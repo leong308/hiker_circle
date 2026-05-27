@@ -1,4 +1,4 @@
-package com.example.hiker_circle
+package com.leongziqi.hikercircle
 
 import io.flutter.embedding.android.FlutterActivity
 

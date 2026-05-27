@@ -1,6 +1,6 @@
 {
-    "name": "hiker_circle",
-    "short_name": "hiker_circle",
+    "name": "HikerCircle",
+    "short_name": "HikerCircle",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
