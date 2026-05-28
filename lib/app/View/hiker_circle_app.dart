@@ -1,12 +1,84 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../authentication/View/phone_sign_in_page.dart';
 import '../../home/View/hiker_home_page.dart';
+import '../Data/firebase_bootstrap.dart';
+import '../Data/firebase_user_repository.dart';
 import '../Data/session_repository.dart';
 import '../ModelView/app_view_model.dart';
 
+const _appFontFamily = 'Inter';
+const _appGreen = Color(0xFF3F8F5E);
+const _appLightGreen = Color(0xFFEAF7EE);
+const _appGreenLine = Color(0xFFCFE5D6);
+const _cupertinoBodyTextStyle = TextStyle(
+  inherit: false,
+  fontFamily: _appFontFamily,
+  fontSize: 17,
+  letterSpacing: 0,
+  color: CupertinoColors.label,
+  decoration: TextDecoration.none,
+);
+const _cupertinoActionTextStyle = TextStyle(
+  inherit: false,
+  fontFamily: _appFontFamily,
+  fontSize: 17,
+  letterSpacing: 0,
+  color: _appGreen,
+  decoration: TextDecoration.none,
+);
+const _cupertinoSmallActionTextStyle = TextStyle(
+  inherit: false,
+  fontFamily: _appFontFamily,
+  fontSize: 15,
+  letterSpacing: 0,
+  color: _appGreen,
+  decoration: TextDecoration.none,
+);
+const _cupertinoTabTextStyle = TextStyle(
+  inherit: false,
+  fontFamily: _appFontFamily,
+  fontSize: 10,
+  fontWeight: FontWeight.w500,
+  letterSpacing: 0,
+  color: CupertinoColors.inactiveGray,
+  decoration: TextDecoration.none,
+);
+const _cupertinoTitleTextStyle = TextStyle(
+  inherit: false,
+  fontFamily: _appFontFamily,
+  fontSize: 17,
+  fontWeight: FontWeight.w600,
+  letterSpacing: 0,
+  color: CupertinoColors.label,
+  decoration: TextDecoration.none,
+);
+const _cupertinoLargeTitleTextStyle = TextStyle(
+  inherit: false,
+  fontFamily: _appFontFamily,
+  fontSize: 34,
+  fontWeight: FontWeight.w700,
+  letterSpacing: 0,
+  color: CupertinoColors.label,
+  decoration: TextDecoration.none,
+);
+const _cupertinoPickerTextStyle = TextStyle(
+  inherit: false,
+  fontFamily: _appFontFamily,
+  fontSize: 21,
+  letterSpacing: 0,
+  color: CupertinoColors.label,
+  decoration: TextDecoration.none,
+);
+
 class HikerCircleApp extends StatefulWidget {
-  const HikerCircleApp({super.key});
+  const HikerCircleApp({
+    super.key,
+    this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
+  });
+
+  final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
   State<HikerCircleApp> createState() => _HikerCircleAppState();
@@ -18,8 +90,15 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   @override
   void initState() {
     super.initState();
-    _appViewModel = AppViewModel(sessionRepository: SessionRepository());
+    _appViewModel = AppViewModel(
+      sessionRepository: SessionRepository(
+        firebaseUserRepository: FirebaseUserRepository(
+          firebaseBootstrapResult: widget.firebaseBootstrapResult,
+        ),
+      ),
+    );
     _appViewModel.addListener(_refresh);
+    _appViewModel.initialize();
   }
 
   @override
@@ -35,10 +114,6 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
 
   @override
   Widget build(BuildContext context) {
-    const green = Color(0xFF3F8F5E);
-    const lightGreen = Color(0xFFEAF7EE);
-    const greenLine = Color(0xFFCFE5D6);
-
     return MaterialApp(
       title: 'HikerCircle',
       debugShowCheckedModeBanner: false,
@@ -46,13 +121,31 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
+        fontFamily: _appFontFamily,
+        cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
+          primaryColor: _appGreen,
+          primaryContrastingColor: Colors.white,
+          scaffoldBackgroundColor: Colors.white,
+          textTheme: CupertinoTextThemeData(
+            primaryColor: _appGreen,
+            textStyle: _cupertinoBodyTextStyle,
+            actionTextStyle: _cupertinoActionTextStyle,
+            actionSmallTextStyle: _cupertinoSmallActionTextStyle,
+            tabLabelTextStyle: _cupertinoTabTextStyle,
+            navTitleTextStyle: _cupertinoTitleTextStyle,
+            navLargeTitleTextStyle: _cupertinoLargeTitleTextStyle,
+            navActionTextStyle: _cupertinoActionTextStyle,
+            pickerTextStyle: _cupertinoPickerTextStyle,
+            dateTimePickerTextStyle: _cupertinoPickerTextStyle,
+          ),
+        ),
         scaffoldBackgroundColor: Colors.white,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: green,
+          seedColor: _appGreen,
           brightness: Brightness.light,
-          primary: green,
-          secondary: lightGreen,
-          primaryContainer: lightGreen,
+          primary: _appGreen,
+          secondary: _appLightGreen,
+          primaryContainer: _appLightGreen,
           surface: Colors.white,
         ),
         cardColor: Colors.white,
@@ -61,24 +154,35 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           fillColor: Colors.white,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: greenLine),
+            borderSide: const BorderSide(color: _appGreenLine),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: greenLine),
+            borderSide: const BorderSide(color: _appGreenLine),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: green, width: 1.5),
+            borderSide: const BorderSide(color: _appGreen, width: 1.5),
           ),
         ),
       ),
-      home: _appViewModel.session == null
+      home: _appViewModel.isInitializing
+          ? const _StartupPage()
+          : _appViewModel.session == null
           ? PhoneSignInPage(onSignedIn: _appViewModel.completeSignIn)
           : HikerHomePage(
               session: _appViewModel.session!,
               onSignOut: _appViewModel.signOut,
             ),
     );
+  }
+}
+
+class _StartupPage extends StatelessWidget {
+  const _StartupPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }

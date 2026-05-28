@@ -1,8 +1,9 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/Model/app_session.dart';
+import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
+import '../../sos/View/sos_page.dart';
 
 class HikerHomePage extends StatefulWidget {
   const HikerHomePage({
@@ -62,15 +63,23 @@ class _HikerHomePageState extends State<HikerHomePage>
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: TabBarView(
         controller: tabController,
-        children: tabs
-            .map(
-              (tab) => ImageTabPage(
-                label: tab.label,
-                phoneNumber: widget.session.phoneNumber,
-                onSignOut: tab.label == 'Me' ? widget.onSignOut : null,
-              ),
-            )
-            .toList(),
+        children: tabs.map((tab) {
+          if (tab.label == 'SOS') {
+            return const SosPage();
+          }
+
+          if (tab.label == 'Profile') {
+            return MePage(
+              phoneNumber: widget.session.phoneNumber,
+              onSignOut: widget.onSignOut,
+            );
+          }
+
+          return ImageTabPage(
+            label: tab.label,
+            phoneNumber: widget.session.phoneNumber,
+          );
+        }).toList(),
       ),
       bottomNavigationBar: HikerBottomNavBar(
         currentIndex: selectedTabIndex,
@@ -85,17 +94,14 @@ class ImageTabPage extends StatelessWidget {
     super.key,
     required this.label,
     required this.phoneNumber,
-    this.onSignOut,
   });
 
   final String label;
   final String phoneNumber;
-  final VoidCallback? onSignOut;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
 
     return Stack(
       fit: StackFit.expand,
@@ -144,24 +150,6 @@ class ImageTabPage extends StatelessWidget {
                     color: Color(0xFF4E5B53),
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        if (onSignOut != null)
-          SafeArea(
-            child: Align(
-              alignment: Alignment.topRight,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 10, right: 12),
-                child: CupertinoButton(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size.square(44),
-                  onPressed: onSignOut,
-                  child: Icon(
-                    CupertinoIcons.square_arrow_right,
-                    color: scheme.primary,
                   ),
                 ),
               ),

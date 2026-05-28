@@ -22,8 +22,8 @@ class HikerBottomNavBar extends StatelessWidget {
     HikerBottomNavDestination(label: 'Home', icon: Icons.home_rounded),
     HikerBottomNavDestination(label: 'Trail', icon: Icons.map_rounded),
     HikerBottomNavDestination(label: 'SOS', icon: Icons.sos_rounded),
-    HikerBottomNavDestination(label: 'Plan', icon: Icons.event_note_rounded),
-    HikerBottomNavDestination(label: 'Me', icon: Icons.person_rounded),
+    HikerBottomNavDestination(label: 'Circle', icon: Icons.groups_2_rounded),
+    HikerBottomNavDestination(label: 'Profile', icon: Icons.person_rounded),
   ];
 
   final int currentIndex;

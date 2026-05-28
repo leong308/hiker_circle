@@ -1,0 +1,38 @@
+{
+  "project_info": {
+    "project_number": "41069899337",
+    "project_id": "hiker-circle",
+    "storage_bucket": "hiker-circle.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:41069899337:android:f6fc9a19684233d8a61998",
+        "android_client_info": {
+          "package_name": "com.leongziqi.hikercircle"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "41069899337-trphik29v5dkihopd4g8ubblm1qelqk2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.leongziqi.hikercircle",
+            "certificate_hash": "0d1b4e3f06e85162016b37afd29695fdc6f91393"
+          }
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAN5jC3e3GE0GPUt09U7z1UkMffzAiQh9o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

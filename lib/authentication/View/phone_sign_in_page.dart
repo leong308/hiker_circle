@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/Data/session_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../ModelView/auth_view_model.dart';
 import 'auth_brand_panel.dart';
@@ -8,7 +9,7 @@ import 'inline_notice.dart';
 class PhoneSignInPage extends StatefulWidget {
   const PhoneSignInPage({super.key, required this.onSignedIn});
 
-  final ValueChanged<AppSession> onSignedIn;
+  final Future<void> Function(AppSession session) onSignedIn;
 
   @override
   State<PhoneSignInPage> createState() => _PhoneSignInPageState();
@@ -19,6 +20,8 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   final _phoneController = TextEditingController();
   final _otpController = TextEditingController();
   late final AuthViewModel _viewModel;
+  bool _isCompletingSignIn = false;
+  String? _signInError;
 
   @override
   void initState() {
@@ -48,12 +51,39 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     await _viewModel.sendCode(_phoneController.text);
   }
 
-  void _verifyCode() {
+  Future<void> _verifyCode() async {
     FocusScope.of(context).unfocus();
     final session = _viewModel.verifyCode(_otpController.text);
     if (session != null) {
-      widget.onSignedIn(session);
+      setState(() {
+        _isCompletingSignIn = true;
+        _signInError = null;
+      });
+
+      try {
+        await widget.onSignedIn(session);
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _signInError = _friendlySignInError(error);
+        });
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isCompletingSignIn = false;
+          });
+        }
+      }
     }
+  }
+
+  String _friendlySignInError(Object error) {
+    if (error is SessionRepositoryException) {
+      return error.message;
+    }
+    return 'Unable to finish login. Please check your connection and try again.';
   }
 
   @override
@@ -106,7 +136,8 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                     textInputAction: TextInputAction.done,
                                     enabled:
                                         !_viewModel.isSendingCode &&
-                                        !_viewModel.isVerifyingCode,
+                                        !_viewModel.isVerifyingCode &&
+                                        !_isCompletingSignIn,
                                     decoration: const InputDecoration(
                                       labelText: 'Phone number',
                                       hintText: '012 345 6789',
@@ -144,7 +175,9 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                       keyboardType: TextInputType.number,
                                       textInputAction: TextInputAction.done,
                                       maxLength: 6,
-                                      enabled: !_viewModel.isVerifyingCode,
+                                      enabled:
+                                          !_viewModel.isVerifyingCode &&
+                                          !_isCompletingSignIn,
                                       decoration: const InputDecoration(
                                         counterText: '',
                                         labelText: 'Verification code',
@@ -156,8 +189,12 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                     FilledButton.icon(
                                       onPressed: _viewModel.isVerifyingCode
                                           ? null
+                                          : _isCompletingSignIn
+                                          ? null
                                           : _verifyCode,
-                                      icon: _viewModel.isVerifyingCode
+                                      icon:
+                                          _viewModel.isVerifyingCode ||
+                                              _isCompletingSignIn
                                           ? const SizedBox.square(
                                               dimension: 18,
                                               child: CircularProgressIndicator(
@@ -182,6 +219,14 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                       icon: Icons.error_outline,
                                       color: scheme.error,
                                       text: _viewModel.error!,
+                                    ),
+                                  ],
+                                  if (_signInError != null) ...[
+                                    const SizedBox(height: 16),
+                                    InlineNotice(
+                                      icon: Icons.error_outline,
+                                      color: scheme.error,
+                                      text: _signInError!,
                                     ),
                                   ],
                                 ],

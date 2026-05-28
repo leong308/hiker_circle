@@ -8,13 +8,21 @@ class AppViewModel extends ChangeNotifier {
     : _sessionRepository = sessionRepository;
 
   final SessionRepository _sessionRepository;
+  bool _isInitializing = true;
 
   AppSession? get session => _sessionRepository.currentSession;
 
   bool get isSignedIn => _sessionRepository.isSignedIn;
+  bool get isInitializing => _isInitializing;
 
-  void completeSignIn(AppSession session) {
-    _sessionRepository.signIn(session);
+  Future<void> initialize() async {
+    await _sessionRepository.loadSavedSession();
+    _isInitializing = false;
+    notifyListeners();
+  }
+
+  Future<void> completeSignIn(AppSession session) async {
+    await _sessionRepository.signIn(session);
     notifyListeners();
   }
 
