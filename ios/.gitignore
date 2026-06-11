@@ -32,3 +32,13 @@ Runner/GeneratedPluginRegistrant.*
 !default.mode2v3
 !default.pbxuser
 !default.perspectivev3
+
+# Xcode / iOS build outputs
+build/
+SourcePackages/
+*.xcarchive
+*.ipa
+
+# Xcode Swift Package Manager cache
+Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+Runner.xcworkspace/xcshareddata/swiftpm/
