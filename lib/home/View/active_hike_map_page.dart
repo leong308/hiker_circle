@@ -25,7 +25,7 @@ class ActiveHikeMapPage extends StatelessWidget {
                   const SizedBox(height: 16),
                   Expanded(
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(12),
                       child: DecoratedBox(
                         decoration: const BoxDecoration(color: Colors.white),
                         child: CustomPaint(
@@ -345,11 +345,11 @@ class _InsetGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: child,
       ),

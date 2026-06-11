@@ -23,6 +23,7 @@ import java.io.FileOutputStream
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "hiker_circle/sos_device_alerts"
+        private const val DEEP_LINK_CHANNEL = "hiker_circle/deeplinks"
         private const val CAMERA_REQUEST_CODE = 8472
         private const val LOCATION_REQUEST_CODE = 8473
         private const val LOCATION_TIMEOUT_MILLIS = 6000L
@@ -40,6 +41,8 @@ class MainActivity : FlutterActivity() {
     private var pendingLocationResult: MethodChannel.Result? = null
     private var pendingLocationListener: LocationListener? = null
     private var pendingAllowLastKnownLocation = false
+    private var deepLinkChannel: MethodChannel? = null
+    private var pendingDeepLink: String? = null
 
     private val sosTorchPattern = listOf(
         TorchStep(true, 220L),
@@ -90,6 +93,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         cameraManager = getSystemService(CameraManager::class.java)
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+        pendingDeepLink = intent?.dataString
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -115,6 +119,29 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        deepLinkChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DEEP_LINK_CHANNEL,
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "consumeInitialDeepLink" -> {
+                        result.success(pendingDeepLink)
+                        pendingDeepLink = null
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val deepLink = intent.dataString ?: return
+        pendingDeepLink = deepLink
+        deepLinkChannel?.invokeMethod("onDeepLink", deepLink)
     }
 
     override fun onRequestPermissionsResult(

@@ -8,7 +8,7 @@ class MeRepository {
   MeProfile loadProfile({required String phoneNumber}) {
     return MeProfile(
       displayName: 'Trail Friend',
-      handle: '@hikercircle',
+      handle: '@${_profileHandleForPhone(phoneNumber)}',
       phoneNumber: phoneNumber,
       status: 'Ready for the next hike',
     );
@@ -16,9 +16,9 @@ class MeRepository {
 
   List<MeStat> loadStats() {
     return const [
-      MeStat(label: 'Circles', value: '6'),
-      MeStat(label: 'Buddies', value: '24'),
-      MeStat(label: 'Trails', value: '12'),
+      MeStat(label: 'Circles', value: '3'),
+      MeStat(label: 'Buddies', value: '3'),
+      MeStat(label: 'Trails', value: '3'),
     ];
   }
 
@@ -58,9 +58,9 @@ class MeRepository {
             subtitle: 'Choose who can see your live trail status',
           ),
           MeActionItem(
-            icon: Icons.medical_information_rounded,
-            title: 'Medical notes',
-            subtitle: 'Allergies, blood type, and key details',
+            icon: Icons.rule_rounded,
+            title: 'Safety preferences',
+            subtitle: 'Check-in defaults, fallback alerts, and trail privacy',
           ),
         ],
       ),
@@ -82,8 +82,26 @@ class MeRepository {
             title: 'Help center',
             subtitle: 'Support, guides, and app information',
           ),
+          MeActionItem(
+            icon: Icons.account_circle_rounded,
+            title: 'Account preferences',
+            subtitle: 'Profile identity and sign-in controls',
+          ),
+          MeActionItem(
+            icon: Icons.download_rounded,
+            title: 'Export history',
+            subtitle: 'Download hikes, posts, and team activity',
+          ),
         ],
       ),
     ];
   }
+}
+
+String _profileHandleForPhone(String phoneNumber) {
+  final digits = phoneNumber.replaceAll(RegExp('[^0-9]'), '');
+  if (digits.length <= 4) {
+    return 'hiker$digits';
+  }
+  return 'hiker${digits.substring(digits.length - 4)}';
 }

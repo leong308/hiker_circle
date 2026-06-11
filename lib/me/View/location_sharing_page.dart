@@ -283,7 +283,7 @@ class _MapPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: const BoxDecoration(color: Colors.white),
         child: Stack(
@@ -533,7 +533,7 @@ class _LocationDetails extends StatelessWidget {
         : 'Accuracy +/- ${location!.accuracyMeters!.toStringAsFixed(0)} m';
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: const BoxDecoration(color: Colors.white),
         child: Padding(
@@ -620,7 +620,7 @@ class _LiveLocationControls extends StatelessWidget {
     final isDisabled = isBusy || isSharing;
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: const BoxDecoration(color: Colors.white),
         child: Padding(

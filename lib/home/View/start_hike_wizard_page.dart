@@ -650,14 +650,14 @@ class _ChoiceTile extends StatelessWidget {
 
     return Material(
       color: selected ? _WizardColors.greenSoft : Colors.white,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: selected ? _WizardColors.green : _WizardColors.separator,
             ),
@@ -712,7 +712,7 @@ class _TrailSummary extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: _WizardColors.greenSoft,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -751,7 +751,7 @@ class _CheckpointList extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _WizardColors.separator),
       ),
       child: Column(
@@ -805,7 +805,7 @@ class _ContactsPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _WizardColors.separator),
       ),
       child: Column(
@@ -857,7 +857,7 @@ class _PreparationStatusList extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _WizardColors.separator),
       ),
       child: const Column(
@@ -888,7 +888,7 @@ class _ChecklistGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _WizardColors.separator),
       ),
       child: Column(
@@ -927,7 +927,7 @@ class _ForecastCard extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: _WizardColors.greenSoft,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -982,7 +982,7 @@ class _StartupActionsCard extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _WizardColors.separator),
       ),
       child: Padding(
@@ -1104,11 +1104,11 @@ class _InsetGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: child,
       ),

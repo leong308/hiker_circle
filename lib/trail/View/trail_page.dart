@@ -152,6 +152,11 @@ class _TrailPageState extends State<TrailPage> {
                     const LinearProgressIndicator(minHeight: 2),
                   ],
                   const SizedBox(height: 16),
+                  _DiscoverHero(
+                    trails: _trails,
+                    downloadedCount: downloadedTrails.length,
+                  ),
+                  const SizedBox(height: 14),
                   TextField(
                     decoration: const InputDecoration(
                       hintText: 'Search trail, hill or area...',
@@ -172,8 +177,17 @@ class _TrailPageState extends State<TrailPage> {
                       });
                     },
                   ),
+                  const SizedBox(height: 18),
+                  _TrailInsightStrip(
+                    visibleCount: _visibleTrails.length,
+                    downloadedCount: downloadedTrails.length,
+                    hazardCount: _visibleTrails.fold<int>(
+                      0,
+                      (count, trail) => count + trail.hazards.length,
+                    ),
+                  ),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Recommended Near You'),
+                  _SectionTitle(label: 'Best Matches'),
                   const SizedBox(height: 8),
                   if (_visibleTrails.isEmpty)
                     const _EmptyState(message: 'No trails match this filter.')
@@ -189,10 +203,13 @@ class _TrailPageState extends State<TrailPage> {
                       const SizedBox(height: 12),
                     ],
                   const SizedBox(height: 10),
-                  _SectionTitle(label: 'Downloaded Maps'),
+                  _SectionTitle(label: 'Offline Ready Routes'),
                   const SizedBox(height: 8),
                   if (downloadedTrails.isEmpty)
-                    const _EmptyState(message: 'No downloaded trail maps yet.')
+                    const _EmptyState(
+                      message:
+                          'No routes are ready offline yet. Open a trail and download its route pack.',
+                    )
                   else
                     for (final trail in downloadedTrails) ...[
                       _DownloadedMapCard(trail: trail),
@@ -319,72 +336,30 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                 children: [
                   _DetailHeader(onBack: () => Navigator.of(context).pop()),
                   const SizedBox(height: 16),
-                  _TrailCover(trail: trail, height: 190),
-                  const SizedBox(height: 16),
-                  _TrailTitle(trail: trail),
+                  _TrailDetailHero(trail: trail),
                   const SizedBox(height: 14),
                   _MetricGroup(trail: trail),
                   const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () => unawaited(widget.onStartHike(trail)),
-                          icon: const Icon(Icons.play_arrow_rounded),
-                          label: const Text('Start Hike'),
+                  _TrailPlanCard(
+                    trail: trail,
+                    isOfflineDownloaded: _isOfflineDownloaded,
+                    isLoadingRoute: _isLoadingRoute,
+                    onStartHike: () => unawaited(widget.onStartHike(trail)),
+                    onSaveTrail: () => ScaffoldMessenger.of(context)
+                      ..hideCurrentSnackBar()
+                      ..showSnackBar(
+                        const SnackBar(
+                          content: Text('Trail saved to your profile.'),
+                          behavior: SnackBarBehavior.floating,
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => ScaffoldMessenger.of(context)
-                            ..hideCurrentSnackBar()
-                            ..showSnackBar(
-                              const SnackBar(
-                                content: Text('Trail saved to your profile.'),
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            ),
-                          icon: const Icon(Icons.bookmark_add_rounded),
-                          label: const Text('Save Trail'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 22),
-                  _SectionTitle(label: 'Map Preview'),
-                  const SizedBox(height: 8),
-                  _RoutePreview(trail: trail),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _isLoadingRoute
-                              ? null
-                              : () => unawaited(_loadOnlineRoute()),
-                          icon: const Icon(Icons.public_rounded),
-                          label: Text(
-                            _isLoadingRoute ? 'Loading Route' : 'Online Route',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed:
-                              trail.offlineMapAvailable && !_isOfflineDownloaded
-                              ? () => unawaited(_downloadMap())
-                              : null,
-                          icon: const Icon(Icons.download_for_offline_rounded),
-                          label: Text(
-                            _isOfflineDownloaded
-                                ? 'Downloaded'
-                                : 'Download Map',
-                          ),
-                        ),
-                      ),
-                    ],
+                    onLoadOnlineRoute: _isLoadingRoute
+                        ? null
+                        : () => unawaited(_loadOnlineRoute()),
+                    onDownloadMap:
+                        trail.offlineMapAvailable && !_isOfflineDownloaded
+                        ? () => unawaited(_downloadMap())
+                        : null,
                   ),
                   if (_routeResult != null || _routeErrorMessage != null) ...[
                     const SizedBox(height: 10),
@@ -394,12 +369,18 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     ),
                   ],
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Weather Forecast'),
+                  _SectionTitle(label: 'Route Preview'),
+                  const SizedBox(height: 8),
+                  _RoutePreview(trail: trail),
+                  const SizedBox(height: 22),
+                  _SectionTitle(label: 'Checkpoint Flow'),
+                  const SizedBox(height: 8),
+                  _CheckpointTimeline(trail: trail),
+                  const SizedBox(height: 22),
+                  _SectionTitle(label: 'Conditions and Safety'),
                   const SizedBox(height: 8),
                   _WeatherCard(trail: trail),
-                  const SizedBox(height: 22),
-                  _SectionTitle(label: 'Safety Information'),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   _SafetyInfoCard(
                     trail: trail,
                     isOfflineDownloaded: _isOfflineDownloaded,
@@ -769,13 +750,204 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
-      child: Text(
-        'Discover Trails',
-        style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-          color: _TrailColors.text,
-          fontSize: 24,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Discover Trails',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: _TrailColors.text,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+                Text(
+                  'Pick a route by conditions, safety, and team fit',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _TrailColors.secondaryText,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const _CircleIcon(icon: Icons.tune_rounded),
+        ],
+      ),
+    );
+  }
+}
+
+class _DiscoverHero extends StatelessWidget {
+  const _DiscoverHero({required this.trails, required this.downloadedCount});
+
+  final List<Trail> trails;
+  final int downloadedCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final topTrail = trails.isEmpty ? null : trails.first;
+
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _Glyph(icon: Icons.explore_rounded),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    topTrail == null
+                        ? 'Build your next hiking plan'
+                        : 'Suggested for today: ${topTrail.name}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: _TrailColors.text,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Compare difficulty, forecast, hazard reports, and offline readiness before you commit.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _TrailColors.secondaryText,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _StatusPill(
+                        label: '${trails.length} routes',
+                        color: _TrailColors.green,
+                      ),
+                      _StatusPill(
+                        label: '$downloadedCount offline',
+                        color: _TrailColors.blue,
+                      ),
+                      const _StatusPill(
+                        label: 'Dummy planning',
+                        color: _TrailColors.orange,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrailInsightStrip extends StatelessWidget {
+  const _TrailInsightStrip({
+    required this.visibleCount,
+    required this.downloadedCount,
+    required this.hazardCount,
+  });
+
+  final int visibleCount;
+  final int downloadedCount;
+  final int hazardCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 76,
+      child: Row(
+        children: [
+          Expanded(
+            child: _InsightTile(
+              label: 'Matches',
+              value: '$visibleCount',
+              icon: Icons.filter_alt_rounded,
+              color: _TrailColors.green,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _InsightTile(
+              label: 'Offline',
+              value: '$downloadedCount',
+              icon: Icons.download_done_rounded,
+              color: _TrailColors.blue,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _InsightTile(
+              label: 'Hazards',
+              value: '$hazardCount',
+              icon: Icons.warning_amber_rounded,
+              color: _TrailColors.orange,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InsightTile extends StatelessWidget {
+  const _InsightTile({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Icon(icon, color: color, size: 18),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: _TrailColors.text,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: _TrailColors.secondaryText,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -973,6 +1145,319 @@ class _DownloadedMapCard extends StatelessWidget {
   }
 }
 
+class _TrailDetailHero extends StatelessWidget {
+  const _TrailDetailHero({required this.trail});
+
+  final Trail trail;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 240,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _TrailCover(trail: trail, height: 240),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x22000000),
+                    Color(0x00000000),
+                    Color(0xCC000000),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 14,
+              right: 14,
+              bottom: 14,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _HeroPill(label: trail.difficulty),
+                      if (trail.isVerifiedTrail)
+                        const _HeroPill(label: 'Verified trail'),
+                      _HeroPill(
+                        label:
+                            '${trail.ratingAverage.toStringAsFixed(1)} rating',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    trail.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    trail.locationLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.white.withValues(alpha: 0.86),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrailPlanCard extends StatelessWidget {
+  const _TrailPlanCard({
+    required this.trail,
+    required this.isOfflineDownloaded,
+    required this.isLoadingRoute,
+    required this.onStartHike,
+    required this.onSaveTrail,
+    required this.onLoadOnlineRoute,
+    required this.onDownloadMap,
+  });
+
+  final Trail trail;
+  final bool isOfflineDownloaded;
+  final bool isLoadingRoute;
+  final VoidCallback onStartHike;
+  final VoidCallback onSaveTrail;
+  final VoidCallback? onLoadOnlineRoute;
+  final VoidCallback? onDownloadMap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const _Glyph(icon: Icons.route_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Plan this hike',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _TrailColors.text,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      Text(
+                        _planSummary(trail),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _TrailColors.secondaryText,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onStartHike,
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('Start'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onSaveTrail,
+                    icon: const Icon(Icons.bookmark_add_rounded),
+                    label: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onLoadOnlineRoute,
+                    icon: const Icon(Icons.public_rounded),
+                    label: Text(isLoadingRoute ? 'Loading' : 'Online Route'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onDownloadMap,
+                    icon: const Icon(Icons.download_for_offline_rounded),
+                    label: Text(
+                      isOfflineDownloaded ? 'Downloaded' : 'Route Pack',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CheckpointTimeline extends StatelessWidget {
+  const _CheckpointTimeline({required this.trail});
+
+  final Trail trail;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+        child: Column(
+          children: [
+            for (var index = 0; index < trail.checkpoints.length; index++)
+              _CheckpointRow(
+                checkpoint: trail.checkpoints[index],
+                isLast: index == trail.checkpoints.length - 1,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CheckpointRow extends StatelessWidget {
+  const _CheckpointRow({required this.checkpoint, required this.isLast});
+
+  final TrailCheckpoint checkpoint;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                margin: const EdgeInsets.only(top: 10),
+                decoration: BoxDecoration(
+                  color: _TrailColors.greenSoft,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${checkpoint.order}',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: _TrailColors.green,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              if (!isLast)
+                const Expanded(
+                  child: VerticalDivider(
+                    width: 1,
+                    thickness: 1,
+                    color: _TrailColors.separator,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 10, bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    checkpoint.name,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _TrailColors.text,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Dummy ETA checkpoint - ${checkpoint.latitude.toStringAsFixed(4)}, ${checkpoint.longitude.toStringAsFixed(4)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _TrailColors.secondaryText,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroPill extends StatelessWidget {
+  const _HeroPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
 class _TrailCover extends StatelessWidget {
   const _TrailCover({required this.trail, required this.height, this.width});
 
@@ -1064,51 +1549,6 @@ class _TrailCoverFallback extends StatelessWidget {
   Widget build(BuildContext context) {
     return CustomPaint(
       painter: _TrailCoverPainter(color: Color(trail.coverColorValue)),
-    );
-  }
-}
-
-class _TrailTitle extends StatelessWidget {
-  const _TrailTitle({required this.trail});
-
-  final Trail trail;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    trail.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: _TrailColors.text,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    trail.locationLabel,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TrailColors.secondaryText,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _StatusPill(label: trail.difficulty, color: _TrailColors.green),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -2193,11 +2633,11 @@ class _InsetGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: child,
       ),
@@ -2296,6 +2736,13 @@ String _formatDate(DateTime dateTime) {
     'December',
   ];
   return '${dateTime.day} ${months[dateTime.month - 1]} ${dateTime.year}';
+}
+
+String _planSummary(Trail trail) {
+  final hazardText = trail.hazards.isEmpty
+      ? 'no active hazard reports'
+      : '${trail.hazards.length} hazard report${trail.hazards.length == 1 ? '' : 's'}';
+  return '${trail.distanceLabel}, ${trail.durationLabel}, $hazardText, ${trail.weather.rainProbability}% rain probability.';
 }
 
 abstract final class _TrailColors {

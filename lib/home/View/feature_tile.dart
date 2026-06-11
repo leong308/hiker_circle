@@ -13,11 +13,11 @@ class FeatureTile extends StatelessWidget {
       elevation: 0,
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         side: const BorderSide(color: Color(0xFFCFE5D6)),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         onTap: () {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('${feature.title} will be built next.')),

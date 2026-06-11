@@ -6,6 +6,7 @@ import CoreLocation
 @main
 @objc class AppDelegate: FlutterAppDelegate, CLLocationManagerDelegate {
   private let sosDeviceAlertChannel = "hiker_circle/sos_device_alerts"
+  private let deepLinkChannelName = "hiker_circle/deeplinks"
   private let alarmAsset = "assets/audios/sos_alarm.mp3"
   private var audioPlayer: AVAudioPlayer?
   private var torchTimer: Timer?
@@ -14,6 +15,8 @@ import CoreLocation
   private var pendingLocationResult: FlutterResult?
   private var pendingAllowLastKnownLocation = false
   private var locationTimeoutTimer: Timer?
+  private var deepLinkChannel: FlutterMethodChannel?
+  private var pendingDeepLink: String?
   private let sosTorchPattern: [(enabled: Bool, duration: TimeInterval)] = [
     (true, 0.22),
     (false, 0.18),
@@ -41,7 +44,22 @@ import CoreLocation
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     configureSosDeviceAlertChannel()
+    configureDeepLinkChannel()
+    if let url = launchOptions?[.url] as? URL {
+      pendingDeepLink = url.absoluteString
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey : Any] = [:]
+  ) -> Bool {
+    let handledByFlutter = super.application(app, open: url, options: options)
+    pendingDeepLink = url.absoluteString
+    deepLinkChannel?.invokeMethod("onDeepLink", arguments: url.absoluteString)
+    return handledByFlutter || url.scheme == "hikercircle"
   }
 
   private func configureSosDeviceAlertChannel() {
@@ -83,6 +101,33 @@ import CoreLocation
         self.getCurrentTriggerLocation(call, result)
       case "shareText":
         self.shareText(call, result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func configureDeepLinkChannel() {
+    guard let controller = window?.rootViewController as? FlutterViewController else {
+      return
+    }
+
+    let channel = FlutterMethodChannel(
+      name: deepLinkChannelName,
+      binaryMessenger: controller.binaryMessenger
+    )
+    deepLinkChannel = channel
+
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(nil)
+        return
+      }
+
+      switch call.method {
+      case "consumeInitialDeepLink":
+        result(self.pendingDeepLink)
+        self.pendingDeepLink = nil
       default:
         result(FlutterMethodNotImplemented)
       }
