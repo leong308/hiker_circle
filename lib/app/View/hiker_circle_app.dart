@@ -173,6 +173,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           : HikerHomePage(
               session: _appViewModel.session!,
               onSignOut: _appViewModel.signOut,
+              firebaseBootstrapResult: widget.firebaseBootstrapResult,
             ),
     );
   }

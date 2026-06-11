@@ -1,13 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/Model/app_session.dart';
+import '../Data/emergency_contacts_repository.dart';
 import '../Model/sos_models.dart';
 import '../ModelView/emergency_contacts_view_model.dart';
 
 class EmergencyContactsPage extends StatefulWidget {
-  const EmergencyContactsPage({super.key, required this.initialContacts});
+  const EmergencyContactsPage({
+    super.key,
+    required this.session,
+    required this.initialContacts,
+    this.repository = const EmergencyContactsRepository(),
+  });
 
+  final AppSession session;
   final List<EmergencyContact> initialContacts;
+  final EmergencyContactsRepository repository;
 
   @override
   State<EmergencyContactsPage> createState() => _EmergencyContactsPageState();
@@ -24,7 +35,9 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   void initState() {
     super.initState();
     viewModel = EmergencyContactsViewModel(
+      session: widget.session,
       initialContacts: widget.initialContacts,
+      repository: widget.repository,
     );
     viewModel.addListener(_refresh);
   }
@@ -43,17 +56,25 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     setState(() {});
   }
 
-  void _addContact() {
+  void _close() {
+    Navigator.of(context).pop(viewModel.contacts);
+  }
+
+  Future<void> _addContact() async {
+    if (viewModel.isSaving) {
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    final wasAdded = viewModel.addContact(
+    final wasAdded = await viewModel.addContact(
       name: _nameController.text,
       phoneNumber: _phoneController.text,
       relationship: _relationshipController.text,
     );
-    if (!wasAdded) {
+    if (!wasAdded || !mounted) {
       return;
     }
 
@@ -64,6 +85,10 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   }
 
   Future<void> _editContact(int index, EmergencyContact contact) async {
+    if (viewModel.isSaving) {
+      return;
+    }
+
     final updatedContact = await showModalBottomSheet<EmergencyContact>(
       context: context,
       isScrollControlled: true,
@@ -71,11 +96,11 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
       builder: (context) => _EditContactSheet(contact: contact),
     );
 
-    if (updatedContact == null) {
+    if (updatedContact == null || !mounted) {
       return;
     }
 
-    viewModel.updateContact(
+    await viewModel.updateContact(
       index,
       name: updatedContact.name,
       phoneNumber: updatedContact.phoneNumber,
@@ -84,6 +109,10 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   }
 
   Future<void> _deleteContact(int index, EmergencyContact contact) async {
+    if (viewModel.isSaving) {
+      return;
+    }
+
     final shouldDelete = await showCupertinoDialog<bool>(
       context: context,
       builder: (context) {
@@ -106,7 +135,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     );
 
     if (shouldDelete == true) {
-      viewModel.deleteContact(index);
+      await viewModel.deleteContact(index);
     }
   }
 
@@ -123,15 +152,18 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const _Header(),
+                  _Header(onBack: _close),
                   const SizedBox(height: 16),
                   _SummaryCard(
                     count: viewModel.contacts.length,
                     max: EmergencyContactsViewModel.maxContacts,
+                    isSaving: viewModel.isSaving,
+                    saveErrorMessage: viewModel.saveErrorMessage,
                   ),
                   const SizedBox(height: 18),
                   _ContactsList(
                     contacts: viewModel.contacts,
+                    isSaving: viewModel.isSaving,
                     onEditContact: _editContact,
                     onDeleteContact: _deleteContact,
                   ),
@@ -141,7 +173,8 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
                     nameController: _nameController,
                     phoneController: _phoneController,
                     relationshipController: _relationshipController,
-                    canAddContact: viewModel.canAddContact,
+                    canAddContact:
+                        viewModel.canAddContact && !viewModel.isSaving,
                     remainingSlots: viewModel.remainingSlots,
                     onAddContact: _addContact,
                   ),
@@ -156,7 +189,9 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header();
+  const _Header({required this.onBack});
+
+  final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -169,7 +204,7 @@ class _Header extends StatelessWidget {
             child: CupertinoButton(
               padding: EdgeInsets.zero,
               minimumSize: const Size.square(36),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: onBack,
               child: Container(
                 width: 36,
                 height: 36,
@@ -222,44 +257,74 @@ class _Header extends StatelessWidget {
 }
 
 class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.count, required this.max});
+  const _SummaryCard({
+    required this.count,
+    required this.max,
+    required this.isSaving,
+    required this.saveErrorMessage,
+  });
 
   final int count;
   final int max;
+  final bool isSaving;
+  final String? saveErrorMessage;
 
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
       child: Padding(
         padding: const EdgeInsets.all(14),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const _Glyph(icon: Icons.contacts_rounded),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$count/$max contacts added',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: _ContactsColors.text,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
+            Row(
+              children: [
+                const _Glyph(icon: Icons.contacts_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$count/$max contacts added',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _ContactsColors.text,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        isSaving
+                            ? 'Saving emergency contacts...'
+                            : 'These contacts receive emergency SOS messages first.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _ContactsColors.secondaryText,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    'These contacts receive emergency SOS messages first.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _ContactsColors.secondaryText,
-                      fontWeight: FontWeight.w400,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
+            if (isSaving) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
+            if (saveErrorMessage case final message?) ...[
+              const SizedBox(height: 10),
+              Text(
+                message,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _ContactsColors.destructive,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -270,11 +335,13 @@ class _SummaryCard extends StatelessWidget {
 class _ContactsList extends StatelessWidget {
   const _ContactsList({
     required this.contacts,
+    required this.isSaving,
     required this.onEditContact,
     required this.onDeleteContact,
   });
 
   final List<EmergencyContact> contacts;
+  final bool isSaving;
   final Future<void> Function(int index, EmergencyContact contact)
   onEditContact;
   final Future<void> Function(int index, EmergencyContact contact)
@@ -306,6 +373,7 @@ class _ContactsList extends StatelessWidget {
             _SwipeContactCell(
               index: index,
               contact: contacts[index],
+              isSaving: isSaving,
               onEditContact: onEditContact,
               onDeleteContact: onDeleteContact,
             ),
@@ -325,12 +393,14 @@ class _SwipeContactCell extends StatelessWidget {
   const _SwipeContactCell({
     required this.index,
     required this.contact,
+    required this.isSaving,
     required this.onEditContact,
     required this.onDeleteContact,
   });
 
   final int index;
   final EmergencyContact contact;
+  final bool isSaving;
   final Future<void> Function(int index, EmergencyContact contact)
   onEditContact;
   final Future<void> Function(int index, EmergencyContact contact)
@@ -341,6 +411,10 @@ class _SwipeContactCell extends StatelessWidget {
     return Dismissible(
       key: ValueKey('${contact.name}-${contact.phoneNumber}-$index'),
       confirmDismiss: (direction) async {
+        if (isSaving) {
+          return false;
+        }
+
         if (direction == DismissDirection.startToEnd) {
           await onEditContact(index, contact);
           return false;
@@ -479,7 +553,7 @@ class _AddContactForm extends StatelessWidget {
   final TextEditingController relationshipController;
   final bool canAddContact;
   final int remainingSlots;
-  final VoidCallback onAddContact;
+  final Future<void> Function() onAddContact;
 
   @override
   Widget build(BuildContext context) {
@@ -545,13 +619,15 @@ class _AddContactForm extends StatelessWidget {
                 validator: _requiredValidator,
                 onFieldSubmitted: (_) {
                   if (canAddContact) {
-                    onAddContact();
+                    unawaited(onAddContact());
                   }
                 },
               ),
               const SizedBox(height: 14),
               FilledButton.icon(
-                onPressed: canAddContact ? onAddContact : null,
+                onPressed: canAddContact
+                    ? () => unawaited(onAddContact())
+                    : null,
                 icon: const Icon(Icons.person_add_alt_1_rounded),
                 label: const Text('Add contact'),
               ),

@@ -30,6 +30,10 @@ class FirebaseUserRepository {
     return _resolvedFirestore.collection('users');
   }
 
+  static String documentIdForPhoneNumber(String phoneNumber) {
+    return phoneNumber.replaceAll('/', '_');
+  }
+
   Future<AppSession> registerOrLoadUser(AppSession session) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       throw FirebaseUserRepositoryException(
@@ -41,7 +45,7 @@ class FirebaseUserRepository {
     try {
       final now = DateTime.now().toUtc();
       final userDocument = _users.doc(
-        _documentIdForPhoneNumber(session.phoneNumber),
+        documentIdForPhoneNumber(session.phoneNumber),
       );
 
       return _resolvedFirestore.runTransaction((transaction) async {
@@ -77,10 +81,6 @@ class FirebaseUserRepository {
         'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
       );
     }
-  }
-
-  String _documentIdForPhoneNumber(String phoneNumber) {
-    return phoneNumber.replaceAll('/', '_');
   }
 
   DateTime? _dateFromValue(Object? value) {

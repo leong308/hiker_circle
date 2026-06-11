@@ -12,7 +12,8 @@
 .swiftpm/
 migrate_working_dir/
 
-# IntelliJ related
+# IntelliJ/IDE related
+.vscode/
 *.iml
 *.ipr
 *.iws
@@ -27,11 +28,26 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.dart_localappdata/
+.packages
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
 /build/
 /coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Environment
+.env
+.env.*
+!.env.example
 
 # Symbolication related
 app.*.symbols
@@ -43,3 +59,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Operating system generated files
+.DS_Store
+Thumbs.db
+
+# Node.js generated files
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

@@ -36,6 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   crypto: ^3.0.6
   http: ^1.6.0
+  maplibre_gl: ^0.26.1
   liquid_glass_bar: ^0.1.1
   firebase_core: ^4.9.0
   cloud_firestore: ^6.4.1
@@ -64,6 +65,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/audios/sos_alarm.mp3
+    - assets/guides/first_aid_guide.json
 
   fonts:
     - family: Inter

@@ -55,26 +55,34 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     FocusScope.of(context).unfocus();
     final session = _viewModel.verifyCode(_otpController.text);
     if (session != null) {
-      setState(() {
-        _isCompletingSignIn = true;
-        _signInError = null;
-      });
+      await _completeSignIn(session);
+    }
+  }
 
-      try {
-        await widget.onSignedIn(session);
-      } catch (error) {
-        if (!mounted) {
-          return;
-        }
+  Future<void> _completeSignIn(AppSession session) async {
+    if (_isCompletingSignIn) {
+      return;
+    }
+
+    setState(() {
+      _isCompletingSignIn = true;
+      _signInError = null;
+    });
+
+    try {
+      await widget.onSignedIn(session);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _signInError = _friendlySignInError(error);
+      });
+    } finally {
+      if (mounted) {
         setState(() {
-          _signInError = _friendlySignInError(error);
+          _isCompletingSignIn = false;
         });
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isCompletingSignIn = false;
-          });
-        }
       }
     }
   }

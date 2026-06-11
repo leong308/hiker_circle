@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/authentication/Data/phone_number_formatter.dart';
 import 'package:hiker_circle/authentication/Model/otp_challenge.dart';
+import 'package:hiker_circle/sos/Model/sos_models.dart';
 
 void main() {
   group('PhoneNumberFormatter', () {
@@ -38,6 +39,33 @@ void main() {
 
       expect(hidden.code, isNull);
       expect(hidden.verify(challenge.code!), isTrue);
+    });
+  });
+
+  group('EmergencyContact', () {
+    test('round trips Firestore data', () {
+      const contact = EmergencyContact(
+        name: 'Aina',
+        phoneNumber: '+60123456789',
+        relationship: 'Sister',
+      );
+
+      final firestoreData = contact.toFirestore();
+
+      expect(firestoreData, {
+        'name': 'Aina',
+        'phoneNumber': '+60123456789',
+        'relationship': 'Sister',
+      });
+      expect(EmergencyContact.fromFirestore(firestoreData).name, 'Aina');
+      expect(
+        EmergencyContact.fromFirestore(firestoreData).phoneNumber,
+        '+60123456789',
+      );
+      expect(
+        EmergencyContact.fromFirestore(firestoreData).relationship,
+        'Sister',
+      );
     });
   });
 }

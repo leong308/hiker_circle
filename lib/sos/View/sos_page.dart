@@ -1,30 +1,191 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../app/Data/firebase_bootstrap.dart';
+import '../../app/Model/app_session.dart';
+import '../Data/emergency_contacts_repository.dart';
+import '../Data/location_snapshot_service.dart';
+import '../Data/sos_alert_repository.dart';
+import '../Data/sos_device_alert_service.dart';
 import '../Model/sos_models.dart';
 import '../ModelView/sos_view_model.dart';
 import 'emergency_contacts_page.dart';
 
 class SosPage extends StatefulWidget {
-  const SosPage({super.key});
+  const SosPage({
+    super.key,
+    required this.session,
+    this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
+  });
+
+  final AppSession session;
+  final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
   State<SosPage> createState() => _SosPageState();
 }
 
 class _SosPageState extends State<SosPage> {
+  final SosDeviceAlertService _deviceAlertService =
+      const SosDeviceAlertService();
   late final SosViewModel viewModel;
+  bool _isManualSosPatternActive = false;
 
   @override
   void initState() {
     super.initState();
-    viewModel = SosViewModel();
+    viewModel = SosViewModel(
+      session: widget.session,
+      emergencyContactsRepository: EmergencyContactsRepository(
+        firebaseBootstrapResult: widget.firebaseBootstrapResult,
+      ),
+      sosAlertRepository: SosAlertRepository(
+        firebaseBootstrapResult: widget.firebaseBootstrapResult,
+      ),
+    );
+    viewModel.addListener(_refresh);
+    unawaited(viewModel.loadEmergencyContacts());
   }
 
   @override
   void dispose() {
+    if (_isManualSosPatternActive) {
+      unawaited(_deviceAlertService.stopManualSosPattern());
+    }
+    viewModel.removeListener(_refresh);
     viewModel.dispose();
     super.dispose();
+  }
+
+  void _refresh() {
+    setState(() {});
+  }
+
+  Future<void> _handleManualSos() async {
+    if (viewModel.isSendingSosAlert) {
+      return;
+    }
+
+    unawaited(HapticFeedback.heavyImpact());
+    final shouldSend = await showCupertinoDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return const _ManualSosCountdownDialog();
+      },
+    );
+
+    if (shouldSend != true || !mounted) {
+      return;
+    }
+
+    await _triggerAlert(SosAlertMode.manual);
+  }
+
+  Future<void> _handleDuressSos() async {
+    if (viewModel.isSendingSosAlert) {
+      return;
+    }
+
+    unawaited(HapticFeedback.mediumImpact());
+    await _triggerAlert(SosAlertMode.duress);
+  }
+
+  Future<void> _triggerAlert(SosAlertMode mode) async {
+    final triggeredAt = DateTime.now().toUtc();
+    if (mode == SosAlertMode.manual) {
+      unawaited(_startManualSosPattern());
+    }
+
+    final triggerLocation = await _captureTriggerLocation();
+    final result = await viewModel.triggerAlert(
+      mode: mode,
+      triggeredAt: triggeredAt,
+      triggerLocation: triggerLocation,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    final message = result == null
+        ? viewModel.sosAlertErrorMessage ?? 'SOS alert was not sent.'
+        : _messageForResult(result);
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: result == null || result.alert.failedCount > 0
+              ? _SosColors.destructive
+              : _SosColors.green,
+        ),
+      );
+  }
+
+  Future<SosTriggerLocation?> _captureTriggerLocation() async {
+    try {
+      final snapshotService = LocationSnapshotService.instance;
+      return snapshotService.latestLocation ?? await snapshotService.refresh();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _startManualSosPattern() async {
+    try {
+      await _deviceAlertService.startManualSosPattern();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isManualSosPatternActive = true;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to start phone alarm or flashlight.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  Future<void> _stopManualSosPattern() async {
+    try {
+      await _deviceAlertService.stopManualSosPattern();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isManualSosPatternActive = false;
+        });
+      }
+    }
+  }
+
+  String _messageForResult(SosAlertResult result) {
+    final alert = result.alert;
+    if (alert.status == SosAlertStatus.noContacts) {
+      return '${alert.mode.label} logged, but no emergency contacts are saved.';
+    }
+    if (alert.status == SosAlertStatus.sent) {
+      return '${alert.mode.label} sent to ${alert.sentCount} contacts.';
+    }
+    if (alert.status == SosAlertStatus.partial) {
+      return '${alert.mode.label} sent to ${alert.sentCount} contacts; ${alert.failedCount} failed.';
+    }
+    return '${alert.mode.label} could not be sent to your contacts.';
   }
 
   @override
@@ -40,13 +201,35 @@ class _SosPageState extends State<SosPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _Header(emergencyContacts: viewModel.emergencyContacts),
+                  _Header(
+                    session: widget.session,
+                    emergencyContacts: viewModel.emergencyContacts,
+                    emergencyContactsRepository:
+                        viewModel.emergencyContactsRepository,
+                    onEmergencyContactsChanged:
+                        viewModel.replaceEmergencyContacts,
+                  ),
                   const SizedBox(height: 16),
                   _MetricsGroup(metrics: viewModel.metrics),
                   const SizedBox(height: 18),
-                  _ManualSosCard(details: viewModel.manualSosDetails),
+                  _SosAlertStatusCard(
+                    isSending: viewModel.isSendingSosAlert,
+                    latestResult: viewModel.latestSosAlertResult,
+                    errorMessage: viewModel.sosAlertErrorMessage,
+                  ),
                   const SizedBox(height: 14),
-                  const _DuressSosCard(),
+                  _ManualSosCard(
+                    details: viewModel.manualSosDetails,
+                    isSending: viewModel.isSendingSosAlert,
+                    isAlarmActive: _isManualSosPatternActive,
+                    onTrigger: () => unawaited(_handleManualSos()),
+                    onStopAlarm: () => unawaited(_stopManualSosPattern()),
+                  ),
+                  const SizedBox(height: 14),
+                  _DuressSosCard(
+                    isSending: viewModel.isSendingSosAlert,
+                    onLongPress: () => unawaited(_handleDuressSos()),
+                  ),
                   const SizedBox(height: 22),
                   for (final section in viewModel.sections) ...[
                     _FeatureSection(section: section),
@@ -63,9 +246,17 @@ class _SosPageState extends State<SosPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.emergencyContacts});
+  const _Header({
+    required this.session,
+    required this.emergencyContacts,
+    required this.emergencyContactsRepository,
+    required this.onEmergencyContactsChanged,
+  });
 
+  final AppSession session;
   final List<EmergencyContact> emergencyContacts;
+  final EmergencyContactsRepository emergencyContactsRepository;
+  final ValueChanged<List<EmergencyContact>> onEmergencyContactsChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -104,21 +295,31 @@ class _Header extends StatelessWidget {
           _HeaderAction(
             tooltip: 'Emergency contacts',
             icon: Icons.contacts_rounded,
-            onPressed: () => _openEmergencyContacts(context),
+            onPressed: () => unawaited(_openEmergencyContacts(context)),
           ),
         ],
       ),
     );
   }
 
-  void _openEmergencyContacts(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
+  Future<void> _openEmergencyContacts(BuildContext context) async {
+    final contacts = await Navigator.of(context).push<List<EmergencyContact>>(
+      MaterialPageRoute<List<EmergencyContact>>(
         builder: (context) {
-          return EmergencyContactsPage(initialContacts: emergencyContacts);
+          return EmergencyContactsPage(
+            session: session,
+            initialContacts: emergencyContacts,
+            repository: emergencyContactsRepository,
+          );
         },
       ),
     );
+
+    if (contacts == null || !context.mounted) {
+      return;
+    }
+
+    onEmergencyContactsChanged(contacts);
   }
 }
 
@@ -151,6 +352,103 @@ class _HeaderAction extends StatelessWidget {
           child: Icon(icon, color: _SosColors.green, size: 19),
         ),
       ),
+    );
+  }
+}
+
+class _ManualSosCountdownDialog extends StatefulWidget {
+  const _ManualSosCountdownDialog();
+
+  @override
+  State<_ManualSosCountdownDialog> createState() =>
+      _ManualSosCountdownDialogState();
+}
+
+class _ManualSosCountdownDialogState extends State<_ManualSosCountdownDialog> {
+  static const int _totalSeconds = 10;
+
+  Timer? _timer;
+  int _secondsRemaining = _totalSeconds;
+  bool _didComplete = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final nextSecond = _secondsRemaining - 1;
+      if (nextSecond <= 0) {
+        _completeCountdown();
+        return;
+      }
+
+      setState(() {
+        _secondsRemaining = nextSecond;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _completeCountdown() {
+    if (_didComplete || !mounted) {
+      return;
+    }
+
+    _didComplete = true;
+    _timer?.cancel();
+    Navigator.of(context).pop(true);
+  }
+
+  void _cancel() {
+    if (_didComplete) {
+      return;
+    }
+
+    _didComplete = true;
+    _timer?.cancel();
+    Navigator.of(context).pop(false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (_totalSeconds - _secondsRemaining) / _totalSeconds;
+
+    return CupertinoAlertDialog(
+      title: const Text('Emergency SOS'),
+      content: Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: Column(
+          children: [
+            Text(
+              'Sending in $_secondsRemaining seconds',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            LinearProgressIndicator(
+              value: progress,
+              minHeight: 3,
+              color: _SosColors.destructive,
+              backgroundColor: _SosColors.destructiveSoft,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        CupertinoDialogAction(
+          isDestructiveAction: true,
+          onPressed: _cancel,
+          child: const Text('Cancel SOS'),
+        ),
+        CupertinoDialogAction(
+          isDefaultAction: true,
+          onPressed: _completeCountdown,
+          child: const Text('Send Now'),
+        ),
+      ],
     );
   }
 }
@@ -214,10 +512,122 @@ class _MetricCell extends StatelessWidget {
   }
 }
 
+class _SosAlertStatusCard extends StatelessWidget {
+  const _SosAlertStatusCard({
+    required this.isSending,
+    required this.latestResult,
+    required this.errorMessage,
+  });
+
+  final bool isSending;
+  final SosAlertResult? latestResult;
+  final String? errorMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final latestAlert = latestResult?.alert;
+    final statusColor = latestAlert?.status == SosAlertStatus.failed
+        ? _SosColors.destructive
+        : _SosColors.green;
+    final title = isSending
+        ? 'Sending SOS alert'
+        : latestAlert == null
+        ? 'SOS ready'
+        : '${latestAlert.mode.label} ${latestAlert.status.label.toLowerCase()}';
+    final subtitle = errorMessage != null
+        ? errorMessage!
+        : latestAlert == null
+        ? 'Emergency alerts will be logged to your profile and sent by WhatsApp.'
+        : _subtitleFor(latestAlert);
+
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                _Glyph(
+                  icon: isSending
+                      ? Icons.outbox_rounded
+                      : Icons.verified_user_rounded,
+                  color: errorMessage != null
+                      ? _SosColors.destructive
+                      : statusColor,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _SosColors.text,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: errorMessage != null
+                              ? _SosColors.destructive
+                              : _SosColors.secondaryText,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (isSending) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(minHeight: 2),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _subtitleFor(SosAlert alert) {
+    if (alert.status == SosAlertStatus.noContacts) {
+      return 'Saved to Firebase, but no emergency contacts were available.';
+    }
+    if (alert.status == SosAlertStatus.sent) {
+      return 'Saved to Firebase and sent to ${alert.sentCount} contacts.';
+    }
+    if (alert.status == SosAlertStatus.partial) {
+      return 'Saved to Firebase. Sent to ${alert.sentCount}; ${alert.failedCount} failed.';
+    }
+    return 'Saved to Firebase, but contact delivery failed.';
+  }
+}
+
 class _ManualSosCard extends StatelessWidget {
-  const _ManualSosCard({required this.details});
+  const _ManualSosCard({
+    required this.details,
+    required this.isSending,
+    required this.isAlarmActive,
+    required this.onTrigger,
+    required this.onStopAlarm,
+  });
 
   final List<SosActionDetail> details;
+  final bool isSending;
+  final bool isAlarmActive;
+  final VoidCallback onTrigger;
+  final VoidCallback onStopAlarm;
 
   @override
   Widget build(BuildContext context) {
@@ -265,10 +675,19 @@ class _ManualSosCard extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             _TapSurface(
+              onTap: isAlarmActive
+                  ? onStopAlarm
+                  : isSending
+                  ? null
+                  : onTrigger,
               child: Container(
                 height: 104,
                 decoration: BoxDecoration(
-                  color: _SosColors.destructive,
+                  color: isAlarmActive
+                      ? _SosColors.green
+                      : isSending
+                      ? _SosColors.destructive.withValues(alpha: 0.56)
+                      : _SosColors.destructive,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Center(
@@ -276,7 +695,11 @@ class _ManualSosCard extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        'Emergency SOS',
+                        isAlarmActive
+                            ? 'Stop Alarm'
+                            : isSending
+                            ? 'Sending SOS'
+                            : 'Emergency SOS',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           color: Colors.white,
                           fontWeight: FontWeight.w800,
@@ -285,7 +708,11 @@ class _ManualSosCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '10 seconds to cancel',
+                        isAlarmActive
+                            ? 'Alarm and flashlight pattern active'
+                            : isSending
+                            ? 'Contacting emergency contacts'
+                            : '10 seconds to cancel',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.white.withValues(alpha: 0.86),
                           fontWeight: FontWeight.w600,
@@ -314,12 +741,16 @@ class _ManualSosCard extends StatelessWidget {
 }
 
 class _DuressSosCard extends StatelessWidget {
-  const _DuressSosCard();
+  const _DuressSosCard({required this.isSending, required this.onLongPress});
+
+  final bool isSending;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
       child: _TapSurface(
+        onLongPress: isSending ? null : onLongPress,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
           child: Row(
@@ -343,7 +774,9 @@ class _DuressSosCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      'Long press the emergency button for a silent alert with no flash or alarm',
+                      isSending
+                          ? 'Sending silent alert to saved emergency contacts'
+                          : 'Long press for a silent alert with no flash or alarm',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -560,15 +993,17 @@ class _Glyph extends StatelessWidget {
 }
 
 class _TapSurface extends StatelessWidget {
-  const _TapSurface({required this.child});
+  const _TapSurface({required this.child, this.onTap, this.onLongPress});
 
   final Widget child;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-      child: InkWell(onTap: () {}, child: child),
+      child: InkWell(onTap: onTap, onLongPress: onLongPress, child: child),
     );
   }
 }

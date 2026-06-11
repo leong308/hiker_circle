@@ -1,0 +1,88 @@
+{
+  "topics": [
+    {
+      "id": "falls_injury",
+      "title": "Falls and Injury",
+      "category": "Falls and Injury",
+      "steps": [
+        "Stop moving and check for pain, bleeding, or dizziness.",
+        "Keep the injured person still if a head, neck, or back injury is possible.",
+        "Clean small cuts with safe water if available.",
+        "Cover bleeding with clean cloth and apply steady pressure.",
+        "Request help if the person cannot walk safely."
+      ]
+    },
+    {
+      "id": "bleeding",
+      "title": "Bleeding",
+      "category": "Bleeding",
+      "steps": [
+        "Apply firm pressure using clean cloth or gauze.",
+        "Raise the injured area if it can be done without causing more pain.",
+        "Do not remove soaked cloth; add another layer over it.",
+        "Keep the person warm and still.",
+        "Use SOS or call emergency services for heavy bleeding."
+      ]
+    },
+    {
+      "id": "sprain",
+      "title": "Sprain or Twisted Ankle",
+      "category": "Sprain",
+      "steps": [
+        "Stop walking and rest.",
+        "Avoid placing weight on the injured ankle.",
+        "Apply a cold compress if available.",
+        "Use support or bandage if trained to do so.",
+        "Request help if unable to continue safely."
+      ]
+    },
+    {
+      "id": "heat_exhaustion",
+      "title": "Heat Exhaustion",
+      "category": "Heat Exhaustion",
+      "steps": [
+        "Move to shade and stop hiking.",
+        "Loosen tight clothing and cool the skin.",
+        "Sip water slowly if the person is alert.",
+        "Watch for confusion, fainting, or vomiting.",
+        "Request emergency help if symptoms worsen."
+      ]
+    },
+    {
+      "id": "snake_bite",
+      "title": "Snake Bite",
+      "category": "Snake Bite",
+      "steps": [
+        "Move away from the snake without trying to catch it.",
+        "Keep the bitten person still and calm.",
+        "Remove tight items near the bite area.",
+        "Do not cut, suck, or apply ice to the bite.",
+        "Call emergency services and share your location."
+      ]
+    },
+    {
+      "id": "lost_stranded",
+      "title": "Lost or Stranded",
+      "category": "Lost or Stranded",
+      "steps": [
+        "Stop moving and stay on or near the trail if possible.",
+        "Check battery and enable low-power mode.",
+        "Use the app to pin your current location.",
+        "Signal with whistle, light, or bright clothing.",
+        "Use SOS if injured, unsafe, or unable to return."
+      ]
+    },
+    {
+      "id": "severe_weather",
+      "title": "Severe Weather",
+      "category": "Severe Weather",
+      "steps": [
+        "Move away from exposed ridges, tall isolated trees, and flood-prone areas.",
+        "Turn back if visibility or footing becomes unsafe.",
+        "Keep electronics dry and preserve battery.",
+        "Wait in a safer sheltered area if moving is dangerous.",
+        "Notify contacts if your return time will be delayed."
+      ]
+    }
+  ]
+}

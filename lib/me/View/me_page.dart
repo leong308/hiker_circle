@@ -1,14 +1,22 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/Data/firebase_bootstrap.dart';
 import '../Model/me_models.dart';
 import '../ModelView/me_view_model.dart';
+import 'location_sharing_page.dart';
 
 class MePage extends StatefulWidget {
-  const MePage({super.key, required this.phoneNumber, required this.onSignOut});
+  const MePage({
+    super.key,
+    required this.phoneNumber,
+    required this.onSignOut,
+    this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
+  });
 
   final String phoneNumber;
   final VoidCallback onSignOut;
+  final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
   State<MePage> createState() => _MePageState();
@@ -49,7 +57,10 @@ class _MePageState extends State<MePage> {
                   _StatsGroup(stats: viewModel.stats),
                   const SizedBox(height: 22),
                   for (final section in viewModel.sections) ...[
-                    _SettingsSection(section: section),
+                    _SettingsSection(
+                      section: section,
+                      onItemTap: _openActionItem,
+                    ),
                     const SizedBox(height: 18),
                   ],
                   _SignOutCell(onSignOut: widget.onSignOut),
@@ -57,6 +68,21 @@ class _MePageState extends State<MePage> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  void _openActionItem(MeActionItem item) {
+    if (item.title != 'Location sharing') {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => LocationSharingPage(
+          phoneNumber: widget.phoneNumber,
+          firebaseBootstrapResult: widget.firebaseBootstrapResult,
         ),
       ),
     );
@@ -274,9 +300,10 @@ class _StatCell extends StatelessWidget {
 }
 
 class _SettingsSection extends StatelessWidget {
-  const _SettingsSection({required this.section});
+  const _SettingsSection({required this.section, required this.onItemTap});
 
   final MeSection section;
+  final ValueChanged<MeActionItem> onItemTap;
 
   @override
   Widget build(BuildContext context) {
@@ -299,7 +326,10 @@ class _SettingsSection extends StatelessWidget {
           child: Column(
             children: [
               for (var index = 0; index < section.items.length; index++) ...[
-                _SettingsCell(item: section.items[index]),
+                _SettingsCell(
+                  item: section.items[index],
+                  onTap: () => onItemTap(section.items[index]),
+                ),
                 if (index != section.items.length - 1)
                   const Padding(
                     padding: EdgeInsets.only(left: 58),
@@ -315,13 +345,15 @@ class _SettingsSection extends StatelessWidget {
 }
 
 class _SettingsCell extends StatelessWidget {
-  const _SettingsCell({required this.item});
+  const _SettingsCell({required this.item, required this.onTap});
 
   final MeActionItem item;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return _TapSurface(
+      onTap: onTap,
       child: SizedBox(
         height: 52,
         child: Padding(

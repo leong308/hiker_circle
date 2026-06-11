@@ -1,1 +1,42 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"hiker-circle","appId":"1:41069899337:android:f6fc9a19684233d8a61998","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"hiker-circle","configurations":{"android":"1:41069899337:android:f6fc9a19684233d8a61998","ios":"1:41069899337:ios:1633f87257716481a61998","macos":"1:41069899337:ios:1633f87257716481a61998","web":"1:41069899337:web:04b79b9aaf104702a61998","windows":"1:41069899337:web:19643ebb35c1f03aa61998"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "hiker-circle",
+          "appId": "1:41069899337:android:f6fc9a19684233d8a61998",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "hiker-circle",
+          "configurations": {
+            "android": "1:41069899337:android:f6fc9a19684233d8a61998",
+            "ios": "1:41069899337:ios:1633f87257716481a61998",
+            "macos": "1:41069899337:ios:1633f87257716481a61998",
+            "web": "1:41069899337:web:04b79b9aaf104702a61998",
+            "windows": "1:41069899337:web:19643ebb35c1f03aa61998"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "predeploy": [
+      "node scripts/prepare_firebase_hosting.js"
+    ],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/live-location",
+        "destination": "/live-location.html"
+      }
+    ]
+  }
+}

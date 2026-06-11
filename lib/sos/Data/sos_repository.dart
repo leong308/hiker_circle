@@ -8,7 +8,7 @@ class SosRepository {
 
   SosDashboard loadDashboard() {
     return const SosDashboard(
-      contactsReady: 2,
+      contactsReady: 0,
       contactsRequired: 5,
       authorityStatus: 'Ready to cache when online',
       queueStatus: 'No unsent alerts',
@@ -17,23 +17,12 @@ class SosRepository {
   }
 
   List<EmergencyContact> loadEmergencyContacts() {
-    return const [
-      EmergencyContact(
-        name: 'Primary Contact',
-        phoneNumber: '+6012 345 6789',
-        relationship: 'Family',
-      ),
-      EmergencyContact(
-        name: 'Trail Buddy',
-        phoneNumber: '+6017 234 5678',
-        relationship: 'Friend',
-      ),
-    ];
+    return const [];
   }
 
   List<SosMetric> loadMetrics() {
     return const [
-      SosMetric(label: 'Contacts', value: '2/3'),
+      SosMetric(label: 'Contacts', value: '0/5'),
       SosMetric(label: 'Queued', value: '0'),
       SosMetric(label: 'Live', value: 'Off'),
     ];
@@ -42,74 +31,60 @@ class SosRepository {
   List<SosActionDetail> loadManualSosDetails() {
     return const [
       SosActionDetail(icon: CupertinoIcons.timer, label: '10s cancel'),
-      SosActionDetail(icon: Icons.flash_on_rounded, label: 'Flash alert'),
-      SosActionDetail(icon: Icons.volume_up_rounded, label: 'Loud alarm'),
-      SosActionDetail(
-        icon: Icons.location_on_rounded,
-        label: 'Latest location',
-      ),
-      SosActionDetail(
-        icon: Icons.battery_charging_full_rounded,
-        label: 'Battery',
-      ),
-      SosActionDetail(icon: Icons.route_rounded, label: 'Last trail'),
+      SosActionDetail(icon: Icons.alarm_rounded, label: 'Alarm volume'),
+      SosActionDetail(icon: Icons.flash_on_rounded, label: 'SOS flash'),
+      SosActionDetail(icon: Icons.location_on_rounded, label: 'GPS link'),
+      SosActionDetail(icon: Icons.chat_bubble_rounded, label: 'WhatsApp alert'),
+      SosActionDetail(icon: Icons.contacts_rounded, label: 'Saved contacts'),
+      SosActionDetail(icon: Icons.cloud_done_rounded, label: 'Firebase log'),
     ];
   }
 
   List<SosFeatureSection> loadSections() {
     return const [
       SosFeatureSection(
-        title: 'Queueing',
+        title: 'Alert Delivery',
         items: [
           SosFeatureItem(
-            icon: Icons.outbox_rounded,
-            title: 'Offline alert queue',
-            subtitle:
-                'Unsent alerts stay queued and retry when network returns',
-            trailing: 'Auto',
+            icon: Icons.chat_bubble_rounded,
+            title: 'WhatsApp dispatch',
+            subtitle: 'Send SOS messages to saved emergency contacts',
+            trailing: 'Live',
           ),
           SosFeatureItem(
-            icon: Icons.my_location_rounded,
-            title: 'Newest location refresh',
-            subtitle:
-                'Queued SOS messages attach the latest available location',
+            icon: Icons.cloud_done_rounded,
+            title: 'Firebase alert log',
+            subtitle: 'Save every SOS with trigger time and GPS snapshot',
           ),
           SosFeatureItem(
-            icon: Icons.network_check_rounded,
-            title: 'Coverage estimation',
-            subtitle: 'Network loss records can build local coverage estimates',
+            icon: Icons.fact_check_rounded,
+            title: 'Delivery result',
+            subtitle: 'Track sent, partial, failed, or missing-contact alerts',
           ),
         ],
       ),
       SosFeatureSection(
-        title: 'Live Location Sharing',
+        title: 'Emergency Contacts',
         items: [
           SosFeatureItem(
-            icon: Icons.family_restroom_rounded,
-            title: 'Family members',
-            subtitle: 'Choose trusted people who can follow your live location',
-            trailing: 'Choose',
+            icon: Icons.contacts_rounded,
+            title: 'Saved contact list',
+            subtitle: 'Manual and duress SOS use your saved contact list',
           ),
         ],
       ),
       SosFeatureSection(
-        title: 'Fall Then Stillness Detection',
+        title: 'Duress',
         items: [
           SosFeatureItem(
-            icon: Icons.sensors_rounded,
-            title: 'Impact and stillness check',
-            subtitle: 'Detect a sudden fall and watch for no movement after',
+            icon: Icons.pan_tool_alt_rounded,
+            title: 'Silent long press',
+            subtitle: 'Hold the duress card to send without a countdown',
           ),
           SosFeatureItem(
-            icon: Icons.notifications_active_rounded,
-            title: 'Manual check-in alert',
-            subtitle: 'Sound indicator asks the user to confirm false alarms',
-          ),
-          SosFeatureItem(
-            icon: Icons.hourglass_bottom_rounded,
-            title: 'SOS escalation timer',
-            subtitle:
-                'Trigger SOS if there is no response within the timeframe',
+            icon: Icons.visibility_off_rounded,
+            title: 'Discreet message',
+            subtitle: 'Ask contacts not to call if that could raise risk',
           ),
         ],
       ),

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="HikerCircle live location share">
+  <title>HikerCircle Live Location</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f2f2f7;
+      color: #111111;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #f2f2f7;
+    }
+
+    main {
+      width: min(680px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 0;
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 6px 0 0;
+      color: #6e6e73;
+      line-height: 1.45;
+    }
+
+    .panel {
+      margin-top: 16px;
+      overflow: hidden;
+      border-radius: 8px;
+      background: white;
+    }
+
+    .map {
+      width: 100%;
+      height: 280px;
+      border: 0;
+      background: #eaf7ee;
+    }
+
+    .details {
+      padding: 14px;
+    }
+
+    .coordinate {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 700;
+      color: #111111;
+      overflow-wrap: anywhere;
+    }
+
+    .updated {
+      margin-top: 4px;
+      font-size: 14px;
+      color: #6e6e73;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 14px;
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 8px;
+      background: #34a853;
+      color: white;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .empty {
+      padding: 20px;
+      border-radius: 8px;
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>HikerCircle Live Location</h1>
+    <p id="status">Loading shared location...</p>
+    <section id="content" class="panel" hidden>
+      <iframe id="map" class="map" title="Live location map"></iframe>
+      <div class="details">
+        <p id="coordinate" class="coordinate"></p>
+        <p id="updated" class="updated"></p>
+        <a id="mapLink" class="button" target="_blank" rel="noreferrer">Open in Google Maps</a>
+      </div>
+    </section>
+    <section id="empty" class="empty" hidden>
+      This live location link is inactive or unavailable.
+    </section>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAEnKwoQqGoJaQ23x4QOH0_TSWB7DU3Mxk",
+      authDomain: "hiker-circle.firebaseapp.com",
+      projectId: "hiker-circle",
+      storageBucket: "hiker-circle.firebasestorage.app",
+      messagingSenderId: "41069899337",
+      appId: "1:41069899337:web:04b79b9aaf104702a61998"
+    };
+
+    const params = new URLSearchParams(window.location.search);
+    const shareId = params.get("share");
+    const status = document.getElementById("status");
+    const content = document.getElementById("content");
+    const empty = document.getElementById("empty");
+    const map = document.getElementById("map");
+    const coordinate = document.getElementById("coordinate");
+    const updated = document.getElementById("updated");
+    const mapLink = document.getElementById("mapLink");
+
+    function showEmpty(message) {
+      status.textContent = message;
+      content.hidden = true;
+      empty.hidden = false;
+    }
+
+    function showLocation(data) {
+      const location = data.latestLocation;
+      if (!data.isActive || !location || typeof location.latitude !== "number" || typeof location.longitude !== "number") {
+        showEmpty("This live location link is inactive.");
+        return;
+      }
+
+      const lat = location.latitude;
+      const lng = location.longitude;
+      const link = location.universalMapLink || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+      const timestamp = data.updatedAtLocal || location.capturedAtLocal || "";
+
+      status.textContent = "Live location active";
+      coordinate.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      updated.textContent = timestamp ? `Updated ${new Date(timestamp).toLocaleString()}` : "Updated recently";
+      map.src = `https://maps.google.com/maps?q=${lat},${lng}&z=16&output=embed`;
+      mapLink.href = link;
+      content.hidden = false;
+      empty.hidden = true;
+    }
+
+    if (!shareId) {
+      showEmpty("Missing live location share id.");
+    } else {
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+      onSnapshot(
+        doc(db, "live_location_shares", shareId),
+        (snapshot) => {
+          if (!snapshot.exists()) {
+            showEmpty("This live location link is unavailable.");
+            return;
+          }
+          showLocation(snapshot.data());
+        },
+        () => showEmpty("Unable to load this live location.")
+      );
+    }
+  </script>
+</body>
+</html>
