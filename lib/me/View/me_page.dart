@@ -1685,25 +1685,28 @@ class _SwitchSettingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: SwitchListTile.adaptive(
-        value: value,
-        onChanged: onChanged,
-        activeThumbColor: _MeColors.green,
-        activeTrackColor: _MeColors.green.withValues(alpha: 0.24),
-        secondary: _Glyph(icon: icon),
-        title: Text(
-          title,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            color: _MeColors.text,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
+      child: Material(
+        color: Colors.transparent,
+        child: SwitchListTile.adaptive(
+          value: value,
+          onChanged: onChanged,
+          activeThumbColor: _MeColors.green,
+          activeTrackColor: _MeColors.green.withValues(alpha: 0.24),
+          secondary: _Glyph(icon: icon),
+          title: Text(
+            title,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: _MeColors.text,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
           ),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _MeColors.secondaryText,
-            letterSpacing: 0,
+          subtitle: Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _MeColors.secondaryText,
+              letterSpacing: 0,
+            ),
           ),
         ),
       ),

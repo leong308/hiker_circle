@@ -53,12 +53,15 @@ class EmergencyContact {
 
 enum SosAlertMode {
   manual,
+  fallStillness,
   duress;
 
   String get firestoreValue {
     switch (this) {
       case SosAlertMode.manual:
         return 'manual';
+      case SosAlertMode.fallStillness:
+        return 'fall_stillness';
       case SosAlertMode.duress:
         return 'duress';
     }
@@ -68,8 +71,20 @@ enum SosAlertMode {
     switch (this) {
       case SosAlertMode.manual:
         return 'Manual SOS';
+      case SosAlertMode.fallStillness:
+        return 'Fall SOS';
       case SosAlertMode.duress:
         return 'Duress SOS';
+    }
+  }
+
+  bool get usesLoudEmergencyPattern {
+    switch (this) {
+      case SosAlertMode.manual:
+      case SosAlertMode.fallStillness:
+        return true;
+      case SosAlertMode.duress:
+        return false;
     }
   }
 }
@@ -179,6 +194,188 @@ class SosTriggerLocation {
       if (capturedAt case final capturedAt?)
         'capturedAtLocal': capturedAt.toUtc().toIso8601String(),
     };
+  }
+}
+
+abstract final class SosAlertMessageComposer {
+  static const String defaultCustomNote =
+      'I need urgent help during my hike. Please call me now. If I do not answer, use the map link below and contact local emergency services.';
+
+  static String compose({
+    required SosAlertMode mode,
+    required String phoneNumber,
+    required DateTime triggeredAt,
+    required SosTriggerLocation? triggerLocation,
+    String? customNote,
+  }) {
+    final locationLine = triggerLocation == null
+        ? 'Location: unavailable'
+        : 'Location: ${triggerLocation.universalMapLink}';
+    final accuracyLine = triggerLocation?.accuracyMeters == null
+        ? null
+        : 'GPS accuracy: ${triggerLocation!.accuracyMeters!.round()} m';
+    final note = _normalizedNote(customNote);
+
+    return [
+      'HikerCircle SOS ALERT',
+      'Type: ${mode.label}',
+      'Hiker: $phoneNumber',
+      'Triggered: ${triggeredAt.toUtc().toIso8601String()}',
+      'Reason: ${reasonFor(mode)}',
+      locationLine,
+      if (accuracyLine != null) accuracyLine,
+      'Message: $note',
+      'Action: Call the hiker first. If there is no response, share this alert and map link with emergency responders.',
+    ].join('\n');
+  }
+
+  static String reasonFor(SosAlertMode mode) {
+    switch (mode) {
+      case SosAlertMode.manual:
+        return 'Manual emergency SOS was confirmed in the app.';
+      case SosAlertMode.fallStillness:
+        return 'Possible fall followed by stillness was detected and escalated.';
+      case SosAlertMode.duress:
+        return 'Silent duress SOS was triggered. Avoid calling if that may increase risk.';
+    }
+  }
+
+  static String _normalizedNote(String? customNote) {
+    final trimmed = customNote?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return defaultCustomNote;
+    }
+    return trimmed;
+  }
+}
+
+class SosLocalAlertFeedback {
+  const SosLocalAlertFeedback({
+    required this.alarmRequested,
+    required this.flashlightRequested,
+    required this.spokenPromptRequested,
+    required this.updatedAt,
+    required this.statusLabel,
+    this.errorMessage,
+  });
+
+  factory SosLocalAlertFeedback.started({required DateTime updatedAt}) {
+    return SosLocalAlertFeedback(
+      alarmRequested: true,
+      flashlightRequested: true,
+      spokenPromptRequested: false,
+      updatedAt: updatedAt,
+      statusLabel: 'Alarm and flashlight requested',
+    );
+  }
+
+  factory SosLocalAlertFeedback.stopped({required DateTime updatedAt}) {
+    return SosLocalAlertFeedback(
+      alarmRequested: false,
+      flashlightRequested: false,
+      spokenPromptRequested: false,
+      updatedAt: updatedAt,
+      statusLabel: 'Local SOS stopped',
+    );
+  }
+
+  factory SosLocalAlertFeedback.failed({
+    required DateTime updatedAt,
+    required String errorMessage,
+  }) {
+    return SosLocalAlertFeedback(
+      alarmRequested: false,
+      flashlightRequested: false,
+      spokenPromptRequested: false,
+      updatedAt: updatedAt,
+      statusLabel: 'Local SOS feedback failed',
+      errorMessage: errorMessage,
+    );
+  }
+
+  final bool alarmRequested;
+  final bool flashlightRequested;
+  final bool spokenPromptRequested;
+  final DateTime updatedAt;
+  final String statusLabel;
+  final String? errorMessage;
+}
+
+class SosOutputVolumeStatus {
+  const SosOutputVolumeStatus({
+    required this.platform,
+    required this.isIos,
+    required this.canMeasureOutputVolume,
+    required this.outputVolume,
+    required this.minimumRequiredVolume,
+  });
+
+  factory SosOutputVolumeStatus.fromPlatform(
+    Map<Object?, Object?>? data, {
+    required double defaultMinimumRequiredVolume,
+  }) {
+    final volume = _normalizedDouble(data?['outputVolume']);
+    final minimumRequiredVolume =
+        _normalizedDouble(data?['minimumRequiredVolume']) ??
+        defaultMinimumRequiredVolume.clamp(0.0, 1.0).toDouble();
+    final platform = data?['platform'] is String
+        ? data!['platform'] as String
+        : 'unknown';
+    final isIos = data?['isIos'] == true || platform == 'ios';
+
+    return SosOutputVolumeStatus(
+      platform: platform,
+      isIos: isIos,
+      canMeasureOutputVolume:
+          data?['canMeasureOutputVolume'] == true && volume != null,
+      outputVolume: volume,
+      minimumRequiredVolume: minimumRequiredVolume,
+    );
+  }
+
+  factory SosOutputVolumeStatus.unsupported({
+    required double minimumRequiredVolume,
+  }) {
+    return SosOutputVolumeStatus(
+      platform: 'unknown',
+      isIos: false,
+      canMeasureOutputVolume: false,
+      outputVolume: null,
+      minimumRequiredVolume: minimumRequiredVolume.clamp(0.0, 1.0).toDouble(),
+    );
+  }
+
+  final String platform;
+  final bool isIos;
+  final bool canMeasureOutputVolume;
+  final double? outputVolume;
+  final double minimumRequiredVolume;
+
+  bool get shouldGateForIos {
+    return isIos && canMeasureOutputVolume;
+  }
+
+  bool get isAudible {
+    if (!shouldGateForIos) {
+      return true;
+    }
+    final volume = outputVolume;
+    return volume != null && volume >= minimumRequiredVolume;
+  }
+
+  int get outputVolumePercent {
+    return (((outputVolume ?? 0) * 100).clamp(0.0, 100.0)).round();
+  }
+
+  int get minimumRequiredPercent {
+    return ((minimumRequiredVolume * 100).clamp(0.0, 100.0)).round();
+  }
+
+  static double? _normalizedDouble(Object? value) {
+    if (value is! num) {
+      return null;
+    }
+    return value.toDouble().clamp(0.0, 1.0).toDouble();
   }
 }
 

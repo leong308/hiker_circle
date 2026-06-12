@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -12,13 +13,17 @@ import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/location_snapshot_service.dart';
+import '../../sos/Data/sos_alert_repository.dart';
+import '../../sos/Data/sos_device_alert_service.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../sos/View/emergency_contacts_page.dart';
+import '../../sos/View/ios_sos_volume_guard.dart';
 import '../../sos/View/sos_page.dart';
 import '../../trail/Data/trail_repository.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
 import '../Model/hike_session_models.dart';
+import '../ModelView/fall_stillness_monitor.dart';
 import 'home_dashboard_page.dart';
 import 'start_hike_wizard_page.dart';
 
@@ -39,19 +44,33 @@ class HikerHomePage extends StatefulWidget {
 }
 
 class _HikerHomePageState extends State<HikerHomePage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const MethodChannel _deepLinkChannel = MethodChannel(
     'hiker_circle/deeplinks',
   );
+  static const String _fallStillnessPrompt =
+      'Are you okay? Do you need help? Please respond by tapping the phone three times to cancel SOS.';
 
   late final TabController tabController;
   late final List<Trail> trails;
   late final HikerCircleFirebaseRepository hikerCircleRepository;
   late final EmergencyContactsRepository emergencyContactsRepository;
+  late final SosAlertRepository sosAlertRepository;
+  late final FallStillnessMonitor fallStillnessMonitor;
+  final SosDeviceAlertService _sosDeviceAlertService =
+      const SosDeviceAlertService();
   late PlannedHike plannedHike;
   bool isLoadingLiveData = false;
+  bool isSendingFallStillnessSos = false;
+  bool isFallStillnessDialogVisible = false;
+  bool isFallStillnessLocalAlarmActive = false;
+  bool fallStillnessCountdownWasBackgrounded = false;
+  FallStillnessMonitorStatus lastFallStillnessStatus =
+      FallStillnessMonitorStatus.inactive;
   ActiveHikeSession? activeHike;
   int selectedTabIndex = 0;
+  int manualSosRequestId = 0;
+  final List<DateTime> fallStillnessCancelTaps = <DateTime>[];
   List<EmergencyContact> emergencyContacts = const [
     EmergencyContact(
       name: 'Mother',
@@ -90,6 +109,14 @@ class _HikerHomePageState extends State<HikerHomePage>
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    sosAlertRepository = SosAlertRepository(
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+    );
+    fallStillnessMonitor = FallStillnessMonitor(
+      onEmergencyReady: _handleFallStillnessEmergencyReady,
+    );
+    fallStillnessMonitor.addListener(_handleFallStillnessMonitorChanged);
+    WidgetsBinding.instance.addObserver(this);
     tabController = TabController(length: tabs.length, vsync: this);
     tabController.addListener(updateTabIndex);
     _deepLinkChannel.setMethodCallHandler(_handleDeepLinkMethodCall);
@@ -104,7 +131,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         'consumeInitialDeepLink',
       );
       if (link != null) {
-        _handleBuddyDeepLink(link);
+        _handleDeepLink(link);
       }
     } catch (_) {
       // Deep links are optional on platforms that do not expose a native hook.
@@ -117,13 +144,17 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     final link = call.arguments;
     if (link is String) {
-      _handleBuddyDeepLink(link);
+      _handleDeepLink(link);
     }
   }
 
-  void _handleBuddyDeepLink(String link) {
+  void _handleDeepLink(String link) {
     final uri = Uri.tryParse(link);
     if (uri == null || uri.scheme != 'hikercircle') {
+      return;
+    }
+    if (uri.host == 'sos' && uri.path == '/manual') {
+      requestManualSos();
       return;
     }
     if (uri.host != 'buddy' || uri.path != '/add') {
@@ -306,6 +337,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   void onTabTap(int index) {
+    _recordFallStillnessCancelTap();
     setState(() {
       selectedTabIndex = index;
     });
@@ -321,6 +353,21 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     if (startedHike == null || !mounted) {
       return;
+    }
+
+    if (startedHike.draft.fallDetectionEnabled ||
+        startedHike.draft.offlinePhysicalAlertEnabled) {
+      final volumeReady = await ensureIosSosOutputVolumeReady(
+        context: context,
+        deviceAlertService: _sosDeviceAlertService,
+        title: 'Turn Up iPhone Volume',
+        message:
+            'Fall SOS and offline audio SOS use iPhone media volume for the local alarm. Turn it up before starting your hike.',
+        proceedLabel: 'Start Hike',
+      );
+      if (!volumeReady || !mounted) {
+        return;
+      }
     }
 
     ActiveHikeSession liveHike = startedHike;
@@ -355,6 +402,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       activeHike = liveHike;
       selectedTabIndex = 0;
     });
+    _syncFallStillnessMonitor(liveHike);
     tabController.animateTo(0);
   }
 
@@ -520,6 +568,14 @@ class _HikerHomePageState extends State<HikerHomePage>
     tabController.animateTo(2);
   }
 
+  void requestManualSos() {
+    setState(() {
+      selectedTabIndex = 2;
+      manualSosRequestId += 1;
+    });
+    tabController.animateTo(2);
+  }
+
   Widget pageFor(HikerBottomNavDestination tab) {
     switch (tab.label) {
       case 'Home':
@@ -532,6 +588,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           onOpenEmergencyContacts: () => unawaited(openEmergencyContacts()),
           onOpenTrailDetail: openTrailDetail,
           onOpenSosTab: openSosTab,
+          onTriggerManualSos: requestManualSos,
           onActiveHikeChanged: (updatedHike) {
             setState(() {
               activeHike = updatedHike;
@@ -555,10 +612,17 @@ class _HikerHomePageState extends State<HikerHomePage>
                 ),
               );
             }
+            unawaited(fallStillnessMonitor.stop());
+            unawaited(_sosDeviceAlertService.stopSpokenPrompt());
+            unawaited(_sosDeviceAlertService.stopManualSosPattern());
+            isFallStillnessLocalAlarmActive = false;
             setState(() {
               activeHike = null;
             });
           },
+          fallStillnessSnapshot: fallStillnessMonitor.snapshot,
+          onCancelFallStillnessSos: () =>
+              _cancelFallStillnessSos('Phone tap response received'),
         );
       case 'Trail':
         return TrailPage(
@@ -571,6 +635,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         return SosPage(
           session: widget.session,
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
+          manualSosRequestId: manualSosRequestId,
         );
       case 'Circle':
         return CirclePage(
@@ -592,7 +657,238 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      fallStillnessCountdownWasBackgrounded =
+          fallStillnessMonitor.isAwaitingResponse;
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed &&
+        fallStillnessCountdownWasBackgrounded &&
+        fallStillnessMonitor.isAwaitingResponse) {
+      fallStillnessCountdownWasBackgrounded = false;
+      _cancelFallStillnessSos('App opened');
+    }
+  }
+
+  void _handleFallStillnessMonitorChanged() {
+    if (!mounted) {
+      return;
+    }
+
+    final status = fallStillnessMonitor.snapshot.status;
+    final didStartCountdown =
+        status == FallStillnessMonitorStatus.awaitingResponse &&
+        lastFallStillnessStatus != FallStillnessMonitorStatus.awaitingResponse;
+    lastFallStillnessStatus = status;
+
+    setState(() {});
+
+    if (didStartCountdown) {
+      unawaited(_handleFallStillnessCountdownStarted());
+    }
+  }
+
+  Future<void> _handleFallStillnessCountdownStarted() async {
+    unawaited(HapticFeedback.heavyImpact());
+    try {
+      await _sosDeviceAlertService.startManualSosPattern();
+      isFallStillnessLocalAlarmActive = true;
+    } catch (_) {
+      _showFallStillnessSnackBar(
+        'Fall SOS countdown started, but the phone alarm or flashlight could not start.',
+        isError: true,
+      );
+    }
+    unawaited(
+      _sosDeviceAlertService.speakFallStillnessPrompt(
+        message: _fallStillnessPrompt,
+      ),
+    );
+
+    if (!mounted || isFallStillnessDialogVisible) {
+      return;
+    }
+
+    isFallStillnessDialogVisible = true;
+    await showCupertinoDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return _FallStillnessCountdownDialog(
+          monitor: fallStillnessMonitor,
+          onCancel: () =>
+              _cancelFallStillnessSos('Phone tap response received'),
+        );
+      },
+    );
+    isFallStillnessDialogVisible = false;
+  }
+
+  Future<void> _handleFallStillnessEmergencyReady(
+    FallStillnessMonitorSnapshot snapshot,
+  ) async {
+    fallStillnessCancelTaps.clear();
+    unawaited(_sosDeviceAlertService.stopSpokenPrompt());
+    await _triggerFallStillnessSos(snapshot);
+  }
+
+  Future<void> _triggerFallStillnessSos(
+    FallStillnessMonitorSnapshot snapshot,
+  ) async {
+    if (isSendingFallStillnessSos) {
+      return;
+    }
+
+    isSendingFallStillnessSos = true;
+    var didStartLocalAlarm = isFallStillnessLocalAlarmActive;
+    if (!didStartLocalAlarm) {
+      try {
+        await _sosDeviceAlertService.startManualSosPattern();
+        didStartLocalAlarm = true;
+        isFallStillnessLocalAlarmActive = true;
+      } catch (_) {
+        _showFallStillnessSnackBar(
+          'Fall SOS detected, but the phone alarm or flashlight could not start.',
+          isError: true,
+        );
+      }
+    }
+
+    try {
+      final triggerLocation = await _captureTriggerLocation();
+      final result = await sosAlertRepository.triggerAlert(
+        session: widget.session,
+        mode: SosAlertMode.fallStillness,
+        triggeredAt: snapshot.triggeredAt ?? DateTime.now().toUtc(),
+        triggerLocation: triggerLocation,
+        contacts: emergencyContacts,
+      );
+      _showFallStillnessSnackBar(
+        _messageForSosResult(result),
+        includeStopAlarmAction: didStartLocalAlarm,
+      );
+    } on SosAlertRepositoryException catch (error) {
+      _showFallStillnessSnackBar(
+        didStartLocalAlarm
+            ? 'Fall SOS local alarm started, but network alert failed: ${error.message}'
+            : 'Fall SOS could not be sent: ${error.message}',
+        isError: true,
+        includeStopAlarmAction: didStartLocalAlarm,
+      );
+    } catch (_) {
+      _showFallStillnessSnackBar(
+        didStartLocalAlarm
+            ? 'Fall SOS local alarm started, but contact notification failed.'
+            : 'Fall SOS could not be sent.',
+        isError: true,
+        includeStopAlarmAction: didStartLocalAlarm,
+      );
+    } finally {
+      isSendingFallStillnessSos = false;
+    }
+  }
+
+  Future<SosTriggerLocation?> _captureTriggerLocation() async {
+    try {
+      return LocationSnapshotService.instance.latestLocation ??
+          await LocationSnapshotService.instance.refresh();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _messageForSosResult(SosAlertResult result) {
+    final alert = result.alert;
+    if (alert.status == SosAlertStatus.noContacts) {
+      return 'Fall SOS logged, but no emergency contacts are saved.';
+    }
+    if (alert.status == SosAlertStatus.sent) {
+      return 'Fall SOS sent to ${alert.sentCount} contacts.';
+    }
+    if (alert.status == SosAlertStatus.partial) {
+      return 'Fall SOS sent to ${alert.sentCount} contacts; ${alert.failedCount} failed.';
+    }
+    return 'Fall SOS could not be sent to your contacts.';
+  }
+
+  void _showFallStillnessSnackBar(
+    String message, {
+    bool isError = false,
+    bool includeStopAlarmAction = false,
+  }) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: isError
+              ? const Color(0xFFE11D48)
+              : const Color(0xFF34A853),
+          action: includeStopAlarmAction
+              ? SnackBarAction(
+                  label: 'Stop alarm',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    isFallStillnessLocalAlarmActive = false;
+                    unawaited(_sosDeviceAlertService.stopManualSosPattern());
+                  },
+                )
+              : null,
+        ),
+      );
+  }
+
+  void _syncFallStillnessMonitor(ActiveHikeSession? hike) {
+    if (hike == null || !hike.draft.fallDetectionEnabled) {
+      unawaited(fallStillnessMonitor.stop());
+      return;
+    }
+
+    unawaited(fallStillnessMonitor.start(hike.draft.fallDetectionSettings));
+  }
+
+  void _recordFallStillnessCancelTap() {
+    if (!fallStillnessMonitor.isAwaitingResponse) {
+      fallStillnessCancelTaps.clear();
+      return;
+    }
+
+    final now = DateTime.now();
+    fallStillnessCancelTaps.removeWhere(
+      (tapTime) => now.difference(tapTime) > const Duration(seconds: 2),
+    );
+    fallStillnessCancelTaps.add(now);
+    if (fallStillnessCancelTaps.length >= 3) {
+      fallStillnessCancelTaps.clear();
+      _cancelFallStillnessSos('Triple tap received');
+    }
+  }
+
+  void _cancelFallStillnessSos(String reason) {
+    fallStillnessMonitor.cancelPendingEmergency(reason);
+    fallStillnessCancelTaps.clear();
+    unawaited(_sosDeviceAlertService.stopSpokenPrompt());
+    unawaited(_sosDeviceAlertService.stopManualSosPattern());
+    isFallStillnessLocalAlarmActive = false;
+    _showFallStillnessSnackBar('$reason. Fall SOS countdown cancelled.');
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    fallStillnessMonitor.removeListener(_handleFallStillnessMonitorChanged);
+    fallStillnessMonitor.dispose();
+    unawaited(_sosDeviceAlertService.stopSpokenPrompt());
+    unawaited(_sosDeviceAlertService.stopManualSosPattern());
     tabController.removeListener(updateTabIndex);
     _deepLinkChannel.setMethodCallHandler(null);
     tabController.dispose();
@@ -606,14 +902,87 @@ class _HikerHomePageState extends State<HikerHomePage>
     return Scaffold(
       extendBody: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: TabBarView(
-        controller: tabController,
-        children: tabs.map(pageFor).toList(),
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _recordFallStillnessCancelTap(),
+        child: TabBarView(
+          controller: tabController,
+          children: tabs.map(pageFor).toList(),
+        ),
       ),
       bottomNavigationBar: HikerBottomNavBar(
         currentIndex: selectedTabIndex,
         onDestinationSelected: onTabTap,
       ),
+    );
+  }
+}
+
+class _FallStillnessCountdownDialog extends StatelessWidget {
+  const _FallStillnessCountdownDialog({
+    required this.monitor,
+    required this.onCancel,
+  });
+
+  final FallStillnessMonitor monitor;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: monitor,
+      builder: (context, _) {
+        final snapshot = monitor.snapshot;
+        if (snapshot.status != FallStillnessMonitorStatus.awaitingResponse) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted && Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+          });
+        }
+
+        final seconds = snapshot.secondsRemaining ?? 0;
+        final settings = snapshot.settings;
+        final totalSeconds = settings?.stillnessDuration.inSeconds ?? seconds;
+        final progress = totalSeconds <= 0
+            ? 0.0
+            : 1 - (seconds / totalSeconds).clamp(0, 1);
+
+        return CupertinoAlertDialog(
+          title: const Text('Possible Fall Detected'),
+          content: Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Column(
+              children: [
+                const Text(
+                  'Are you okay? Do you need help? Triple-tap the phone or cancel below to stop SOS.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Fall SOS in $seconds seconds',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 12),
+                LinearProgressIndicator(
+                  value: progress.toDouble(),
+                  minHeight: 3,
+                  color: const Color(0xFFE11D48),
+                  backgroundColor: const Color(0xFFFFE4E6),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: onCancel,
+              child: const Text('I am OK - Cancel SOS'),
+            ),
+          ],
+        );
+      },
     );
   }
 }

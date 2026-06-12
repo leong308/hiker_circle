@@ -39,6 +39,8 @@
 	<string>HikerCircle uses the camera for buddy QR scanning and the flashlight for manual SOS alerts.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>HikerCircle uses your location for trail context, nearby safety updates, and SOS location sharing while you use the app.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>HikerCircle uses motion sensors during active hikes to detect a possible fall followed by stillness and start a cancellable SOS countdown.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -60,5 +62,18 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAlarm</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Start emergency countdown</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Manual SOS</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.leongziqi.hikercircle.manualSos</string>
+		</dict>
+	</array>
 </dict>
 </plist>

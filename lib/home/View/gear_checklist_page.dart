@@ -212,18 +212,21 @@ class _ChecklistSection extends StatelessWidget {
           child: Column(
             children: [
               for (var index = 0; index < items.length; index++) ...[
-                CheckboxListTile(
-                  value: completedItems.contains(items[index]),
-                  onChanged: (value) => onChanged(items[index], value),
-                  dense: true,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  activeColor: _ChecklistColors.green,
-                  title: Text(
-                    items[index],
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _ChecklistColors.text,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0,
+                Material(
+                  color: Colors.transparent,
+                  child: CheckboxListTile(
+                    value: completedItems.contains(items[index]),
+                    onChanged: (value) => onChanged(items[index], value),
+                    dense: true,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    activeColor: _ChecklistColors.green,
+                    title: Text(
+                      items[index],
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: _ChecklistColors.text,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0,
+                      ),
                     ),
                   ),
                 ),

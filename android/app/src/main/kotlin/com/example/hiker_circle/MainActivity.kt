@@ -9,16 +9,19 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.speech.tts.TextToSpeech
 import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import java.util.Locale
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -32,6 +35,8 @@ class MainActivity : FlutterActivity() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var mediaPlayer: MediaPlayer? = null
+    private var textToSpeech: TextToSpeech? = null
+    private var pendingSpeechMessage: String? = null
     private var cameraManager: CameraManager? = null
     private var torchCameraId: String? = null
     private var isTorchPatternActive = false
@@ -114,6 +119,18 @@ class MainActivity : FlutterActivity() {
                         stopManualSosPattern()
                         result.success(null)
                     }
+                    "speakFallStillnessPrompt" -> {
+                        speakFallStillnessPrompt(
+                            call.argument<String>("message")
+                                ?: "Are you okay? Do you need help? Please respond by tapping the phone to cancel SOS.",
+                        )
+                        result.success(null)
+                    }
+                    "stopSpokenPrompt" -> {
+                        stopSpokenPrompt()
+                        result.success(null)
+                    }
+                    "getOutputVolumeStatus" -> getOutputVolumeStatus(call, result)
                     "getCurrentTriggerLocation" -> getCurrentTriggerLocation(call, result)
                     "shareText" -> shareText(call, result)
                     else -> result.notImplemented()
@@ -168,6 +185,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        stopSpokenPrompt()
+        textToSpeech?.shutdown()
+        textToSpeech = null
         stopManualSosPattern()
         completePendingLocation(null)
         super.onDestroy()
@@ -181,6 +201,31 @@ class MainActivity : FlutterActivity() {
     private fun stopManualSosPattern() {
         stopAlarm()
         stopTorchPattern()
+    }
+
+    private fun getOutputVolumeStatus(
+        call: io.flutter.plugin.common.MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val requestedMinimum = call.argument<Double>("minimumRequiredVolume") ?: 0.2
+        val minimumRequiredVolume = requestedMinimum.coerceIn(0.0, 1.0)
+        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        val maxVolume = audioManager
+            .getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            .coerceAtLeast(1)
+        val outputVolume =
+            audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / maxVolume
+
+        result.success(
+            mapOf(
+                "platform" to "android",
+                "isIos" to false,
+                "canMeasureOutputVolume" to true,
+                "outputVolume" to outputVolume,
+                "minimumRequiredVolume" to minimumRequiredVolume,
+                "isAudible" to true,
+            ),
+        )
     }
 
     private fun startAlarm() {
@@ -213,6 +258,38 @@ class MainActivity : FlutterActivity() {
             }
         }
         mediaPlayer = null
+    }
+
+    private fun speakFallStillnessPrompt(message: String) {
+        val currentSpeaker = textToSpeech
+        if (currentSpeaker != null) {
+            speakWith(currentSpeaker, message)
+            return
+        }
+
+        pendingSpeechMessage = message
+        textToSpeech = TextToSpeech(this) { status ->
+            val speaker = textToSpeech ?: return@TextToSpeech
+            if (status == TextToSpeech.SUCCESS) {
+                speaker.language = Locale.getDefault()
+                speakWith(speaker, pendingSpeechMessage ?: message)
+                pendingSpeechMessage = null
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun speakWith(speaker: TextToSpeech, message: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            speaker.speak(message, TextToSpeech.QUEUE_FLUSH, null, "fall_stillness_prompt")
+        } else {
+            speaker.speak(message, TextToSpeech.QUEUE_FLUSH, null)
+        }
+    }
+
+    private fun stopSpokenPrompt() {
+        pendingSpeechMessage = null
+        textToSpeech?.stop()
     }
 
     private fun copyFlutterAlarmAssetToCache(): File {

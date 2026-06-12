@@ -7,8 +7,11 @@ import CoreLocation
 @objc class AppDelegate: FlutterAppDelegate, CLLocationManagerDelegate {
   private let sosDeviceAlertChannel = "hiker_circle/sos_device_alerts"
   private let deepLinkChannelName = "hiker_circle/deeplinks"
+  private let manualSosShortcutType = "com.leongziqi.hikercircle.manualSos"
+  private let manualSosShortcutDeepLink = "hikercircle://sos/manual?source=ios_quick_action"
   private let alarmAsset = "assets/audios/sos_alarm.mp3"
   private var audioPlayer: AVAudioPlayer?
+  private let speechSynthesizer = AVSpeechSynthesizer()
   private var torchTimer: Timer?
   private var torchPatternIndex = 0
   private var locationManager: CLLocationManager?
@@ -48,6 +51,9 @@ import CoreLocation
     if let url = launchOptions?[.url] as? URL {
       pendingDeepLink = url.absoluteString
     }
+    if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+      _ = handleShortcutItem(shortcutItem, notifyFlutter: false)
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -60,6 +66,30 @@ import CoreLocation
     pendingDeepLink = url.absoluteString
     deepLinkChannel?.invokeMethod("onDeepLink", arguments: url.absoluteString)
     return handledByFlutter || url.scheme == "hikercircle"
+  }
+
+  override func application(
+    _ application: UIApplication,
+    performActionFor shortcutItem: UIApplicationShortcutItem,
+    completionHandler: @escaping (Bool) -> Void
+  ) {
+    completionHandler(handleShortcutItem(shortcutItem, notifyFlutter: true))
+  }
+
+  private func handleShortcutItem(
+    _ shortcutItem: UIApplicationShortcutItem,
+    notifyFlutter: Bool
+  ) -> Bool {
+    guard shortcutItem.type == manualSosShortcutType else {
+      return false
+    }
+
+    let wasAlreadyPending = pendingDeepLink == manualSosShortcutDeepLink
+    pendingDeepLink = manualSosShortcutDeepLink
+    if notifyFlutter && !wasAlreadyPending {
+      deepLinkChannel?.invokeMethod("onDeepLink", arguments: manualSosShortcutDeepLink)
+    }
+    return true
   }
 
   private func configureSosDeviceAlertChannel() {
@@ -97,6 +127,18 @@ import CoreLocation
       case "stopManualSosPattern":
         self.stopManualSosPattern()
         result(nil)
+      case "speakFallStillnessPrompt":
+        let arguments = call.arguments as? [String: Any]
+        let message = arguments?["message"] as? String
+        self.speakFallStillnessPrompt(
+          message ?? "Are you okay? Do you need help? Please respond by tapping the phone to cancel SOS."
+        )
+        result(nil)
+      case "stopSpokenPrompt":
+        self.stopSpokenPrompt()
+        result(nil)
+      case "getOutputVolumeStatus":
+        self.getOutputVolumeStatus(call, result)
       case "getCurrentTriggerLocation":
         self.getCurrentTriggerLocation(call, result)
       case "shareText":
@@ -142,6 +184,26 @@ import CoreLocation
   private func stopManualSosPattern() {
     stopAlarm()
     stopTorchPattern()
+  }
+
+  private func getOutputVolumeStatus(
+    _ call: FlutterMethodCall,
+    _ result: FlutterResult
+  ) {
+    let arguments = call.arguments as? [String: Any]
+    let requestedMinimum =
+      (arguments?["minimumRequiredVolume"] as? NSNumber)?.doubleValue ?? 0.2
+    let minimumRequiredVolume = max(0.0, min(1.0, requestedMinimum))
+    let outputVolume = Double(AVAudioSession.sharedInstance().outputVolume)
+
+    result([
+      "platform": "ios",
+      "isIos": true,
+      "canMeasureOutputVolume": true,
+      "outputVolume": outputVolume,
+      "minimumRequiredVolume": minimumRequiredVolume,
+      "isAudible": outputVolume >= minimumRequiredVolume
+    ])
   }
 
   private func getCurrentTriggerLocation(
@@ -303,20 +365,41 @@ import CoreLocation
     }
 
     let audioSession = AVAudioSession.sharedInstance()
-    try audioSession.setCategory(.playback, mode: .default)
+    try audioSession.setCategory(.playback, mode: .default, options: [.duckOthers])
     try audioSession.setActive(true)
+    try? audioSession.overrideOutputAudioPort(.speaker)
 
     let player = try AVAudioPlayer(contentsOf: alarmUrl)
     player.numberOfLoops = -1
+    player.volume = 1.0
     player.prepareToPlay()
-    player.play()
+    guard player.play() else {
+      throw SosDeviceAlertError.alarmPlaybackFailed
+    }
     audioPlayer = player
   }
 
   private func stopAlarm() {
     audioPlayer?.stop()
     audioPlayer = nil
-    try? AVAudioSession.sharedInstance().setActive(false)
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+  }
+
+  private func speakFallStillnessPrompt(_ message: String) {
+    if speechSynthesizer.isSpeaking {
+      speechSynthesizer.stopSpeaking(at: .immediate)
+    }
+
+    let utterance = AVSpeechUtterance(string: message)
+    utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
+    utterance.volume = 1.0
+    speechSynthesizer.speak(utterance)
+  }
+
+  private func stopSpokenPrompt() {
+    if speechSynthesizer.isSpeaking {
+      speechSynthesizer.stopSpeaking(at: .immediate)
+    }
   }
 
   private func startTorchPattern() {
@@ -367,11 +450,14 @@ import CoreLocation
 
 enum SosDeviceAlertError: LocalizedError {
   case alarmAssetMissing
+  case alarmPlaybackFailed
 
   var errorDescription: String? {
     switch self {
     case .alarmAssetMissing:
       return "Unable to find the SOS alarm asset."
+    case .alarmPlaybackFailed:
+      return "Unable to start SOS alarm playback."
     }
   }
 }

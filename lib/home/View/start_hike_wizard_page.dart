@@ -493,8 +493,18 @@ class _SafetySettingsStep extends StatelessWidget {
   final HikeSessionDraft draft;
   final ValueChanged<HikeSessionDraft> onChanged;
 
+  static const List<Duration> _responseCountdownOptions = [
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(seconds: 45),
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+  ];
+
   @override
   Widget build(BuildContext context) {
+    final fallDetectionSettings = draft.fallDetectionSettings;
+
     return _StepCard(
       title: 'Safety Settings',
       subtitle: 'Choose who receives updates and which monitors are active.',
@@ -512,6 +522,66 @@ class _SafetySettingsStep extends StatelessWidget {
           value: draft.fallDetectionEnabled,
           onChanged: (value) =>
               onChanged(draft.copyWith(fallDetectionEnabled: value)),
+        ),
+        _SensorSensitivitySlider(
+          enabled: draft.fallDetectionEnabled,
+          value: fallDetectionSettings.sensorSensitivity,
+          label: fallDetectionSettings.sensitivityLabel,
+          showFalseAlarmWarning: fallDetectionSettings.isHighSensitivity,
+          onChanged: (value) {
+            onChanged(
+              draft.copyWith(
+                fallDetectionSettings: FallDetectionSettings(
+                  sensorSensitivity: value,
+                  stillnessDuration: fallDetectionSettings.stillnessDuration,
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<Duration>(
+          initialValue:
+              _responseCountdownOptions.contains(
+                fallDetectionSettings.stillnessDuration,
+              )
+              ? fallDetectionSettings.stillnessDuration
+              : _responseCountdownOptions[1],
+          decoration: const InputDecoration(
+            labelText: 'Response Countdown Before SOS',
+            prefixIcon: Icon(Icons.timer_rounded),
+          ),
+          items: [
+            for (final duration in _responseCountdownOptions)
+              DropdownMenuItem<Duration>(
+                value: duration,
+                child: Text(_durationLabel(duration)),
+              ),
+          ],
+          onChanged: draft.fallDetectionEnabled
+              ? (duration) {
+                  if (duration == null) {
+                    return;
+                  }
+                  onChanged(
+                    draft.copyWith(
+                      fallDetectionSettings: FallDetectionSettings(
+                        sensorSensitivity:
+                            fallDetectionSettings.sensorSensitivity,
+                        stillnessDuration: duration,
+                      ),
+                    ),
+                  );
+                }
+              : null,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'After free fall, impact, and a fixed stillness check, HikerCircle uses this countdown for the final tap response before sending Fall SOS.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: _WizardColors.secondaryText,
+            letterSpacing: 0,
+          ),
         ),
         _SwitchRow(
           label: 'Path Deviation Alert',
@@ -531,6 +601,88 @@ class _SafetySettingsStep extends StatelessWidget {
           onChanged: (value) => onChanged(draft.copyWith(duressEnabled: value)),
         ),
       ],
+    );
+  }
+}
+
+class _SensorSensitivitySlider extends StatelessWidget {
+  const _SensorSensitivitySlider({
+    required this.enabled,
+    required this.value,
+    required this.label,
+    required this.showFalseAlarmWarning,
+    required this.onChanged,
+  });
+
+  final bool enabled;
+  final double value;
+  final String label;
+  final bool showFalseAlarmWarning;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: enabled ? 1 : 0.55,
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Sensor Sensitivity',
+          prefixIcon: Icon(Icons.sensors_rounded),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '$label (${value.round()}/10)',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _WizardColors.text,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                Text(
+                  enabled ? 'Active' : 'Off',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: enabled
+                        ? _WizardColors.green
+                        : _WizardColors.secondaryText,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+            Slider(
+              value: value,
+              min: FallDetectionSettings.minSensorSensitivity,
+              max: FallDetectionSettings.maxSensorSensitivity,
+              divisions:
+                  (FallDetectionSettings.maxSensorSensitivity -
+                          FallDetectionSettings.minSensorSensitivity)
+                      .round(),
+              activeColor: _WizardColors.green,
+              inactiveColor: _WizardColors.separator,
+              label: '$label ${value.round()}/10',
+              onChanged: enabled ? onChanged : null,
+            ),
+            if (enabled && showFalseAlarmWarning) ...[
+              const SizedBox(height: 6),
+              Text(
+                'High sensitivity can detect softer hiking falls, but it may also cause more false alarms from backpack drops or sitting down hard.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _WizardColors.red,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -833,17 +985,20 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SwitchListTile(
-      value: value,
-      onChanged: onChanged,
-      activeThumbColor: _WizardColors.green,
-      contentPadding: EdgeInsets.zero,
-      title: Text(
-        label,
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: _WizardColors.text,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0,
+    return Material(
+      color: Colors.transparent,
+      child: SwitchListTile(
+        value: value,
+        onChanged: onChanged,
+        activeThumbColor: _WizardColors.green,
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          label,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: _WizardColors.text,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0,
+          ),
         ),
       ),
     );
@@ -894,18 +1049,21 @@ class _ChecklistGroup extends StatelessWidget {
       child: Column(
         children: [
           for (var index = 0; index < items.length; index++) ...[
-            CheckboxListTile(
-              value: completedItems.contains(items[index]),
-              onChanged: (value) => onChanged(items[index], value),
-              dense: true,
-              activeColor: _WizardColors.green,
-              controlAffinity: ListTileControlAffinity.leading,
-              title: Text(
-                items[index],
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _WizardColors.text,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
+            Material(
+              color: Colors.transparent,
+              child: CheckboxListTile(
+                value: completedItems.contains(items[index]),
+                onChanged: (value) => onChanged(items[index], value),
+                dense: true,
+                activeColor: _WizardColors.green,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(
+                  items[index],
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _WizardColors.text,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0,
+                  ),
                 ),
               ),
             ),
@@ -1155,6 +1313,9 @@ String _formatTime(DateTime dateTime) {
 }
 
 String _durationLabel(Duration duration) {
+  if (duration.inSeconds < 60) {
+    return '${duration.inSeconds} seconds';
+  }
   if (duration.inMinutes < 60) {
     return '${duration.inMinutes} minutes';
   }
@@ -1168,4 +1329,5 @@ abstract final class _WizardColors {
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
+  static const Color red = Color(0xFFE11D48);
 }

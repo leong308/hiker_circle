@@ -139,6 +139,10 @@ class HikerCircleFirebaseRepository {
         'emergencyContactNames': draft.emergencyContactNames,
         'shareLiveLocation': draft.shareLiveLocation,
         'fallDetectionEnabled': draft.fallDetectionEnabled,
+        'fallDetectionSensorSensitivity':
+            draft.fallDetectionSettings.sensorSensitivity,
+        'fallDetectionStillnessDurationSeconds':
+            draft.fallDetectionSettings.stillnessDuration.inSeconds,
         'pathDeviationEnabled': draft.pathDeviationEnabled,
         'offlinePhysicalAlertEnabled': draft.offlinePhysicalAlertEnabled,
         'duressEnabled': draft.duressEnabled,

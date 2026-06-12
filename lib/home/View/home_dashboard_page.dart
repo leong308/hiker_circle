@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
+import '../ModelView/fall_stillness_monitor.dart';
 import 'active_hike_map_page.dart';
 import 'first_aid_guide_page.dart';
 import 'gear_checklist_page.dart';
@@ -20,10 +21,13 @@ class HomeDashboardPage extends StatelessWidget {
     required this.onOpenEmergencyContacts,
     required this.onOpenTrailDetail,
     required this.onOpenSosTab,
+    required this.onTriggerManualSos,
     required this.onActiveHikeChanged,
     required this.onCheckInRequested,
     required this.onPinLocationRequested,
     required this.onEndHike,
+    required this.fallStillnessSnapshot,
+    required this.onCancelFallStillnessSos,
   });
 
   final String phoneNumber;
@@ -34,12 +38,15 @@ class HomeDashboardPage extends StatelessWidget {
   final VoidCallback onOpenEmergencyContacts;
   final ValueChanged<Trail> onOpenTrailDetail;
   final VoidCallback onOpenSosTab;
+  final VoidCallback onTriggerManualSos;
   final ValueChanged<ActiveHikeSession> onActiveHikeChanged;
   final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
   onCheckInRequested;
   final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
   onPinLocationRequested;
   final VoidCallback onEndHike;
+  final FallStillnessMonitorSnapshot fallStillnessSnapshot;
+  final VoidCallback onCancelFallStillnessSos;
 
   @override
   Widget build(BuildContext context) {
@@ -66,14 +73,18 @@ class HomeDashboardPage extends StatelessWidget {
                       onJoinTeamHike: onJoinTeamHike,
                       onOpenTrailDetail: onOpenTrailDetail,
                       onOpenSosTab: onOpenSosTab,
+                      onTriggerManualSos: onTriggerManualSos,
                     )
                   : _ActiveHikeDashboard(
                       activeHike: active,
+                      fallStillnessSnapshot: fallStillnessSnapshot,
                       onOpenFullMap: () => _openFullMap(context, active),
                       onCheckIn: () => unawaited(_checkIn(context, active)),
                       onPinLocation: () =>
                           unawaited(_pinLocation(context, active)),
                       onEndHike: () => unawaited(_confirmEndHike(context)),
+                      onCancelFallStillnessSos: onCancelFallStillnessSos,
+                      onTriggerManualSos: onTriggerManualSos,
                     ),
             ),
           ),
@@ -204,6 +215,7 @@ class _PreparationDashboard extends StatelessWidget {
     required this.onJoinTeamHike,
     required this.onOpenTrailDetail,
     required this.onOpenSosTab,
+    required this.onTriggerManualSos,
   });
 
   final String phoneNumber;
@@ -212,6 +224,7 @@ class _PreparationDashboard extends StatelessWidget {
   final VoidCallback onJoinTeamHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final VoidCallback onOpenSosTab;
+  final VoidCallback onTriggerManualSos;
 
   @override
   Widget build(BuildContext context) {
@@ -226,6 +239,8 @@ class _PreparationDashboard extends StatelessWidget {
           onStartHike: onStartHike,
           onJoinTeamHike: onJoinTeamHike,
         ),
+        const SizedBox(height: 12),
+        _EmergencySosCard(onTriggerManualSos: onTriggerManualSos),
         const SizedBox(height: 18),
         _UpcomingHikeCard(
           plannedHike: plannedHike,
@@ -420,6 +435,66 @@ class _StartHikeActions extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _EmergencySosCard extends StatelessWidget {
+  const _EmergencySosCard({required this.onTriggerManualSos});
+
+  final VoidCallback onTriggerManualSos;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTriggerManualSos,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                const _Glyph(icon: Icons.sos_rounded, color: _HomeColors.red),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Emergency SOS',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _HomeColors.text,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Tap for manual SOS, even when you are not in a hike.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _HomeColors.secondaryText,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _HomeColors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: onTriggerManualSos,
+                  child: const Text('SOS'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1264,17 +1339,23 @@ class _DetailHeader extends StatelessWidget {
 class _ActiveHikeDashboard extends StatelessWidget {
   const _ActiveHikeDashboard({
     required this.activeHike,
+    required this.fallStillnessSnapshot,
     required this.onOpenFullMap,
     required this.onCheckIn,
     required this.onPinLocation,
     required this.onEndHike,
+    required this.onCancelFallStillnessSos,
+    required this.onTriggerManualSos,
   });
 
   final ActiveHikeSession activeHike;
+  final FallStillnessMonitorSnapshot fallStillnessSnapshot;
   final VoidCallback onOpenFullMap;
   final VoidCallback onCheckIn;
   final VoidCallback onPinLocation;
   final VoidCallback onEndHike;
+  final VoidCallback onCancelFallStillnessSos;
+  final VoidCallback onTriggerManualSos;
 
   @override
   Widget build(BuildContext context) {
@@ -1292,6 +1373,8 @@ class _ActiveHikeDashboard extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _ConnectionStatusCard(queuedUpdates: activeHike.queuedUpdates),
+        const SizedBox(height: 14),
+        _EmergencySosCard(onTriggerManualSos: onTriggerManualSos),
         const SizedBox(height: 14),
         _MiniMapCard(activeHike: activeHike),
         const SizedBox(height: 14),
@@ -1317,7 +1400,11 @@ class _ActiveHikeDashboard extends StatelessWidget {
         const SizedBox(height: 22),
         _SectionTitle(label: 'Safety Monitoring'),
         const SizedBox(height: 8),
-        _MonitoringCard(activeHike: activeHike),
+        _MonitoringCard(
+          activeHike: activeHike,
+          fallStillnessSnapshot: fallStillnessSnapshot,
+          onCancelFallStillnessSos: onCancelFallStillnessSos,
+        ),
         const SizedBox(height: 22),
         _SectionTitle(label: 'Shared With'),
         const SizedBox(height: 8),
@@ -1542,18 +1629,64 @@ class _MiniMapCard extends StatelessWidget {
 }
 
 class _MonitoringCard extends StatelessWidget {
-  const _MonitoringCard({required this.activeHike});
+  const _MonitoringCard({
+    required this.activeHike,
+    required this.fallStillnessSnapshot,
+    required this.onCancelFallStillnessSos,
+  });
 
   final ActiveHikeSession activeHike;
+  final FallStillnessMonitorSnapshot fallStillnessSnapshot;
+  final VoidCallback onCancelFallStillnessSos;
 
   @override
   Widget build(BuildContext context) {
+    final settings = activeHike.draft.fallDetectionSettings;
+    final fallDetectionValue = activeHike.draft.fallDetectionEnabled
+        ? fallStillnessSnapshot.status.label
+        : 'Off';
+
     return _InsetGroup(
       child: Column(
         children: [
           const _StatusRow(label: 'Route Status', value: 'On Route'),
           const _HorizontalSeparator(),
-          const _StatusRow(label: 'Fall Detection', value: 'Active'),
+          _StatusRow(label: 'Fall Detection', value: fallDetectionValue),
+          const _HorizontalSeparator(),
+          _StatusRow(
+            label: 'Sensor Sensitivity',
+            value:
+                '${settings.sensitivityLabel} (${settings.sensorSensitivity.round()}/10)',
+          ),
+          const _HorizontalSeparator(),
+          _StatusRow(
+            label: 'Response Countdown',
+            value: settings.responseCountdownDurationLabel,
+          ),
+          if (fallStillnessSnapshot.status ==
+              FallStillnessMonitorStatus.verifyingStillness) ...[
+            const _HorizontalSeparator(),
+            _StatusRow(
+              label: 'Stillness Check',
+              value: _stillnessCheckValue(fallStillnessSnapshot),
+            ),
+          ],
+          if (fallStillnessSnapshot.status ==
+              FallStillnessMonitorStatus.awaitingResponse) ...[
+            const _HorizontalSeparator(),
+            _FallStillnessCountdownRow(
+              snapshot: fallStillnessSnapshot,
+              onCancel: onCancelFallStillnessSos,
+            ),
+          ],
+          if (fallStillnessSnapshot.status ==
+              FallStillnessMonitorStatus.unavailable) ...[
+            const _HorizontalSeparator(),
+            _StatusRow(
+              label: 'Sensor Status',
+              value: fallStillnessSnapshot.message ?? 'Unavailable',
+            ),
+          ],
           const _HorizontalSeparator(),
           _StatusRow(
             label: 'Location Recording',
@@ -1570,6 +1703,83 @@ class _MonitoringCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _stillnessCheckValue(FallStillnessMonitorSnapshot snapshot) {
+    final seconds = snapshot.secondsRemaining;
+    final suffix = snapshot.isBackpackTrapLikely ? ' extended' : '';
+    if (seconds == null) {
+      return 'Verifying$suffix';
+    }
+    return '$seconds sec$suffix';
+  }
+}
+
+class _FallStillnessCountdownRow extends StatelessWidget {
+  const _FallStillnessCountdownRow({
+    required this.snapshot,
+    required this.onCancel,
+  });
+
+  final FallStillnessMonitorSnapshot snapshot;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final seconds = snapshot.secondsRemaining ?? 0;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const _Glyph(icon: Icons.health_and_safety_rounded),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Possible fall detected. SOS in $seconds seconds.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _HomeColors.red,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LinearProgressIndicator(
+            value: _countdownProgress(snapshot),
+            minHeight: 3,
+            color: _HomeColors.red,
+            backgroundColor: _HomeColors.red.withValues(alpha: 0.14),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onCancel,
+            icon: const Icon(Icons.touch_app_rounded),
+            label: const Text('I am OK - Cancel SOS'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double? _countdownProgress(FallStillnessMonitorSnapshot snapshot) {
+    final settings = snapshot.settings;
+    final remaining = snapshot.secondsRemaining;
+    if (settings == null || remaining == null) {
+      return null;
+    }
+
+    final totalDurationSeconds = settings.stillnessDuration.inSeconds;
+    if (totalDurationSeconds <= 0) {
+      return null;
+    }
+
+    return 1 - (remaining / totalDurationSeconds).clamp(0, 1).toDouble();
   }
 }
 

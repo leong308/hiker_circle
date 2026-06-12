@@ -89,6 +89,7 @@ class SosViewModel extends ChangeNotifier {
     required SosAlertMode mode,
     required DateTime triggeredAt,
     required SosTriggerLocation? triggerLocation,
+    String? customMessageNote,
   }) async {
     if (_isSendingSosAlert) {
       return null;
@@ -105,6 +106,7 @@ class SosViewModel extends ChangeNotifier {
         triggeredAt: triggeredAt,
         triggerLocation: triggerLocation,
         contacts: emergencyContacts,
+        customMessageNote: customMessageNote,
       );
       _latestSosAlertResult = result;
       return result;

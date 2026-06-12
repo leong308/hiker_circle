@@ -14,6 +14,86 @@ enum HikeType {
   }
 }
 
+class FallDetectionSettings {
+  const FallDetectionSettings({
+    required this.sensorSensitivity,
+    required this.stillnessDuration,
+  });
+
+  static const double minSensorSensitivity = 1;
+  static const double maxSensorSensitivity = 10;
+  static const double gravityMetersPerSecondSquared = 9.80665;
+  static const Duration impactWindowDuration = Duration(milliseconds: 500);
+  static const Duration postImpactBounceDuration = Duration(seconds: 2);
+  static const Duration stillnessVerificationDuration = Duration(seconds: 10);
+  static const Duration backpackTrapStillnessDuration = Duration(seconds: 20);
+
+  final double sensorSensitivity;
+  final Duration stillnessDuration;
+
+  double get normalizedSensitivity {
+    final clamped = sensorSensitivity.clamp(
+      minSensorSensitivity,
+      maxSensorSensitivity,
+    );
+    return (clamped - minSensorSensitivity) /
+        (maxSensorSensitivity - minSensorSensitivity);
+  }
+
+  double get impactAccelerationThreshold {
+    return _lerp(
+      5.0 * gravityMetersPerSecondSquared,
+      4.0 * gravityMetersPerSecondSquared,
+      normalizedSensitivity,
+    );
+  }
+
+  double get freeFallAccelerationThreshold {
+    return _lerp(
+      0.25 * gravityMetersPerSecondSquared,
+      0.40 * gravityMetersPerSecondSquared,
+      normalizedSensitivity,
+    );
+  }
+
+  double get stillnessVarianceThreshold {
+    return _lerp(0.012, 0.032, normalizedSensitivity);
+  }
+
+  double get significantLinearMovementThreshold {
+    return _lerp(0.55, 1.25, normalizedSensitivity);
+  }
+
+  double get altitudeDropThresholdMeters {
+    return _lerp(1.6, 0.8, normalizedSensitivity);
+  }
+
+  String get sensitivityLabel {
+    if (sensorSensitivity < 3.5) {
+      return 'Low';
+    }
+    if (sensorSensitivity > 7) {
+      return 'High';
+    }
+    return 'Balanced';
+  }
+
+  String get responseCountdownDurationLabel {
+    if (stillnessDuration.inSeconds < 60) {
+      return '${stillnessDuration.inSeconds} sec';
+    }
+    return '${stillnessDuration.inMinutes} min';
+  }
+
+  String get stillnessDurationLabel => responseCountdownDurationLabel;
+
+  bool get isHighSensitivity => sensorSensitivity > 7;
+
+  static double _lerp(double start, double end, double amount) {
+    return start + (end - start) * amount;
+  }
+}
+
 class PlannedHike {
   const PlannedHike({
     required this.trail,
@@ -72,6 +152,7 @@ class HikeSessionDraft {
     required this.emergencyContactNames,
     required this.shareLiveLocation,
     required this.fallDetectionEnabled,
+    required this.fallDetectionSettings,
     required this.pathDeviationEnabled,
     required this.offlinePhysicalAlertEnabled,
     required this.duressEnabled,
@@ -93,6 +174,10 @@ class HikeSessionDraft {
       emergencyContactNames: const ['Mother', 'Brother'],
       shareLiveLocation: true,
       fallDetectionEnabled: true,
+      fallDetectionSettings: const FallDetectionSettings(
+        sensorSensitivity: 5,
+        stillnessDuration: Duration(seconds: 30),
+      ),
       pathDeviationEnabled: true,
       offlinePhysicalAlertEnabled: true,
       duressEnabled: true,
@@ -117,6 +202,7 @@ class HikeSessionDraft {
   final List<String> emergencyContactNames;
   final bool shareLiveLocation;
   final bool fallDetectionEnabled;
+  final FallDetectionSettings fallDetectionSettings;
   final bool pathDeviationEnabled;
   final bool offlinePhysicalAlertEnabled;
   final bool duressEnabled;
@@ -135,6 +221,7 @@ class HikeSessionDraft {
     List<String>? emergencyContactNames,
     bool? shareLiveLocation,
     bool? fallDetectionEnabled,
+    FallDetectionSettings? fallDetectionSettings,
     bool? pathDeviationEnabled,
     bool? offlinePhysicalAlertEnabled,
     bool? duressEnabled,
@@ -156,6 +243,8 @@ class HikeSessionDraft {
           emergencyContactNames ?? this.emergencyContactNames,
       shareLiveLocation: shareLiveLocation ?? this.shareLiveLocation,
       fallDetectionEnabled: fallDetectionEnabled ?? this.fallDetectionEnabled,
+      fallDetectionSettings:
+          fallDetectionSettings ?? this.fallDetectionSettings,
       pathDeviationEnabled: pathDeviationEnabled ?? this.pathDeviationEnabled,
       offlinePhysicalAlertEnabled:
           offlinePhysicalAlertEnabled ?? this.offlinePhysicalAlertEnabled,

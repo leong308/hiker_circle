@@ -39,20 +39,27 @@ class SosAlertRepository {
     return _resolvedFirestore.collection('users');
   }
 
+  CollectionReference<Map<String, dynamic>> get _sosAlerts {
+    return _resolvedFirestore.collection('sosAlerts');
+  }
+
   Future<SosAlertResult> triggerAlert({
     required AppSession session,
     required SosAlertMode mode,
     required DateTime triggeredAt,
     required SosTriggerLocation? triggerLocation,
     required List<EmergencyContact> contacts,
+    String? customMessageNote,
   }) async {
     _throwIfFirebaseUnavailable();
 
     final alertId = _alertIdFor(triggeredAt, mode);
-    final message = _messageFor(
+    final message = SosAlertMessageComposer.compose(
       mode: mode,
-      session: session,
+      phoneNumber: session.phoneNumber,
+      triggeredAt: triggeredAt,
       triggerLocation: triggerLocation,
+      customNote: customMessageNote,
     );
 
     final dispatches = <SosContactDispatch>[];
@@ -155,6 +162,15 @@ class SosAlertRepository {
         'sosAlertsUpdatedAtLocal': alert.triggeredAt.toIso8601String(),
         'phoneNumber': session.phoneNumber,
       }, SetOptions(merge: true));
+      await _sosAlerts.doc(alert.id).set({
+        ...alert.toFirestore(),
+        'userId': FirebaseUserRepository.documentIdForPhoneNumber(
+          session.phoneNumber,
+        ),
+        'phoneNumber': session.phoneNumber,
+        'cloudLogPath': 'sosAlerts/${alert.id}',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     } on FirebaseException catch (error) {
       throw SosAlertRepositoryException(
         'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
@@ -183,27 +199,6 @@ class SosAlertRepository {
       return SosAlertStatus.partial;
     }
     return SosAlertStatus.failed;
-  }
-
-  String _messageFor({
-    required SosAlertMode mode,
-    required AppSession session,
-    required SosTriggerLocation? triggerLocation,
-  }) {
-    final modeLine = switch (mode) {
-      SosAlertMode.manual => 'They triggered a manual emergency SOS alert.',
-      SosAlertMode.duress =>
-        'They silently triggered a duress SOS alert. Do not call if that may put them at risk.',
-    };
-
-    final locationLine = triggerLocation == null
-        ? 'Location: unavailable'
-        : 'Location: ${triggerLocation.universalMapLink}';
-
-    return 'HikerCircle ${mode.label}\n'
-        'From: ${session.phoneNumber}\n'
-        '$modeLine\n'
-        '$locationLine';
   }
 
   String _alertIdFor(DateTime triggeredAt, SosAlertMode mode) {

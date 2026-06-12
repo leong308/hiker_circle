@@ -1108,24 +1108,27 @@ class _SettingsSwitchTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: SwitchListTile.adaptive(
-        value: value,
-        onChanged: onChanged,
-        activeThumbColor: _CircleColors.green,
-        activeTrackColor: _CircleColors.green.withValues(alpha: 0.24),
-        title: Text(
-          title,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            color: _CircleColors.text,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
+      child: Material(
+        color: Colors.transparent,
+        child: SwitchListTile.adaptive(
+          value: value,
+          onChanged: onChanged,
+          activeThumbColor: _CircleColors.green,
+          activeTrackColor: _CircleColors.green.withValues(alpha: 0.24),
+          title: Text(
+            title,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: _CircleColors.text,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
           ),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _CircleColors.secondaryText,
-            letterSpacing: 0,
+          subtitle: Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _CircleColors.secondaryText,
+              letterSpacing: 0,
+            ),
           ),
         ),
       ),
