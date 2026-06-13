@@ -1,6 +1,10 @@
 package com.leongziqi.hikercircle
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
@@ -11,6 +15,7 @@ import android.location.LocationManager
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -27,11 +32,17 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "hiker_circle/sos_device_alerts"
         private const val DEEP_LINK_CHANNEL = "hiker_circle/deeplinks"
+        private const val ACTIVE_HIKE_LIVE_STATUS_CHANNEL =
+            "hiker_circle/active_hike_live_status"
         private const val CAMERA_REQUEST_CODE = 8472
         private const val LOCATION_REQUEST_CODE = 8473
+        private const val POST_NOTIFICATIONS_REQUEST_CODE = 8474
         private const val LOCATION_TIMEOUT_MILLIS = 6000L
         private const val ALARM_ASSET = "assets/audios/sos_alarm.mp3"
         private const val MEDICAL_ALARM_ASSET = "assets/audios/med_alarm.mp3"
+        private const val ACTIVE_HIKE_NOTIFICATION_CHANNEL_ID =
+            "hiker_circle_active_hike"
+        private const val ACTIVE_HIKE_NOTIFICATION_ID = 4207
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -50,6 +61,7 @@ class MainActivity : FlutterActivity() {
     private var pendingAllowLastKnownLocation = false
     private var deepLinkChannel: MethodChannel? = null
     private var pendingDeepLink: String? = null
+    private var pendingActiveHikeLiveStatus: ActiveHikeLiveStatus? = null
 
     private val sosTorchPattern = listOf(
         TorchStep(true, 220L),
@@ -155,6 +167,32 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            ACTIVE_HIKE_LIVE_STATUS_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startOrUpdateActiveHikeLiveStatus" -> {
+                    val status = ActiveHikeLiveStatus.from(call.arguments)
+                    if (status == null) {
+                        result.error(
+                            "active_hike_live_status_invalid",
+                            "Active hike status payload is invalid.",
+                            null,
+                        )
+                    } else {
+                        startOrUpdateActiveHikeLiveStatus(status)
+                        result.success(null)
+                    }
+                }
+                "stopActiveHikeLiveStatus" -> {
+                    stopActiveHikeLiveStatus()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -182,6 +220,16 @@ class MainActivity : FlutterActivity() {
             return
         }
 
+        if (requestCode == POST_NOTIFICATIONS_REQUEST_CODE) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                pendingActiveHikeLiveStatus?.let { status ->
+                    postActiveHikeNotification(status)
+                }
+            }
+            pendingActiveHikeLiveStatus = null
+            return
+        }
+
         pendingTorchStart = false
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             startTorchPattern()
@@ -205,6 +253,122 @@ class MainActivity : FlutterActivity() {
     private fun stopManualSosPattern() {
         stopAlarm()
         stopTorchPattern()
+    }
+
+    private fun startOrUpdateActiveHikeLiveStatus(status: ActiveHikeLiveStatus) {
+        if (!canPostNotifications()) {
+            pendingActiveHikeLiveStatus = status
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                requestPermissions(
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    POST_NOTIFICATIONS_REQUEST_CODE,
+                )
+            }
+            return
+        }
+
+        postActiveHikeNotification(status)
+    }
+
+    private fun stopActiveHikeLiveStatus() {
+        pendingActiveHikeLiveStatus = null
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.cancel(ACTIVE_HIKE_NOTIFICATION_ID)
+    }
+
+    private fun canPostNotifications(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    @Suppress("DEPRECATION")
+    private fun postActiveHikeNotification(status: ActiveHikeLiveStatus) {
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                ACTIVE_HIKE_NOTIFICATION_CHANNEL_ID,
+                "Active hike",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = "Live hike progress and quick actions"
+                setShowBadge(false)
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, ACTIVE_HIKE_NOTIFICATION_CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+
+        val notification = builder
+            .setSmallIcon(android.R.drawable.ic_dialog_map)
+            .setContentTitle("Hiking ${status.trailName}")
+            .setContentText(status.summary)
+            .setSubText("HikerCircle")
+            .setContentIntent(pendingActivityIntent("hikercircle://hike/active"))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(true)
+            .setWhen(status.startedAtMillis)
+            .setUsesChronometer(true)
+            .setCategory(Notification.CATEGORY_STATUS)
+            .addLiveStatusAction(
+                icon = android.R.drawable.ic_menu_view,
+                title = "View details",
+                pendingIntent = pendingActivityIntent(
+                    "hikercircle://hike/active?source=android_live_status",
+                    6101,
+                ),
+            )
+            .addLiveStatusAction(
+                icon = android.R.drawable.ic_menu_mylocation,
+                title = "Check in",
+                pendingIntent = pendingActivityIntent(
+                    "hikercircle://hike/check-in?source=android_live_status",
+                    6102,
+                ),
+            )
+            .build()
+
+        notificationManager.notify(ACTIVE_HIKE_NOTIFICATION_ID, notification)
+    }
+
+    private fun pendingActivityIntent(
+        uri: String,
+        requestCode: Int = 6100,
+    ): PendingIntent {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse(uri)
+            setPackage(packageName)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
+
+        return PendingIntent.getActivity(this, requestCode, intent, flags)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Notification.Builder.addLiveStatusAction(
+        icon: Int,
+        title: String,
+        pendingIntent: PendingIntent,
+    ): Notification.Builder {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            addAction(
+                Notification.Action.Builder(icon, title, pendingIntent).build(),
+            )
+        } else {
+            addAction(icon, title, pendingIntent)
+        }
+        return this
     }
 
     private fun getOutputVolumeStatus(
@@ -557,4 +721,36 @@ class MainActivity : FlutterActivity() {
         val enabled: Boolean,
         val durationMillis: Long,
     )
+
+    private data class ActiveHikeLiveStatus(
+        val sessionId: String,
+        val trailName: String,
+        val startedAtMillis: Long,
+        val expectedReturnAtMillis: Long,
+        val checkIns: Int,
+        val manualPins: Int,
+        val queuedUpdates: Int,
+        val batteryLevel: Int,
+    ) {
+        val summary: String
+            get() = "Check-ins $checkIns • Pins $manualPins • $queuedUpdates queued"
+
+        companion object {
+            fun from(arguments: Any?): ActiveHikeLiveStatus? {
+                val data = arguments as? Map<*, *> ?: return null
+                return ActiveHikeLiveStatus(
+                    sessionId = data["sessionId"] as? String ?: return null,
+                    trailName = data["trailName"] as? String ?: "Active hike",
+                    startedAtMillis = (data["startedAtMillis"] as? Number)?.toLong()
+                        ?: return null,
+                    expectedReturnAtMillis = (data["expectedReturnAtMillis"] as? Number)
+                        ?.toLong() ?: 0L,
+                    checkIns = (data["checkIns"] as? Number)?.toInt() ?: 0,
+                    manualPins = (data["manualPins"] as? Number)?.toInt() ?: 0,
+                    queuedUpdates = (data["queuedUpdates"] as? Number)?.toInt() ?: 0,
+                    batteryLevel = (data["batteryLevel"] as? Number)?.toInt() ?: 0,
+                )
+            }
+        }
+    }
 }
