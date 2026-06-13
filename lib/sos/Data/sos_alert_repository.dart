@@ -43,6 +43,76 @@ class SosAlertRepository {
     return _resolvedFirestore.collection('sosAlerts');
   }
 
+  Future<Map<SosAlertMode, String>> loadCustomWhatsAppNotes({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const {};
+    }
+
+    final snapshot = await _userDocumentFor(session).get();
+    final data = snapshot.data();
+    final notes = data?['sosWhatsappNotes'];
+    if (notes is! Map) {
+      return const {};
+    }
+
+    return {
+      for (final mode in [
+        SosAlertMode.manual,
+        SosAlertMode.duress,
+        SosAlertMode.medical,
+      ])
+        if (notes[mode.firestoreValue] is String)
+          mode: notes[mode.firestoreValue] as String,
+    };
+  }
+
+  Future<void> saveCustomWhatsAppNote({
+    required AppSession session,
+    required SosAlertMode mode,
+    required String note,
+  }) async {
+    _throwIfFirebaseUnavailable();
+
+    await _userDocumentFor(session).set({
+      'sosWhatsappNotes': {mode.firestoreValue: note.trim()},
+      'sosWhatsappNotesUpdatedAt': FieldValue.serverTimestamp(),
+      'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
+          .toUtc()
+          .toIso8601String(),
+      'phoneNumber': session.phoneNumber,
+    }, SetOptions(merge: true));
+  }
+
+  Future<List<SosAlert>> loadAlertLogs({
+    required AppSession session,
+    int limit = 30,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const [];
+    }
+
+    try {
+      final snapshot = await _sosAlerts
+          .where(
+            'userId',
+            isEqualTo: FirebaseUserRepository.documentIdForPhoneNumber(
+              session.phoneNumber,
+            ),
+          )
+          .limit(limit)
+          .get();
+      final alerts = snapshot.docs
+          .map((document) => SosAlert.fromFirestore(document.data()))
+          .toList();
+      alerts.sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
+      return alerts;
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<SosAlertResult> triggerAlert({
     required AppSession session,
     required SosAlertMode mode,

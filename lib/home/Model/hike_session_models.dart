@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import '../../sos/Model/sos_models.dart';
 import '../../trail/Model/trail_models.dart';
 
 enum HikeType {
@@ -44,6 +47,14 @@ class FallDetectionSettings {
     return _lerp(
       5.0 * gravityMetersPerSecondSquared,
       4.0 * gravityMetersPerSecondSquared,
+      normalizedSensitivity,
+    );
+  }
+
+  double get directImpactAccelerationThreshold {
+    return _lerp(
+      3.6 * gravityMetersPerSecondSquared,
+      2.8 * gravityMetersPerSecondSquared,
       normalizedSensitivity,
     );
   }
@@ -264,6 +275,10 @@ class ActiveHikeSession {
     required this.queuedUpdates,
     required this.manualPins,
     required this.checkIns,
+    this.batteryStartedLevel,
+    this.latestLocation,
+    this.routePoints = const [],
+    this.manualPinLocations = const [],
   });
 
   factory ActiveHikeSession.fromDraft(HikeSessionDraft draft) {
@@ -275,6 +290,7 @@ class ActiveHikeSession {
       queuedUpdates: 3,
       manualPins: 0,
       checkIns: 0,
+      batteryStartedLevel: 67,
     );
   }
 
@@ -282,27 +298,280 @@ class ActiveHikeSession {
   final HikeSessionDraft draft;
   final DateTime startedAt;
   final int batteryLevel;
+  final int? batteryStartedLevel;
   final int queuedUpdates;
   final int manualPins;
   final int checkIns;
+  final HikeCoordinate? latestLocation;
+  final List<HikeCoordinate> routePoints;
+  final List<HikeManualPin> manualPinLocations;
 
   Trail get trail => draft.trail;
+  Duration get elapsedDuration => DateTime.now().difference(startedAt);
+  int get routePointCount => routePoints.length;
+
+  double get recordedDistanceKm {
+    if (routePoints.length < 2) {
+      return 0;
+    }
+
+    var totalMeters = 0.0;
+    for (var index = 1; index < routePoints.length; index++) {
+      totalMeters += routePoints[index - 1].distanceTo(routePoints[index]);
+    }
+    return totalMeters / 1000;
+  }
+
+  int? get batteryUsedPercent {
+    final started = batteryStartedLevel;
+    if (started == null) {
+      return null;
+    }
+    return math.max(0, started - batteryLevel);
+  }
+
+  bool hasPinnedNear(HikeCoordinate coordinate, {double thresholdMeters = 12}) {
+    return manualPinLocations.any(
+      (pin) => pin.coordinate.distanceTo(coordinate) <= thresholdMeters,
+    );
+  }
 
   ActiveHikeSession copyWith({
     String? sessionId,
     int? batteryLevel,
+    int? batteryStartedLevel,
     int? queuedUpdates,
     int? manualPins,
     int? checkIns,
+    HikeCoordinate? latestLocation,
+    List<HikeCoordinate>? routePoints,
+    List<HikeManualPin>? manualPinLocations,
   }) {
     return ActiveHikeSession(
       sessionId: sessionId ?? this.sessionId,
       draft: draft,
       startedAt: startedAt,
       batteryLevel: batteryLevel ?? this.batteryLevel,
+      batteryStartedLevel: batteryStartedLevel ?? this.batteryStartedLevel,
       queuedUpdates: queuedUpdates ?? this.queuedUpdates,
       manualPins: manualPins ?? this.manualPins,
       checkIns: checkIns ?? this.checkIns,
+      latestLocation: latestLocation ?? this.latestLocation,
+      routePoints: routePoints ?? this.routePoints,
+      manualPinLocations: manualPinLocations ?? this.manualPinLocations,
     );
+  }
+}
+
+class HikeCoordinate {
+  const HikeCoordinate({
+    required this.latitude,
+    required this.longitude,
+    required this.capturedAt,
+    this.accuracyMeters,
+  });
+
+  factory HikeCoordinate.fromTriggerLocation(SosTriggerLocation location) {
+    return HikeCoordinate(
+      latitude: location.latitude,
+      longitude: location.longitude,
+      accuracyMeters: location.accuracyMeters,
+      capturedAt: location.capturedAt ?? DateTime.now().toUtc(),
+    );
+  }
+
+  factory HikeCoordinate.fromFirestore(Map<String, dynamic> data) {
+    final capturedAt = data['capturedAtLocal'];
+    return HikeCoordinate(
+      latitude: _doubleFrom(data['latitude']),
+      longitude: _doubleFrom(data['longitude']),
+      accuracyMeters: data['accuracyMeters'] is num
+          ? (data['accuracyMeters'] as num).toDouble()
+          : null,
+      capturedAt: capturedAt is String
+          ? DateTime.tryParse(capturedAt) ?? DateTime.now().toUtc()
+          : DateTime.now().toUtc(),
+    );
+  }
+
+  final double latitude;
+  final double longitude;
+  final double? accuracyMeters;
+  final DateTime capturedAt;
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'latitude': latitude,
+      'longitude': longitude,
+      if (accuracyMeters != null) 'accuracyMeters': accuracyMeters,
+      'capturedAtLocal': capturedAt.toUtc().toIso8601String(),
+    };
+  }
+
+  double distanceTo(HikeCoordinate other) {
+    const earthRadiusMeters = 6371000.0;
+    final startLatitude = _degreesToRadians(latitude);
+    final endLatitude = _degreesToRadians(other.latitude);
+    final deltaLatitude = _degreesToRadians(other.latitude - latitude);
+    final deltaLongitude = _degreesToRadians(other.longitude - longitude);
+    final haversine =
+        math.sin(deltaLatitude / 2) * math.sin(deltaLatitude / 2) +
+        math.cos(startLatitude) *
+            math.cos(endLatitude) *
+            math.sin(deltaLongitude / 2) *
+            math.sin(deltaLongitude / 2);
+    final centralAngle =
+        2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine));
+    return earthRadiusMeters * centralAngle;
+  }
+
+  static double _degreesToRadians(double degrees) {
+    return degrees * math.pi / 180;
+  }
+
+  static double _doubleFrom(Object? value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    return 0;
+  }
+}
+
+class HikeManualPin {
+  const HikeManualPin({
+    required this.id,
+    required this.coordinate,
+    required this.pinnedAt,
+  });
+
+  final String id;
+  final HikeCoordinate coordinate;
+  final DateTime pinnedAt;
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'pinId': id,
+      'coordinate': coordinate.toFirestore(),
+      'pinnedAtLocal': pinnedAt.toUtc().toIso8601String(),
+    };
+  }
+}
+
+enum PinLocationStatus { pinned, duplicate, unavailable }
+
+class PinLocationResult {
+  const PinLocationResult({required this.hike, required this.status});
+
+  final ActiveHikeSession hike;
+  final PinLocationStatus status;
+}
+
+class HikeSummaryReport {
+  const HikeSummaryReport({
+    required this.sessionId,
+    required this.trailName,
+    required this.startedAt,
+    required this.endedAt,
+    required this.duration,
+    required this.distanceKm,
+    required this.checkIns,
+    required this.manualPins,
+    required this.routePointCount,
+    required this.batteryStartPercent,
+    required this.batteryEndPercent,
+    required this.insights,
+  });
+
+  factory HikeSummaryReport.fromActiveHike({
+    required ActiveHikeSession activeHike,
+    required DateTime endedAt,
+  }) {
+    final distanceKm = activeHike.recordedDistanceKm > 0
+        ? activeHike.recordedDistanceKm
+        : activeHike.trail.distanceKm;
+    final duration = endedAt.difference(activeHike.startedAt);
+    final batteryStart =
+        activeHike.batteryStartedLevel ?? activeHike.batteryLevel;
+    final batteryDrop = math.max(0, batteryStart - activeHike.batteryLevel);
+    final movingHours = math.max(duration.inMinutes / 60, 0.1);
+    final paceMinutesPerKm = distanceKm <= 0
+        ? 0
+        : duration.inMinutes / math.max(distanceKm, 0.1);
+
+    return HikeSummaryReport(
+      sessionId: activeHike.sessionId,
+      trailName: activeHike.trail.name,
+      startedAt: activeHike.startedAt,
+      endedAt: endedAt,
+      duration: duration,
+      distanceKm: distanceKm,
+      checkIns: activeHike.checkIns,
+      manualPins: activeHike.manualPins,
+      routePointCount: activeHike.routePointCount,
+      batteryStartPercent: batteryStart,
+      batteryEndPercent: activeHike.batteryLevel,
+      insights: [
+        'Average pace: ${paceMinutesPerKm.round()} min/km across ${distanceKm.toStringAsFixed(2)} km.',
+        'Tracking density: ${activeHike.routePointCount} GPS points saved for replay and safety review.',
+        'Safety rhythm: ${activeHike.checkIns} check-ins and ${activeHike.manualPins} pinned locations.',
+        'Battery used: $batteryDrop% over ${_formatDuration(duration)} (${(batteryDrop / movingHours).toStringAsFixed(1)}% per hour).',
+        if (activeHike.queuedUpdates == 0)
+          'Cloud sync: all hike telemetry is up to date.'
+        else
+          'Cloud sync: ${activeHike.queuedUpdates} updates are still queued for upload.',
+      ],
+    );
+  }
+
+  final String sessionId;
+  final String trailName;
+  final DateTime startedAt;
+  final DateTime endedAt;
+  final Duration duration;
+  final double distanceKm;
+  final int checkIns;
+  final int manualPins;
+  final int routePointCount;
+  final int batteryStartPercent;
+  final int batteryEndPercent;
+  final List<String> insights;
+
+  String get shareText {
+    return [
+      'Hike summary: $trailName',
+      'Distance: ${distanceKm.toStringAsFixed(2)} km',
+      'Duration: ${_formatDuration(duration)}',
+      'Check-ins: $checkIns',
+      'Pinned locations: $manualPins',
+      'Battery: $batteryStartPercent% to $batteryEndPercent%',
+      ...insights.map((insight) => '- $insight'),
+    ].join('\n');
+  }
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'sessionId': sessionId,
+      'trailName': trailName,
+      'startedAtLocal': startedAt.toUtc().toIso8601String(),
+      'endedAtLocal': endedAt.toUtc().toIso8601String(),
+      'durationMinutes': duration.inMinutes,
+      'distanceKm': distanceKm,
+      'checkIns': checkIns,
+      'manualPins': manualPins,
+      'routePointCount': routePointCount,
+      'batteryStartPercent': batteryStartPercent,
+      'batteryEndPercent': batteryEndPercent,
+      'insights': insights,
+      'shareText': shareText,
+    };
+  }
+
+  static String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    if (hours <= 0) {
+      return '$minutes min';
+    }
+    return '${hours}h ${minutes}m';
   }
 }

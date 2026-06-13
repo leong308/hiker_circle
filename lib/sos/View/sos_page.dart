@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
@@ -43,8 +44,7 @@ class _SosPageState extends State<SosPage> {
   int _handledManualSosRequestId = 0;
   int _handledImmediateSosRequestId = 0;
   bool _isManualSosPatternActive = false;
-  String _customWhatsAppNote = SosAlertMessageComposer.defaultCustomNote;
-  SosLocalAlertFeedback? _localAlertFeedback;
+  Map<SosAlertMode, String> _customWhatsAppNotes = _defaultWhatsAppNotes();
 
   @override
   void initState() {
@@ -60,6 +60,8 @@ class _SosPageState extends State<SosPage> {
     );
     viewModel.addListener(_refresh);
     unawaited(viewModel.loadEmergencyContacts());
+    unawaited(_loadCustomWhatsAppNotes());
+    unawaited(viewModel.loadCloudAlertLogs());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _handlePendingManualSosRequest();
     });
@@ -85,6 +87,34 @@ class _SosPageState extends State<SosPage> {
 
   void _refresh() {
     setState(() {});
+  }
+
+  static Map<SosAlertMode, String> _defaultWhatsAppNotes() {
+    return const {
+      SosAlertMode.manual: SosAlertMessageComposer.defaultCustomNote,
+      SosAlertMode.duress:
+          'I may be under pressure and cannot speak safely. Please watch my live location, avoid calling if it may increase risk, and contact local emergency services if I stop responding.',
+      SosAlertMode.medical:
+          'I need medical help during my hike. Please call me, use the map link, and share this alert with medical responders if I do not answer.',
+    };
+  }
+
+  Future<void> _loadCustomWhatsAppNotes() async {
+    await viewModel.loadCustomWhatsAppNotes();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _customWhatsAppNotes = {
+        ..._defaultWhatsAppNotes(),
+        ...viewModel.customWhatsAppNotes,
+      };
+    });
+  }
+
+  String _customWhatsAppNoteFor(SosAlertMode mode) {
+    return _customWhatsAppNotes[mode] ??
+        SosAlertMessageComposer.defaultCustomNote;
   }
 
   void _handlePendingManualSosRequest() {
@@ -193,7 +223,7 @@ class _SosPageState extends State<SosPage> {
       mode: mode,
       triggeredAt: triggeredAt,
       triggerLocation: triggerLocation,
-      customMessageNote: _customWhatsAppNote,
+      customMessageNote: _customWhatsAppNoteFor(mode),
     );
     if (!mounted) {
       return;
@@ -234,9 +264,6 @@ class _SosPageState extends State<SosPage> {
 
       setState(() {
         _isManualSosPatternActive = true;
-        _localAlertFeedback = SosLocalAlertFeedback.started(
-          updatedAt: DateTime.now(),
-        );
       });
     } catch (_) {
       if (!mounted) {
@@ -244,10 +271,7 @@ class _SosPageState extends State<SosPage> {
       }
 
       setState(() {
-        _localAlertFeedback = SosLocalAlertFeedback.failed(
-          updatedAt: DateTime.now(),
-          errorMessage: 'Unable to start phone alarm or flashlight.',
-        );
+        _isManualSosPatternActive = false;
       });
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -267,9 +291,6 @@ class _SosPageState extends State<SosPage> {
       if (mounted) {
         setState(() {
           _isManualSosPatternActive = false;
-          _localAlertFeedback = SosLocalAlertFeedback.stopped(
-            updatedAt: DateTime.now(),
-          );
         });
       }
     }
@@ -335,18 +356,25 @@ class _SosPageState extends State<SosPage> {
                     onDuressLongPress: () => unawaited(_handleDuressSos()),
                   ),
                   const SizedBox(height: 22),
-                  _AlertDeliveryPanel(
+                  _SosTriggerLogPanel(
                     isNetworkAvailable:
                         widget.firebaseBootstrapResult.isAvailable,
                     session: widget.session,
                     latestResult: viewModel.latestSosAlertResult,
-                    customWhatsAppNote: _customWhatsAppNote,
-                    localAlertFeedback: _localAlertFeedback,
-                    isLocalAlarmActive: _isManualSosPatternActive,
-                    onCustomWhatsAppNoteChanged: (note) {
+                    customWhatsAppNotes: _customWhatsAppNotes,
+                    cloudAlertLogs: viewModel.cloudAlertLogs,
+                    onCustomWhatsAppNoteChanged: (mode, note) {
                       setState(() {
-                        _customWhatsAppNote = note;
+                        _customWhatsAppNotes = {
+                          ..._customWhatsAppNotes,
+                          mode: note,
+                        };
                       });
+                      unawaited(
+                        viewModel
+                            .saveCustomWhatsAppNote(mode: mode, note: note)
+                            .catchError((_) {}),
+                      );
                     },
                   ),
                   const SizedBox(height: 18),
@@ -591,10 +619,10 @@ class _NetworkSosStatusCard extends StatelessWidget {
     final color = isNetworkAvailable ? _SosColors.green : _SosColors.orange;
     final title = isNetworkAvailable
         ? 'Network SOS available'
-        : 'Local SOS mode only';
+        : 'Cloud SOS unavailable';
     final subtitle = isNetworkAvailable
         ? 'Alerts can use cloud logging and WhatsApp delivery when sent.'
-        : 'No backend connection right now. The phone alarm, flashlight pattern, and local log remain available.';
+        : 'No backend connection right now. WhatsApp dispatch and Firebase cloud logging may fail until connection is restored.';
 
     return _InsetGroup(
       child: Padding(
@@ -627,7 +655,7 @@ class _NetworkSosStatusCard extends StatelessWidget {
                         ),
                       ),
                       _StatusPill(
-                        label: isNetworkAvailable ? 'Online' : 'Local',
+                        label: isNetworkAvailable ? 'Online' : 'Offline',
                         color: color,
                         surface: color.withValues(alpha: 0.12),
                       ),
@@ -1041,24 +1069,23 @@ class _ManualSosDetailsOverlay extends StatelessWidget {
   }
 }
 
-class _AlertDeliveryPanel extends StatelessWidget {
-  const _AlertDeliveryPanel({
+class _SosTriggerLogPanel extends StatelessWidget {
+  const _SosTriggerLogPanel({
     required this.isNetworkAvailable,
     required this.session,
     required this.latestResult,
-    required this.customWhatsAppNote,
-    required this.localAlertFeedback,
-    required this.isLocalAlarmActive,
+    required this.customWhatsAppNotes,
+    required this.cloudAlertLogs,
     required this.onCustomWhatsAppNoteChanged,
   });
 
   final bool isNetworkAvailable;
   final AppSession session;
   final SosAlertResult? latestResult;
-  final String customWhatsAppNote;
-  final SosLocalAlertFeedback? localAlertFeedback;
-  final bool isLocalAlarmActive;
-  final ValueChanged<String> onCustomWhatsAppNoteChanged;
+  final Map<SosAlertMode, String> customWhatsAppNotes;
+  final List<SosAlert> cloudAlertLogs;
+  final void Function(SosAlertMode mode, String note)
+  onCustomWhatsAppNoteChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1067,13 +1094,13 @@ class _AlertDeliveryPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionTitle(label: 'Alert Delivery'),
+        const _SectionTitle(label: 'SOS Trigger Log'),
         const SizedBox(height: 8),
         _DeliveryActionCard(
           icon: Icons.chat_bubble_rounded,
           title: 'WhatsApp notification',
-          subtitle: 'Edit the custom note and preview the outgoing payload.',
-          trailing: customWhatsAppNote.trim().isEmpty ? 'Default' : 'Custom',
+          subtitle: 'Edit Manual, Duress, and Medical SOS notes.',
+          trailing: '${_customNoteCount()}/3 custom',
           onTap: () => unawaited(_openWhatsAppMessageEditor(context)),
         ),
         const SizedBox(height: 8),
@@ -1081,62 +1108,64 @@ class _AlertDeliveryPanel extends StatelessWidget {
           icon: Icons.cloud_done_rounded,
           title: 'Cloud alert log',
           subtitle: latestAlert == null
-              ? 'Cloud log fields are ready for the next SOS.'
+              ? 'Cloud logs load from Firebase when alerts exist.'
               : 'Latest ${latestAlert.mode.label} is logged with audit fields.',
-          trailing: isNetworkAvailable ? 'Online' : 'Local only',
+          trailing: isNetworkAvailable ? '${cloudAlertLogs.length}' : 'Offline',
           onTap: () => _openDeliveryDetail(
             context,
             title: 'Cloud alert log',
             icon: Icons.cloud_done_rounded,
             description:
-                'SOS alerts are saved to the user profile for the in-app latest status and mirrored to a top-level sosAlerts collection for emergency review.',
+                'SOS alerts are read from the top-level sosAlerts Firebase collection and mirrored to the user profile latest alert.',
             rows: _cloudLogRows(),
           ),
         ),
         const SizedBox(height: 8),
         _DeliveryActionCard(
           icon: Icons.fact_check_rounded,
-          title: 'Delivery results',
+          title: 'SOS trigger log',
           subtitle: latestAlert == null
-              ? 'Dispatch results appear after an SOS alert is sent.'
+              ? 'Trigger results appear after an SOS alert is sent.'
               : '${latestAlert.sentCount} sent, ${latestAlert.failedCount} failed.',
           trailing: latestAlert?.status.label ?? 'Ready',
           onTap: () => _openDeliveryDetail(
             context,
-            title: 'Delivery results',
+            title: 'SOS trigger log',
             icon: Icons.fact_check_rounded,
             description:
                 'Each contact dispatch records the normalized recipient, send state, and any WhatsApp/Green API error returned by the delivery layer.',
             rows: _deliveryResultRows(),
           ),
         ),
-        const SizedBox(height: 8),
-        _DeliveryActionCard(
-          icon: Icons.phone_android_rounded,
-          title: 'Local fallback',
-          subtitle: 'Phone alarm, flashlight pattern, and stop feedback.',
-          trailing: isLocalAlarmActive ? 'Active' : 'Standby',
-          onTap: () => _openDeliveryDetail(
-            context,
-            title: 'Local SOS feedback',
-            icon: Icons.phone_android_rounded,
-            description:
-                'Local feedback runs even when contact delivery fails. Manual SOS and Fall SOS use the loud pattern; Duress SOS stays silent.',
-            rows: _localFeedbackRows(),
-          ),
-        ),
       ],
     );
   }
 
+  int _customNoteCount() {
+    var count = 0;
+    for (final mode in [
+      SosAlertMode.manual,
+      SosAlertMode.duress,
+      SosAlertMode.medical,
+    ]) {
+      final note = customWhatsAppNotes[mode]?.trim();
+      if (note != null &&
+          note.isNotEmpty &&
+          note != SosAlertMessageComposer.defaultCustomNote) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   Future<void> _openWhatsAppMessageEditor(BuildContext context) async {
     final latestAlert = latestResult?.alert;
-    final nextNote = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
+    final update = await Navigator.of(context).push<_WhatsAppNoteUpdate>(
+      MaterialPageRoute<_WhatsAppNoteUpdate>(
         builder: (context) {
           return _WhatsAppMessageDetailPage(
             session: session,
-            initialNote: customWhatsAppNote,
+            initialNotes: customWhatsAppNotes,
             previewMode: latestAlert?.mode ?? SosAlertMode.manual,
             previewTriggeredAt: latestAlert?.triggeredAt ?? DateTime.now(),
             previewLocation: latestAlert?.triggerLocation,
@@ -1145,8 +1174,8 @@ class _AlertDeliveryPanel extends StatelessWidget {
       ),
     );
 
-    if (nextNote != null && context.mounted) {
-      onCustomWhatsAppNoteChanged(nextNote);
+    if (update != null && context.mounted) {
+      onCustomWhatsAppNoteChanged(update.mode, update.note);
     }
   }
 
@@ -1157,14 +1186,27 @@ class _AlertDeliveryPanel extends StatelessWidget {
     );
     if (latestAlert == null) {
       return [
-        ('Network status', isNetworkAvailable ? 'Ready' : 'Local only'),
+        ('Network status', isNetworkAvailable ? 'Ready' : 'Offline'),
         ('User latest path', 'users/$userDocumentId/latest_sos_alert'),
         ('Audit collection', 'sosAlerts/{alertId}'),
+        ('Loaded cloud logs', '${cloudAlertLogs.length}'),
+        for (final alert in cloudAlertLogs.take(8))
+          (
+            '${alert.mode.label} ${_shortTime(alert.triggeredAt)}',
+            alert.status.label,
+          ),
         ('Stored fields', 'Mode, timestamp, GPS, message, status, dispatches'),
       ];
     }
 
     return [
+      if (cloudAlertLogs.isNotEmpty)
+        ('Loaded cloud logs', '${cloudAlertLogs.length}'),
+      for (final alert in cloudAlertLogs.take(8))
+        (
+          '${alert.mode.label} ${_shortTime(alert.triggeredAt)}',
+          alert.status.label,
+        ),
       ('Alert ID', latestAlert.id),
       ('Status', latestAlert.status.label),
       ('Triggered', latestAlert.triggeredAt.toUtc().toIso8601String()),
@@ -1175,6 +1217,13 @@ class _AlertDeliveryPanel extends StatelessWidget {
         latestAlert.triggerLocation?.universalMapLink ?? 'Unavailable',
       ),
     ];
+  }
+
+  String _shortTime(DateTime value) {
+    final local = value.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 
   List<(String, String)> _deliveryResultRows() {
@@ -1200,25 +1249,6 @@ class _AlertDeliveryPanel extends StatelessWidget {
               ? 'Sent to ${dispatch.phoneNumber}'
               : 'Failed: ${dispatch.errorMessage ?? dispatch.phoneNumber}',
         ),
-    ];
-  }
-
-  List<(String, String)> _localFeedbackRows() {
-    final feedback = localAlertFeedback;
-    return [
-      ('Alarm sound', isLocalAlarmActive ? 'Looping' : 'Standby'),
-      (
-        'Flashlight pattern',
-        isLocalAlarmActive || feedback?.flashlightRequested == true
-            ? 'SOS pattern requested'
-            : 'Standby',
-      ),
-      ('Latest command', feedback?.statusLabel ?? 'No local SOS command yet'),
-      if (feedback?.errorMessage != null) ('Error', feedback!.errorMessage!),
-      (
-        'iOS alarm behavior',
-        'Uses playback audio at full app volume. iOS does not expose the system Alarm volume channel to third-party apps.',
-      ),
     ];
   }
 
@@ -1315,17 +1345,24 @@ class _DeliveryActionCard extends StatelessWidget {
   }
 }
 
+class _WhatsAppNoteUpdate {
+  const _WhatsAppNoteUpdate({required this.mode, required this.note});
+
+  final SosAlertMode mode;
+  final String note;
+}
+
 class _WhatsAppMessageDetailPage extends StatefulWidget {
   const _WhatsAppMessageDetailPage({
     required this.session,
-    required this.initialNote,
+    required this.initialNotes,
     required this.previewMode,
     required this.previewTriggeredAt,
     required this.previewLocation,
   });
 
   final AppSession session;
-  final String initialNote;
+  final Map<SosAlertMode, String> initialNotes;
   final SosAlertMode previewMode;
   final DateTime previewTriggeredAt;
   final SosTriggerLocation? previewLocation;
@@ -1338,11 +1375,15 @@ class _WhatsAppMessageDetailPage extends StatefulWidget {
 class _WhatsAppMessageDetailPageState
     extends State<_WhatsAppMessageDetailPage> {
   late final TextEditingController _noteController;
+  late SosAlertMode _selectedMode;
+  late Map<SosAlertMode, String> _notes;
 
   @override
   void initState() {
     super.initState();
-    _noteController = TextEditingController(text: widget.initialNote);
+    _notes = {..._SosPageState._defaultWhatsAppNotes(), ...widget.initialNotes};
+    _selectedMode = _editableModeFor(widget.previewMode);
+    _noteController = TextEditingController(text: _noteFor(_selectedMode));
   }
 
   @override
@@ -1354,7 +1395,7 @@ class _WhatsAppMessageDetailPageState
   @override
   Widget build(BuildContext context) {
     final preview = SosAlertMessageComposer.compose(
-      mode: widget.previewMode,
+      mode: _selectedMode,
       phoneNumber: widget.session.phoneNumber,
       triggeredAt: widget.previewTriggeredAt,
       triggerLocation: widget.previewLocation,
@@ -1399,6 +1440,34 @@ class _WhatsAppMessageDetailPageState
                                 ),
                           ),
                           const SizedBox(height: 6),
+                          CupertinoSlidingSegmentedControl<SosAlertMode>(
+                            groupValue: _selectedMode,
+                            children: const {
+                              SosAlertMode.manual: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Text('Manual'),
+                              ),
+                              SosAlertMode.duress: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Text('Duress'),
+                              ),
+                              SosAlertMode.medical: Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Text('Medical'),
+                              ),
+                            },
+                            onValueChanged: (mode) {
+                              if (mode == null) {
+                                return;
+                              }
+                              _saveCurrentNote();
+                              setState(() {
+                                _selectedMode = mode;
+                                _noteController.text = _noteFor(mode);
+                              });
+                            },
+                          ),
+                          const SizedBox(height: 12),
                           TextField(
                             controller: _noteController,
                             minLines: 3,
@@ -1419,8 +1488,7 @@ class _WhatsAppMessageDetailPageState
                                   onPressed: () {
                                     setState(() {
                                       _noteController.text =
-                                          SosAlertMessageComposer
-                                              .defaultCustomNote;
+                                          _SosPageState._defaultWhatsAppNotes()[_selectedMode]!;
                                     });
                                   },
                                   child: const Text('Reset Default'),
@@ -1429,9 +1497,16 @@ class _WhatsAppMessageDetailPageState
                               const SizedBox(width: 10),
                               Expanded(
                                 child: FilledButton.icon(
-                                  onPressed: () => Navigator.of(
-                                    context,
-                                  ).pop(_noteController.text.trim()),
+                                  onPressed: () {
+                                    _saveCurrentNote();
+                                    Navigator.of(context).pop(
+                                      _WhatsAppNoteUpdate(
+                                        mode: _selectedMode,
+                                        note:
+                                            _notes[_selectedMode]?.trim() ?? '',
+                                      ),
+                                    );
+                                  },
                                   icon: const Icon(Icons.check_rounded),
                                   label: const Text('Use Message'),
                                 ),
@@ -1479,6 +1554,23 @@ class _WhatsAppMessageDetailPageState
         ),
       ),
     );
+  }
+
+  SosAlertMode _editableModeFor(SosAlertMode mode) {
+    if (mode == SosAlertMode.duress ||
+        mode == SosAlertMode.medical ||
+        mode == SosAlertMode.manual) {
+      return mode;
+    }
+    return SosAlertMode.manual;
+  }
+
+  String _noteFor(SosAlertMode mode) {
+    return _notes[mode] ?? SosAlertMessageComposer.defaultCustomNote;
+  }
+
+  void _saveCurrentNote() {
+    _notes = {..._notes, _selectedMode: _noteController.text.trim()};
   }
 }
 
@@ -1652,8 +1744,81 @@ class _ReadinessRow extends StatelessWidget {
   }
 }
 
-class _SosTestSettingsPage extends StatelessWidget {
+class _SosTestSettingsPage extends StatefulWidget {
   const _SosTestSettingsPage();
+
+  @override
+  State<_SosTestSettingsPage> createState() => _SosTestSettingsPageState();
+}
+
+class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
+  final SosDeviceAlertService _deviceAlertService =
+      const SosDeviceAlertService();
+  StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
+  StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
+  Timer? _testStopTimer;
+  bool _isFlashlightActive = false;
+  bool _isEmergencySirenActive = false;
+  bool _isMedicalSirenActive = false;
+  String _accelerometerLabel = 'Waiting for motion sensor...';
+  String _gyroscopeLabel = 'Waiting for gyro sensor...';
+
+  @override
+  void initState() {
+    super.initState();
+    _accelerometerSubscription =
+        accelerometerEventStream(
+          samplingPeriod: const Duration(milliseconds: 200),
+        ).listen(
+          (event) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _accelerometerLabel =
+                  'x ${event.x.toStringAsFixed(2)}, y ${event.y.toStringAsFixed(2)}, z ${event.z.toStringAsFixed(2)} m/s2';
+            });
+          },
+          onError: (_) {
+            if (mounted) {
+              setState(() {
+                _accelerometerLabel = 'Accelerometer unavailable.';
+              });
+            }
+          },
+        );
+    _gyroscopeSubscription =
+        gyroscopeEventStream(
+          samplingPeriod: const Duration(milliseconds: 200),
+        ).listen(
+          (event) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _gyroscopeLabel =
+                  'x ${event.x.toStringAsFixed(2)}, y ${event.y.toStringAsFixed(2)}, z ${event.z.toStringAsFixed(2)} rad/s';
+            });
+          },
+          onError: (_) {
+            if (mounted) {
+              setState(() {
+                _gyroscopeLabel = 'Gyroscope unavailable.';
+              });
+            }
+          },
+        );
+  }
+
+  @override
+  void dispose() {
+    _testStopTimer?.cancel();
+    unawaited(_accelerometerSubscription?.cancel());
+    unawaited(_gyroscopeSubscription?.cancel());
+    unawaited(_deviceAlertService.stopFlashlightPattern());
+    unawaited(_deviceAlertService.stopManualSosPattern());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1670,7 +1835,7 @@ class _SosTestSettingsPage extends StatelessWidget {
                 children: [
                   _SosDetailHeader(
                     title: 'Test Settings',
-                    subtitle: 'Dry-run SOS flows without notifying anyone',
+                    subtitle: 'Run device, message, and sensor checks',
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
@@ -1678,46 +1843,40 @@ class _SosTestSettingsPage extends StatelessWidget {
                     child: Column(
                       children: [
                         _SosTestRow(
-                          icon: Icons.sos_rounded,
-                          title: 'Manual SOS test',
+                          icon: Icons.chat_bubble_rounded,
+                          title: 'WhatsApp test message',
                           subtitle:
-                              'Preview countdown, alarm copy, and map link.',
-                          onTap: () => _showTestResult(
-                            context,
-                            'Manual SOS dry run completed.',
-                          ),
+                              'Open a TEST alert payload in the share sheet.',
+                          onTap: () => unawaited(_sendWhatsAppTestMessage()),
                         ),
                         const _HorizontalSeparator(),
                         _SosTestRow(
-                          icon: Icons.shield_outlined,
-                          title: 'Duress SOS test',
-                          subtitle:
-                              'Confirm the hidden shield long-press path.',
-                          onTap: () => _showTestResult(
-                            context,
-                            'Duress SOS dry run completed silently.',
-                          ),
+                          icon: Icons.flash_on_rounded,
+                          title: 'SOS flashlight pattern',
+                          subtitle: _isFlashlightActive
+                              ? 'Tap to stop the active SOS flash pattern.'
+                              : 'Short-short-short, long-long-long, short-short-short.',
+                          onTap: () => unawaited(_toggleFlashlightTest()),
+                        ),
+                        const _HorizontalSeparator(),
+                        _SosTestRow(
+                          icon: Icons.sos_rounded,
+                          title: 'Emergency siren test',
+                          subtitle: _isEmergencySirenActive
+                              ? 'Tap to stop the emergency siren.'
+                              : 'Play the emergency alarm and flashlight pattern.',
+                          onTap: () =>
+                              unawaited(_toggleSirenTest(SosAlertMode.manual)),
                         ),
                         const _HorizontalSeparator(),
                         _SosTestRow(
                           icon: Icons.health_and_safety_rounded,
-                          title: 'Fall and stillness SOS',
-                          subtitle:
-                              'Simulate fall detection and no-movement timer.',
-                          onTap: () => _showTestResult(
-                            context,
-                            'Fall and stillness simulation passed.',
-                          ),
-                        ),
-                        const _HorizontalSeparator(),
-                        _SosTestRow(
-                          icon: Icons.chat_bubble_rounded,
-                          title: 'WhatsApp notification',
-                          subtitle: 'Preview a dummy WhatsApp alert payload.',
-                          onTap: () => _showTestResult(
-                            context,
-                            'WhatsApp dummy notification prepared.',
-                          ),
+                          title: 'Medical siren test',
+                          subtitle: _isMedicalSirenActive
+                              ? 'Tap to stop the medical siren.'
+                              : 'Play the medical alarm and flashlight pattern.',
+                          onTap: () =>
+                              unawaited(_toggleSirenTest(SosAlertMode.medical)),
                         ),
                       ],
                     ),
@@ -1726,23 +1885,21 @@ class _SosTestSettingsPage extends StatelessWidget {
                   _InsetGroup(
                     child: Padding(
                       padding: const EdgeInsets.all(14),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const _Glyph(
-                            icon: Icons.info_outline_rounded,
-                            color: _SosColors.orange,
+                          _FlashPatternPreview(active: _isFlashlightActive),
+                          const SizedBox(height: 14),
+                          _SensorReadout(
+                            icon: Icons.sensors_rounded,
+                            title: 'Accelerometer',
+                            value: _accelerometerLabel,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'These controls are UI-only dry runs. They do not call emergency contacts, WhatsApp, Firebase, alarm, or flashlight services.',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: _SosColors.secondaryText,
-                                    letterSpacing: 0,
-                                  ),
-                            ),
+                          const _HorizontalSeparator(),
+                          _SensorReadout(
+                            icon: Icons.threesixty_rounded,
+                            title: 'Gyroscope',
+                            value: _gyroscopeLabel,
                           ),
                         ],
                       ),
@@ -1757,12 +1914,235 @@ class _SosTestSettingsPage extends StatelessWidget {
     );
   }
 
-  void _showTestResult(BuildContext context, String message) {
+  Future<void> _sendWhatsAppTestMessage() async {
+    final text = SosAlertMessageComposer.compose(
+      mode: SosAlertMode.manual,
+      phoneNumber: 'TEST',
+      triggeredAt: DateTime.now().toUtc(),
+      triggerLocation: null,
+      customNote:
+          'This is a HikerCircle WhatsApp TEST message. No emergency has been triggered.',
+    );
+    try {
+      await _deviceAlertService.shareText(
+        subject: 'HikerCircle WhatsApp test',
+        text: text,
+      );
+      _showTestResult('WhatsApp test payload opened in the share sheet.');
+    } catch (_) {
+      _showTestResult('Share sheet is unavailable on this platform.');
+    }
+  }
+
+  Future<void> _toggleFlashlightTest() async {
+    if (_isFlashlightActive) {
+      await _deviceAlertService.stopFlashlightPattern();
+      if (mounted) {
+        setState(() {
+          _isFlashlightActive = false;
+        });
+      }
+      return;
+    }
+
+    await _stopAllTests();
+    await _deviceAlertService.startFlashlightPattern();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isFlashlightActive = true;
+    });
+    _scheduleAutoStop();
+    _showTestResult('SOS flashlight pattern started.');
+  }
+
+  Future<void> _toggleSirenTest(SosAlertMode mode) async {
+    final isActive = mode == SosAlertMode.medical
+        ? _isMedicalSirenActive
+        : _isEmergencySirenActive;
+    if (isActive) {
+      await _stopAllTests();
+      return;
+    }
+
+    await _stopAllTests();
+    await _deviceAlertService.startSosPatternForMode(mode);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isEmergencySirenActive = mode != SosAlertMode.medical;
+      _isMedicalSirenActive = mode == SosAlertMode.medical;
+    });
+    _scheduleAutoStop();
+    _showTestResult('${mode.label} siren test started.');
+  }
+
+  Future<void> _stopAllTests() async {
+    _testStopTimer?.cancel();
+    try {
+      await _deviceAlertService.stopFlashlightPattern();
+      await _deviceAlertService.stopManualSosPattern();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFlashlightActive = false;
+          _isEmergencySirenActive = false;
+          _isMedicalSirenActive = false;
+        });
+      }
+    }
+  }
+
+  void _scheduleAutoStop() {
+    _testStopTimer?.cancel();
+    _testStopTimer = Timer(const Duration(seconds: 8), () {
+      unawaited(_stopAllTests());
+    });
+  }
+
+  void _showTestResult(String message) {
+    if (!mounted) {
+      return;
+    }
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
+  }
+}
+
+class _FlashPatternPreview extends StatefulWidget {
+  const _FlashPatternPreview({required this.active});
+
+  final bool active;
+
+  @override
+  State<_FlashPatternPreview> createState() => _FlashPatternPreviewState();
+}
+
+class _FlashPatternPreviewState extends State<_FlashPatternPreview> {
+  Timer? _timer;
+  bool _isOn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FlashPatternPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active != widget.active) {
+      _syncTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _syncTimer() {
+    _timer?.cancel();
+    if (!widget.active) {
+      setState(() {
+        _isOn = false;
+      });
+      return;
+    }
+
+    _timer = Timer.periodic(const Duration(milliseconds: 260), (_) {
+      if (mounted) {
+        setState(() {
+          _isOn = !_isOn;
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 140),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _isOn ? _SosColors.destructiveSoft : _SosColors.greenSoft,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            _isOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+            color: _isOn ? _SosColors.destructive : _SosColors.green,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              widget.active
+                  ? 'SOS flash meaning: 3 short, 3 long, 3 short. Auto-stops after 8 seconds.'
+                  : 'Flashlight preview is idle.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _SosColors.text,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SensorReadout extends StatelessWidget {
+  const _SensorReadout({
+    required this.icon,
+    required this.title,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      child: Row(
+        children: [
+          _Glyph(icon: icon, color: _SosColors.green),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: _SosColors.text,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _SosColors.secondaryText,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

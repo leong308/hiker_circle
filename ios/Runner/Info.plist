@@ -37,6 +37,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>HikerCircle uses the camera for buddy QR scanning and the flashlight for manual SOS alerts.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>HikerCircle uses contacts only when you choose SOS emergency contacts from your phone address book.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>HikerCircle uses your location for trail context, nearby safety updates, and SOS location sharing while you use the app.</string>
 	<key>NSMotionUsageDescription</key>

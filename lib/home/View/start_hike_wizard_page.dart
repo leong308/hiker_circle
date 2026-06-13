@@ -509,6 +509,11 @@ class _SafetySettingsStep extends StatelessWidget {
       title: 'Safety Settings',
       subtitle: 'Choose who receives updates and which monitors are active.',
       children: [
+        _SafetyProfileSwitch(
+          value: _profileForDraft(draft),
+          onChanged: (profile) => onChanged(_draftForProfile(draft, profile)),
+        ),
+        const SizedBox(height: 12),
         _ContactsPreview(names: draft.emergencyContactNames),
         const SizedBox(height: 12),
         _SwitchRow(
@@ -601,6 +606,119 @@ class _SafetySettingsStep extends StatelessWidget {
           onChanged: (value) => onChanged(draft.copyWith(duressEnabled: value)),
         ),
       ],
+    );
+  }
+
+  _SafetyProfile _profileForDraft(HikeSessionDraft draft) {
+    if (draft.fallDetectionEnabled &&
+        draft.pathDeviationEnabled &&
+        draft.offlinePhysicalAlertEnabled &&
+        draft.duressEnabled &&
+        draft.shareLiveLocation) {
+      return _SafetyProfile.maximum;
+    }
+    if (!draft.fallDetectionEnabled &&
+        !draft.offlinePhysicalAlertEnabled &&
+        !draft.pathDeviationEnabled) {
+      return _SafetyProfile.light;
+    }
+    return _SafetyProfile.balanced;
+  }
+
+  HikeSessionDraft _draftForProfile(
+    HikeSessionDraft draft,
+    _SafetyProfile profile,
+  ) {
+    switch (profile) {
+      case _SafetyProfile.light:
+        return draft.copyWith(
+          shareLiveLocation: true,
+          fallDetectionEnabled: false,
+          pathDeviationEnabled: false,
+          offlinePhysicalAlertEnabled: false,
+          duressEnabled: true,
+        );
+      case _SafetyProfile.balanced:
+        return draft.copyWith(
+          shareLiveLocation: true,
+          fallDetectionEnabled: true,
+          pathDeviationEnabled: true,
+          offlinePhysicalAlertEnabled: true,
+          duressEnabled: true,
+        );
+      case _SafetyProfile.maximum:
+        return draft.copyWith(
+          shareLiveLocation: true,
+          fallDetectionEnabled: true,
+          pathDeviationEnabled: true,
+          offlinePhysicalAlertEnabled: true,
+          duressEnabled: true,
+          fallDetectionSettings: const FallDetectionSettings(
+            sensorSensitivity: 8,
+            stillnessDuration: Duration(seconds: 30),
+          ),
+        );
+    }
+  }
+}
+
+enum _SafetyProfile {
+  light,
+  balanced,
+  maximum;
+
+  String get label {
+    switch (this) {
+      case _SafetyProfile.light:
+        return 'Light';
+      case _SafetyProfile.balanced:
+        return 'Balanced';
+      case _SafetyProfile.maximum:
+        return 'Maximum';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case _SafetyProfile.light:
+        return Icons.battery_saver_rounded;
+      case _SafetyProfile.balanced:
+        return Icons.verified_user_rounded;
+      case _SafetyProfile.maximum:
+        return Icons.health_and_safety_rounded;
+    }
+  }
+}
+
+class _SafetyProfileSwitch extends StatelessWidget {
+  const _SafetyProfileSwitch({required this.value, required this.onChanged});
+
+  final _SafetyProfile value;
+  final ValueChanged<_SafetyProfile> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: const InputDecoration(
+        labelText: 'Safety Profile',
+        prefixIcon: Icon(Icons.tune_rounded),
+      ),
+      child: Row(
+        children: [
+          for (final profile in _SafetyProfile.values) ...[
+            Expanded(
+              child: _IconSegment<_SafetyProfile>(
+                value: profile,
+                groupValue: value,
+                label: profile.label,
+                icon: profile.icon,
+                onChanged: onChanged,
+              ),
+            ),
+            if (profile != _SafetyProfile.values.last) const SizedBox(width: 6),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -985,19 +1103,111 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: SwitchListTile(
-        value: value,
-        onChanged: onChanged,
-        activeThumbColor: _WizardColors.green,
-        contentPadding: EdgeInsets.zero,
-        title: Text(
-          label,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            color: _WizardColors.text,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0,
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: _WizardColors.text,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 138,
+            child: Row(
+              children: [
+                Expanded(
+                  child: _IconSegment<bool>(
+                    value: false,
+                    groupValue: value,
+                    label: 'Off',
+                    icon: Icons.close_rounded,
+                    onChanged: onChanged,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _IconSegment<bool>(
+                    value: true,
+                    groupValue: value,
+                    label: 'On',
+                    icon: Icons.check_rounded,
+                    onChanged: onChanged,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IconSegment<T> extends StatelessWidget {
+  const _IconSegment({
+    required this.value,
+    required this.groupValue,
+    required this.label,
+    required this.icon,
+    required this.onChanged,
+  });
+
+  final T value;
+  final T groupValue;
+  final String label;
+  final IconData icon;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = value == groupValue;
+
+    return Tooltip(
+      message: label,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => onChanged(value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 170),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+          decoration: BoxDecoration(
+            color: selected
+                ? _WizardColors.green
+                : _WizardColors.green.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? _WizardColors.green : _WizardColors.separator,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: selected ? Colors.white : _WizardColors.green,
+              ),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: selected ? Colors.white : _WizardColors.green,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

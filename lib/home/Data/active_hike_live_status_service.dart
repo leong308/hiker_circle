@@ -44,6 +44,8 @@ class ActiveHikeLiveStatusService {
       'manualPins': activeHike.manualPins,
       'queuedUpdates': activeHike.queuedUpdates,
       'batteryLevel': activeHike.batteryLevel,
+      'distanceKm': activeHike.recordedDistanceKm,
+      'routePointCount': activeHike.routePointCount,
     };
   }
 }

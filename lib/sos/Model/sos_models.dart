@@ -51,6 +51,57 @@ class EmergencyContact {
   }
 }
 
+class EmergencyContactCandidate {
+  const EmergencyContactCandidate({
+    required this.fullName,
+    required this.phoneNumbers,
+    this.firstName,
+    this.lastName,
+  });
+
+  factory EmergencyContactCandidate.fromPlatform(Map<Object?, Object?> data) {
+    final phones = data['phoneNumbers'];
+    return EmergencyContactCandidate(
+      firstName: _stringFrom(data['firstName']),
+      lastName: _stringFrom(data['lastName']),
+      fullName: _stringFrom(data['fullName']) ?? '',
+      phoneNumbers: phones is Iterable
+          ? phones
+                .whereType<String>()
+                .where((phone) => phone.trim().isNotEmpty)
+                .toList()
+          : const [],
+    );
+  }
+
+  final String? firstName;
+  final String? lastName;
+  final String fullName;
+  final List<String> phoneNumbers;
+
+  String get displayName {
+    final combined = [
+      firstName?.trim(),
+      lastName?.trim(),
+    ].whereType<String>().where((part) => part.isNotEmpty).join(' ');
+    if (combined.isNotEmpty) {
+      return combined;
+    }
+    return fullName.trim();
+  }
+
+  String get primaryPhoneNumber {
+    return phoneNumbers.isEmpty ? '' : phoneNumbers.first;
+  }
+
+  static String? _stringFrom(Object? value) {
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+    return null;
+  }
+}
+
 enum SosAlertMode {
   manual,
   medical,
@@ -136,6 +187,17 @@ class SosContactDispatch {
     this.errorMessage,
   });
 
+  factory SosContactDispatch.fromFirestore(Map<String, dynamic> data) {
+    return SosContactDispatch(
+      contactName: _stringFrom(data['contactName']),
+      phoneNumber: _stringFrom(data['phoneNumber']),
+      wasSent: data['wasSent'] == true,
+      errorMessage: data['errorMessage'] is String
+          ? data['errorMessage'] as String
+          : null,
+    );
+  }
+
   final String contactName;
   final String phoneNumber;
   final bool wasSent;
@@ -148,6 +210,13 @@ class SosContactDispatch {
       'wasSent': wasSent,
       if (errorMessage case final errorMessage?) 'errorMessage': errorMessage,
     };
+  }
+
+  static String _stringFrom(Object? value) {
+    if (value is String) {
+      return value;
+    }
+    return '';
   }
 }
 
@@ -178,6 +247,22 @@ class SosTriggerLocation {
           : capturedAtLocal is String
           ? DateTime.tryParse(capturedAtLocal)
           : null,
+    );
+  }
+
+  factory SosTriggerLocation.fromFirestore(Map<String, dynamic> data) {
+    final capturedAt = data['capturedAtLocal'];
+    return SosTriggerLocation(
+      latitude: data['latitude'] is num
+          ? (data['latitude'] as num).toDouble()
+          : 0,
+      longitude: data['longitude'] is num
+          ? (data['longitude'] as num).toDouble()
+          : 0,
+      accuracyMeters: data['accuracyMeters'] is num
+          ? (data['accuracyMeters'] as num).toDouble()
+          : null,
+      capturedAt: capturedAt is String ? DateTime.tryParse(capturedAt) : null,
     );
   }
 
@@ -416,6 +501,39 @@ class SosAlert {
     this.triggerLocation,
   });
 
+  factory SosAlert.fromFirestore(Map<String, dynamic> data) {
+    final dispatches = data['dispatches'];
+    final triggerLocation = data['triggerLocation'];
+    return SosAlert(
+      id: _stringFrom(data['id']),
+      mode: _modeFrom(data['mode']),
+      status: _statusFrom(data['status']),
+      triggeredAt:
+          DateTime.tryParse(_stringFrom(data['triggeredAtLocal'])) ??
+          DateTime.now().toUtc(),
+      triggeredByPhoneNumber: _stringFrom(data['triggeredByPhoneNumber']),
+      contactCount: _intFrom(data['contactCount']),
+      sentCount: _intFrom(data['sentCount']),
+      failedCount: _intFrom(data['failedCount']),
+      dispatches: dispatches is Iterable
+          ? dispatches
+                .whereType<Map>()
+                .map(
+                  (dispatch) => SosContactDispatch.fromFirestore(
+                    Map<String, dynamic>.from(dispatch),
+                  ),
+                )
+                .toList()
+          : const [],
+      message: _stringFrom(data['message']),
+      triggerLocation: triggerLocation is Map
+          ? SosTriggerLocation.fromFirestore(
+              Map<String, dynamic>.from(triggerLocation),
+            )
+          : null,
+    );
+  }
+
   final String id;
   final SosAlertMode mode;
   final SosAlertStatus status;
@@ -445,6 +563,42 @@ class SosAlert {
       if (triggerLocation case final triggerLocation?)
         'triggerLocation': triggerLocation.toFirestore(),
     };
+  }
+
+  static SosAlertMode _modeFrom(Object? value) {
+    if (value is String) {
+      for (final mode in SosAlertMode.values) {
+        if (mode.firestoreValue == value) {
+          return mode;
+        }
+      }
+    }
+    return SosAlertMode.manual;
+  }
+
+  static SosAlertStatus _statusFrom(Object? value) {
+    if (value is String) {
+      for (final status in SosAlertStatus.values) {
+        if (status.firestoreValue == value) {
+          return status;
+        }
+      }
+    }
+    return SosAlertStatus.failed;
+  }
+
+  static String _stringFrom(Object? value) {
+    if (value is String) {
+      return value;
+    }
+    return '';
+  }
+
+  static int _intFrom(Object? value) {
+    if (value is num) {
+      return value.toInt();
+    }
+    return 0;
   }
 }
 

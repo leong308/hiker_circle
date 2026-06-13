@@ -2,6 +2,7 @@ import Flutter
 import UIKit
 import AVFoundation
 import CoreLocation
+import Contacts
 #if canImport(ActivityKit)
 import ActivityKit
 #endif
@@ -141,6 +142,16 @@ import ActivityKit
       case "stopManualSosPattern":
         self.stopManualSosPattern()
         result(nil)
+      case "startFlashlightPattern":
+        self.startTorchPattern()
+        result(nil)
+      case "stopFlashlightPattern":
+        self.stopTorchPattern()
+        result(nil)
+      case "getBatteryLevel":
+        result(self.currentBatteryLevel())
+      case "getDeviceContacts":
+        self.getDeviceContacts(result)
       case "beginOutputVolumeMonitoring":
         do {
           try self.beginOutputVolumeMonitoring()
@@ -337,6 +348,75 @@ import ActivityKit
   private func stopManualSosPattern() {
     stopAlarm()
     stopTorchPattern()
+  }
+
+  private func currentBatteryLevel() -> Int? {
+    UIDevice.current.isBatteryMonitoringEnabled = true
+    let level = UIDevice.current.batteryLevel
+    guard level >= 0 else {
+      return nil
+    }
+    return Int((level * 100).rounded())
+  }
+
+  private func getDeviceContacts(_ result: @escaping FlutterResult) {
+    let store = CNContactStore()
+    switch CNContactStore.authorizationStatus(for: .contacts) {
+    case .authorized, .limited:
+      result(fetchDeviceContacts(store: store))
+    case .notDetermined:
+      store.requestAccess(for: .contacts) { [weak self] granted, _ in
+        DispatchQueue.main.async {
+          guard granted, let self else {
+            result([])
+            return
+          }
+          result(self.fetchDeviceContacts(store: store))
+        }
+      }
+    case .denied, .restricted:
+      result([])
+    @unknown default:
+      result([])
+    }
+  }
+
+  private func fetchDeviceContacts(store: CNContactStore) -> [[String: Any]] {
+    let keys: [CNKeyDescriptor] = [
+      CNContactGivenNameKey as CNKeyDescriptor,
+      CNContactFamilyNameKey as CNKeyDescriptor,
+      CNContactPhoneNumbersKey as CNKeyDescriptor,
+      CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
+    ]
+    let request = CNContactFetchRequest(keysToFetch: keys)
+    request.sortOrder = .givenName
+    var contacts: [[String: Any]] = []
+
+    do {
+      try store.enumerateContacts(with: request) { contact, _ in
+        let phoneNumbers = contact.phoneNumbers.map {
+          $0.value.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        guard !phoneNumbers.isEmpty else {
+          return
+        }
+
+        let fullName = CNContactFormatter.string(from: contact, style: .fullName)
+          ?? [contact.givenName, contact.familyName]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        contacts.append([
+          "firstName": contact.givenName,
+          "lastName": contact.familyName,
+          "fullName": fullName,
+          "phoneNumbers": phoneNumbers,
+        ])
+      }
+    } catch {
+      return []
+    }
+
+    return contacts
   }
 
   private func getOutputVolumeStatus(
@@ -669,6 +749,8 @@ private struct ManualHikeLiveStatus {
   let manualPins: Int
   let queuedUpdates: Int
   let batteryLevel: Int
+  let distanceKm: Double
+  let routePointCount: Int
 
   init?(arguments: Any?) {
     guard let data = arguments as? [String: Any],
@@ -691,6 +773,8 @@ private struct ManualHikeLiveStatus {
     self.manualPins = Self.intValue(data["manualPins"])
     self.queuedUpdates = Self.intValue(data["queuedUpdates"])
     self.batteryLevel = min(100, max(0, Self.intValue(data["batteryLevel"])))
+    self.distanceKm = max(0, Self.doubleValue(data["distanceKm"]) ?? 0)
+    self.routePointCount = Self.intValue(data["routePointCount"])
   }
 
   private static func intValue(_ value: Any?) -> Int {
@@ -730,7 +814,9 @@ private struct ManualHikeLiveStatus {
       checkIns: checkIns,
       manualPins: manualPins,
       queuedUpdates: queuedUpdates,
-      batteryLevel: batteryLevel
+      batteryLevel: batteryLevel,
+      distanceKm: distanceKm,
+      routePointCount: routePointCount
     )
   }
   #endif
@@ -747,6 +833,8 @@ struct ManualHikeAttributes: ActivityAttributes {
     var manualPins: Int
     var queuedUpdates: Int
     var batteryLevel: Int
+    var distanceKm: Double
+    var routePointCount: Int
   }
 
   var sessionId: String

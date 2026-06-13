@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../app/Model/app_session.dart';
+import '../../authentication/Data/phone_number_formatter.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Model/sos_models.dart';
 
@@ -14,7 +15,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
        _repository = repository,
        _contacts = List.of(initialContacts);
 
-  static const int maxContacts = 5;
+  static const int maxContacts = 3;
 
   final AppSession _session;
   final EmergencyContactsRepository _repository;
@@ -37,10 +38,22 @@ class EmergencyContactsViewModel extends ChangeNotifier {
       return false;
     }
 
+    final normalizedPhoneNumber = _normalizedPhoneNumber(phoneNumber);
+    if (normalizedPhoneNumber == null) {
+      return false;
+    }
+    if (_contacts.any(
+      (contact) => contact.phoneNumber == normalizedPhoneNumber,
+    )) {
+      _saveErrorMessage = 'This emergency contact is already saved.';
+      notifyListeners();
+      return false;
+    }
+
     _contacts.add(
       EmergencyContact(
         name: name.trim(),
-        phoneNumber: phoneNumber.trim(),
+        phoneNumber: normalizedPhoneNumber,
         relationship: relationship.trim(),
       ),
     );
@@ -59,9 +72,14 @@ class EmergencyContactsViewModel extends ChangeNotifier {
       return;
     }
 
+    final normalizedPhoneNumber = _normalizedPhoneNumber(phoneNumber);
+    if (normalizedPhoneNumber == null) {
+      return;
+    }
+
     _contacts[index] = EmergencyContact(
       name: name.trim(),
-      phoneNumber: phoneNumber.trim(),
+      phoneNumber: normalizedPhoneNumber,
       relationship: relationship.trim(),
     );
     notifyListeners();
@@ -97,5 +115,16 @@ class EmergencyContactsViewModel extends ChangeNotifier {
       _isSaving = false;
       notifyListeners();
     }
+  }
+
+  String? _normalizedPhoneNumber(String phoneNumber) {
+    if (!PhoneNumberFormatter.isValid(phoneNumber)) {
+      _saveErrorMessage =
+          'Enter a phone number with country code, for example +60123456789.';
+      notifyListeners();
+      return null;
+    }
+    _saveErrorMessage = null;
+    return PhoneNumberFormatter.normalize(phoneNumber);
   }
 }

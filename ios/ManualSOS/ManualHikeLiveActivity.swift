@@ -18,6 +18,8 @@ struct ManualHikeAttributes: ActivityAttributes {
     var manualPins: Int
     var queuedUpdates: Int
     var batteryLevel: Int
+    var distanceKm: Double
+    var routePointCount: Int
   }
 
   var sessionId: String
@@ -46,11 +48,11 @@ struct ManualHikeLiveActivity: Widget {
 
         DynamicIslandExpandedRegion(.trailing) {
           VStack(alignment: .trailing, spacing: 2) {
-            Text("Check-ins")
+            Text("Distance")
               .font(.caption2)
               .foregroundStyle(.white.opacity(0.75))
 
-            Text("\(context.state.checkIns)")
+            Text(String(format: "%.2f km", context.state.distanceKm))
               .font(.title3.bold())
               .foregroundStyle(.white)
           }
@@ -120,10 +122,15 @@ private struct HikeLiveActivityLockScreenView: View {
       }
 
       HStack(spacing: 8) {
+        metricTile(label: "Distance", value: String(format: "%.2f km", context.state.distanceKm))
         metricTile(label: "Check-ins", value: "\(context.state.checkIns)")
         metricTile(label: "Pins", value: "\(context.state.manualPins)")
-        metricTile(label: "Queued", value: "\(context.state.queuedUpdates)")
         metricTile(label: "Battery", value: "\(context.state.batteryLevel)%")
+      }
+      HStack(spacing: 8) {
+        metricTile(label: "GPS points", value: "\(context.state.routePointCount)")
+        metricTile(label: "Queued", value: "\(context.state.queuedUpdates)")
+        metricTile(label: "ETA", value: etaText(context.state.expectedReturnAt))
       }
 
       HStack(spacing: 8) {
@@ -157,6 +164,14 @@ private struct HikeLiveActivityLockScreenView: View {
     .padding(.vertical, 8)
     .background(Color.black.opacity(0.22))
     .clipShape(RoundedRectangle(cornerRadius: 10))
+  }
+
+  private func etaText(_ date: Date?) -> String {
+    guard let date else {
+      return "--"
+    }
+
+    return date.formatted(date: .omitted, time: .shortened)
   }
 }
 

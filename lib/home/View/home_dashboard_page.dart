@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -6,7 +7,6 @@ import 'package:flutter/material.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 import '../ModelView/fall_stillness_monitor.dart';
-import 'active_hike_map_page.dart';
 import 'first_aid_guide_page.dart';
 import 'gear_checklist_page.dart';
 
@@ -42,7 +42,7 @@ class HomeDashboardPage extends StatelessWidget {
   final ValueChanged<ActiveHikeSession> onActiveHikeChanged;
   final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
   onCheckInRequested;
-  final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
+  final Future<PinLocationResult> Function(ActiveHikeSession activeHike)
   onPinLocationRequested;
   final VoidCallback onEndHike;
   final FallStillnessMonitorSnapshot fallStillnessSnapshot;
@@ -78,7 +78,6 @@ class HomeDashboardPage extends StatelessWidget {
                       activeHike: active,
                       isVisible: isVisible,
                       fallStillnessSnapshot: fallStillnessSnapshot,
-                      onOpenFullMap: () => _openFullMap(context, active),
                       onCheckIn: () => unawaited(_checkIn(context, active)),
                       onPinLocation: () =>
                           unawaited(_pinLocation(context, active)),
@@ -133,14 +132,6 @@ class HomeDashboardPage extends StatelessWidget {
     }
   }
 
-  void _openFullMap(BuildContext context, ActiveHikeSession active) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => ActiveHikeMapPage(activeHike: active),
-      ),
-    );
-  }
-
   Future<void> _checkIn(BuildContext context, ActiveHikeSession active) async {
     final updatedHike = await onCheckInRequested(active);
     onActiveHikeChanged(updatedHike);
@@ -161,18 +152,21 @@ class HomeDashboardPage extends StatelessWidget {
     BuildContext context,
     ActiveHikeSession active,
   ) async {
-    final updatedHike = await onPinLocationRequested(active);
-    onActiveHikeChanged(updatedHike);
+    final result = await onPinLocationRequested(active);
+    onActiveHikeChanged(result.hike);
     if (!context.mounted) {
       return;
     }
+    final message = switch (result.status) {
+      PinLocationStatus.pinned => 'Current GPS location pinned on the map.',
+      PinLocationStatus.duplicate => 'This location is already pinned before.',
+      PinLocationStatus.unavailable =>
+        'GPS is unavailable, so no pin was added.',
+    };
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('Current location pinned locally.'),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
   }
 
@@ -671,7 +665,7 @@ class _SafetyToolsGrid extends StatelessWidget {
         _ToolTile(
           icon: Icons.cell_tower_rounded,
           title: 'Signal Beacon',
-          subtitle: 'Local fallback',
+          subtitle: 'Offline signal',
           onTap: onOpenSignalBeacon,
         ),
       ],
@@ -1276,7 +1270,6 @@ class _ActiveHikeDashboard extends StatelessWidget {
     required this.activeHike,
     required this.isVisible,
     required this.fallStillnessSnapshot,
-    required this.onOpenFullMap,
     required this.onCheckIn,
     required this.onPinLocation,
     required this.onEndHike,
@@ -1286,7 +1279,6 @@ class _ActiveHikeDashboard extends StatelessWidget {
   final ActiveHikeSession activeHike;
   final bool isVisible;
   final FallStillnessMonitorSnapshot fallStillnessSnapshot;
-  final VoidCallback onOpenFullMap;
   final VoidCallback onCheckIn;
   final VoidCallback onPinLocation;
   final VoidCallback onEndHike;
@@ -1304,6 +1296,12 @@ class _ActiveHikeDashboard extends StatelessWidget {
           isVisible: isVisible,
           expectedReturn: activeHike.draft.expectedReturnTime,
           batteryLevel: activeHike.batteryLevel,
+        ),
+        const SizedBox(height: 14),
+        OutlinedButton.icon(
+          onPressed: onEndHike,
+          icon: const Icon(Icons.stop_circle_rounded),
+          label: const Text('End Hike Session'),
         ),
         const SizedBox(height: 14),
         _ConnectionStatusCard(queuedUpdates: activeHike.queuedUpdates),
@@ -1345,18 +1343,6 @@ class _ActiveHikeDashboard extends StatelessWidget {
         _SectionTitle(label: 'Team Snapshot'),
         const SizedBox(height: 8),
         const _TeamSnapshotCard(),
-        const SizedBox(height: 14),
-        FilledButton.icon(
-          onPressed: onOpenFullMap,
-          icon: const Icon(Icons.map_rounded),
-          label: const Text('Open Full Map'),
-        ),
-        const SizedBox(height: 10),
-        OutlinedButton.icon(
-          onPressed: onEndHike,
-          icon: const Icon(Icons.stop_circle_rounded),
-          label: const Text('End Hike Session'),
-        ),
       ],
     );
   }
@@ -1613,26 +1599,35 @@ class _MiniMapCard extends StatelessWidget {
                 child: CustomPaint(
                   painter: _MiniTrailPainter(
                     color: Color(activeHike.trail.coverColorValue),
-                    manualPins: activeHike.manualPins,
+                    routePoints: activeHike.routePoints,
+                    manualPins: activeHike.manualPinLocations,
+                    latestLocation: activeHike.latestLocation,
                   ),
                   child: const SizedBox.expand(),
                 ),
               ),
             ),
             const SizedBox(height: 12),
-            const Row(
+            Row(
               children: [
                 Expanded(
-                  child: _InfoLine(label: 'Altitude', value: '321 m'),
+                  child: _InfoLine(
+                    label: 'GPS Points',
+                    value: '${activeHike.routePointCount}',
+                  ),
                 ),
                 Expanded(
-                  child: _InfoLine(label: 'Compass', value: 'NE'),
+                  child: _InfoLine(
+                    label: 'Distance',
+                    value:
+                        '${activeHike.recordedDistanceKm.toStringAsFixed(2)} km',
+                  ),
                 ),
               ],
             ),
-            const _InfoLine(
-              label: 'Next Checkpoint',
-              value: 'Summit Junction, 420 m ahead',
+            _InfoLine(
+              label: 'Manual Pins',
+              value: '${activeHike.manualPinLocations.length} saved',
             ),
           ],
         ),
@@ -1871,10 +1866,17 @@ class _StatusRow extends StatelessWidget {
 }
 
 class _MiniTrailPainter extends CustomPainter {
-  const _MiniTrailPainter({required this.color, required this.manualPins});
+  const _MiniTrailPainter({
+    required this.color,
+    required this.routePoints,
+    required this.manualPins,
+    required this.latestLocation,
+  });
 
   final Color color;
-  final int manualPins;
+  final List<HikeCoordinate> routePoints;
+  final List<HikeManualPin> manualPins;
+  final HikeCoordinate? latestLocation;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1892,49 +1894,62 @@ class _MiniTrailPainter extends CustomPainter {
 
     canvas.drawRect(Offset.zero & size, background);
 
-    final path = Path()
-      ..moveTo(size.width * 0.18, size.height * 0.78)
-      ..cubicTo(
-        size.width * 0.28,
-        size.height * 0.58,
-        size.width * 0.42,
-        size.height * 0.66,
-        size.width * 0.52,
-        size.height * 0.44,
-      )
-      ..cubicTo(
-        size.width * 0.60,
-        size.height * 0.24,
-        size.width * 0.74,
-        size.height * 0.40,
-        size.width * 0.84,
-        size.height * 0.18,
-      );
+    final visiblePoints = <HikeCoordinate>[
+      ...routePoints,
+      for (final pin in manualPins) pin.coordinate,
+      if (latestLocation != null) latestLocation!,
+    ];
+    if (visiblePoints.length < 2) {
+      _drawEmptyGrid(canvas, size);
+      final center = Offset(size.width * 0.5, size.height * 0.5);
+      _drawMarker(canvas, center, _HomeColors.blue);
+      return;
+    }
+
+    final bounds = _CoordinateBounds.from(visiblePoints);
+    final projectedRoute = routePoints
+        .map((point) => bounds.project(point, size))
+        .toList();
+    final path = Path();
+    if (projectedRoute.isNotEmpty) {
+      path.moveTo(projectedRoute.first.dx, projectedRoute.first.dy);
+      for (final point in projectedRoute.skip(1)) {
+        path.lineTo(point.dx, point.dy);
+      }
+    }
     canvas.drawPath(path, recordedPaint);
     canvas.drawPath(path, routePaint);
 
-    _drawMarker(
-      canvas,
-      Offset(size.width * 0.44, size.height * 0.55),
-      _HomeColors.green,
-    );
-    _drawMarker(
-      canvas,
-      Offset(size.width * 0.66, size.height * 0.32),
-      _HomeColors.orange,
-    );
-    _drawMarker(
-      canvas,
-      Offset(size.width * 0.84, size.height * 0.18),
-      _HomeColors.blue,
-    );
+    if (projectedRoute.isNotEmpty) {
+      _drawMarker(canvas, projectedRoute.first, _HomeColors.green);
+    }
 
-    for (var index = 0; index < manualPins; index++) {
+    for (final pin in manualPins) {
       _drawMarker(
         canvas,
-        Offset(size.width * (0.34 + index * 0.08), size.height * 0.62),
+        bounds.project(pin.coordinate, size),
         _HomeColors.red,
       );
+    }
+
+    if (latestLocation != null) {
+      _drawMarker(
+        canvas,
+        bounds.project(latestLocation!, size),
+        _HomeColors.blue,
+      );
+    }
+  }
+
+  void _drawEmptyGrid(Canvas canvas, Size size) {
+    final gridPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.44)
+      ..strokeWidth = 1;
+    for (var index = 1; index < 4; index++) {
+      final x = size.width * index / 4;
+      final y = size.height * index / 4;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
   }
 
@@ -1950,7 +1965,65 @@ class _MiniTrailPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MiniTrailPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.manualPins != manualPins;
+    return oldDelegate.color != color ||
+        oldDelegate.routePoints != routePoints ||
+        oldDelegate.manualPins != manualPins ||
+        oldDelegate.latestLocation != latestLocation;
+  }
+}
+
+class _CoordinateBounds {
+  const _CoordinateBounds({
+    required this.minLatitude,
+    required this.maxLatitude,
+    required this.minLongitude,
+    required this.maxLongitude,
+  });
+
+  factory _CoordinateBounds.from(List<HikeCoordinate> points) {
+    var minLatitude = points.first.latitude;
+    var maxLatitude = points.first.latitude;
+    var minLongitude = points.first.longitude;
+    var maxLongitude = points.first.longitude;
+    for (final point in points.skip(1)) {
+      minLatitude = math.min(minLatitude, point.latitude);
+      maxLatitude = math.max(maxLatitude, point.latitude);
+      minLongitude = math.min(minLongitude, point.longitude);
+      maxLongitude = math.max(maxLongitude, point.longitude);
+    }
+
+    if ((maxLatitude - minLatitude).abs() < 0.0001) {
+      minLatitude -= 0.00005;
+      maxLatitude += 0.00005;
+    }
+    if ((maxLongitude - minLongitude).abs() < 0.0001) {
+      minLongitude -= 0.00005;
+      maxLongitude += 0.00005;
+    }
+
+    return _CoordinateBounds(
+      minLatitude: minLatitude,
+      maxLatitude: maxLatitude,
+      minLongitude: minLongitude,
+      maxLongitude: maxLongitude,
+    );
+  }
+
+  final double minLatitude;
+  final double maxLatitude;
+  final double minLongitude;
+  final double maxLongitude;
+
+  Offset project(HikeCoordinate coordinate, Size size) {
+    const padding = 18.0;
+    final xRatio =
+        (coordinate.longitude - minLongitude) / (maxLongitude - minLongitude);
+    final yRatio =
+        1 - (coordinate.latitude - minLatitude) / (maxLatitude - minLatitude);
+    return Offset(
+      padding + xRatio * (size.width - padding * 2),
+      padding + yRatio * (size.height - padding * 2),
+    );
   }
 }
 

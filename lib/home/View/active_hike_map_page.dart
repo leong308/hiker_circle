@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -31,7 +33,9 @@ class ActiveHikeMapPage extends StatelessWidget {
                         child: CustomPaint(
                           painter: _OfflineMapPainter(
                             color: Color(activeHike.trail.coverColorValue),
-                            manualPins: activeHike.manualPins,
+                            routePoints: activeHike.routePoints,
+                            manualPins: activeHike.manualPinLocations,
+                            latestLocation: activeHike.latestLocation,
                           ),
                           child: Padding(
                             padding: const EdgeInsets.all(16),
@@ -121,8 +125,8 @@ class _MapLegend extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             const _LegendRow(color: _MapColors.green, label: 'Recorded trail'),
-            const _LegendRow(color: _MapColors.orange, label: 'Hazard marker'),
-            const _LegendRow(color: _MapColors.blue, label: 'Next checkpoint'),
+            const _LegendRow(color: _MapColors.red, label: 'Pinned location'),
+            const _LegendRow(color: _MapColors.blue, label: 'Latest GPS'),
           ],
         ),
       ),
@@ -193,10 +197,17 @@ class _StatusCard extends StatelessWidget {
 }
 
 class _OfflineMapPainter extends CustomPainter {
-  const _OfflineMapPainter({required this.color, required this.manualPins});
+  const _OfflineMapPainter({
+    required this.color,
+    required this.routePoints,
+    required this.manualPins,
+    required this.latestLocation,
+  });
 
   final Color color;
-  final int manualPins;
+  final List<HikeCoordinate> routePoints;
+  final List<HikeManualPin> manualPins;
+  final HikeCoordinate? latestLocation;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -234,51 +245,46 @@ class _OfflineMapPainter extends CustomPainter {
       canvas.drawPath(path, contourPaint);
     }
 
-    final route = Path()
-      ..moveTo(size.width * 0.18, size.height * 0.78)
-      ..cubicTo(
-        size.width * 0.28,
-        size.height * 0.60,
-        size.width * 0.42,
-        size.height * 0.66,
-        size.width * 0.50,
-        size.height * 0.48,
-      )
-      ..cubicTo(
-        size.width * 0.60,
-        size.height * 0.26,
-        size.width * 0.72,
-        size.height * 0.40,
-        size.width * 0.82,
-        size.height * 0.20,
+    final visiblePoints = <HikeCoordinate>[
+      ...routePoints,
+      for (final pin in manualPins) pin.coordinate,
+      if (latestLocation != null) latestLocation!,
+    ];
+    if (visiblePoints.length < 2) {
+      _drawMarker(
+        canvas,
+        Offset(size.width * 0.5, size.height * 0.5),
+        _MapColors.blue,
       );
+      return;
+    }
+
+    final bounds = _CoordinateBounds.from(visiblePoints);
+    final projectedRoute = routePoints
+        .map((point) => bounds.project(point, size))
+        .toList();
+    final route = Path();
+    if (projectedRoute.isNotEmpty) {
+      route.moveTo(projectedRoute.first.dx, projectedRoute.first.dy);
+      for (final point in projectedRoute.skip(1)) {
+        route.lineTo(point.dx, point.dy);
+      }
+    }
     canvas.drawPath(route, plannedPaint);
     canvas.drawPath(route, routePaint);
 
-    _drawMarker(
-      canvas,
-      Offset(size.width * 0.18, size.height * 0.78),
-      _MapColors.green,
-    );
-    _drawMarker(
-      canvas,
-      Offset(size.width * 0.58, size.height * 0.36),
-      _MapColors.orange,
-    );
-    _drawMarker(
-      canvas,
-      Offset(size.width * 0.82, size.height * 0.20),
-      _MapColors.blue,
-    );
+    if (projectedRoute.isNotEmpty) {
+      _drawMarker(canvas, projectedRoute.first, _MapColors.green);
+    }
 
-    for (var index = 0; index < manualPins; index++) {
+    for (final pin in manualPins) {
+      _drawMarker(canvas, bounds.project(pin.coordinate, size), _MapColors.red);
+    }
+    if (latestLocation != null) {
       _drawMarker(
         canvas,
-        Offset(
-          size.width * (0.36 + index * 0.08),
-          size.height * (0.58 - index * 0.05),
-        ),
-        _MapColors.red,
+        bounds.project(latestLocation!, size),
+        _MapColors.blue,
       );
     }
   }
@@ -295,7 +301,63 @@ class _OfflineMapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _OfflineMapPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.manualPins != manualPins;
+    return oldDelegate.color != color ||
+        oldDelegate.routePoints != routePoints ||
+        oldDelegate.manualPins != manualPins ||
+        oldDelegate.latestLocation != latestLocation;
+  }
+}
+
+class _CoordinateBounds {
+  const _CoordinateBounds({
+    required this.minLatitude,
+    required this.maxLatitude,
+    required this.minLongitude,
+    required this.maxLongitude,
+  });
+
+  factory _CoordinateBounds.from(List<HikeCoordinate> points) {
+    var minLatitude = points.first.latitude;
+    var maxLatitude = points.first.latitude;
+    var minLongitude = points.first.longitude;
+    var maxLongitude = points.first.longitude;
+    for (final point in points.skip(1)) {
+      minLatitude = math.min(minLatitude, point.latitude);
+      maxLatitude = math.max(maxLatitude, point.latitude);
+      minLongitude = math.min(minLongitude, point.longitude);
+      maxLongitude = math.max(maxLongitude, point.longitude);
+    }
+    if ((maxLatitude - minLatitude).abs() < 0.0001) {
+      minLatitude -= 0.00005;
+      maxLatitude += 0.00005;
+    }
+    if ((maxLongitude - minLongitude).abs() < 0.0001) {
+      minLongitude -= 0.00005;
+      maxLongitude += 0.00005;
+    }
+    return _CoordinateBounds(
+      minLatitude: minLatitude,
+      maxLatitude: maxLatitude,
+      minLongitude: minLongitude,
+      maxLongitude: maxLongitude,
+    );
+  }
+
+  final double minLatitude;
+  final double maxLatitude;
+  final double minLongitude;
+  final double maxLongitude;
+
+  Offset project(HikeCoordinate coordinate, Size size) {
+    const padding = 24.0;
+    final xRatio =
+        (coordinate.longitude - minLongitude) / (maxLongitude - minLongitude);
+    final yRatio =
+        1 - (coordinate.latitude - minLatitude) / (maxLatitude - minLatitude);
+    return Offset(
+      padding + xRatio * (size.width - padding * 2),
+      padding + yRatio * (size.height - padding * 2),
+    );
   }
 }
 
@@ -361,7 +423,6 @@ abstract final class _MapColors {
   static const Color background = Color(0xFFF2F2F7);
   static const Color green = Color(0xFF34A853);
   static const Color blue = Color(0xFF2563EB);
-  static const Color orange = Color(0xFFF59E0B);
   static const Color red = Color(0xFFE11D48);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);

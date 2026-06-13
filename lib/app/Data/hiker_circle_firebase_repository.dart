@@ -51,6 +51,12 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('teams');
   CollectionReference<Map<String, dynamic>> get _communityPosts =>
       _resolvedFirestore.collection('communityPosts');
+  CollectionReference<Map<String, dynamic>> _communityCommentsFor(
+    String postId,
+  ) {
+    return _communityPosts.doc(postId).collection('comments');
+  }
+
   CollectionReference<Map<String, dynamic>> get _achievements =>
       _resolvedFirestore.collection('achievements');
   CollectionReference<Map<String, dynamic>> get _userAchievements =>
@@ -250,6 +256,7 @@ class HikerCircleFirebaseRepository {
   Future<void> endHikeSession({
     required AppSession session,
     required ActiveHikeSession activeHike,
+    HikeSummaryReport? summary,
   }) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
@@ -260,6 +267,14 @@ class HikerCircleFirebaseRepository {
       'status': 'completed',
       'endedAt': FieldValue.serverTimestamp(),
       'endedAtLocal': now.toIso8601String(),
+      'distanceKm': summary?.distanceKm ?? activeHike.recordedDistanceKm,
+      'durationMinutes':
+          summary?.duration.inMinutes ??
+          DateTime.now().difference(activeHike.startedAt).inMinutes,
+      'checkIns': activeHike.checkIns,
+      'manualPins': activeHike.manualPins,
+      'routePointCount': activeHike.routePointCount,
+      if (summary != null) 'summaryReport': summary.toFirestore(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
     await awardAchievement(
@@ -395,6 +410,7 @@ class HikerCircleFirebaseRepository {
   Future<void> createCompletedHikePost({
     required AppSession session,
     required ActiveHikeSession activeHike,
+    HikeSummaryReport? summary,
     String caption = 'Trail completed safely.',
   }) async {
     _throwIfFirebaseUnavailable();
@@ -411,11 +427,45 @@ class HikerCircleFirebaseRepository {
       'sessionId': activeHike.sessionId,
       'caption': caption,
       'imageUrls': <String>[],
-      'distanceKm': activeHike.trail.distanceKm,
-      'durationMinutes': DateTime.now()
-          .difference(activeHike.startedAt)
-          .inMinutes,
+      'distanceKm': summary?.distanceKm ?? activeHike.recordedDistanceKm,
+      'durationMinutes':
+          summary?.duration.inMinutes ??
+          DateTime.now().difference(activeHike.startedAt).inMinutes,
+      'checkIns': activeHike.checkIns,
+      'manualPins': activeHike.manualPins,
+      'routePointCount': activeHike.routePointCount,
+      if (summary != null) 'summaryReport': summary.toFirestore(),
       'highestAltitudeMeters': null,
+      'visibility': 'public',
+      'likeCount': 0,
+      'commentCount': 0,
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdAtLocal': now.toIso8601String(),
+    });
+  }
+
+  Future<void> createCommunityPost({
+    required AppSession session,
+    required String caption,
+    String postType = 'community_note',
+    String? trailId,
+    String? trailName,
+  }) async {
+    _throwIfFirebaseUnavailable();
+
+    final now = DateTime.now().toUtc();
+    final document = _communityPosts.doc();
+    await document.set({
+      'postId': document.id,
+      'authorId': _userIdFor(session),
+      'authorPhoneNumber': session.phoneNumber,
+      'authorName': 'You',
+      'authorHandle': _handleForPhone(session.phoneNumber),
+      'postType': postType,
+      if (trailId != null) 'trailId': trailId,
+      if (trailName != null) 'trailName': trailName,
+      'caption': caption.trim(),
+      'imageUrls': <String>[],
       'visibility': 'public',
       'likeCount': 0,
       'commentCount': 0,
@@ -434,6 +484,57 @@ class HikerCircleFirebaseRepository {
           .orderBy('createdAtLocal', descending: true)
           .limit(20)
           .get();
+      return snapshot.docs.map((document) => document.data()).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> addCommunityComment({
+    required AppSession session,
+    required String postId,
+    required String body,
+  }) async {
+    _throwIfFirebaseUnavailable();
+
+    final trimmedBody = body.trim();
+    if (trimmedBody.isEmpty) {
+      return;
+    }
+
+    final now = DateTime.now().toUtc();
+    final comment = _communityCommentsFor(postId).doc();
+    final batch = _resolvedFirestore.batch();
+    batch.set(comment, {
+      'commentId': comment.id,
+      'postId': postId,
+      'authorId': _userIdFor(session),
+      'authorPhoneNumber': session.phoneNumber,
+      'authorName': 'You',
+      'authorHandle': _handleForPhone(session.phoneNumber),
+      'body': trimmedBody,
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdAtLocal': now.toIso8601String(),
+    });
+    batch.set(_communityPosts.doc(postId), {
+      'commentCount': FieldValue.increment(1),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAtLocal': now.toIso8601String(),
+    }, SetOptions(merge: true));
+    await batch.commit();
+  }
+
+  Future<List<Map<String, dynamic>>> loadCommunityComments({
+    required String postId,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const [];
+    }
+
+    try {
+      final snapshot = await _communityCommentsFor(
+        postId,
+      ).orderBy('createdAtLocal', descending: false).limit(100).get();
       return snapshot.docs.map((document) => document.data()).toList();
     } catch (_) {
       return const [];
@@ -655,6 +756,14 @@ class HikerCircleFirebaseRepository {
 
   String _userIdFor(AppSession session) {
     return FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber);
+  }
+
+  String _handleForPhone(String phoneNumber) {
+    final digits = phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length <= 4) {
+      return '@hiker$digits';
+    }
+    return '@hiker${digits.substring(digits.length - 4)}';
   }
 
   String _stringFrom(Object? value) {

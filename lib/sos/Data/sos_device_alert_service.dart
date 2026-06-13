@@ -7,7 +7,7 @@ class SosDeviceAlertService {
 
   static const String sosAlarmAsset = 'assets/audios/sos_alarm.mp3';
   static const String medicalAlarmAsset = 'assets/audios/med_alarm.mp3';
-  static const double minimumAudibleOutputVolume = 0.20;
+  static const double minimumAudibleOutputVolume = 0.55;
   static const MethodChannel _channel = MethodChannel(
     'hiker_circle/sos_device_alerts',
   );
@@ -33,6 +33,49 @@ class SosDeviceAlertService {
 
   Future<void> stopManualSosPattern() async {
     await _channel.invokeMethod<void>('stopManualSosPattern');
+  }
+
+  Future<void> startFlashlightPattern() async {
+    await _channel.invokeMethod<void>('startFlashlightPattern');
+  }
+
+  Future<void> stopFlashlightPattern() async {
+    await _channel.invokeMethod<void>('stopFlashlightPattern');
+  }
+
+  Future<int?> getBatteryLevel() async {
+    try {
+      final batteryLevel = await _channel.invokeMethod<int>('getBatteryLevel');
+      if (batteryLevel == null) {
+        return null;
+      }
+      return batteryLevel.clamp(0, 100).toInt();
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  Future<List<EmergencyContactCandidate>> loadDeviceContacts() async {
+    try {
+      final rawContacts = await _channel.invokeListMethod<Object?>(
+        'getDeviceContacts',
+      );
+      if (rawContacts == null) {
+        return const [];
+      }
+
+      return rawContacts
+          .whereType<Map<Object?, Object?>>()
+          .map(EmergencyContactCandidate.fromPlatform)
+          .where(
+            (contact) =>
+                contact.displayName.isNotEmpty &&
+                contact.phoneNumbers.isNotEmpty,
+          )
+          .toList();
+    } on MissingPluginException {
+      return const [];
+    }
   }
 
   Future<void> beginOutputVolumeMonitoring() async {

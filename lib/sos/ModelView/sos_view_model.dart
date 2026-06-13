@@ -5,6 +5,7 @@ import '../Data/emergency_contacts_repository.dart';
 import '../Data/sos_alert_repository.dart';
 import '../Data/sos_repository.dart';
 import '../Model/sos_models.dart';
+import 'emergency_contacts_view_model.dart';
 
 class SosViewModel extends ChangeNotifier {
   SosViewModel({
@@ -33,6 +34,8 @@ class SosViewModel extends ChangeNotifier {
   String? _emergencyContactsErrorMessage;
   String? _sosAlertErrorMessage;
   SosAlertResult? _latestSosAlertResult;
+  Map<SosAlertMode, String> _customWhatsAppNotes = const {};
+  List<SosAlert> _cloudAlertLogs = const [];
 
   List<EmergencyContact> get emergencyContacts {
     return List.unmodifiable(_emergencyContacts);
@@ -40,7 +43,11 @@ class SosViewModel extends ChangeNotifier {
 
   List<SosMetric> get metrics {
     return [
-      SosMetric(label: 'Contacts', value: '${_emergencyContacts.length}/5'),
+      SosMetric(
+        label: 'Contacts',
+        value:
+            '${_emergencyContacts.length}/${EmergencyContactsViewModel.maxContacts}',
+      ),
       SosMetric(
         label: 'Latest',
         value: _latestSosAlertResult?.alert.status.label ?? 'Ready',
@@ -56,6 +63,10 @@ class SosViewModel extends ChangeNotifier {
   String? get emergencyContactsErrorMessage => _emergencyContactsErrorMessage;
   String? get sosAlertErrorMessage => _sosAlertErrorMessage;
   SosAlertResult? get latestSosAlertResult => _latestSosAlertResult;
+  List<SosAlert> get cloudAlertLogs => List.unmodifiable(_cloudAlertLogs);
+  Map<SosAlertMode, String> get customWhatsAppNotes {
+    return Map.unmodifiable(_customWhatsAppNotes);
+  }
 
   Future<void> loadEmergencyContacts() async {
     if (_isLoadingEmergencyContacts) {
@@ -85,6 +96,37 @@ class SosViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> loadCustomWhatsAppNotes() async {
+    try {
+      _customWhatsAppNotes = await _sosAlertRepository.loadCustomWhatsAppNotes(
+        session: _session,
+      );
+      notifyListeners();
+    } catch (_) {
+      // Custom notes are optional; the composer default remains available.
+    }
+  }
+
+  Future<void> saveCustomWhatsAppNote({
+    required SosAlertMode mode,
+    required String note,
+  }) async {
+    _customWhatsAppNotes = {..._customWhatsAppNotes, mode: note};
+    notifyListeners();
+    await _sosAlertRepository.saveCustomWhatsAppNote(
+      session: _session,
+      mode: mode,
+      note: note,
+    );
+  }
+
+  Future<void> loadCloudAlertLogs() async {
+    _cloudAlertLogs = await _sosAlertRepository.loadAlertLogs(
+      session: _session,
+    );
+    notifyListeners();
+  }
+
   Future<SosAlertResult?> triggerAlert({
     required SosAlertMode mode,
     required DateTime triggeredAt,
@@ -109,6 +151,16 @@ class SosViewModel extends ChangeNotifier {
         customMessageNote: customMessageNote,
       );
       _latestSosAlertResult = result;
+      _cloudAlertLogs = [result.alert, ..._cloudAlertLogs].fold<List<SosAlert>>(
+        <SosAlert>[],
+        (logs, alert) {
+          if (logs.any((existing) => existing.id == alert.id)) {
+            return logs;
+          }
+          logs.add(alert);
+          return logs;
+        },
+      );
       return result;
     } on SosAlertRepositoryException catch (error) {
       _sosAlertErrorMessage = error.message;

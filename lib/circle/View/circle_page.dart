@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -28,8 +30,31 @@ class _CirclePageState extends State<CirclePage> {
   int _selectedSection = 0;
   final Set<String> _buddyHandles = {'@ainatrails', '@jasonridge'};
   late final List<_CommunityPerson> _people = _seedPeople();
-  late final List<_CommunityPost> _posts = _seedPosts();
+  late List<_CommunityPost> _posts = _seedPosts();
   late final List<_TeamPlan> _teams = _seedTeams();
+  bool _isLoadingPosts = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadCommunityPosts());
+  }
+
+  Future<void> _loadCommunityPosts() async {
+    setState(() {
+      _isLoadingPosts = true;
+    });
+    final posts = await widget.hikerCircleRepository.loadCommunityPosts();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (posts.isNotEmpty) {
+        _posts = posts.map(_communityPostFromFirestore).toList();
+      }
+      _isLoadingPosts = false;
+    });
+  }
 
   void _addBuddy(_CommunityPerson person) {
     if (_buddyHandles.contains(person.handle)) {
@@ -47,6 +72,63 @@ class _CirclePageState extends State<CirclePage> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+  }
+
+  Future<void> _createCommunityPost(String caption) async {
+    try {
+      await widget.hikerCircleRepository.createCommunityPost(
+        session: widget.session,
+        caption: caption,
+      );
+      await _loadCommunityPosts();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Community post shared.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  Future<void> _shareActiveHikeUpdate() async {
+    final hike = widget.activeHike;
+    if (hike == null) {
+      return;
+    }
+    await _createCommunityPost(
+      'Live update from ${hike.trail.name}: ${hike.checkIns} check-ins, ${hike.manualPins} pins, ${hike.recordedDistanceKm.toStringAsFixed(2)} km tracked so far.',
+    );
+  }
+
+  void _openPostDetail(_CommunityPost post) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) {
+          return _CommunityPostDetailPage(
+            session: widget.session,
+            repository: widget.hikerCircleRepository,
+            post: post,
+          );
+        },
+      ),
+    );
   }
 
   void _createTeam() {
@@ -136,8 +218,12 @@ class _CirclePageState extends State<CirclePage> {
                               activeHike: widget.activeHike,
                               people: _people,
                               posts: _posts,
+                              isLoadingPosts: _isLoadingPosts,
                               buddyHandles: _buddyHandles,
                               onAddBuddy: _addBuddy,
+                              onCreatePost: _createCommunityPost,
+                              onShareHike: _shareActiveHikeUpdate,
+                              onOpenPost: _openPostDetail,
                             )
                           : _TeamsSection(
                               buddies: buddies,
@@ -174,6 +260,7 @@ class _CommunityPerson {
 
 class _CommunityPost {
   const _CommunityPost({
+    this.postId,
     required this.author,
     required this.handle,
     required this.timeLabel,
@@ -184,6 +271,7 @@ class _CommunityPost {
     required this.color,
   });
 
+  final String? postId;
   final String author;
   final String handle;
   final String timeLabel;
@@ -192,6 +280,20 @@ class _CommunityPost {
   final int likes;
   final int replies;
   final Color color;
+}
+
+class _CommunityComment {
+  const _CommunityComment({
+    required this.author,
+    required this.handle,
+    required this.body,
+    required this.timeLabel,
+  });
+
+  final String author;
+  final String handle;
+  final String body;
+  final String timeLabel;
 }
 
 class _TeamPlan {
@@ -269,48 +371,78 @@ class _CommunitySection extends StatelessWidget {
     required this.activeHike,
     required this.people,
     required this.posts,
+    required this.isLoadingPosts,
     required this.buddyHandles,
     required this.onAddBuddy,
+    required this.onCreatePost,
+    required this.onShareHike,
+    required this.onOpenPost,
   });
 
   final ActiveHikeSession? activeHike;
   final List<_CommunityPerson> people;
   final List<_CommunityPost> posts;
+  final bool isLoadingPosts;
   final Set<String> buddyHandles;
   final ValueChanged<_CommunityPerson> onAddBuddy;
+  final Future<void> Function(String caption) onCreatePost;
+  final Future<void> Function() onShareHike;
+  final ValueChanged<_CommunityPost> onOpenPost;
 
   @override
   Widget build(BuildContext context) {
+    final suggestions = people
+        .where((person) => !buddyHandles.contains(person.handle))
+        .toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ComposerCard(activeHike: activeHike),
+        _ComposerCard(
+          activeHike: activeHike,
+          onCreatePost: onCreatePost,
+          onShareHike: onShareHike,
+        ),
         const SizedBox(height: 18),
         _SectionTitle(label: 'Add Buddies'),
         const SizedBox(height: 8),
-        SizedBox(
-          height: 156,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: people.length,
-            separatorBuilder: (context, index) => const SizedBox(width: 10),
-            itemBuilder: (context, index) {
-              final person = people[index];
-              return _BuddySuggestionCard(
-                person: person,
-                isBuddy: buddyHandles.contains(person.handle),
-                onAddBuddy: () => onAddBuddy(person),
-              );
-            },
+        if (suggestions.isEmpty)
+          const _InsetGroup(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No new buddy suggestions right now.'),
+            ),
+          )
+        else
+          SizedBox(
+            height: 156,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: suggestions.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final person = suggestions[index];
+                return _BuddySuggestionCard(
+                  person: person,
+                  isBuddy: false,
+                  onAddBuddy: () => onAddBuddy(person),
+                );
+              },
+            ),
           ),
-        ),
         const SizedBox(height: 22),
         _SectionTitle(label: 'Community Feed'),
         const SizedBox(height: 8),
+        if (isLoadingPosts)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
         for (final post in posts) ...[
           _CommunityPostCard(
             post: post,
             isBuddy: buddyHandles.contains(post.handle),
+            onOpenPost: () => onOpenPost(post),
             onAddBuddy: () {
               final person = people.firstWhere(
                 (person) => person.handle == post.handle,
@@ -333,9 +465,15 @@ class _CommunitySection extends StatelessWidget {
 }
 
 class _ComposerCard extends StatelessWidget {
-  const _ComposerCard({required this.activeHike});
+  const _ComposerCard({
+    required this.activeHike,
+    required this.onCreatePost,
+    required this.onShareHike,
+  });
 
   final ActiveHikeSession? activeHike;
+  final Future<void> Function(String caption) onCreatePost;
+  final Future<void> Function() onShareHike;
 
   @override
   Widget build(BuildContext context) {
@@ -368,8 +506,7 @@ class _ComposerCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () =>
-                        _showDummySnack(context, 'Dummy post composer opened.'),
+                    onPressed: () => unawaited(_openComposer(context)),
                     icon: const Icon(Icons.edit_rounded),
                     label: const Text('Post'),
                   ),
@@ -379,10 +516,7 @@ class _ComposerCard extends StatelessWidget {
                   child: FilledButton.icon(
                     onPressed: activeHike == null
                         ? null
-                        : () => _showDummySnack(
-                            context,
-                            'Active hike shared to community draft.',
-                          ),
+                        : () => unawaited(onShareHike()),
                     icon: const Icon(Icons.hiking_rounded),
                     label: const Text('Share Hike'),
                   ),
@@ -393,6 +527,62 @@ class _ComposerCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _openComposer(BuildContext context) async {
+    final controller = TextEditingController();
+    final caption = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(18, 4, 18, 18 + bottomInset),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'New community post',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: _CircleColors.text,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                minLines: 3,
+                maxLines: 5,
+                maxLength: 280,
+                decoration: const InputDecoration(
+                  hintText: 'Share a trail note, question, or safety update.',
+                ),
+              ),
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed: () =>
+                    Navigator.of(context).pop(controller.text.trim()),
+                icon: const Icon(Icons.send_rounded),
+                label: const Text('Post'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    controller.dispose();
+
+    if (caption == null || caption.trim().isEmpty) {
+      return;
+    }
+    await onCreatePost(caption.trim());
   }
 }
 
@@ -491,126 +681,394 @@ class _CommunityPostCard extends StatelessWidget {
   const _CommunityPostCard({
     required this.post,
     required this.isBuddy,
+    required this.onOpenPost,
     required this.onAddBuddy,
   });
 
   final _CommunityPost post;
   final bool isBuddy;
+  final VoidCallback onOpenPost;
   final VoidCallback onAddBuddy;
 
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onOpenPost,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _Avatar(label: post.author.substring(0, 1), color: post.color),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _Avatar(
+                      label: post.author.substring(0, 1),
+                      color: post.color,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Flexible(
-                            child: Text(
-                              post.author,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodyLarge
-                                  ?.copyWith(
-                                    color: _CircleColors.text,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0,
-                                  ),
-                            ),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  post.author,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodyLarge
+                                      ?.copyWith(
+                                        color: _CircleColors.text,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  post.handle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: _CircleColors.secondaryText,
+                                        letterSpacing: 0,
+                                      ),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              post.handle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: _CircleColors.secondaryText,
-                                    letterSpacing: 0,
-                                  ),
-                            ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${post.timeLabel} - ${post.trail}',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: _CircleColors.secondaryText,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0,
+                                ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${post.timeLabel} - ${post.trail}',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: _CircleColors.secondaryText,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ],
+                    ),
+                    const SizedBox(width: 8),
+                    isBuddy
+                        ? const _StatusPill(
+                            label: 'Buddy',
+                            color: _CircleColors.green,
+                          )
+                        : OutlinedButton(
+                            onPressed: onAddBuddy,
+                            child: const Text('Add'),
+                          ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  post.body,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _CircleColors.text,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0,
                   ),
                 ),
-                const SizedBox(width: 8),
-                isBuddy
-                    ? const _StatusPill(
-                        label: 'Buddy',
-                        color: _CircleColors.green,
-                      )
-                    : OutlinedButton(
-                        onPressed: onAddBuddy,
-                        child: const Text('Add'),
-                      ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              post.body,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _CircleColors.text,
-                fontWeight: FontWeight.w500,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CustomPaint(
-                painter: _CommunityImagePainter(color: post.color),
-                child: const SizedBox(height: 152, width: double.infinity),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                _PostAction(
-                  icon: CupertinoIcons.heart,
-                  label: '${post.likes}',
-                  onTap: () => _showDummySnack(context, 'Liked post.'),
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: CustomPaint(
+                    painter: _CommunityImagePainter(color: post.color),
+                    child: const SizedBox(height: 152, width: double.infinity),
+                  ),
                 ),
-                const SizedBox(width: 18),
-                _PostAction(
-                  icon: CupertinoIcons.chat_bubble,
-                  label: '${post.replies}',
-                  onTap: () =>
-                      _showDummySnack(context, 'Reply composer opened.'),
-                ),
-                const SizedBox(width: 18),
-                _PostAction(
-                  icon: CupertinoIcons.arrowshape_turn_up_right,
-                  label: 'Share',
-                  onTap: () => _showDummySnack(context, 'Share sheet opened.'),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _PostAction(
+                      icon: CupertinoIcons.heart,
+                      label: '${post.likes}',
+                      onTap: () => _showDummySnack(context, 'Liked post.'),
+                    ),
+                    const SizedBox(width: 18),
+                    _PostAction(
+                      icon: CupertinoIcons.chat_bubble,
+                      label: '${post.replies}',
+                      onTap: onOpenPost,
+                    ),
+                    const SizedBox(width: 18),
+                    _PostAction(
+                      icon: CupertinoIcons.arrowshape_turn_up_right,
+                      label: 'Share',
+                      onTap: () =>
+                          _showDummySnack(context, 'Share sheet opened.'),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _CommunityPostDetailPage extends StatefulWidget {
+  const _CommunityPostDetailPage({
+    required this.session,
+    required this.repository,
+    required this.post,
+  });
+
+  final AppSession session;
+  final HikerCircleFirebaseRepository repository;
+  final _CommunityPost post;
+
+  @override
+  State<_CommunityPostDetailPage> createState() =>
+      _CommunityPostDetailPageState();
+}
+
+class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
+  final _commentController = TextEditingController();
+  List<_CommunityComment> _comments = const [];
+  bool _isLoadingComments = false;
+  bool _isPostingComment = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadComments());
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadComments() async {
+    final postId = widget.post.postId;
+    if (postId == null || postId.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingComments = true;
+    });
+    final comments = await widget.repository.loadCommunityComments(
+      postId: postId,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _comments = comments.map(_communityCommentFromFirestore).toList();
+      _isLoadingComments = false;
+    });
+  }
+
+  Future<void> _postComment() async {
+    final postId = widget.post.postId;
+    final body = _commentController.text.trim();
+    if (_isPostingComment || body.isEmpty) {
+      return;
+    }
+    if (postId == null || postId.isEmpty) {
+      _showDetailSnack('Only Firebase community posts support comments.');
+      return;
+    }
+
+    setState(() {
+      _isPostingComment = true;
+    });
+    try {
+      await widget.repository.addCommunityComment(
+        session: widget.session,
+        postId: postId,
+        body: body,
+      );
+      _commentController.clear();
+      await _loadComments();
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      _showDetailSnack(error.message);
+    } catch (_) {
+      _showDetailSnack('Unable to add comment right now.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPostingComment = false;
+        });
+      }
+    }
+  }
+
+  void _showDetailSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final post = widget.post;
+
+    return Scaffold(
+      backgroundColor: _CircleColors.background,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _DetailHeader(
+                    title: post.author,
+                    subtitle: '${post.timeLabel} - ${post.trail}',
+                    onBack: () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(height: 16),
+                  _CommunityPostCard(
+                    post: post,
+                    isBuddy: true,
+                    onOpenPost: () {},
+                    onAddBuddy: () {},
+                  ),
+                  const SizedBox(height: 22),
+                  _SectionTitle(label: 'Comments'),
+                  const SizedBox(height: 8),
+                  _InsetGroup(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _commentController,
+                              minLines: 1,
+                              maxLines: 3,
+                              decoration: const InputDecoration(
+                                hintText: 'Write a comment...',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          IconButton.filled(
+                            onPressed: _isPostingComment
+                                ? null
+                                : () => unawaited(_postComment()),
+                            icon: _isPostingComment
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.send_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_isLoadingComments)
+                    const LinearProgressIndicator(minHeight: 2)
+                  else if (_comments.isEmpty)
+                    const _InsetGroup(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('No comments yet.'),
+                      ),
+                    )
+                  else
+                    _InsetGroup(
+                      child: Column(
+                        children: [
+                          for (
+                            var index = 0;
+                            index < _comments.length;
+                            index++
+                          ) ...[
+                            _CommentRow(comment: _comments[index]),
+                            if (index != _comments.length - 1)
+                              const _HorizontalSeparator(),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CommentRow extends StatelessWidget {
+  const _CommentRow({required this.comment});
+
+  final _CommunityComment comment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Avatar(
+            label: comment.author.isEmpty
+                ? '?'
+                : comment.author.substring(0, 1),
+            color: _CircleColors.green,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${comment.author} ${comment.handle}',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _CircleColors.text,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  comment.body,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _CircleColors.text,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  comment.timeLabel,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: _CircleColors.secondaryText,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1655,6 +2113,104 @@ List<_TeamPlan> _seedTeams() {
       readiness: 74,
     ),
   ];
+}
+
+_CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
+  final authorPhone = _stringFrom(data['authorPhoneNumber']);
+  final authorName = _stringFrom(data['authorName']).isEmpty
+      ? 'Hiker ${authorPhone.length >= 4 ? authorPhone.substring(authorPhone.length - 4) : ''}'
+      : _stringFrom(data['authorName']);
+  final handle = _stringFrom(data['authorHandle']).isEmpty
+      ? _handleForPhone(authorPhone)
+      : _stringFrom(data['authorHandle']);
+  final trailName = _stringFrom(data['trailName']).isEmpty
+      ? 'Community'
+      : _stringFrom(data['trailName']);
+  final caption = _stringFrom(data['caption']).isEmpty
+      ? 'Shared a trail update.'
+      : _stringFrom(data['caption']);
+
+  return _CommunityPost(
+    postId: _stringFrom(data['postId']),
+    author: authorName,
+    handle: handle,
+    timeLabel: _relativeTimeLabel(data['createdAtLocal']),
+    trail: trailName,
+    body: caption,
+    likes: _intFrom(data['likeCount']),
+    replies: _intFrom(data['commentCount']),
+    color: _colorForPost(_stringFrom(data['postId'])),
+  );
+}
+
+_CommunityComment _communityCommentFromFirestore(Map<String, dynamic> data) {
+  final authorPhone = _stringFrom(data['authorPhoneNumber']);
+  final authorName = _stringFrom(data['authorName']).isEmpty
+      ? 'Hiker ${authorPhone.length >= 4 ? authorPhone.substring(authorPhone.length - 4) : ''}'
+      : _stringFrom(data['authorName']);
+
+  return _CommunityComment(
+    author: authorName,
+    handle: _stringFrom(data['authorHandle']).isEmpty
+        ? _handleForPhone(authorPhone)
+        : _stringFrom(data['authorHandle']),
+    body: _stringFrom(data['body']),
+    timeLabel: _relativeTimeLabel(data['createdAtLocal']),
+  );
+}
+
+String _relativeTimeLabel(Object? rawValue) {
+  final value = rawValue is String ? DateTime.tryParse(rawValue) : null;
+  if (value == null) {
+    return 'Just now';
+  }
+  final elapsed = DateTime.now().toUtc().difference(value.toUtc());
+  if (elapsed.inMinutes < 1) {
+    return 'Just now';
+  }
+  if (elapsed.inHours < 1) {
+    return '${elapsed.inMinutes}m ago';
+  }
+  if (elapsed.inDays < 1) {
+    return '${elapsed.inHours}h ago';
+  }
+  return '${elapsed.inDays}d ago';
+}
+
+String _handleForPhone(String phoneNumber) {
+  final digits = phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.length <= 4) {
+    return '@hiker$digits';
+  }
+  return '@hiker${digits.substring(digits.length - 4)}';
+}
+
+String _stringFrom(Object? value) {
+  if (value is String) {
+    return value;
+  }
+  return '';
+}
+
+int _intFrom(Object? value) {
+  if (value is num) {
+    return value.toInt();
+  }
+  return 0;
+}
+
+Color _colorForPost(String postId) {
+  const colors = [
+    _CircleColors.green,
+    _CircleColors.orange,
+    _CircleColors.blue,
+    _CircleColors.purple,
+  ];
+  if (postId.isEmpty) {
+    return colors.first;
+  }
+  return colors[postId.codeUnits.fold<int>(0, (sum, unit) => sum + unit) %
+      colors.length];
 }
 
 void _showDummySnack(BuildContext context, String message) {

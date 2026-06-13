@@ -4,7 +4,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/Model/app_session.dart';
+import '../../authentication/Data/phone_number_formatter.dart';
 import '../Data/emergency_contacts_repository.dart';
+import '../Data/sos_device_alert_service.dart';
 import '../Model/sos_models.dart';
 import '../ModelView/emergency_contacts_view_model.dart';
 
@@ -29,7 +31,12 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _relationshipController = TextEditingController();
+  final SosDeviceAlertService _deviceAlertService =
+      const SosDeviceAlertService();
   late final EmergencyContactsViewModel viewModel;
+  List<EmergencyContactCandidate> _deviceContacts = const [];
+  bool _isLoadingDeviceContacts = false;
+  String? _deviceContactsMessage;
 
   @override
   void initState() {
@@ -40,6 +47,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
       repository: widget.repository,
     );
     viewModel.addListener(_refresh);
+    unawaited(_loadDeviceContacts());
   }
 
   @override
@@ -139,6 +147,46 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     }
   }
 
+  Future<void> _loadDeviceContacts() async {
+    setState(() {
+      _isLoadingDeviceContacts = true;
+      _deviceContactsMessage = null;
+    });
+
+    final contacts = await _deviceAlertService.loadDeviceContacts();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _deviceContacts = contacts;
+      _isLoadingDeviceContacts = false;
+      if (contacts.isEmpty) {
+        _deviceContactsMessage =
+            'No phone contacts are available or permission was not granted.';
+      }
+    });
+  }
+
+  void _selectDeviceContact(EmergencyContactCandidate contact) {
+    _nameController.text = contact.displayName;
+    _phoneController.text = PhoneNumberFormatter.normalize(
+      contact.primaryPhoneNumber,
+    );
+    if (_relationshipController.text.trim().isEmpty) {
+      _relationshipController.text = 'Emergency contact';
+    }
+    FocusScope.of(context).unfocus();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('${contact.displayName} filled into the form.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -166,6 +214,16 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
                     isSaving: viewModel.isSaving,
                     onEditContact: _editContact,
                     onDeleteContact: _deleteContact,
+                  ),
+                  const SizedBox(height: 18),
+                  _DeviceContactsPicker(
+                    contacts: _deviceContacts,
+                    savedContacts: viewModel.contacts,
+                    isLoading: _isLoadingDeviceContacts,
+                    message: _deviceContactsMessage,
+                    canSelect: viewModel.canAddContact && !viewModel.isSaving,
+                    onRefresh: () => unawaited(_loadDeviceContacts()),
+                    onSelectContact: _selectDeviceContact,
                   ),
                   const SizedBox(height: 18),
                   _AddContactForm(
@@ -238,7 +296,7 @@ class _Header extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Add up to 5 people for SOS alerts',
+                  'Add up to 3 people for SOS alerts',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -322,6 +380,135 @@ class _SummaryCard extends StatelessWidget {
                   color: _ContactsColors.destructive,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeviceContactsPicker extends StatelessWidget {
+  const _DeviceContactsPicker({
+    required this.contacts,
+    required this.savedContacts,
+    required this.isLoading,
+    required this.message,
+    required this.canSelect,
+    required this.onRefresh,
+    required this.onSelectContact,
+  });
+
+  final List<EmergencyContactCandidate> contacts;
+  final List<EmergencyContact> savedContacts;
+  final bool isLoading;
+  final String? message;
+  final bool canSelect;
+  final VoidCallback onRefresh;
+  final ValueChanged<EmergencyContactCandidate> onSelectContact;
+
+  @override
+  Widget build(BuildContext context) {
+    final savedNumbers = savedContacts.map((contact) {
+      return PhoneNumberFormatter.normalize(contact.phoneNumber);
+    }).toSet();
+    final candidates = contacts
+        .where((contact) {
+          return PhoneNumberFormatter.isValid(contact.primaryPhoneNumber) &&
+              !savedNumbers.contains(
+                PhoneNumberFormatter.normalize(contact.primaryPhoneNumber),
+              );
+        })
+        .take(8)
+        .toList();
+
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const _Glyph(icon: Icons.phone_iphone_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'From phone contacts',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _ContactsColors.text,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      Text(
+                        'Tap a contact to fill name and number.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _ContactsColors.secondaryText,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh phone contacts',
+                  onPressed: isLoading ? null : onRefresh,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ],
+            ),
+            if (isLoading) ...[
+              const SizedBox(height: 12),
+              const LinearProgressIndicator(minHeight: 2),
+            ] else if (candidates.isEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                message ?? 'No new phone contacts to add.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _ContactsColors.secondaryText,
+                  letterSpacing: 0,
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 178,
+                child: ListView.separated(
+                  itemCount: candidates.length,
+                  separatorBuilder: (context, index) =>
+                      const _HorizontalSeparator(),
+                  itemBuilder: (context, index) {
+                    final contact = candidates[index];
+                    return ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const _Glyph(icon: Icons.person_rounded),
+                      title: Text(
+                        contact.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        PhoneNumberFormatter.normalize(
+                          contact.primaryPhoneNumber,
+                        ),
+                      ),
+                      trailing: const Icon(
+                        CupertinoIcons.chevron_forward,
+                        color: _ContactsColors.chevron,
+                        size: 16,
+                      ),
+                      enabled: canSelect,
+                      onTap: canSelect ? () => onSelectContact(contact) : null,
+                    );
+                  },
                 ),
               ),
             ],
@@ -577,7 +764,7 @@ class _AddContactForm extends StatelessWidget {
               Text(
                 canAddContact
                     ? '$remainingSlots slots remaining'
-                    : 'Maximum of 5 contacts reached',
+                    : 'Maximum of 3 contacts reached',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _ContactsColors.secondaryText,
                   fontWeight: FontWeight.w400,
@@ -593,7 +780,7 @@ class _AddContactForm extends StatelessWidget {
                   labelText: 'Name',
                   prefixIcon: Icon(Icons.person_outline_rounded),
                 ),
-                validator: _requiredValidator,
+                validator: _phoneValidator,
               ),
               const SizedBox(height: 10),
               TextFormField(
@@ -641,6 +828,17 @@ class _AddContactForm extends StatelessWidget {
   static String? _requiredValidator(String? value) {
     if (value == null || value.trim().isEmpty) {
       return 'Required';
+    }
+    return null;
+  }
+
+  static String? _phoneValidator(String? value) {
+    final required = _requiredValidator(value);
+    if (required != null) {
+      return required;
+    }
+    if (!PhoneNumberFormatter.isValid(value!)) {
+      return 'Use country code, for example +60123456789';
     }
     return null;
   }
@@ -760,7 +958,7 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                             labelText: 'Phone number',
                             prefixIcon: Icon(Icons.phone_iphone_rounded),
                           ),
-                          validator: _AddContactForm._requiredValidator,
+                          validator: _AddContactForm._phoneValidator,
                         ),
                         const SizedBox(height: 10),
                         TextFormField(

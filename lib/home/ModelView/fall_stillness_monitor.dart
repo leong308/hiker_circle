@@ -68,7 +68,7 @@ class FallStillnessMonitor extends ChangeNotifier {
       FallStillnessMonitorSnapshot.listening(
         settings: settings,
         message:
-            'Tracking at 10 Hz for free fall, impact, and stillness patterns.',
+            'Tracking at 10 Hz for free fall, direct impact, and stillness patterns.',
       ),
     );
 
@@ -185,6 +185,30 @@ class FallStillnessMonitor extends ChangeNotifier {
     required DateTime now,
     required double accelerationMagnitude,
   }) {
+    if (accelerationMagnitude >= settings.directImpactAccelerationThreshold) {
+      _phase = _FallDetectionPhase.bounceGrace;
+      _lastCandidateAt = now;
+      _latestImpactAcceleration = accelerationMagnitude;
+      _lastAltitudeDropMeters = _altitudeDropBefore(now);
+      _isBackpackTrapLikely =
+          _lastAltitudeDropMeters != null &&
+          _lastAltitudeDropMeters! < settings.altitudeDropThresholdMeters;
+      _bounceGraceEndsAt = now.add(
+        FallDetectionSettings.postImpactBounceDuration,
+      );
+      _setSnapshot(
+        FallStillnessMonitorSnapshot.impactDetected(
+          settings: settings,
+          detectedAt: now,
+          countdownEndsAt: _bounceGraceEndsAt!,
+          accelerationMagnitude: accelerationMagnitude,
+          altitudeDropMeters: _lastAltitudeDropMeters,
+          isBackpackTrapLikely: _isBackpackTrapLikely,
+        ),
+      );
+      return;
+    }
+
     if (accelerationMagnitude > settings.freeFallAccelerationThreshold) {
       return;
     }

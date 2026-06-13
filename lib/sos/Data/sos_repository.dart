@@ -9,7 +9,7 @@ class SosRepository {
   SosDashboard loadDashboard() {
     return const SosDashboard(
       contactsReady: 0,
-      contactsRequired: 5,
+      contactsRequired: 3,
       authorityStatus: 'Ready to cache when online',
       queueStatus: 'No unsent alerts',
       liveSharingStatus: 'Family sharing off',
@@ -22,7 +22,7 @@ class SosRepository {
 
   List<SosMetric> loadMetrics() {
     return const [
-      SosMetric(label: 'Contacts', value: '0/5'),
+      SosMetric(label: 'Contacts', value: '0/3'),
       SosMetric(label: 'Queued', value: '0'),
       SosMetric(label: 'Live', value: 'Off'),
     ];
@@ -43,7 +43,7 @@ class SosRepository {
   List<SosFeatureSection> loadSections() {
     return const [
       SosFeatureSection(
-        title: 'Alert Delivery',
+        title: 'SOS Trigger Log',
         items: [
           SosFeatureItem(
             icon: Icons.chat_bubble_rounded,
@@ -58,7 +58,7 @@ class SosRepository {
           ),
           SosFeatureItem(
             icon: Icons.fact_check_rounded,
-            title: 'Delivery result',
+            title: 'SOS trigger log',
             subtitle: 'Track sent, partial, failed, or missing-contact alerts',
           ),
         ],
