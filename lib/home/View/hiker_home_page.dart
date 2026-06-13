@@ -70,6 +70,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   ActiveHikeSession? activeHike;
   int selectedTabIndex = 0;
   int manualSosRequestId = 0;
+  int immediateSosRequestId = 0;
+  SosAlertMode? immediateSosRequestMode;
   final List<DateTime> fallStillnessCancelTaps = <DateTime>[];
   List<EmergencyContact> emergencyContacts = const [
     EmergencyContact(
@@ -155,6 +157,18 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     if (uri.host == 'sos' && uri.path == '/manual') {
       requestManualSos();
+      return;
+    }
+    if (uri.host == 'sos' && uri.path == '/instant') {
+      requestImmediateSos(SosAlertMode.manual);
+      return;
+    }
+    if (uri.host == 'sos' && uri.path == '/medical') {
+      requestImmediateSos(SosAlertMode.medical);
+      return;
+    }
+    if (uri.host == 'sos' && uri.path == '/duress') {
+      requestImmediateSos(SosAlertMode.duress);
       return;
     }
     if (uri.host != 'buddy' || uri.path != '/add') {
@@ -576,6 +590,15 @@ class _HikerHomePageState extends State<HikerHomePage>
     tabController.animateTo(2);
   }
 
+  void requestImmediateSos(SosAlertMode mode) {
+    setState(() {
+      selectedTabIndex = 2;
+      immediateSosRequestMode = mode;
+      immediateSosRequestId += 1;
+    });
+    tabController.animateTo(2);
+  }
+
   Widget pageFor(HikerBottomNavDestination tab) {
     switch (tab.label) {
       case 'Home':
@@ -588,7 +611,6 @@ class _HikerHomePageState extends State<HikerHomePage>
           onOpenEmergencyContacts: () => unawaited(openEmergencyContacts()),
           onOpenTrailDetail: openTrailDetail,
           onOpenSosTab: openSosTab,
-          onTriggerManualSos: requestManualSos,
           onActiveHikeChanged: (updatedHike) {
             setState(() {
               activeHike = updatedHike;
@@ -636,6 +658,8 @@ class _HikerHomePageState extends State<HikerHomePage>
           session: widget.session,
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
           manualSosRequestId: manualSosRequestId,
+          immediateSosRequestId: immediateSosRequestId,
+          immediateSosMode: immediateSosRequestMode,
         );
       case 'Circle':
         return CirclePage(

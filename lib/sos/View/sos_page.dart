@@ -21,11 +21,15 @@ class SosPage extends StatefulWidget {
     super.key,
     required this.session,
     this.manualSosRequestId = 0,
+    this.immediateSosRequestId = 0,
+    this.immediateSosMode,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
   });
 
   final AppSession session;
   final int manualSosRequestId;
+  final int immediateSosRequestId;
+  final SosAlertMode? immediateSosMode;
   final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
@@ -37,6 +41,7 @@ class _SosPageState extends State<SosPage> {
       const SosDeviceAlertService();
   late final SosViewModel viewModel;
   int _handledManualSosRequestId = 0;
+  int _handledImmediateSosRequestId = 0;
   bool _isManualSosPatternActive = false;
   String _customWhatsAppNote = SosAlertMessageComposer.defaultCustomNote;
   SosLocalAlertFeedback? _localAlertFeedback;
@@ -83,6 +88,16 @@ class _SosPageState extends State<SosPage> {
   }
 
   void _handlePendingManualSosRequest() {
+    final immediateMode = widget.immediateSosMode;
+    if (mounted &&
+        immediateMode != null &&
+        widget.immediateSosRequestId > 0 &&
+        widget.immediateSosRequestId != _handledImmediateSosRequestId) {
+      _handledImmediateSosRequestId = widget.immediateSosRequestId;
+      unawaited(_handleImmediateSos(immediateMode));
+      return;
+    }
+
     if (!mounted ||
         widget.manualSosRequestId <= 0 ||
         widget.manualSosRequestId == _handledManualSosRequestId) {
@@ -112,6 +127,19 @@ class _SosPageState extends State<SosPage> {
     }
 
     await _triggerAlert(SosAlertMode.manual);
+  }
+
+  Future<void> _handleImmediateSos(SosAlertMode mode) async {
+    if (viewModel.isSendingSosAlert) {
+      return;
+    }
+
+    unawaited(
+      mode == SosAlertMode.duress
+          ? HapticFeedback.mediumImpact()
+          : HapticFeedback.heavyImpact(),
+    );
+    await _triggerAlert(mode);
   }
 
   Future<void> _handleDuressSos() async {
@@ -151,12 +179,12 @@ class _SosPageState extends State<SosPage> {
         context: context,
         deviceAlertService: _deviceAlertService,
         message:
-            'Manual SOS uses iPhone media volume for the local alarm. Turn it up before continuing.',
+            '${mode.label} uses iPhone media volume for the local alarm. Turn it up before continuing.',
       );
       if (!volumeReady || !mounted) {
         return;
       }
-      unawaited(_startManualSosPattern());
+      unawaited(_startManualSosPattern(mode));
     }
 
     final triggeredAt = DateTime.now().toUtc();
@@ -197,9 +225,9 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
-  Future<void> _startManualSosPattern() async {
+  Future<void> _startManualSosPattern(SosAlertMode mode) async {
     try {
-      await _deviceAlertService.startManualSosPattern();
+      await _deviceAlertService.startSosPatternForMode(mode);
       if (!mounted) {
         return;
       }

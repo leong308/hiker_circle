@@ -53,6 +53,7 @@ class EmergencyContact {
 
 enum SosAlertMode {
   manual,
+  medical,
   fallStillness,
   duress;
 
@@ -60,6 +61,8 @@ enum SosAlertMode {
     switch (this) {
       case SosAlertMode.manual:
         return 'manual';
+      case SosAlertMode.medical:
+        return 'medical';
       case SosAlertMode.fallStillness:
         return 'fall_stillness';
       case SosAlertMode.duress:
@@ -71,6 +74,8 @@ enum SosAlertMode {
     switch (this) {
       case SosAlertMode.manual:
         return 'Manual SOS';
+      case SosAlertMode.medical:
+        return 'Medical Help';
       case SosAlertMode.fallStillness:
         return 'Fall SOS';
       case SosAlertMode.duress:
@@ -81,6 +86,7 @@ enum SosAlertMode {
   bool get usesLoudEmergencyPattern {
     switch (this) {
       case SosAlertMode.manual:
+      case SosAlertMode.medical:
       case SosAlertMode.fallStillness:
         return true;
       case SosAlertMode.duress:
@@ -233,6 +239,8 @@ abstract final class SosAlertMessageComposer {
     switch (mode) {
       case SosAlertMode.manual:
         return 'Manual emergency SOS was confirmed in the app.';
+      case SosAlertMode.medical:
+        return 'Medical help request was triggered from HikerCircle.';
       case SosAlertMode.fallStillness:
         return 'Possible fall followed by stillness was detected and escalated.';
       case SosAlertMode.duress:

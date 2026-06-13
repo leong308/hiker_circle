@@ -68,11 +68,31 @@
 			<key>UIApplicationShortcutItemIconType</key>
 			<string>UIApplicationShortcutIconTypeAlarm</string>
 			<key>UIApplicationShortcutItemSubtitle</key>
-			<string>Start emergency countdown</string>
+			<string>Trigger emergency now</string>
 			<key>UIApplicationShortcutItemTitle</key>
-			<string>Manual SOS</string>
+			<string>Instant SOS</string>
 			<key>UIApplicationShortcutItemType</key>
-			<string>com.leongziqi.hikercircle.manualSos</string>
+			<string>com.leongziqi.hikercircle.instantSos</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeTask</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Request medical help</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Medical Help</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.leongziqi.hikercircle.medicalSos</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeProhibit</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Send silently</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Duress SOS</string>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.leongziqi.hikercircle.duressSos</string>
 		</dict>
 	</array>
 </dict>

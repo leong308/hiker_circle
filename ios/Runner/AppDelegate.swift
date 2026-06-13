@@ -7,10 +7,15 @@ import CoreLocation
 @objc class AppDelegate: FlutterAppDelegate, CLLocationManagerDelegate {
   private let sosDeviceAlertChannel = "hiker_circle/sos_device_alerts"
   private let deepLinkChannelName = "hiker_circle/deeplinks"
-  private let manualSosShortcutType = "com.leongziqi.hikercircle.manualSos"
-  private let manualSosShortcutDeepLink = "hikercircle://sos/manual?source=ios_quick_action"
+  private let sosShortcutDeepLinks = [
+    "com.leongziqi.hikercircle.instantSos": "hikercircle://sos/instant?source=ios_quick_action",
+    "com.leongziqi.hikercircle.medicalSos": "hikercircle://sos/medical?source=ios_quick_action",
+    "com.leongziqi.hikercircle.duressSos": "hikercircle://sos/duress?source=ios_quick_action",
+  ]
   private let alarmAsset = "assets/audios/sos_alarm.mp3"
+  private let medicalAlarmAsset = "assets/audios/med_alarm.mp3"
   private var audioPlayer: AVAudioPlayer?
+  private var activeAlarmAsset: String?
   private let speechSynthesizer = AVSpeechSynthesizer()
   private var torchTimer: Timer?
   private var torchPatternIndex = 0
@@ -80,14 +85,14 @@ import CoreLocation
     _ shortcutItem: UIApplicationShortcutItem,
     notifyFlutter: Bool
   ) -> Bool {
-    guard shortcutItem.type == manualSosShortcutType else {
+    guard let deepLink = sosShortcutDeepLinks[shortcutItem.type] else {
       return false
     }
 
-    let wasAlreadyPending = pendingDeepLink == manualSosShortcutDeepLink
-    pendingDeepLink = manualSosShortcutDeepLink
+    let wasAlreadyPending = pendingDeepLink == deepLink
+    pendingDeepLink = deepLink
     if notifyFlutter && !wasAlreadyPending {
-      deepLinkChannel?.invokeMethod("onDeepLink", arguments: manualSosShortcutDeepLink)
+      deepLinkChannel?.invokeMethod("onDeepLink", arguments: deepLink)
     }
     return true
   }
@@ -115,7 +120,9 @@ import CoreLocation
       switch call.method {
       case "startManualSosPattern":
         do {
-          try self.startManualSosPattern()
+          let arguments = call.arguments as? [String: Any]
+          let requestedAlarmAsset = arguments?["alarmAsset"] as? String
+          try self.startManualSosPattern(alarmAsset: requestedAlarmAsset)
           result(nil)
         } catch {
           result(FlutterError(
@@ -176,8 +183,8 @@ import CoreLocation
     }
   }
 
-  private func startManualSosPattern() throws {
-    try startAlarm()
+  private func startManualSosPattern(alarmAsset requestedAlarmAsset: String? = nil) throws {
+    try startAlarm(alarmAsset: normalizedAlarmAsset(requestedAlarmAsset))
     startTorchPattern()
   }
 
@@ -354,12 +361,13 @@ import CoreLocation
     return locationManager?.location
   }
 
-  private func startAlarm() throws {
-    if audioPlayer?.isPlaying == true {
+  private func startAlarm(alarmAsset requestedAlarmAsset: String) throws {
+    if audioPlayer?.isPlaying == true && activeAlarmAsset == requestedAlarmAsset {
       return
     }
+    stopAlarm()
 
-    let assetKey = FlutterDartProject.lookupKey(forAsset: alarmAsset)
+    let assetKey = FlutterDartProject.lookupKey(forAsset: requestedAlarmAsset)
     guard let alarmUrl = Bundle.main.url(forResource: assetKey, withExtension: nil) else {
       throw SosDeviceAlertError.alarmAssetMissing
     }
@@ -377,12 +385,18 @@ import CoreLocation
       throw SosDeviceAlertError.alarmPlaybackFailed
     }
     audioPlayer = player
+    activeAlarmAsset = requestedAlarmAsset
   }
 
   private func stopAlarm() {
     audioPlayer?.stop()
     audioPlayer = nil
+    activeAlarmAsset = nil
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+  }
+
+  private func normalizedAlarmAsset(_ requestedAlarmAsset: String?) -> String {
+    return requestedAlarmAsset == medicalAlarmAsset ? medicalAlarmAsset : alarmAsset
   }
 
   private func speakFallStillnessPrompt(_ message: String) {

@@ -5,13 +5,30 @@ import '../Model/sos_models.dart';
 class SosDeviceAlertService {
   const SosDeviceAlertService();
 
+  static const String sosAlarmAsset = 'assets/audios/sos_alarm.mp3';
+  static const String medicalAlarmAsset = 'assets/audios/med_alarm.mp3';
   static const double minimumAudibleOutputVolume = 0.20;
   static const MethodChannel _channel = MethodChannel(
     'hiker_circle/sos_device_alerts',
   );
 
-  Future<void> startManualSosPattern() async {
-    await _channel.invokeMethod<void>('startManualSosPattern');
+  Future<void> startManualSosPattern({
+    String alarmAsset = sosAlarmAsset,
+  }) async {
+    await _channel.invokeMethod<void>('startManualSosPattern', {
+      'alarmAsset': alarmAsset,
+    });
+  }
+
+  Future<void> startSosPatternForMode(SosAlertMode mode) async {
+    await startManualSosPattern(alarmAsset: alarmAssetForMode(mode));
+  }
+
+  String alarmAssetForMode(SosAlertMode mode) {
+    return switch (mode) {
+      SosAlertMode.medical => medicalAlarmAsset,
+      _ => sosAlarmAsset,
+    };
   }
 
   Future<void> stopManualSosPattern() async {

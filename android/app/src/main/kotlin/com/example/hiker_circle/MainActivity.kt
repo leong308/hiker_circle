@@ -31,10 +31,12 @@ class MainActivity : FlutterActivity() {
         private const val LOCATION_REQUEST_CODE = 8473
         private const val LOCATION_TIMEOUT_MILLIS = 6000L
         private const val ALARM_ASSET = "assets/audios/sos_alarm.mp3"
+        private const val MEDICAL_ALARM_ASSET = "assets/audios/med_alarm.mp3"
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var mediaPlayer: MediaPlayer? = null
+    private var activeAlarmAsset: String? = null
     private var textToSpeech: TextToSpeech? = null
     private var pendingSpeechMessage: String? = null
     private var cameraManager: CameraManager? = null
@@ -105,7 +107,9 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "startManualSosPattern" -> {
                         try {
-                            startManualSosPattern()
+                            startManualSosPattern(
+                                call.argument<String>("alarmAsset") ?: ALARM_ASSET,
+                            )
                             result.success(null)
                         } catch (error: Exception) {
                             result.error(
@@ -193,8 +197,8 @@ class MainActivity : FlutterActivity() {
         super.onDestroy()
     }
 
-    private fun startManualSosPattern() {
-        startAlarm()
+    private fun startManualSosPattern(alarmAsset: String = ALARM_ASSET) {
+        startAlarm(normalizedAlarmAsset(alarmAsset))
         startTorchPattern()
     }
 
@@ -228,12 +232,13 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    private fun startAlarm() {
-        if (mediaPlayer?.isPlaying == true) {
+    private fun startAlarm(alarmAsset: String) {
+        if (mediaPlayer?.isPlaying == true && activeAlarmAsset == alarmAsset) {
             return
         }
+        stopAlarm()
 
-        val alarmFile = copyFlutterAlarmAssetToCache()
+        val alarmFile = copyFlutterAlarmAssetToCache(alarmAsset)
         mediaPlayer = MediaPlayer().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
@@ -246,6 +251,7 @@ class MainActivity : FlutterActivity() {
             prepare()
             start()
         }
+        activeAlarmAsset = alarmAsset
     }
 
     private fun stopAlarm() {
@@ -258,6 +264,7 @@ class MainActivity : FlutterActivity() {
             }
         }
         mediaPlayer = null
+        activeAlarmAsset = null
     }
 
     private fun speakFallStillnessPrompt(message: String) {
@@ -292,15 +299,15 @@ class MainActivity : FlutterActivity() {
         textToSpeech?.stop()
     }
 
-    private fun copyFlutterAlarmAssetToCache(): File {
-        val alarmFile = File(cacheDir, "sos_alarm.mp3")
+    private fun copyFlutterAlarmAssetToCache(alarmAsset: String): File {
+        val alarmFile = File(cacheDir, alarmAsset.substringAfterLast('/'))
         if (alarmFile.exists() && alarmFile.length() > 0L) {
             return alarmFile
         }
 
         val assetKey = FlutterInjector.instance()
             .flutterLoader()
-            .getLookupKeyForAsset(ALARM_ASSET)
+            .getLookupKeyForAsset(alarmAsset)
 
         assets.open(assetKey).use { input ->
             FileOutputStream(alarmFile).use { output ->
@@ -309,6 +316,13 @@ class MainActivity : FlutterActivity() {
         }
 
         return alarmFile
+    }
+
+    private fun normalizedAlarmAsset(alarmAsset: String): String {
+        return when (alarmAsset) {
+            MEDICAL_ALARM_ASSET -> MEDICAL_ALARM_ASSET
+            else -> ALARM_ASSET
+        }
     }
 
     private fun startTorchPattern() {

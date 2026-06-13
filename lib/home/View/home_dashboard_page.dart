@@ -21,7 +21,6 @@ class HomeDashboardPage extends StatelessWidget {
     required this.onOpenEmergencyContacts,
     required this.onOpenTrailDetail,
     required this.onOpenSosTab,
-    required this.onTriggerManualSos,
     required this.onActiveHikeChanged,
     required this.onCheckInRequested,
     required this.onPinLocationRequested,
@@ -38,7 +37,6 @@ class HomeDashboardPage extends StatelessWidget {
   final VoidCallback onOpenEmergencyContacts;
   final ValueChanged<Trail> onOpenTrailDetail;
   final VoidCallback onOpenSosTab;
-  final VoidCallback onTriggerManualSos;
   final ValueChanged<ActiveHikeSession> onActiveHikeChanged;
   final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
   onCheckInRequested;
@@ -73,7 +71,6 @@ class HomeDashboardPage extends StatelessWidget {
                       onJoinTeamHike: onJoinTeamHike,
                       onOpenTrailDetail: onOpenTrailDetail,
                       onOpenSosTab: onOpenSosTab,
-                      onTriggerManualSos: onTriggerManualSos,
                     )
                   : _ActiveHikeDashboard(
                       activeHike: active,
@@ -84,7 +81,6 @@ class HomeDashboardPage extends StatelessWidget {
                           unawaited(_pinLocation(context, active)),
                       onEndHike: () => unawaited(_confirmEndHike(context)),
                       onCancelFallStillnessSos: onCancelFallStillnessSos,
-                      onTriggerManualSos: onTriggerManualSos,
                     ),
             ),
           ),
@@ -215,7 +211,6 @@ class _PreparationDashboard extends StatelessWidget {
     required this.onJoinTeamHike,
     required this.onOpenTrailDetail,
     required this.onOpenSosTab,
-    required this.onTriggerManualSos,
   });
 
   final String phoneNumber;
@@ -224,7 +219,6 @@ class _PreparationDashboard extends StatelessWidget {
   final VoidCallback onJoinTeamHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final VoidCallback onOpenSosTab;
-  final VoidCallback onTriggerManualSos;
 
   @override
   Widget build(BuildContext context) {
@@ -239,8 +233,6 @@ class _PreparationDashboard extends StatelessWidget {
           onStartHike: onStartHike,
           onJoinTeamHike: onJoinTeamHike,
         ),
-        const SizedBox(height: 12),
-        _EmergencySosCard(onTriggerManualSos: onTriggerManualSos),
         const SizedBox(height: 18),
         _UpcomingHikeCard(
           plannedHike: plannedHike,
@@ -435,66 +427,6 @@ class _StartHikeActions extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _EmergencySosCard extends StatelessWidget {
-  const _EmergencySosCard({required this.onTriggerManualSos});
-
-  final VoidCallback onTriggerManualSos;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTriggerManualSos,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              children: [
-                const _Glyph(icon: Icons.sos_rounded, color: _HomeColors.red),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Emergency SOS',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: _HomeColors.text,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        'Tap for manual SOS, even when you are not in a hike.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _HomeColors.secondaryText,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _HomeColors.red,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: onTriggerManualSos,
-                  child: const Text('SOS'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -1345,7 +1277,6 @@ class _ActiveHikeDashboard extends StatelessWidget {
     required this.onPinLocation,
     required this.onEndHike,
     required this.onCancelFallStillnessSos,
-    required this.onTriggerManualSos,
   });
 
   final ActiveHikeSession activeHike;
@@ -1355,7 +1286,6 @@ class _ActiveHikeDashboard extends StatelessWidget {
   final VoidCallback onPinLocation;
   final VoidCallback onEndHike;
   final VoidCallback onCancelFallStillnessSos;
-  final VoidCallback onTriggerManualSos;
 
   @override
   Widget build(BuildContext context) {
@@ -1373,8 +1303,6 @@ class _ActiveHikeDashboard extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _ConnectionStatusCard(queuedUpdates: activeHike.queuedUpdates),
-        const SizedBox(height: 14),
-        _EmergencySosCard(onTriggerManualSos: onTriggerManualSos),
         const SizedBox(height: 14),
         _MiniMapCard(activeHike: activeHike),
         const SizedBox(height: 14),
