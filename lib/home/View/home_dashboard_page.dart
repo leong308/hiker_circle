@@ -16,6 +16,7 @@ class HomeDashboardPage extends StatelessWidget {
     required this.phoneNumber,
     required this.plannedHike,
     required this.activeHike,
+    required this.isVisible,
     required this.onStartHike,
     required this.onJoinTeamHike,
     required this.onOpenEmergencyContacts,
@@ -32,6 +33,7 @@ class HomeDashboardPage extends StatelessWidget {
   final String phoneNumber;
   final PlannedHike plannedHike;
   final ActiveHikeSession? activeHike;
+  final bool isVisible;
   final Future<void> Function(Trail trail) onStartHike;
   final VoidCallback onJoinTeamHike;
   final VoidCallback onOpenEmergencyContacts;
@@ -74,6 +76,7 @@ class HomeDashboardPage extends StatelessWidget {
                     )
                   : _ActiveHikeDashboard(
                       activeHike: active,
+                      isVisible: isVisible,
                       fallStillnessSnapshot: fallStillnessSnapshot,
                       onOpenFullMap: () => _openFullMap(context, active),
                       onCheckIn: () => unawaited(_checkIn(context, active)),
@@ -1271,6 +1274,7 @@ class _DetailHeader extends StatelessWidget {
 class _ActiveHikeDashboard extends StatelessWidget {
   const _ActiveHikeDashboard({
     required this.activeHike,
+    required this.isVisible,
     required this.fallStillnessSnapshot,
     required this.onOpenFullMap,
     required this.onCheckIn,
@@ -1280,6 +1284,7 @@ class _ActiveHikeDashboard extends StatelessWidget {
   });
 
   final ActiveHikeSession activeHike;
+  final bool isVisible;
   final FallStillnessMonitorSnapshot fallStillnessSnapshot;
   final VoidCallback onOpenFullMap;
   final VoidCallback onCheckIn;
@@ -1289,15 +1294,14 @@ class _ActiveHikeDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final elapsed = DateTime.now().difference(activeHike.startedAt);
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _ActiveHeader(activeHike: activeHike),
         const SizedBox(height: 16),
         _ActiveMetrics(
-          elapsed: elapsed,
+          startedAt: activeHike.startedAt,
+          isVisible: isVisible,
           expectedReturn: activeHike.draft.expectedReturnTime,
           batteryLevel: activeHike.batteryLevel,
         ),
@@ -1401,12 +1405,14 @@ class _ActiveHeader extends StatelessWidget {
 
 class _ActiveMetrics extends StatelessWidget {
   const _ActiveMetrics({
-    required this.elapsed,
+    required this.startedAt,
+    required this.isVisible,
     required this.expectedReturn,
     required this.batteryLevel,
   });
 
-  final Duration elapsed;
+  final DateTime startedAt;
+  final bool isVisible;
   final DateTime expectedReturn;
   final int batteryLevel;
 
@@ -1418,9 +1424,9 @@ class _ActiveMetrics extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: _MetricCell(
-                label: 'Elapsed Time',
-                value: _formatElapsed(elapsed),
+              child: _ElapsedMetricCell(
+                startedAt: startedAt,
+                isVisible: isVisible,
               ),
             ),
             const _VerticalSeparator(),
@@ -1473,6 +1479,85 @@ class _MetricCell extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ElapsedMetricCell extends StatefulWidget {
+  const _ElapsedMetricCell({required this.startedAt, required this.isVisible});
+
+  final DateTime startedAt;
+  final bool isVisible;
+
+  @override
+  State<_ElapsedMetricCell> createState() => _ElapsedMetricCellState();
+}
+
+class _ElapsedMetricCellState extends State<_ElapsedMetricCell>
+    with WidgetsBindingObserver {
+  Timer? _timer;
+  AppLifecycleState _lifecycleState =
+      WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+
+  bool get _shouldTick {
+    return widget.isVisible && _lifecycleState == AppLifecycleState.resumed;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ElapsedMetricCell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isVisible != widget.isVisible ||
+        oldWidget.startedAt != widget.startedAt) {
+      _syncTimer();
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
+    _syncTimer();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _syncTimer() {
+    if (!_shouldTick) {
+      _timer?.cancel();
+      _timer = null;
+      return;
+    }
+
+    if (_timer?.isActive == true) {
+      return;
+    }
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _MetricCell(
+      label: 'Elapsed Time',
+      value: _formatElapsed(DateTime.now().difference(widget.startedAt)),
     );
   }
 }

@@ -9,6 +9,7 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
+@available(iOSApplicationExtension 18.0, *)
 struct ManualSOSControl: ControlWidget {
     static let kind: String = "com.example.hikerCircle.ManualSOS"
 
@@ -30,6 +31,7 @@ struct ManualSOSControl: ControlWidget {
     }
 }
 
+@available(iOSApplicationExtension 18.0, *)
 extension ManualSOSControl {
     struct Value {
         var isRunning: Bool
@@ -48,6 +50,7 @@ extension ManualSOSControl {
     }
 }
 
+@available(iOSApplicationExtension 18.0, *)
 struct TimerConfiguration: ControlConfigurationIntent {
     static let title: LocalizedStringResource = "Timer Name Configuration"
 
@@ -55,6 +58,7 @@ struct TimerConfiguration: ControlConfigurationIntent {
     var timerName: String
 }
 
+@available(iOSApplicationExtension 18.0, *)
 struct StartTimerIntent: SetValueIntent {
     static let title: LocalizedStringResource = "Start a timer"
 
@@ -71,7 +75,7 @@ struct StartTimerIntent: SetValueIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        // Start the timer…
+        // Start the timer.
         return .result()
     }
 }

@@ -16,8 +16,10 @@ class ActiveHikeLiveStatusService {
         _activeHikeToPlatformMap(activeHike),
       );
     } on MissingPluginException {
-      // iOS requires a WidgetKit/ActivityKit extension target before this can
-      // be implemented natively. Android handles this channel in MainActivity.
+      // Desktop/web builds do not provide this optional platform surface.
+    } on PlatformException {
+      // Live status is optional; keep the hike session running if the native
+      // surface is unavailable or disabled by the user.
     }
   }
 
@@ -25,6 +27,8 @@ class ActiveHikeLiveStatusService {
     try {
       await _channel.invokeMethod<void>('stopActiveHikeLiveStatus');
     } on MissingPluginException {
+      // Optional platform surface.
+    } on PlatformException {
       // Optional platform surface.
     }
   }

@@ -57,6 +57,9 @@ class LiveLocationSharingService extends ChangeNotifier {
       if (existingShare != null) {
         _share = existingShare;
         _isActive = true;
+        await LocationSnapshotService.instance.start(
+          interval: LocationSnapshotService.liveSnapshotInterval,
+        );
         _startPublishTimer();
         unawaited(publishLatest());
       }
@@ -86,6 +89,9 @@ class LiveLocationSharingService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      await LocationSnapshotService.instance.start(
+        interval: LocationSnapshotService.liveSnapshotInterval,
+      );
       final location = await LocationSnapshotService.instance.refresh();
       if (location == null) {
         throw const LiveLocationRepositoryException(
@@ -234,10 +240,11 @@ class LiveLocationSharingService extends ChangeNotifier {
 
   void _startPublishTimer() {
     _publishTimer?.cancel();
-    _publishTimer = Timer.periodic(LocationSnapshotService.snapshotInterval, (
-      _,
-    ) {
-      unawaited(publishLatest());
-    });
+    _publishTimer = Timer.periodic(
+      LocationSnapshotService.liveSnapshotInterval,
+      (_) {
+        unawaited(publishLatest());
+      },
+    );
   }
 }

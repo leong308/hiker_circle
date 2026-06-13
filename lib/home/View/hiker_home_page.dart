@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -50,6 +51,10 @@ class _HikerHomePageState extends State<HikerHomePage>
   static const MethodChannel _deepLinkChannel = MethodChannel(
     'hiker_circle/deeplinks',
   );
+  static const Duration _minimumActiveHikeRecordingInterval = Duration(
+    minutes: 1,
+  );
+  static const Duration _activeHikeLiveStatusThrottle = Duration(seconds: 20);
   static const String _fallStillnessPrompt =
       'Are you okay? Do you need help? Please respond by tapping the phone three times to cancel SOS.';
 
@@ -66,9 +71,15 @@ class _HikerHomePageState extends State<HikerHomePage>
   late PlannedHike plannedHike;
   bool isLoadingLiveData = false;
   bool isSendingFallStillnessSos = false;
+  bool isRecordingActiveHikeLocation = false;
   bool isFallStillnessDialogVisible = false;
   bool isFallStillnessLocalAlarmActive = false;
   bool fallStillnessCountdownWasBackgrounded = false;
+  Timer? activeHikeRecordingTimer;
+  String? activeHikeRecordingSessionId;
+  Duration? activeHikeRecordingInterval;
+  DateTime? lastActiveHikeLocationRecordedAt;
+  DateTime? lastActiveHikeLiveStatusSentAt;
   FallStillnessMonitorStatus lastFallStillnessStatus =
       FallStillnessMonitorStatus.inactive;
   ActiveHikeSession? activeHike;
@@ -400,22 +411,73 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
     }
 
+    final startProgress = ValueNotifier<_HikeStartProgress>(
+      const _HikeStartProgress(
+        title: 'Starting hike session',
+        message: 'Preparing your hike safety tools.',
+        progress: 0.18,
+        icon: Icons.hiking_rounded,
+      ),
+    );
+    Timer? startProgressDelayTimer;
+    Future<void>? startProgressDialogFuture;
+    var isStartProgressDialogOpen = false;
+    startProgressDelayTimer = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted) {
+        return;
+      }
+      isStartProgressDialogOpen = true;
+      startProgressDialogFuture =
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) {
+              return _HikeStartProgressDialog(progress: startProgress);
+            },
+          ).whenComplete(() {
+            isStartProgressDialogOpen = false;
+          });
+      unawaited(startProgressDialogFuture);
+    });
+
+    void closeStartProgressDialog() {
+      startProgressDelayTimer?.cancel();
+      if (isStartProgressDialogOpen && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      final dialogFuture = startProgressDialogFuture;
+      if (dialogFuture == null) {
+        startProgress.dispose();
+      } else {
+        unawaited(dialogFuture.whenComplete(startProgress.dispose));
+      }
+    }
+
     ActiveHikeSession liveHike = startedHike;
     try {
+      startProgress.value = const _HikeStartProgress(
+        title: 'Creating hike session',
+        message: 'Saving your active hike and emergency settings.',
+        progress: 0.38,
+        icon: Icons.route_rounded,
+      );
       liveHike = await hikerCircleRepository.createActiveHikeSession(
         session: widget.session,
         draft: startedHike.draft,
       );
-      final location = await LocationSnapshotService.instance.refresh();
-      if (location != null) {
-        await hikerCircleRepository.recordLocationPoint(
-          session: widget.session,
-          activeHike: liveHike,
-          location: location,
-          pointType: 'session_start',
-        );
-      }
+      startProgress.value = const _HikeStartProgress(
+        title: 'Activating live tracking',
+        message: 'Starting fall detection and live hike status.',
+        progress: 0.72,
+        icon: Icons.sensors_rounded,
+      );
     } on HikerCircleFirebaseRepositoryException catch (error) {
+      startProgress.value = const _HikeStartProgress(
+        title: 'Starting offline mode',
+        message: 'Cloud setup is unavailable, so this hike will run locally.',
+        progress: 0.72,
+        icon: Icons.cloud_off_rounded,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
@@ -428,13 +490,63 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
     }
 
+    if (!mounted) {
+      closeStartProgressDialog();
+      return;
+    }
+
+    startProgress.value = const _HikeStartProgress(
+      title: 'Opening hike dashboard',
+      message: 'The first GPS point will be saved in the background.',
+      progress: 1,
+      icon: Icons.check_circle_rounded,
+    );
     setState(() {
       activeHike = liveHike;
       selectedTabIndex = 0;
     });
-    _syncFallStillnessMonitor(liveHike);
-    unawaited(_activeHikeLiveStatusService.startOrUpdate(liveHike));
+    _syncActiveHikeServices(liveHike, forceLiveStatus: true);
     tabController.animateTo(0);
+    closeStartProgressDialog();
+    unawaited(_recordInitialActiveHikeLocation(liveHike));
+  }
+
+  Future<void> _recordInitialActiveHikeLocation(ActiveHikeSession hike) async {
+    try {
+      final location =
+          LocationSnapshotService.instance.latestLocation ??
+          await LocationSnapshotService.instance.refresh();
+      if (location == null) {
+        return;
+      }
+
+      final queuedUpdates = await hikerCircleRepository.recordLocationPoint(
+        session: widget.session,
+        activeHike: hike,
+        location: location,
+        pointType: 'session_start',
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final latestHike = activeHike;
+      if (latestHike == null || latestHike.sessionId != hike.sessionId) {
+        return;
+      }
+
+      lastActiveHikeLocationRecordedAt = DateTime.now();
+      final updatedHike = latestHike.copyWith(queuedUpdates: queuedUpdates);
+      if (updatedHike.queuedUpdates != latestHike.queuedUpdates) {
+        setState(() {
+          activeHike = updatedHike;
+        });
+      }
+      _syncActiveHikeLiveStatus(updatedHike, force: true);
+    } catch (_) {
+      // The periodic active-hike recorder will try again at the configured
+      // interval, so startup should never stall on the first GPS point.
+    }
   }
 
   Future<ActiveHikeSession> checkInActiveHike(
@@ -546,7 +658,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     setState(() {
       activeHike = updatedHike;
     });
-    unawaited(_activeHikeLiveStatusService.startOrUpdate(updatedHike));
+    _syncActiveHikeServices(updatedHike, forceLiveStatus: true);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -580,7 +692,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     setState(() {
       activeHike = updatedHike;
     });
-    unawaited(_activeHikeLiveStatusService.startOrUpdate(updatedHike));
+    _syncActiveHikeServices(updatedHike, forceLiveStatus: true);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -730,6 +842,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           phoneNumber: widget.session.phoneNumber,
           plannedHike: plannedHike,
           activeHike: activeHike,
+          isVisible: selectedTabIndex == 0,
           onStartHike: openStartHikeWizard,
           onJoinTeamHike: openJoinTeamHike,
           onOpenEmergencyContacts: () => unawaited(openEmergencyContacts()),
@@ -739,7 +852,7 @@ class _HikerHomePageState extends State<HikerHomePage>
             setState(() {
               activeHike = updatedHike;
             });
-            unawaited(_activeHikeLiveStatusService.startOrUpdate(updatedHike));
+            _syncActiveHikeServices(updatedHike, forceLiveStatus: true);
           },
           onCheckInRequested: checkInActiveHike,
           onPinLocationRequested: pinCurrentLocation,
@@ -762,7 +875,7 @@ class _HikerHomePageState extends State<HikerHomePage>
             unawaited(fallStillnessMonitor.stop());
             unawaited(_sosDeviceAlertService.stopSpokenPrompt());
             unawaited(_sosDeviceAlertService.stopManualSosPattern());
-            unawaited(_activeHikeLiveStatusService.stop());
+            _syncActiveHikeServices(null);
             isFallStillnessLocalAlarmActive = false;
             setState(() {
               activeHike = null;
@@ -813,14 +926,24 @@ class _HikerHomePageState extends State<HikerHomePage>
         state == AppLifecycleState.hidden) {
       fallStillnessCountdownWasBackgrounded =
           fallStillnessMonitor.isAwaitingResponse;
+      _pauseActiveHikeLocationRecording();
       return;
     }
 
-    if (state == AppLifecycleState.resumed &&
-        fallStillnessCountdownWasBackgrounded &&
-        fallStillnessMonitor.isAwaitingResponse) {
-      fallStillnessCountdownWasBackgrounded = false;
-      _cancelFallStillnessSos('App opened');
+    if (state == AppLifecycleState.resumed) {
+      final hike = activeHike;
+      if (hike != null) {
+        _startActiveHikeLocationRecording(hike);
+        if (_isActiveHikeLocationRecordDue(hike)) {
+          unawaited(_recordActiveHikeLocationTick(force: true));
+        }
+      }
+
+      if (fallStillnessCountdownWasBackgrounded &&
+          fallStillnessMonitor.isAwaitingResponse) {
+        fallStillnessCountdownWasBackgrounded = false;
+        _cancelFallStillnessSos('App opened');
+      }
     }
   }
 
@@ -1006,6 +1129,144 @@ class _HikerHomePageState extends State<HikerHomePage>
     unawaited(fallStillnessMonitor.start(hike.draft.fallDetectionSettings));
   }
 
+  void _syncActiveHikeServices(
+    ActiveHikeSession? hike, {
+    bool forceLiveStatus = false,
+  }) {
+    _syncFallStillnessMonitor(hike);
+    if (hike == null) {
+      _stopActiveHikeLocationRecording();
+      unawaited(_activeHikeLiveStatusService.stop());
+      return;
+    }
+
+    _startActiveHikeLocationRecording(hike);
+    _syncActiveHikeLiveStatus(hike, force: forceLiveStatus);
+  }
+
+  void _startActiveHikeLocationRecording(ActiveHikeSession hike) {
+    final interval = _effectiveActiveHikeRecordingInterval(hike);
+    final isSameRecordingLoop =
+        activeHikeRecordingTimer?.isActive == true &&
+        activeHikeRecordingSessionId == hike.sessionId &&
+        activeHikeRecordingInterval == interval;
+    if (isSameRecordingLoop) {
+      return;
+    }
+
+    activeHikeRecordingTimer?.cancel();
+    activeHikeRecordingSessionId = hike.sessionId;
+    activeHikeRecordingInterval = interval;
+    LocationSnapshotService.instance.setRefreshInterval(
+      _snapshotIntervalForActiveHike(interval),
+    );
+    activeHikeRecordingTimer = Timer.periodic(interval, (_) {
+      unawaited(_recordActiveHikeLocationTick());
+    });
+  }
+
+  void _pauseActiveHikeLocationRecording() {
+    activeHikeRecordingTimer?.cancel();
+    activeHikeRecordingTimer = null;
+  }
+
+  void _stopActiveHikeLocationRecording() {
+    activeHikeRecordingTimer?.cancel();
+    activeHikeRecordingTimer = null;
+    activeHikeRecordingSessionId = null;
+    activeHikeRecordingInterval = null;
+    lastActiveHikeLocationRecordedAt = null;
+    lastActiveHikeLiveStatusSentAt = null;
+    LocationSnapshotService.instance.setRefreshInterval(
+      LiveLocationSharingService.instance.isActive
+          ? LocationSnapshotService.liveSnapshotInterval
+          : LocationSnapshotService.passiveSnapshotInterval,
+    );
+    isRecordingActiveHikeLocation = false;
+  }
+
+  Duration _snapshotIntervalForActiveHike(Duration recordingInterval) {
+    if (LiveLocationSharingService.instance.isActive) {
+      return LocationSnapshotService.liveSnapshotInterval;
+    }
+    return recordingInterval;
+  }
+
+  Duration _effectiveActiveHikeRecordingInterval(ActiveHikeSession hike) {
+    final configured = hike.draft.locationRecordingInterval;
+    if (configured < _minimumActiveHikeRecordingInterval) {
+      return _minimumActiveHikeRecordingInterval;
+    }
+    return configured;
+  }
+
+  bool _isActiveHikeLocationRecordDue(ActiveHikeSession hike) {
+    final lastRecordedAt = lastActiveHikeLocationRecordedAt;
+    if (lastRecordedAt == null) {
+      return true;
+    }
+
+    return DateTime.now().difference(lastRecordedAt) >=
+        _effectiveActiveHikeRecordingInterval(hike);
+  }
+
+  Future<void> _recordActiveHikeLocationTick({bool force = false}) async {
+    final hike = activeHike;
+    if (hike == null ||
+        isRecordingActiveHikeLocation ||
+        (!force && !_isActiveHikeLocationRecordDue(hike))) {
+      return;
+    }
+
+    isRecordingActiveHikeLocation = true;
+    final sessionId = hike.sessionId;
+    try {
+      final location = await LocationSnapshotService.instance.refresh();
+      if (location == null) {
+        return;
+      }
+
+      final queuedUpdates = await hikerCircleRepository.recordLocationPoint(
+        session: widget.session,
+        activeHike: hike,
+        location: location,
+        pointType: 'tracking',
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final latestHike = activeHike;
+      if (latestHike == null || latestHike.sessionId != sessionId) {
+        return;
+      }
+
+      final updatedHike = latestHike.copyWith(queuedUpdates: queuedUpdates);
+      if (updatedHike.queuedUpdates != latestHike.queuedUpdates) {
+        setState(() {
+          activeHike = updatedHike;
+        });
+      }
+      _syncActiveHikeLiveStatus(updatedHike, force: true);
+    } finally {
+      lastActiveHikeLocationRecordedAt = DateTime.now();
+      isRecordingActiveHikeLocation = false;
+    }
+  }
+
+  void _syncActiveHikeLiveStatus(ActiveHikeSession hike, {bool force = false}) {
+    final now = DateTime.now();
+    if (!force &&
+        lastActiveHikeLiveStatusSentAt != null &&
+        now.difference(lastActiveHikeLiveStatusSentAt!) <
+            _activeHikeLiveStatusThrottle) {
+      return;
+    }
+
+    lastActiveHikeLiveStatusSentAt = now;
+    unawaited(_activeHikeLiveStatusService.startOrUpdate(hike));
+  }
+
   void _recordFallStillnessCancelTap() {
     if (!fallStillnessMonitor.isAwaitingResponse) {
       fallStillnessCancelTaps.clear();
@@ -1037,6 +1298,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     WidgetsBinding.instance.removeObserver(this);
     fallStillnessMonitor.removeListener(_handleFallStillnessMonitorChanged);
     fallStillnessMonitor.dispose();
+    _stopActiveHikeLocationRecording();
     unawaited(_sosDeviceAlertService.stopSpokenPrompt());
     unawaited(_sosDeviceAlertService.stopManualSosPattern());
     tabController.removeListener(updateTabIndex);
@@ -1063,6 +1325,155 @@ class _HikerHomePageState extends State<HikerHomePage>
       bottomNavigationBar: HikerBottomNavBar(
         currentIndex: selectedTabIndex,
         onDestinationSelected: onTabTap,
+      ),
+    );
+  }
+}
+
+class _HikeStartProgress {
+  const _HikeStartProgress({
+    required this.title,
+    required this.message,
+    required this.progress,
+    required this.icon,
+  });
+
+  final String title;
+  final String message;
+  final double progress;
+  final IconData icon;
+}
+
+class _HikeStartProgressDialog extends StatelessWidget {
+  const _HikeStartProgressDialog({required this.progress});
+
+  final ValueListenable<_HikeStartProgress> progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+          child: ValueListenableBuilder<_HikeStartProgress>(
+            valueListenable: progress,
+            builder: (context, value, _) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _PulsingHikeIcon(icon: value.icon),
+                  const SizedBox(height: 18),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: Column(
+                      key: ValueKey(value.title),
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          value.title,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF111111),
+                                letterSpacing: 0,
+                              ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          value.message,
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: const Color(0xFF6E6E73),
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: value.progress.clamp(0, 1).toDouble(),
+                      minHeight: 6,
+                      color: const Color(0xFF34A853),
+                      backgroundColor: const Color(0xFFEAF7EE),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Keep HikerCircle open for a moment.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: const Color(0xFF6E6E73),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PulsingHikeIcon extends StatefulWidget {
+  const _PulsingHikeIcon({required this.icon});
+
+  final IconData icon;
+
+  @override
+  State<_PulsingHikeIcon> createState() => _PulsingHikeIconState();
+}
+
+class _PulsingHikeIconState extends State<_PulsingHikeIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 850),
+  )..repeat(reverse: true);
+  late final Animation<double> _scale = Tween<double>(
+    begin: 0.94,
+    end: 1.06,
+  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: Container(
+        width: 68,
+        height: 68,
+        decoration: const BoxDecoration(
+          color: Color(0xFFEAF7EE),
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: const BoxDecoration(
+            color: Color(0xFF34A853),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: Icon(widget.icon, color: Colors.white, size: 26),
+        ),
       ),
     );
   }

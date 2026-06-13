@@ -215,17 +215,6 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != CAMERA_REQUEST_CODE || !pendingTorchStart) {
-            if (requestCode == LOCATION_REQUEST_CODE && pendingLocationResult != null) {
-                if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
-                    requestOneShotLocation()
-                } else {
-                    completePendingLocation(null)
-                }
-            }
-            return
-        }
-
         if (requestCode == POST_NOTIFICATIONS_REQUEST_CODE) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 pendingActiveHikeLiveStatus?.let { status ->
@@ -233,6 +222,19 @@ class MainActivity : FlutterActivity() {
                 }
             }
             pendingActiveHikeLiveStatus = null
+            return
+        }
+
+        if (requestCode == LOCATION_REQUEST_CODE && pendingLocationResult != null) {
+            if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
+                requestOneShotLocation()
+            } else {
+                completePendingLocation(null)
+            }
+            return
+        }
+
+        if (requestCode != CAMERA_REQUEST_CODE || !pendingTorchStart) {
             return
         }
 
@@ -739,7 +741,7 @@ class MainActivity : FlutterActivity() {
         val batteryLevel: Int,
     ) {
         val summary: String
-            get() = "Check-ins $checkIns • Pins $manualPins • $queuedUpdates queued"
+            get() = "Check-ins $checkIns | Pins $manualPins | $queuedUpdates queued"
 
         companion object {
             fun from(arguments: Any?): ActiveHikeLiveStatus? {

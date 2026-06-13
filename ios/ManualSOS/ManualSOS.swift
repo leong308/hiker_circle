@@ -54,7 +54,7 @@ struct ManualSOSEntryView: View {
       }
       .padding(10)
     }
-    .containerBackground(for: .widget) {
+    .hikerWidgetBackground {
       LinearGradient(
         colors: [
           Color(red: 0.37, green: 0.04, blue: 0.04),

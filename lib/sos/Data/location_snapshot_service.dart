@@ -9,7 +9,9 @@ class LocationSnapshotService with WidgetsBindingObserver {
   LocationSnapshotService._();
 
   static final LocationSnapshotService instance = LocationSnapshotService._();
-  static const Duration snapshotInterval = Duration(seconds: 30);
+  static const Duration passiveSnapshotInterval = Duration(minutes: 2);
+  static const Duration liveSnapshotInterval = Duration(seconds: 30);
+  static const Duration snapshotInterval = liveSnapshotInterval;
 
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
@@ -17,16 +19,20 @@ class LocationSnapshotService with WidgetsBindingObserver {
   Timer? _timer;
   SosTriggerLocation? _latestLocation;
   Future<SosTriggerLocation?>? _refreshFuture;
+  Duration _refreshInterval = passiveSnapshotInterval;
   bool _isStarted = false;
 
   SosTriggerLocation? get latestLocation => _latestLocation;
 
-  Future<void> start() async {
+  Future<void> start({Duration interval = passiveSnapshotInterval}) async {
+    final normalizedInterval = _normalizeInterval(interval);
     if (_isStarted) {
+      setRefreshInterval(normalizedInterval);
       return;
     }
 
     _isStarted = true;
+    _refreshInterval = normalizedInterval;
     WidgetsBinding.instance.addObserver(this);
     _startTimer();
     await refresh();
@@ -42,6 +48,22 @@ class LocationSnapshotService with WidgetsBindingObserver {
     _timer = null;
     _latestLocation = null;
     WidgetsBinding.instance.removeObserver(this);
+  }
+
+  void setRefreshInterval(Duration interval) {
+    final normalizedInterval = _normalizeInterval(interval);
+    if (_refreshInterval == normalizedInterval) {
+      return;
+    }
+
+    _refreshInterval = normalizedInterval;
+    if (!_isStarted) {
+      return;
+    }
+
+    _timer?.cancel();
+    _timer = null;
+    _startTimer();
   }
 
   Future<SosTriggerLocation?> refresh() async {
@@ -73,11 +95,11 @@ class LocationSnapshotService with WidgetsBindingObserver {
 
     switch (state) {
       case AppLifecycleState.resumed:
+        _startTimer();
+        unawaited(refresh());
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
-        _startTimer();
-        unawaited(refresh());
       case AppLifecycleState.detached:
         _timer?.cancel();
         _timer = null;
@@ -89,8 +111,15 @@ class LocationSnapshotService with WidgetsBindingObserver {
       return;
     }
 
-    _timer = Timer.periodic(snapshotInterval, (_) {
+    _timer = Timer.periodic(_refreshInterval, (_) {
       unawaited(refresh());
     });
+  }
+
+  Duration _normalizeInterval(Duration interval) {
+    if (interval < liveSnapshotInterval) {
+      return liveSnapshotInterval;
+    }
+    return interval;
   }
 }

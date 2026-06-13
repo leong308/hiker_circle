@@ -2,11 +2,15 @@ import Flutter
 import UIKit
 import AVFoundation
 import CoreLocation
+#if canImport(ActivityKit)
+import ActivityKit
+#endif
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, CLLocationManagerDelegate {
   private let sosDeviceAlertChannel = "hiker_circle/sos_device_alerts"
   private let deepLinkChannelName = "hiker_circle/deeplinks"
+  private let activeHikeLiveStatusChannelName = "hiker_circle/active_hike_live_status"
   private let sosShortcutDeepLinks = [
     "com.leongziqi.hikercircle.instantSos": "hikercircle://sos/instant?source=ios_quick_action",
     "com.leongziqi.hikercircle.medicalSos": "hikercircle://sos/medical?source=ios_quick_action",
@@ -26,6 +30,7 @@ import CoreLocation
   private var locationTimeoutTimer: Timer?
   private var deepLinkChannel: FlutterMethodChannel?
   private var pendingDeepLink: String?
+  private var activeHikeLiveActivitySessionId: String?
   private let sosTorchPattern: [(enabled: Bool, duration: TimeInterval)] = [
     (true, 0.22),
     (false, 0.18),
@@ -54,6 +59,7 @@ import CoreLocation
     GeneratedPluginRegistrant.register(with: self)
     configureSosDeviceAlertChannel()
     configureDeepLinkChannel()
+    configureActiveHikeLiveStatusChannel()
     if let url = launchOptions?[.url] as? URL {
       pendingDeepLink = url.absoluteString
     }
@@ -197,6 +203,131 @@ import CoreLocation
       }
     }
   }
+
+  private func configureActiveHikeLiveStatusChannel() {
+    guard let controller = window?.rootViewController as? FlutterViewController else {
+      return
+    }
+
+    let channel = FlutterMethodChannel(
+      name: activeHikeLiveStatusChannelName,
+      binaryMessenger: controller.binaryMessenger
+    )
+
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(FlutterError(
+          code: "active_hike_live_status_unavailable",
+          message: "Active hike live status service is unavailable.",
+          details: nil
+        ))
+        return
+      }
+
+      switch call.method {
+      case "startOrUpdateActiveHikeLiveStatus":
+        guard let status = ManualHikeLiveStatus(arguments: call.arguments) else {
+          result(FlutterError(
+            code: "active_hike_live_status_invalid",
+            message: "Active hike status payload is invalid.",
+            details: nil
+          ))
+          return
+        }
+
+        #if canImport(ActivityKit)
+        if #available(iOS 16.1, *) {
+          Task { @MainActor in
+            do {
+              try await self.startOrUpdateManualHikeLiveActivity(status)
+              result(nil)
+            } catch {
+              result(FlutterError(
+                code: "active_hike_live_activity_failed",
+                message: error.localizedDescription,
+                details: nil
+              ))
+            }
+          }
+        } else {
+          result(FlutterError(
+            code: "active_hike_live_activity_unavailable",
+            message: "Live Activities require iOS 16.1 or later.",
+            details: nil
+          ))
+        }
+        #else
+        result(FlutterError(
+          code: "active_hike_live_activity_unavailable",
+          message: "ActivityKit is not available in this build.",
+          details: nil
+        ))
+        #endif
+      case "stopActiveHikeLiveStatus":
+        #if canImport(ActivityKit)
+        if #available(iOS 16.1, *) {
+          Task { @MainActor in
+            await self.stopManualHikeLiveActivity()
+            result(nil)
+          }
+        } else {
+          self.activeHikeLiveActivitySessionId = nil
+          result(nil)
+        }
+        #else
+        self.activeHikeLiveActivitySessionId = nil
+        result(nil)
+        #endif
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  #if canImport(ActivityKit)
+  @available(iOS 16.1, *)
+  @MainActor
+  private func startOrUpdateManualHikeLiveActivity(
+    _ status: ManualHikeLiveStatus
+  ) async throws {
+    guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+      throw ManualHikeLiveActivityError.activitiesDisabled
+    }
+
+    let contentState = status.toContentState()
+    if let activity = Activity<ManualHikeAttributes>.activities.first(
+      where: { $0.attributes.sessionId == status.sessionId }
+    ) {
+      await activity.update(using: contentState)
+      activeHikeLiveActivitySessionId = status.sessionId
+      return
+    }
+
+    for activity in Activity<ManualHikeAttributes>.activities {
+      await activity.end(using: nil, dismissalPolicy: .immediate)
+    }
+
+    let attributes = ManualHikeAttributes(sessionId: status.sessionId)
+    let activity = try Activity<ManualHikeAttributes>.request(
+      attributes: attributes,
+      contentState: contentState,
+      pushType: nil
+    )
+    activeHikeLiveActivitySessionId = activity.attributes.sessionId
+  }
+
+  @available(iOS 16.1, *)
+  @MainActor
+  private func stopManualHikeLiveActivity() async {
+    let matchingSessionId = activeHikeLiveActivitySessionId
+    for activity in Activity<ManualHikeAttributes>.activities {
+      if matchingSessionId == nil || activity.attributes.sessionId == matchingSessionId {
+        await activity.end(using: nil, dismissalPolicy: .immediate)
+      }
+    }
+    activeHikeLiveActivitySessionId = nil
+  }
+  #endif
 
   private func startManualSosPattern(alarmAsset requestedAlarmAsset: String? = nil) throws {
     try startAlarm(alarmAsset: normalizedAlarmAsset(requestedAlarmAsset))
@@ -528,3 +659,108 @@ extension CLLocation {
     return data
   }
 }
+
+private struct ManualHikeLiveStatus {
+  let sessionId: String
+  let trailName: String
+  let startedAtMillis: Double
+  let expectedReturnAtMillis: Double
+  let checkIns: Int
+  let manualPins: Int
+  let queuedUpdates: Int
+  let batteryLevel: Int
+
+  init?(arguments: Any?) {
+    guard let data = arguments as? [String: Any],
+          let sessionId = data["sessionId"] as? String,
+          let startedAtMillis = Self.doubleValue(data["startedAtMillis"]) else {
+      return nil
+    }
+
+    let rawTrailName = (data["trailName"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    self.sessionId = sessionId
+    if let trailName = rawTrailName, !trailName.isEmpty {
+      self.trailName = trailName
+    } else {
+      self.trailName = "Active hike"
+    }
+    self.startedAtMillis = startedAtMillis
+    self.expectedReturnAtMillis = Self.doubleValue(data["expectedReturnAtMillis"]) ?? 0
+    self.checkIns = Self.intValue(data["checkIns"])
+    self.manualPins = Self.intValue(data["manualPins"])
+    self.queuedUpdates = Self.intValue(data["queuedUpdates"])
+    self.batteryLevel = min(100, max(0, Self.intValue(data["batteryLevel"])))
+  }
+
+  private static func intValue(_ value: Any?) -> Int {
+    if let number = value as? NSNumber {
+      return number.intValue
+    }
+    if let int = value as? Int {
+      return int
+    }
+    return 0
+  }
+
+  private static func doubleValue(_ value: Any?) -> Double? {
+    if let number = value as? NSNumber {
+      return number.doubleValue
+    }
+    if let double = value as? Double {
+      return double
+    }
+    if let int = value as? Int {
+      return Double(int)
+    }
+    return nil
+  }
+
+  #if canImport(ActivityKit)
+  @available(iOS 16.1, *)
+  func toContentState() -> ManualHikeAttributes.ContentState {
+    let expectedReturnAt = expectedReturnAtMillis > 0
+      ? Date(timeIntervalSince1970: expectedReturnAtMillis / 1000)
+      : nil
+
+    return ManualHikeAttributes.ContentState(
+      trailName: trailName,
+      startedAt: Date(timeIntervalSince1970: startedAtMillis / 1000),
+      expectedReturnAt: expectedReturnAt,
+      checkIns: checkIns,
+      manualPins: manualPins,
+      queuedUpdates: queuedUpdates,
+      batteryLevel: batteryLevel
+    )
+  }
+  #endif
+}
+
+#if canImport(ActivityKit)
+@available(iOS 16.1, *)
+struct ManualHikeAttributes: ActivityAttributes {
+  public struct ContentState: Codable, Hashable {
+    var trailName: String
+    var startedAt: Date
+    var expectedReturnAt: Date?
+    var checkIns: Int
+    var manualPins: Int
+    var queuedUpdates: Int
+    var batteryLevel: Int
+  }
+
+  var sessionId: String
+}
+
+@available(iOS 16.1, *)
+private enum ManualHikeLiveActivityError: LocalizedError {
+  case activitiesDisabled
+
+  var errorDescription: String? {
+    switch self {
+    case .activitiesDisabled:
+      return "Live Activities are disabled for HikerCircle. Enable them in iOS Settings to show active hike status."
+    }
+  }
+}
+#endif
