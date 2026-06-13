@@ -135,6 +135,12 @@ class MainActivity : FlutterActivity() {
                         stopManualSosPattern()
                         result.success(null)
                     }
+                    "beginOutputVolumeMonitoring" -> {
+                        result.success(null)
+                    }
+                    "endOutputVolumeMonitoring" -> {
+                        result.success(null)
+                    }
                     "speakFallStillnessPrompt" -> {
                         speakFallStillnessPrompt(
                             call.argument<String>("message")

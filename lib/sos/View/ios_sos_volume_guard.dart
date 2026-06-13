@@ -16,6 +16,9 @@ Future<bool> ensureIosSosOutputVolumeReady({
 }) async {
   final status = await deviceAlertService.getOutputVolumeStatus();
   if (!status.shouldGateForIos || status.isAudible) {
+    if (status.shouldGateForIos) {
+      unawaited(deviceAlertService.endOutputVolumeMonitoring());
+    }
     return true;
   }
   if (!context.mounted) {
@@ -58,7 +61,8 @@ class _IosSosVolumeGuardDialog extends StatefulWidget {
       _IosSosVolumeGuardDialogState();
 }
 
-class _IosSosVolumeGuardDialogState extends State<_IosSosVolumeGuardDialog> {
+class _IosSosVolumeGuardDialogState extends State<_IosSosVolumeGuardDialog>
+    with WidgetsBindingObserver {
   Timer? _pollTimer;
   late SosOutputVolumeStatus _status;
   bool _isRefreshing = false;
@@ -66,18 +70,33 @@ class _IosSosVolumeGuardDialogState extends State<_IosSosVolumeGuardDialog> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _status = widget.initialStatus;
     _pollTimer = Timer.periodic(
-      const Duration(milliseconds: 650),
+      const Duration(milliseconds: 300),
       (_) => unawaited(_refreshStatus()),
     );
-    unawaited(_refreshStatus());
+    unawaited(_prepareVolumeMonitoring());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
+    unawaited(widget.deviceAlertService.endOutputVolumeMonitoring());
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshStatus());
+    }
+  }
+
+  Future<void> _prepareVolumeMonitoring() async {
+    await widget.deviceAlertService.beginOutputVolumeMonitoring();
+    await _refreshStatus();
   }
 
   Future<void> _refreshStatus() async {
@@ -95,6 +114,8 @@ class _IosSosVolumeGuardDialogState extends State<_IosSosVolumeGuardDialog> {
           _status = nextStatus;
         });
       }
+    } catch (_) {
+      // Keep the last known value; the next poll/resume refresh will retry.
     } finally {
       _isRefreshing = false;
     }
@@ -128,7 +149,7 @@ class _IosSosVolumeGuardDialogState extends State<_IosSosVolumeGuardDialog> {
             ),
             const SizedBox(height: 10),
             LinearProgressIndicator(
-              value: _status.outputVolume ?? 0,
+              value: _status.displayOutputVolume,
               minHeight: 4,
               color: canProceed
                   ? const Color(0xFF34A853)

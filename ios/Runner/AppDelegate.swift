@@ -16,6 +16,7 @@ import CoreLocation
   private let medicalAlarmAsset = "assets/audios/med_alarm.mp3"
   private var audioPlayer: AVAudioPlayer?
   private var activeAlarmAsset: String?
+  private var isOutputVolumeMonitoringActive = false
   private let speechSynthesizer = AVSpeechSynthesizer()
   private var torchTimer: Timer?
   private var torchPatternIndex = 0
@@ -134,6 +135,20 @@ import CoreLocation
       case "stopManualSosPattern":
         self.stopManualSosPattern()
         result(nil)
+      case "beginOutputVolumeMonitoring":
+        do {
+          try self.beginOutputVolumeMonitoring()
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "sos_volume_monitoring_failed",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
+      case "endOutputVolumeMonitoring":
+        self.endOutputVolumeMonitoring()
+        result(nil)
       case "speakFallStillnessPrompt":
         let arguments = call.arguments as? [String: Any]
         let message = arguments?["message"] as? String
@@ -197,6 +212,9 @@ import CoreLocation
     _ call: FlutterMethodCall,
     _ result: FlutterResult
   ) {
+    if !isOutputVolumeMonitoringActive && audioPlayer?.isPlaying != true {
+      try? beginOutputVolumeMonitoring()
+    }
     let arguments = call.arguments as? [String: Any]
     let requestedMinimum =
       (arguments?["minimumRequiredVolume"] as? NSNumber)?.doubleValue ?? 0.2
@@ -211,6 +229,22 @@ import CoreLocation
       "minimumRequiredVolume": minimumRequiredVolume,
       "isAudible": outputVolume >= minimumRequiredVolume
     ])
+  }
+
+  private func beginOutputVolumeMonitoring() throws {
+    let audioSession = AVAudioSession.sharedInstance()
+    try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+    try audioSession.setActive(true)
+    try? audioSession.overrideOutputAudioPort(.speaker)
+    isOutputVolumeMonitoringActive = true
+  }
+
+  private func endOutputVolumeMonitoring() {
+    isOutputVolumeMonitoringActive = false
+    guard audioPlayer?.isPlaying != true else {
+      return
+    }
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
   }
 
   private func getCurrentTriggerLocation(
@@ -376,6 +410,7 @@ import CoreLocation
     try audioSession.setCategory(.playback, mode: .default, options: [.duckOthers])
     try audioSession.setActive(true)
     try? audioSession.overrideOutputAudioPort(.speaker)
+    isOutputVolumeMonitoringActive = false
 
     let player = try AVAudioPlayer(contentsOf: alarmUrl)
     player.numberOfLoops = -1
@@ -392,7 +427,9 @@ import CoreLocation
     audioPlayer?.stop()
     audioPlayer = nil
     activeAlarmAsset = nil
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    if !isOutputVolumeMonitoringActive {
+      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
   }
 
   private func normalizedAlarmAsset(_ requestedAlarmAsset: String?) -> String {

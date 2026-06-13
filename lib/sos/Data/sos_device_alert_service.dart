@@ -35,6 +35,22 @@ class SosDeviceAlertService {
     await _channel.invokeMethod<void>('stopManualSosPattern');
   }
 
+  Future<void> beginOutputVolumeMonitoring() async {
+    try {
+      await _channel.invokeMethod<void>('beginOutputVolumeMonitoring');
+    } on MissingPluginException {
+      // Optional native helper. Platforms without it can still return volume.
+    }
+  }
+
+  Future<void> endOutputVolumeMonitoring() async {
+    try {
+      await _channel.invokeMethod<void>('endOutputVolumeMonitoring');
+    } on MissingPluginException {
+      // Optional native helper.
+    }
+  }
+
   Future<void> speakFallStillnessPrompt({required String message}) async {
     await _channel.invokeMethod<void>('speakFallStillnessPrompt', {
       'message': message,

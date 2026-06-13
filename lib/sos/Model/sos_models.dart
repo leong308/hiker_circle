@@ -371,8 +371,22 @@ class SosOutputVolumeStatus {
     return volume != null && volume >= minimumRequiredVolume;
   }
 
+  double get displayOutputVolume {
+    final volume = outputVolume;
+    if (volume == null) {
+      return 0;
+    }
+    if (!isIos) {
+      return volume;
+    }
+
+    // iOS hardware/media volume is exposed in coarse device steps. Rounding to
+    // 16 steps makes the percentage match the native volume HUD more closely.
+    return ((volume * 16).round() / 16).clamp(0.0, 1.0).toDouble();
+  }
+
   int get outputVolumePercent {
-    return (((outputVolume ?? 0) * 100).clamp(0.0, 100.0)).round();
+    return (displayOutputVolume * 100).round();
   }
 
   int get minimumRequiredPercent {
