@@ -20,7 +20,6 @@
 		ED8B33872FDCFA8800ACA3A1 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ED8B33862FDCFA8800ACA3A1 /* WidgetKit.framework */; };
 		ED8B33892FDCFA8800ACA3A1 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ED8B33882FDCFA8800ACA3A1 /* SwiftUI.framework */; };
 		ED8B339A2FDCFA8A00ACA3A1 /* ManualSOSExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ED8B33852FDCFA8800ACA3A1 /* ManualSOSExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		ED8B35782FDD2E7E00ACA3A1 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = ED8B35772FDD2E7E00ACA3A1 /* AppIcon.icon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -357,7 +356,6 @@
 				3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */,
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
-				ED8B35782FDD2E7E00ACA3A1 /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
