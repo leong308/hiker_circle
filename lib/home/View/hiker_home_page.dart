@@ -22,8 +22,10 @@ import '../../sos/View/sos_page.dart';
 import '../../trail/Data/trail_repository.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
+import '../Data/active_hike_live_status_service.dart';
 import '../Model/hike_session_models.dart';
 import '../ModelView/fall_stillness_monitor.dart';
+import 'active_hike_map_page.dart';
 import 'home_dashboard_page.dart';
 import 'start_hike_wizard_page.dart';
 
@@ -59,6 +61,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   late final FallStillnessMonitor fallStillnessMonitor;
   final SosDeviceAlertService _sosDeviceAlertService =
       const SosDeviceAlertService();
+  final ActiveHikeLiveStatusService _activeHikeLiveStatusService =
+      const ActiveHikeLiveStatusService();
   late PlannedHike plannedHike;
   bool isLoadingLiveData = false;
   bool isSendingFallStillnessSos = false;
@@ -169,6 +173,18 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     if (uri.host == 'sos' && uri.path == '/duress') {
       requestImmediateSos(SosAlertMode.duress);
+      return;
+    }
+    if (uri.host == 'hike' && uri.path == '/active') {
+      _openActiveHikeDetailsFromDeepLink();
+      return;
+    }
+    if (uri.host == 'hike' && uri.path == '/check-in') {
+      _checkInFromLiveStatusAction();
+      return;
+    }
+    if (uri.host == 'hike' && uri.path == '/pin') {
+      _pinLocationFromLiveStatusAction();
       return;
     }
     if (uri.host != 'buddy' || uri.path != '/add') {
@@ -417,6 +433,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       selectedTabIndex = 0;
     });
     _syncFallStillnessMonitor(liveHike);
+    unawaited(_activeHikeLiveStatusService.startOrUpdate(liveHike));
     tabController.animateTo(0);
   }
 
@@ -481,6 +498,113 @@ class _HikerHomePageState extends State<HikerHomePage>
       manualPins: currentHike.manualPins + 1,
       queuedUpdates: queuedUpdates,
     );
+  }
+
+  void _openActiveHikeDetailsFromDeepLink() {
+    final hike = activeHike;
+    if (hike == null) {
+      _showNoActiveHikeSnackBar();
+      return;
+    }
+
+    setState(() {
+      selectedTabIndex = 0;
+    });
+    tabController.animateTo(0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => ActiveHikeMapPage(activeHike: hike),
+        ),
+      );
+    });
+  }
+
+  void _checkInFromLiveStatusAction() {
+    final hike = activeHike;
+    if (hike == null) {
+      _showNoActiveHikeSnackBar();
+      return;
+    }
+
+    setState(() {
+      selectedTabIndex = 0;
+    });
+    tabController.animateTo(0);
+    unawaited(_applyLiveStatusCheckIn(hike));
+  }
+
+  Future<void> _applyLiveStatusCheckIn(ActiveHikeSession hike) async {
+    final updatedHike = await checkInActiveHike(hike);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      activeHike = updatedHike;
+    });
+    unawaited(_activeHikeLiveStatusService.startOrUpdate(updatedHike));
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Check-in saved from live hike status.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  void _pinLocationFromLiveStatusAction() {
+    final hike = activeHike;
+    if (hike == null) {
+      _showNoActiveHikeSnackBar();
+      return;
+    }
+
+    setState(() {
+      selectedTabIndex = 0;
+    });
+    tabController.animateTo(0);
+    unawaited(_applyLiveStatusPin(hike));
+  }
+
+  Future<void> _applyLiveStatusPin(ActiveHikeSession hike) async {
+    final updatedHike = await pinCurrentLocation(hike);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      activeHike = updatedHike;
+    });
+    unawaited(_activeHikeLiveStatusService.startOrUpdate(updatedHike));
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Checkpoint pinned from live hike status.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  void _showNoActiveHikeSnackBar() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('No active hike session is running.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    });
   }
 
   void openJoinTeamHike() {
@@ -615,6 +739,7 @@ class _HikerHomePageState extends State<HikerHomePage>
             setState(() {
               activeHike = updatedHike;
             });
+            unawaited(_activeHikeLiveStatusService.startOrUpdate(updatedHike));
           },
           onCheckInRequested: checkInActiveHike,
           onPinLocationRequested: pinCurrentLocation,
@@ -637,6 +762,7 @@ class _HikerHomePageState extends State<HikerHomePage>
             unawaited(fallStillnessMonitor.stop());
             unawaited(_sosDeviceAlertService.stopSpokenPrompt());
             unawaited(_sosDeviceAlertService.stopManualSosPattern());
+            unawaited(_activeHikeLiveStatusService.stop());
             isFallStillnessLocalAlarmActive = false;
             setState(() {
               activeHike = null;
