@@ -32,43 +32,34 @@ struct ManualSOSEntryView: View {
 
   var body: some View {
     Link(destination: sosUrl) {
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: 4) {
         Text("HikerCircle")
           .font(.caption2.bold())
           .foregroundStyle(.white)
 
         Spacer(minLength: 0)
 
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
           Text("SOS")
-            .font(.system(size: 30, weight: .black, design: .rounded))
+            .font(.system(size: 28, weight: .black, design: .rounded))
             .foregroundStyle(.white)
 
           Text("Instant")
-            .font(.caption2.weight(.semibold))
+            .font(.caption2)
             .foregroundStyle(.white.opacity(0.82))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-          LinearGradient(
-            colors: [
-              Color(red: 0.95, green: 0.08, blue: 0.12),
-              Color(red: 0.52, green: 0.05, blue: 0.07)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .background(Color.black.opacity(0.42))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
       }
-      .padding(12)
+      .padding(4)
     }
     .hikerWidgetBackground {
       LinearGradient(
         colors: [
-          Color(red: 0.02, green: 0.22, blue: 0.16),
-          Color(red: 0.10, green: 0.42, blue: 0.27),
-          Color(red: 0.22, green: 0.70, blue: 0.36)
+          Color(red: 0.37, green: 0.04, blue: 0.04),
+          Color(red: 0.86, green: 0.15, blue: 0.15),
+          Color(red: 1.00, green: 0.23, blue: 0.19)
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
