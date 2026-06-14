@@ -28,6 +28,7 @@ import ActivityKit
   private var locationManager: CLLocationManager?
   private var pendingLocationResult: FlutterResult?
   private var pendingAllowLastKnownLocation = false
+  private var isPreciseLocationEnabled = true
   private var locationTimeoutTimer: Timer?
   private var deepLinkChannel: FlutterMethodChannel?
   private var pendingDeepLink: String?
@@ -142,6 +143,20 @@ import ActivityKit
       case "stopManualSosPattern":
         self.stopManualSosPattern()
         result(nil)
+      case "startSirenOnly":
+        do {
+          let arguments = call.arguments as? [String: Any]
+          let requestedAlarmAsset = arguments?["alarmAsset"] as? String
+          self.stopTorchPattern()
+          try self.startAlarm(alarmAsset: self.normalizedAlarmAsset(requestedAlarmAsset))
+          result(nil)
+        } catch {
+          result(FlutterError(
+            code: "siren_test_start_failed",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        }
       case "startFlashlightPattern":
         self.startTorchPattern()
         result(nil)
@@ -180,6 +195,10 @@ import ActivityKit
         self.getOutputVolumeStatus(call, result)
       case "getCurrentTriggerLocation":
         self.getCurrentTriggerLocation(call, result)
+      case "setPreciseLocationEnabled":
+        let arguments = call.arguments as? [String: Any]
+        self.isPreciseLocationEnabled = arguments?["enabled"] as? Bool ?? true
+        result(nil)
       case "shareText":
         self.shareText(call, result)
       default:
@@ -505,7 +524,7 @@ import ActivityKit
       return
     }
 
-    manager.desiredAccuracy = kCLLocationAccuracyBest
+    manager.desiredAccuracy = isPreciseLocationEnabled ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
     locationTimeoutTimer?.invalidate()
     locationTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) {
       [weak self] _ in

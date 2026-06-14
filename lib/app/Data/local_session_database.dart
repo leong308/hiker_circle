@@ -37,6 +37,41 @@ class LocalSessionDatabase {
     await database.delete('users');
   }
 
+  Future<CacheUsageSummary> loadCacheUsageSummary() async {
+    final database = await _openDatabase();
+    final downloadedMapCount =
+        Sqflite.firstIntValue(
+          await database.rawQuery('SELECT COUNT(*) FROM downloaded_maps'),
+        ) ??
+        0;
+    final downloadedMapBytes =
+        Sqflite.firstIntValue(
+          await database.rawQuery(
+            'SELECT COALESCE(SUM(file_size), 0) FROM downloaded_maps',
+          ),
+        ) ??
+        0;
+    final networkObservationCount =
+        Sqflite.firstIntValue(
+          await database.rawQuery('SELECT COUNT(*) FROM network_observations'),
+        ) ??
+        0;
+
+    return CacheUsageSummary(
+      downloadedMapCount: downloadedMapCount,
+      downloadedMapBytes: downloadedMapBytes,
+      networkObservationCount: networkObservationCount,
+    );
+  }
+
+  Future<void> clearCacheData() async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.delete('downloaded_maps');
+      await transaction.delete('network_observations');
+    });
+  }
+
   Future<Database> _openDatabase() async {
     final existingDatabase = _database;
     if (existingDatabase != null) {
@@ -270,5 +305,24 @@ class LocalSessionDatabase {
       signedInAt: signedInAt,
       createdAt: createdAt,
     );
+  }
+}
+
+class CacheUsageSummary {
+  const CacheUsageSummary({
+    required this.downloadedMapCount,
+    required this.downloadedMapBytes,
+    required this.networkObservationCount,
+  });
+
+  final int downloadedMapCount;
+  final int downloadedMapBytes;
+  final int networkObservationCount;
+
+  String get label {
+    final sizeLabel = downloadedMapBytes <= 0
+        ? '0 MB'
+        : '${(downloadedMapBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '$sizeLabel map cache, $downloadedMapCount route packs, $networkObservationCount network samples';
   }
 }

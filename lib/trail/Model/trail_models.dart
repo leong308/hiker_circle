@@ -158,4 +158,51 @@ class Trail {
   }
 
   String get distanceLabel => '${distanceKm.toStringAsFixed(1)} km';
+
+  Trail copyWith({
+    String? trailId,
+    String? name,
+    String? area,
+    String? state,
+    double? latitude,
+    double? longitude,
+    double? distanceKm,
+    String? difficulty,
+    int? estimatedDurationMinutes,
+    int? elevationGainMeters,
+    double? ratingAverage,
+    bool? offlineMapAvailable,
+    bool? offlineMapDownloaded,
+    bool? isVerifiedTrail,
+    String? routeFilePath,
+    int? coverColorValue,
+    String? coverImageUrl,
+    List<TrailCheckpoint>? checkpoints,
+    TrailWeather? weather,
+    List<TrailHazard>? hazards,
+  }) {
+    return Trail(
+      trailId: trailId ?? this.trailId,
+      name: name ?? this.name,
+      area: area ?? this.area,
+      state: state ?? this.state,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      distanceKm: distanceKm ?? this.distanceKm,
+      difficulty: difficulty ?? this.difficulty,
+      estimatedDurationMinutes:
+          estimatedDurationMinutes ?? this.estimatedDurationMinutes,
+      elevationGainMeters: elevationGainMeters ?? this.elevationGainMeters,
+      ratingAverage: ratingAverage ?? this.ratingAverage,
+      offlineMapAvailable: offlineMapAvailable ?? this.offlineMapAvailable,
+      offlineMapDownloaded: offlineMapDownloaded ?? this.offlineMapDownloaded,
+      isVerifiedTrail: isVerifiedTrail ?? this.isVerifiedTrail,
+      routeFilePath: routeFilePath ?? this.routeFilePath,
+      coverColorValue: coverColorValue ?? this.coverColorValue,
+      coverImageUrl: coverImageUrl ?? this.coverImageUrl,
+      checkpoints: checkpoints ?? this.checkpoints,
+      weather: weather ?? this.weather,
+      hazards: hazards ?? this.hazards,
+    );
+  }
 }

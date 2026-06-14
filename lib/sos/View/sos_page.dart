@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../me/View/location_sharing_page.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Data/location_snapshot_service.dart';
 import '../Data/sos_alert_repository.dart';
@@ -184,7 +186,9 @@ class _SosPageState extends State<SosPage> {
   void _openTestSettings() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => const _SosTestSettingsPage(),
+        builder: (context) => _SosTestSettingsPage(
+          onSendWhatsAppTest: viewModel.sendWhatsAppTestMessage,
+        ),
       ),
     );
   }
@@ -193,13 +197,24 @@ class _SosPageState extends State<SosPage> {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      backgroundColor: Colors.white,
+      backgroundColor: _SosColors.surfaceFor(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (context) {
         return _ManualSosDetailsOverlay(details: viewModel.manualSosDetails);
       },
+    );
+  }
+
+  void _openLiveLocationPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => LocationSharingPage(
+          phoneNumber: widget.session.phoneNumber,
+          firebaseBootstrapResult: widget.firebaseBootstrapResult,
+        ),
+      ),
     );
   }
 
@@ -240,7 +255,7 @@ class _SosPageState extends State<SosPage> {
           content: Text(message),
           behavior: SnackBarBehavior.floating,
           backgroundColor: result == null || result.alert.failedCount > 0
-              ? _SosColors.destructive
+              ? _SosColors.destructiveFor(context)
               : _SosColors.green,
         ),
       );
@@ -313,7 +328,7 @@ class _SosPageState extends State<SosPage> {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: _SosColors.background,
+      color: _SosColors.backgroundFor(context),
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 112),
@@ -339,7 +354,10 @@ class _SosPageState extends State<SosPage> {
                     errorMessage: widget.firebaseBootstrapResult.errorMessage,
                   ),
                   const SizedBox(height: 14),
-                  _MetricsGroup(metrics: viewModel.metrics),
+                  _MetricsGroup(
+                    metrics: viewModel.metrics,
+                    onLiveTap: _openLiveLocationPage,
+                  ),
                   const SizedBox(height: 18),
                   _SosAlertStatusCard(
                     isSending: viewModel.isSendingSosAlert,
@@ -418,7 +436,7 @@ class _Header extends StatelessWidget {
                 Text(
                   'SOS',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _SosColors.text,
+                    color: _SosColors.textFor(context),
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -430,7 +448,7 @@ class _Header extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _SosColors.secondaryText,
+                    color: _SosColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w400,
                     letterSpacing: 0,
                   ),
@@ -497,8 +515,8 @@ class _HeaderAction extends StatelessWidget {
         child: Container(
           width: 36,
           height: 36,
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: _SosColors.surfaceFor(context),
             shape: BoxShape.circle,
           ),
           child: Icon(icon, color: _SosColors.green, size: 19),
@@ -583,8 +601,8 @@ class _ManualSosCountdownDialogState extends State<_ManualSosCountdownDialog> {
             LinearProgressIndicator(
               value: progress,
               minHeight: 3,
-              color: _SosColors.destructive,
-              backgroundColor: _SosColors.destructiveSoft,
+              color: _SosColors.destructiveFor(context),
+              backgroundColor: _SosColors.destructiveSoftFor(context),
             ),
           ],
         ),
@@ -648,7 +666,7 @@ class _NetworkSosStatusCard extends StatelessWidget {
                           title,
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(
-                                color: _SosColors.text,
+                                color: _SosColors.textFor(context),
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 0,
                               ),
@@ -665,7 +683,7 @@ class _NetworkSosStatusCard extends StatelessWidget {
                   Text(
                     errorMessage == null ? subtitle : '$subtitle $errorMessage',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _SosColors.secondaryText,
+                      color: _SosColors.secondaryTextFor(context),
                       letterSpacing: 0,
                     ),
                   ),
@@ -680,9 +698,10 @@ class _NetworkSosStatusCard extends StatelessWidget {
 }
 
 class _MetricsGroup extends StatelessWidget {
-  const _MetricsGroup({required this.metrics});
+  const _MetricsGroup({required this.metrics, required this.onLiveTap});
 
   final List<SosMetric> metrics;
+  final VoidCallback onLiveTap;
 
   @override
   Widget build(BuildContext context) {
@@ -692,7 +711,12 @@ class _MetricsGroup extends StatelessWidget {
         child: Row(
           children: [
             for (var index = 0; index < metrics.length; index++) ...[
-              Expanded(child: _MetricCell(metric: metrics[index])),
+              Expanded(
+                child: _MetricCell(
+                  metric: metrics[index],
+                  onTap: metrics[index].label == 'Live' ? onLiveTap : null,
+                ),
+              ),
               if (index != metrics.length - 1) const _VerticalSeparator(),
             ],
           ],
@@ -703,37 +727,43 @@ class _MetricsGroup extends StatelessWidget {
 }
 
 class _MetricCell extends StatelessWidget {
-  const _MetricCell({required this.metric});
+  const _MetricCell({required this.metric, this.onTap});
 
   final SosMetric metric;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(
-          metric.value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: _SosColors.text,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            metric.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: _SosColors.textFor(context),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
           ),
-        ),
-        const SizedBox(height: 1),
-        Text(
-          metric.label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            color: _SosColors.secondaryText,
-            fontWeight: FontWeight.w400,
-            letterSpacing: 0,
+          const SizedBox(height: 1),
+          Text(
+            metric.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: onTap == null
+                  ? _SosColors.secondaryTextFor(context)
+                  : _SosColors.green,
+              fontWeight: onTap == null ? FontWeight.w400 : FontWeight.w800,
+              letterSpacing: 0,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -753,7 +783,7 @@ class _SosAlertStatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final latestAlert = latestResult?.alert;
     final statusColor = latestAlert?.status == SosAlertStatus.failed
-        ? _SosColors.destructive
+        ? _SosColors.destructiveFor(context)
         : _SosColors.green;
     final title = isSending
         ? 'Sending SOS alert'
@@ -779,7 +809,7 @@ class _SosAlertStatusCard extends StatelessWidget {
                       ? Icons.outbox_rounded
                       : Icons.verified_user_rounded,
                   color: errorMessage != null
-                      ? _SosColors.destructive
+                      ? _SosColors.destructiveFor(context)
                       : statusColor,
                 ),
                 const SizedBox(width: 12),
@@ -793,7 +823,7 @@ class _SosAlertStatusCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _SosColors.text,
+                              color: _SosColors.textFor(context),
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0,
                             ),
@@ -805,8 +835,8 @@ class _SosAlertStatusCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: errorMessage != null
-                              ? _SosColors.destructive
-                              : _SosColors.secondaryText,
+                              ? _SosColors.destructiveFor(context)
+                              : _SosColors.secondaryTextFor(context),
                           fontWeight: FontWeight.w400,
                           letterSpacing: 0,
                         ),
@@ -869,7 +899,7 @@ class _EmergencySosControlCard extends StatelessWidget {
               'Manual SOS',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _SosColors.text,
+                color: _SosColors.textFor(context),
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0,
               ),
@@ -892,14 +922,16 @@ class _EmergencySosControlCard extends StatelessWidget {
                     color: isAlarmActive
                         ? _SosColors.green
                         : isSending
-                        ? _SosColors.destructive.withValues(alpha: 0.58)
-                        : _SosColors.destructive,
+                        ? _SosColors.destructiveFor(
+                            context,
+                          ).withValues(alpha: 0.58)
+                        : _SosColors.destructiveFor(context),
                     boxShadow: [
                       BoxShadow(
                         color:
                             (isAlarmActive
                                     ? _SosColors.green
-                                    : _SosColors.destructive)
+                                    : _SosColors.destructiveFor(context))
                                 .withValues(alpha: 0.26),
                         blurRadius: 26,
                         spreadRadius: 8,
@@ -957,7 +989,7 @@ class _EmergencySosControlCard extends StatelessWidget {
               'Tap for the 10-second cancel window. Press and hold the button to view exactly what gets activated.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _SosColors.secondaryText,
+                color: _SosColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0,
               ),
@@ -1038,7 +1070,7 @@ class _ManualSosDetailsOverlay extends StatelessWidget {
               'Manual SOS activates',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _SosColors.text,
+                color: _SosColors.textFor(context),
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0,
               ),
@@ -1048,7 +1080,7 @@ class _ManualSosDetailsOverlay extends StatelessWidget {
               'These are shown on hold so the main button stays calm and uncluttered.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _SosColors.secondaryText,
+                color: _SosColors.secondaryTextFor(context),
                 letterSpacing: 0,
               ),
             ),
@@ -1100,7 +1132,7 @@ class _SosTriggerLogPanel extends StatelessWidget {
           icon: Icons.chat_bubble_rounded,
           title: 'WhatsApp notification',
           subtitle: 'Edit Manual, Duress, and Medical SOS notes.',
-          trailing: '${_customNoteCount()}/3 custom',
+          trailing: 'Edit',
           onTap: () => unawaited(_openWhatsAppMessageEditor(context)),
         ),
         const SizedBox(height: 8),
@@ -1139,23 +1171,6 @@ class _SosTriggerLogPanel extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  int _customNoteCount() {
-    var count = 0;
-    for (final mode in [
-      SosAlertMode.manual,
-      SosAlertMode.duress,
-      SosAlertMode.medical,
-    ]) {
-      final note = customWhatsAppNotes[mode]?.trim();
-      if (note != null &&
-          note.isNotEmpty &&
-          note != SosAlertMessageComposer.defaultCustomNote) {
-        count += 1;
-      }
-    }
-    return count;
   }
 
   Future<void> _openWhatsAppMessageEditor(BuildContext context) async {
@@ -1307,7 +1322,7 @@ class _DeliveryActionCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: _SosColors.text,
+                        color: _SosColors.textFor(context),
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
@@ -1318,7 +1333,7 @@ class _DeliveryActionCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _SosColors.secondaryText,
+                        color: _SosColors.secondaryTextFor(context),
                         letterSpacing: 0,
                       ),
                     ),
@@ -1329,7 +1344,7 @@ class _DeliveryActionCard extends StatelessWidget {
               _StatusPill(
                 label: trailing,
                 color: _SosColors.green,
-                surface: _SosColors.greenSoft,
+                surface: _SosColors.greenSoftFor(context),
               ),
               const SizedBox(width: 6),
               const Icon(
@@ -1403,7 +1418,7 @@ class _WhatsAppMessageDetailPageState
     );
 
     return Scaffold(
-      backgroundColor: _SosColors.background,
+      backgroundColor: _SosColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1434,7 +1449,7 @@ class _WhatsAppMessageDetailPageState
                             'Custom note',
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
-                                  color: _SosColors.text,
+                                  color: _SosColors.textFor(context),
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
@@ -1528,7 +1543,7 @@ class _WhatsAppMessageDetailPageState
                             'WhatsApp preview',
                             style: Theme.of(context).textTheme.titleMedium
                                 ?.copyWith(
-                                  color: _SosColors.text,
+                                  color: _SosColors.textFor(context),
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
@@ -1538,7 +1553,7 @@ class _WhatsAppMessageDetailPageState
                             preview,
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: _SosColors.text,
+                                  color: _SosColors.textFor(context),
                                   height: 1.35,
                                   letterSpacing: 0,
                                 ),
@@ -1590,7 +1605,7 @@ class _AlertDeliveryDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _SosColors.background,
+      backgroundColor: _SosColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1618,7 +1633,7 @@ class _AlertDeliveryDetailPage extends StatelessWidget {
                             title,
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
-                                  color: _SosColors.text,
+                                  color: _SosColors.textFor(context),
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
@@ -1628,7 +1643,7 @@ class _AlertDeliveryDetailPage extends StatelessWidget {
                             description,
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: _SosColors.secondaryText,
+                                  color: _SosColors.secondaryTextFor(context),
                                   letterSpacing: 0,
                                 ),
                           ),
@@ -1722,7 +1737,7 @@ class _ReadinessRow extends StatelessWidget {
                 Text(
                   title,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _SosColors.text,
+                    color: _SosColors.textFor(context),
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
@@ -1731,7 +1746,7 @@ class _ReadinessRow extends StatelessWidget {
                 Text(
                   subtitle,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _SosColors.secondaryText,
+                    color: _SosColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
@@ -1745,7 +1760,9 @@ class _ReadinessRow extends StatelessWidget {
 }
 
 class _SosTestSettingsPage extends StatefulWidget {
-  const _SosTestSettingsPage();
+  const _SosTestSettingsPage({required this.onSendWhatsAppTest});
+
+  final Future<List<SosContactDispatch>> Function() onSendWhatsAppTest;
 
   @override
   State<_SosTestSettingsPage> createState() => _SosTestSettingsPageState();
@@ -1760,8 +1777,14 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   bool _isFlashlightActive = false;
   bool _isEmergencySirenActive = false;
   bool _isMedicalSirenActive = false;
-  String _accelerometerLabel = 'Waiting for motion sensor...';
-  String _gyroscopeLabel = 'Waiting for gyro sensor...';
+  bool _isAccelerometerTestActive = false;
+  bool _isGyroscopeTestActive = false;
+  double _accelerometerTestProgress = 0;
+  double _gyroscopeTestProgress = 0;
+  String _accelerometerTestStatus =
+      'Tap Start, hold the phone securely, then do one quick downward shake.';
+  String _gyroscopeTestStatus =
+      'Tap Start, then rotate your wrist left-right and tilt forward-back.';
 
   @override
   void initState() {
@@ -1774,15 +1797,12 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
             if (!mounted) {
               return;
             }
-            setState(() {
-              _accelerometerLabel =
-                  'x ${event.x.toStringAsFixed(2)}, y ${event.y.toStringAsFixed(2)}, z ${event.z.toStringAsFixed(2)} m/s2';
-            });
+            _handleAccelerometerTestEvent(event);
           },
           onError: (_) {
             if (mounted) {
               setState(() {
-                _accelerometerLabel = 'Accelerometer unavailable.';
+                _accelerometerTestStatus = 'Accelerometer unavailable.';
               });
             }
           },
@@ -1795,15 +1815,12 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
             if (!mounted) {
               return;
             }
-            setState(() {
-              _gyroscopeLabel =
-                  'x ${event.x.toStringAsFixed(2)}, y ${event.y.toStringAsFixed(2)}, z ${event.z.toStringAsFixed(2)} rad/s';
-            });
+            _handleGyroscopeTestEvent(event);
           },
           onError: (_) {
             if (mounted) {
               setState(() {
-                _gyroscopeLabel = 'Gyroscope unavailable.';
+                _gyroscopeTestStatus = 'Gyroscope unavailable.';
               });
             }
           },
@@ -1823,7 +1840,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _SosColors.background,
+      backgroundColor: _SosColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1846,7 +1863,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                           icon: Icons.chat_bubble_rounded,
                           title: 'WhatsApp test message',
                           subtitle:
-                              'Open a TEST alert payload in the share sheet.',
+                              'Send a non-emergency cloud messaging test to your emergency contacts.',
                           onTap: () => unawaited(_sendWhatsAppTestMessage()),
                         ),
                         const _HorizontalSeparator(),
@@ -1864,7 +1881,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                           title: 'Emergency siren test',
                           subtitle: _isEmergencySirenActive
                               ? 'Tap to stop the emergency siren.'
-                              : 'Play the emergency alarm and flashlight pattern.',
+                              : 'Play the emergency siren only. No flashlight.',
                           onTap: () =>
                               unawaited(_toggleSirenTest(SosAlertMode.manual)),
                         ),
@@ -1874,7 +1891,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                           title: 'Medical siren test',
                           subtitle: _isMedicalSirenActive
                               ? 'Tap to stop the medical siren.'
-                              : 'Play the medical alarm and flashlight pattern.',
+                              : 'Play the medical siren only. No flashlight.',
                           onTap: () =>
                               unawaited(_toggleSirenTest(SosAlertMode.medical)),
                         ),
@@ -1890,16 +1907,26 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                         children: [
                           _FlashPatternPreview(active: _isFlashlightActive),
                           const SizedBox(height: 14),
-                          _SensorReadout(
+                          _SensorTestCard(
                             icon: Icons.sensors_rounded,
-                            title: 'Accelerometer',
-                            value: _accelerometerLabel,
+                            title: 'Accelerometer free-fall mimic',
+                            instruction:
+                                'Quickly shake downward once while holding the phone securely.',
+                            progress: _accelerometerTestProgress,
+                            status: _accelerometerTestStatus,
+                            isActive: _isAccelerometerTestActive,
+                            onStart: _startAccelerometerTest,
                           ),
                           const _HorizontalSeparator(),
-                          _SensorReadout(
+                          _SensorTestCard(
                             icon: Icons.threesixty_rounded,
-                            title: 'Gyroscope',
-                            value: _gyroscopeLabel,
+                            title: 'Gyroscope rotation test',
+                            instruction:
+                                'Rotate your wrist in a figure-eight or left-right tilt.',
+                            progress: _gyroscopeTestProgress,
+                            status: _gyroscopeTestStatus,
+                            isActive: _isGyroscopeTestActive,
+                            onStart: _startGyroscopeTest,
                           ),
                         ],
                       ),
@@ -1915,22 +1942,14 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   }
 
   Future<void> _sendWhatsAppTestMessage() async {
-    final text = SosAlertMessageComposer.compose(
-      mode: SosAlertMode.manual,
-      phoneNumber: 'TEST',
-      triggeredAt: DateTime.now().toUtc(),
-      triggerLocation: null,
-      customNote:
-          'This is a HikerCircle WhatsApp TEST message. No emergency has been triggered.',
-    );
     try {
-      await _deviceAlertService.shareText(
-        subject: 'HikerCircle WhatsApp test',
-        text: text,
+      final dispatches = await widget.onSendWhatsAppTest();
+      final sent = dispatches.where((dispatch) => dispatch.wasSent).length;
+      _showTestResult(
+        'WhatsApp cloud test sent to $sent/${dispatches.length} contacts.',
       );
-      _showTestResult('WhatsApp test payload opened in the share sheet.');
     } catch (_) {
-      _showTestResult('Share sheet is unavailable on this platform.');
+      _showTestResult('Unable to send WhatsApp cloud test right now.');
     }
   }
 
@@ -1967,7 +1986,8 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
     }
 
     await _stopAllTests();
-    await _deviceAlertService.startSosPatternForMode(mode);
+    await _deviceAlertService.stopFlashlightPattern();
+    await _deviceAlertService.startSirenOnlyForMode(mode);
     if (!mounted) {
       return;
     }
@@ -1976,7 +1996,11 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
       _isMedicalSirenActive = mode == SosAlertMode.medical;
     });
     _scheduleAutoStop();
-    _showTestResult('${mode.label} siren test started.');
+    _showTestResult(
+      mode == SosAlertMode.medical
+          ? 'Medical siren test started.'
+          : 'Emergency siren test started.',
+    );
   }
 
   Future<void> _stopAllTests() async {
@@ -2011,6 +2035,69 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
       ..showSnackBar(
         SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
+  }
+
+  void _startAccelerometerTest() {
+    setState(() {
+      _isAccelerometerTestActive = true;
+      _accelerometerTestProgress = 0;
+      _accelerometerTestStatus =
+          'Ready. Do one quick downward shake while gripping the phone.';
+    });
+  }
+
+  void _startGyroscopeTest() {
+    setState(() {
+      _isGyroscopeTestActive = true;
+      _gyroscopeTestProgress = 0;
+      _gyroscopeTestStatus =
+          'Ready. Rotate and tilt the phone for a few seconds.';
+    });
+  }
+
+  void _handleAccelerometerTestEvent(AccelerometerEvent event) {
+    if (!_isAccelerometerTestActive || !mounted) {
+      return;
+    }
+    final magnitude = math.sqrt(
+      event.x * event.x + event.y * event.y + event.z * event.z,
+    );
+    final detected = magnitude < 4 || event.z < -8 || event.y < -8;
+    if (!detected) {
+      return;
+    }
+    setState(() {
+      _accelerometerTestProgress = (_accelerometerTestProgress + 0.34)
+          .clamp(0, 1)
+          .toDouble();
+      _accelerometerTestStatus = _accelerometerTestProgress >= 1
+          ? 'Passed. Accelerometer detected the fast downward motion.'
+          : 'Motion detected. Repeat once more to confirm.';
+      if (_accelerometerTestProgress >= 1) {
+        _isAccelerometerTestActive = false;
+      }
+    });
+  }
+
+  void _handleGyroscopeTestEvent(GyroscopeEvent event) {
+    if (!_isGyroscopeTestActive || !mounted) {
+      return;
+    }
+    final angularMotion = event.x.abs() + event.y.abs() + event.z.abs();
+    if (angularMotion < 1.4) {
+      return;
+    }
+    setState(() {
+      _gyroscopeTestProgress = (_gyroscopeTestProgress + 0.18)
+          .clamp(0, 1)
+          .toDouble();
+      _gyroscopeTestStatus = _gyroscopeTestProgress >= 1
+          ? 'Passed. Gyroscope detected rotation on the phone.'
+          : 'Rotation detected. Keep rotating briefly.';
+      if (_gyroscopeTestProgress >= 1) {
+        _isGyroscopeTestActive = false;
+      }
+    });
   }
 }
 
@@ -2071,14 +2158,18 @@ class _FlashPatternPreviewState extends State<_FlashPatternPreview> {
       duration: const Duration(milliseconds: 140),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: _isOn ? _SosColors.destructiveSoft : _SosColors.greenSoft,
+        color: _isOn
+            ? _SosColors.destructiveSoftFor(context)
+            : _SosColors.greenSoftFor(context),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         children: [
           Icon(
             _isOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
-            color: _isOn ? _SosColors.destructive : _SosColors.green,
+            color: _isOn
+                ? _SosColors.destructiveFor(context)
+                : _SosColors.green,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -2087,7 +2178,7 @@ class _FlashPatternPreviewState extends State<_FlashPatternPreview> {
                   ? 'SOS flash meaning: 3 short, 3 long, 3 short. Auto-stops after 8 seconds.'
                   : 'Flashlight preview is idle.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _SosColors.text,
+                color: _SosColors.textFor(context),
                 letterSpacing: 0,
               ),
             ),
@@ -2098,16 +2189,24 @@ class _FlashPatternPreviewState extends State<_FlashPatternPreview> {
   }
 }
 
-class _SensorReadout extends StatelessWidget {
-  const _SensorReadout({
+class _SensorTestCard extends StatelessWidget {
+  const _SensorTestCard({
     required this.icon,
     required this.title,
-    required this.value,
+    required this.instruction,
+    required this.progress,
+    required this.status,
+    required this.isActive,
+    required this.onStart,
   });
 
   final IconData icon;
   final String title;
-  final String value;
+  final String instruction;
+  final double progress;
+  final String status;
+  final bool isActive;
+  final VoidCallback onStart;
 
   @override
   Widget build(BuildContext context) {
@@ -2124,21 +2223,44 @@ class _SensorReadout extends StatelessWidget {
                 Text(
                   title,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _SosColors.text,
+                    color: _SosColors.textFor(context),
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  value,
+                  instruction,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _SosColors.secondaryText,
+                    color: _SosColors.secondaryTextFor(context),
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 5,
+                    color: _SosColors.green,
+                    backgroundColor: _SosColors.greenSoftFor(context),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  status,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: _SosColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
               ],
             ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: isActive ? null : onStart,
+            child: Text(progress >= 1 ? 'Retest' : 'Start'),
           ),
         ],
       ),
@@ -2177,7 +2299,7 @@ class _SosTestRow extends StatelessWidget {
                   Text(
                     title,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _SosColors.text,
+                      color: _SosColors.textFor(context),
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
@@ -2186,7 +2308,7 @@ class _SosTestRow extends StatelessWidget {
                   Text(
                     subtitle,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _SosColors.secondaryText,
+                      color: _SosColors.secondaryTextFor(context),
                       letterSpacing: 0,
                     ),
                   ),
@@ -2251,7 +2373,7 @@ class _SosDetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _SosColors.text,
+                  color: _SosColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
@@ -2262,7 +2384,7 @@ class _SosDetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _SosColors.secondaryText,
+                  color: _SosColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -2291,7 +2413,7 @@ class _StatusRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _SosColors.text,
+                color: _SosColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -2303,7 +2425,7 @@ class _StatusRow extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _SosColors.secondaryText,
+                color: _SosColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -2327,7 +2449,7 @@ class _SectionTitle extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _SosColors.secondaryText,
+          color: _SosColors.secondaryTextFor(context),
           fontSize: 12,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
@@ -2348,18 +2470,18 @@ class _DetailChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
       decoration: BoxDecoration(
-        color: _SosColors.destructiveSoft,
+        color: _SosColors.destructiveSoftFor(context),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: _SosColors.destructive, size: 15),
+          Icon(icon, color: _SosColors.destructiveFor(context), size: 15),
           const SizedBox(width: 5),
           Text(
             label,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _SosColors.destructive,
+              color: _SosColors.destructiveFor(context),
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
@@ -2450,7 +2572,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _SosColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -2464,10 +2586,10 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(
+    return Divider(
       height: 1,
       thickness: 0.7,
-      color: _SosColors.separator,
+      color: _SosColors.separatorFor(context),
     );
   }
 }
@@ -2477,12 +2599,12 @@ class _VerticalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       height: 32,
       child: VerticalDivider(
         width: 1,
         thickness: 0.7,
-        color: _SosColors.separator,
+        color: _SosColors.separatorFor(context),
       ),
     );
   }
@@ -2500,4 +2622,31 @@ abstract final class _SosColors {
   static const Color destructive = Color(0xFFFF3B30);
   static const Color destructiveSoft = Color(0xFFFFEDEC);
   static const Color duress = Color(0xFF8E4C5A);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color greenSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF183625) : greenSoft;
+
+  static Color destructiveSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF3C1B1B) : destructiveSoft;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color destructiveFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFFF6B61) : destructive;
 }

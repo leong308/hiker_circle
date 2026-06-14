@@ -1,12 +1,17 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/Data/app_settings_controller.dart';
 import '../../app/Data/firebase_bootstrap.dart';
+import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
+import '../../sos/Data/sos_device_alert_service.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../sos/View/emergency_contacts_page.dart';
 import '../Model/me_models.dart';
@@ -65,7 +70,7 @@ class _MePageState extends State<MePage> {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: _MeColors.background,
+      color: _MeColors.backgroundFor(context),
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 112),
@@ -341,7 +346,7 @@ class _Header extends StatelessWidget {
                 Text(
                   'Profile',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _MeColors.text,
+                    color: _MeColors.textFor(context),
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -353,7 +358,7 @@ class _Header extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _MeColors.secondaryText,
+                    color: _MeColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w400,
                     letterSpacing: 0,
                   ),
@@ -406,8 +411,8 @@ class _HeaderAction extends StatelessWidget {
         child: Container(
           width: 36,
           height: 36,
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: _MeColors.surfaceFor(context),
             shape: BoxShape.circle,
           ),
           child: Icon(icon, color: _MeColors.green, size: 19),
@@ -435,9 +440,9 @@ class _ProfileCell extends StatelessWidget {
               Container(
                 width: 58,
                 height: 58,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _MeColors.greenSoft,
+                  color: _MeColors.greenSoftFor(context),
                 ),
                 child: const Icon(
                   CupertinoIcons.person_fill,
@@ -455,7 +460,7 @@ class _ProfileCell extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: _MeColors.text,
+                        color: _MeColors.textFor(context),
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
@@ -466,7 +471,7 @@ class _ProfileCell extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: _MeColors.secondaryText,
+                        color: _MeColors.secondaryTextFor(context),
                         fontWeight: FontWeight.w400,
                       ),
                     ),
@@ -480,9 +485,9 @@ class _ProfileCell extends StatelessWidget {
                 size: 22,
               ),
               const SizedBox(width: 12),
-              const Icon(
+              Icon(
                 CupertinoIcons.chevron_forward,
-                color: _MeColors.chevron,
+                color: _MeColors.chevronFor(context),
                 size: 17,
               ),
             ],
@@ -504,7 +509,7 @@ class _ProfileQrPage extends StatelessWidget {
     final qr = _QrMatrix.encode(link);
 
     return Scaffold(
-      backgroundColor: _MeColors.background,
+      backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -530,7 +535,9 @@ class _ProfileQrPage extends StatelessWidget {
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: _MeColors.separator),
+                              border: Border.all(
+                                color: _MeColors.separatorFor(context),
+                              ),
                             ),
                             child: CustomPaint(
                               painter: _QrPainter(matrix: qr.modules),
@@ -542,7 +549,7 @@ class _ProfileQrPage extends StatelessWidget {
                             profile.displayName,
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
-                                  color: _MeColors.text,
+                                  color: _MeColors.textFor(context),
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
@@ -553,7 +560,7 @@ class _ProfileQrPage extends StatelessWidget {
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: _MeColors.secondaryText,
+                                  color: _MeColors.secondaryTextFor(context),
                                   letterSpacing: 0,
                                 ),
                           ),
@@ -643,7 +650,7 @@ class _QrScannerPlaceholderPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _MeColors.background,
+      backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -687,7 +694,7 @@ class _QrScannerPlaceholderPage extends StatelessWidget {
                               'Camera scanner UI',
                               style: Theme.of(context).textTheme.titleLarge
                                   ?.copyWith(
-                                    color: _MeColors.text,
+                                    color: _MeColors.textFor(context),
                                     fontWeight: FontWeight.w800,
                                   ),
                             ),
@@ -697,7 +704,7 @@ class _QrScannerPlaceholderPage extends StatelessWidget {
                               textAlign: TextAlign.center,
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
-                                    color: _MeColors.secondaryText,
+                                    color: _MeColors.secondaryTextFor(context),
                                     letterSpacing: 0,
                                   ),
                             ),
@@ -740,8 +747,8 @@ class _DetailHeader extends StatelessWidget {
             child: Container(
               width: 36,
               height: 36,
-              decoration: const BoxDecoration(
-                color: Colors.white,
+              decoration: BoxDecoration(
+                color: _MeColors.surfaceFor(context),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -762,7 +769,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _MeColors.text,
+                  color: _MeColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
@@ -773,7 +780,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _MeColors.secondaryText,
+                  color: _MeColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -1205,7 +1212,7 @@ class _ProfileHistoryPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _MeColors.background,
+      backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1233,7 +1240,7 @@ class _ProfileHistoryPage extends StatelessWidget {
                               '${items.length} history item${items.length == 1 ? '' : 's'} from dummy profile activity.',
                               style: Theme.of(context).textTheme.bodyMedium
                                   ?.copyWith(
-                                    color: _MeColors.text,
+                                    color: _MeColors.textFor(context),
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 0,
                                   ),
@@ -1289,7 +1296,7 @@ class _ProfileHistoryCard extends StatelessWidget {
                     Text(
                       item.title,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: _MeColors.text,
+                        color: _MeColors.textFor(context),
                         fontWeight: FontWeight.w800,
                         letterSpacing: 0,
                       ),
@@ -1298,7 +1305,7 @@ class _ProfileHistoryCard extends StatelessWidget {
                     Text(
                       item.subtitle,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _MeColors.secondaryText,
+                        color: _MeColors.secondaryTextFor(context),
                         letterSpacing: 0,
                       ),
                     ),
@@ -1307,9 +1314,9 @@ class _ProfileHistoryCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(
+              Icon(
                 CupertinoIcons.chevron_forward,
-                color: _MeColors.chevron,
+                color: _MeColors.chevronFor(context),
                 size: 16,
               ),
             ],
@@ -1336,7 +1343,7 @@ class _ProfileSettingsDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _MeColors.background,
+      backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1366,7 +1373,7 @@ class _ProfileSettingsDetailPage extends StatelessWidget {
                                   'Configured for HikerCircle profile behavior.',
                                   style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(
-                                        color: _MeColors.text,
+                                        color: _MeColors.textFor(context),
                                         fontWeight: FontWeight.w700,
                                         letterSpacing: 0,
                                       ),
@@ -1403,7 +1410,7 @@ class _HelpCenterPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _MeColors.background,
+      backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1467,17 +1474,105 @@ class _AdvancedAppSettingsPage extends StatefulWidget {
 }
 
 class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
+  final AppSettingsController _settings = AppSettingsController.instance;
+  final LocalSessionDatabase _localDatabase = LocalSessionDatabase();
+  final SosDeviceAlertService _deviceAlertService =
+      const SosDeviceAlertService();
   String _language = 'English';
-  String _theme = 'System';
-  bool _preciseLocation = true;
-  bool _cameraForQr = true;
-  bool _offlineCache = true;
-  bool _analytics = false;
+  CacheUsageSummary? _cacheUsageSummary;
+  bool _isClearingCache = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings.addListener(_handleSettingsChanged);
+    unawaited(_loadCacheUsage());
+  }
+
+  @override
+  void dispose() {
+    _settings.removeListener(_handleSettingsChanged);
+    super.dispose();
+  }
+
+  void _handleSettingsChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _loadCacheUsage() async {
+    final summary = await _localDatabase.loadCacheUsageSummary();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _cacheUsageSummary = summary;
+    });
+  }
+
+  Future<void> _setPreciseLocation(bool enabled) async {
+    if (!enabled) {
+      final confirmed = await showCupertinoDialog<bool>(
+        context: context,
+        builder: (context) {
+          return CupertinoAlertDialog(
+            title: const Text('Reduce Location Accuracy?'),
+            content: const Text(
+              'Turning off precise location can improve battery life, but hike tracking, pins, and SOS map links may be less accurate.',
+            ),
+            actions: [
+              CupertinoDialogAction(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Keep Precise'),
+              ),
+              CupertinoDialogAction(
+                isDestructiveAction: true,
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Turn Off'),
+              ),
+            ],
+          );
+        },
+      );
+      if (confirmed != true) {
+        return;
+      }
+    }
+
+    _settings.setPreciseLocationEnabled(enabled);
+    await _deviceAlertService.setPreciseLocationEnabled(enabled);
+  }
+
+  Future<void> _clearCacheData() async {
+    if (_isClearingCache) {
+      return;
+    }
+    setState(() {
+      _isClearingCache = true;
+    });
+    await _localDatabase.clearCacheData();
+    await _loadCacheUsage();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isClearingCache = false;
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Map cache and network samples cleared.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _MeColors.background,
+      backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1508,9 +1603,13 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                   _ChoiceSettingCard(
                     icon: Icons.palette_rounded,
                     title: 'Theme mode',
-                    value: _theme,
-                    options: const ['System', 'Light', 'Dark'],
-                    onSelected: (value) => setState(() => _theme = value),
+                    value: _settings.themeSetting.label,
+                    options: HikerCircleThemeSetting.values
+                        .map((setting) => setting.label)
+                        .toList(),
+                    onSelected: (value) => _settings.setThemeSetting(
+                      HikerCircleThemeSetting.fromLabel(value),
+                    ),
                   ),
                   const SizedBox(height: 18),
                   _SectionTitle(label: 'Permissions'),
@@ -1520,53 +1619,50 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     title: 'Precise location for hikes and SOS',
                     subtitle:
                         'Used for route tracking and emergency map links.',
-                    value: _preciseLocation,
-                    onChanged: (value) =>
-                        setState(() => _preciseLocation = value),
-                  ),
-                  const SizedBox(height: 8),
-                  _SwitchSettingCard(
-                    icon: Icons.qr_code_scanner_rounded,
-                    title: 'Camera for QR and SOS flashlight',
-                    subtitle:
-                        'Required for scanning buddies and local SOS cues.',
-                    value: _cameraForQr,
-                    onChanged: (value) => setState(() => _cameraForQr = value),
+                    value: _settings.preciseLocationEnabled,
+                    onChanged: (value) => unawaited(_setPreciseLocation(value)),
                   ),
                   const SizedBox(height: 18),
                   _SectionTitle(label: 'Storage & Cache'),
                   const SizedBox(height: 8),
-                  _SwitchSettingCard(
-                    icon: Icons.offline_bolt_rounded,
-                    title: 'Keep offline safety cache',
-                    subtitle:
-                        'Preserve route previews, first-aid content, and SOS drafts.',
-                    value: _offlineCache,
-                    onChanged: (value) => setState(() => _offlineCache = value),
-                  ),
-                  const SizedBox(height: 8),
-                  _ProfileSettingsDetailPageCard(
+                  _CacheUsageCard(
                     icon: Icons.storage_rounded,
                     title: 'Cache usage',
                     subtitle:
-                        '124 MB route previews, 18 MB guides, 6 MB drafts',
+                        _cacheUsageSummary?.label ?? 'Calculating cache usage',
+                    isClearing: _isClearingCache,
+                    onClear: () => unawaited(_clearCacheData()),
                   ),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Data & Sync'),
+                  _SectionTitle(label: 'Trail Recommendations'),
                   const SizedBox(height: 8),
                   _SwitchSettingCard(
                     icon: Icons.insights_rounded,
-                    title: 'Share anonymous improvement signals',
-                    subtitle: 'Helps tune route safety recommendations.',
-                    value: _analytics,
-                    onChanged: (value) => setState(() => _analytics = value),
+                    title:
+                        'Allow HikerCircle to collect and use my trail data as anonymous',
+                    subtitle:
+                        'Allows HikerCircle to use your trail pathway anonymously as recommendations for other hikers and reduce map-based outliers.',
+                    value: _settings.anonymousTrailRecommendationsEnabled,
+                    onChanged:
+                        _settings.setAnonymousTrailRecommendationsEnabled,
                   ),
                   const SizedBox(height: 8),
-                  const _ProfileSettingsDetailPageCard(
-                    icon: Icons.sync_rounded,
-                    title: 'Sync behavior',
+                  _SwitchSettingCard(
+                    icon: Icons.vibration_rounded,
+                    title: 'Haptic safety feedback',
                     subtitle:
-                        'Queue trail changes on weak network, sync on Wi-Fi.',
+                        'Use short vibrations for check-ins, pins, and SOS countdown actions.',
+                    value: _settings.hapticSafetyFeedbackEnabled,
+                    onChanged: _settings.setHapticSafetyFeedbackEnabled,
+                  ),
+                  const SizedBox(height: 8),
+                  _SwitchSettingCard(
+                    icon: Icons.battery_alert_rounded,
+                    title: 'Low battery safety warnings',
+                    subtitle:
+                        'Warn before a hike when battery may be too low for safe tracking.',
+                    value: _settings.lowBatterySafetyWarningEnabled,
+                    onChanged: _settings.setLowBatterySafetyWarningEnabled,
                   ),
                 ],
               ),
@@ -1638,7 +1734,7 @@ class _ChoiceSettingCard extends StatelessWidget {
                   child: Text(
                     title,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.text,
+                      color: _MeColors.textFor(context),
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0,
                     ),
@@ -1685,45 +1781,108 @@ class _SwitchSettingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: Material(
-        color: Colors.transparent,
-        child: SwitchListTile.adaptive(
-          value: value,
-          onChanged: onChanged,
-          activeThumbColor: _MeColors.green,
-          activeTrackColor: _MeColors.green.withValues(alpha: 0.24),
-          secondary: _Glyph(icon: icon),
-          title: Text(
-            title,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: _MeColors.text,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Glyph(icon: icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _MeColors.textFor(context),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _MeColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          subtitle: Text(
-            subtitle,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _MeColors.secondaryText,
-              letterSpacing: 0,
-            ),
-          ),
+            const SizedBox(width: 12),
+            _AnimatedBooleanToggle(value: value, onChanged: onChanged),
+          ],
         ),
       ),
     );
   }
 }
 
-class _ProfileSettingsDetailPageCard extends StatelessWidget {
-  const _ProfileSettingsDetailPageCard({
+class _AnimatedBooleanToggle extends StatelessWidget {
+  const _AnimatedBooleanToggle({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedToggleSwitch<bool>.size(
+      current: value,
+      values: const [false, true],
+      height: 38,
+      spacing: 2,
+      indicatorSize: const Size.square(32),
+      borderWidth: 2,
+      style: ToggleStyle(
+        backgroundColor: _MeColors.greenSoftFor(context),
+        borderColor: _MeColors.separatorFor(context),
+        borderRadius: BorderRadius.circular(999),
+        indicatorBorderRadius: BorderRadius.circular(999),
+      ),
+      styleBuilder: (enabled) => ToggleStyle(
+        indicatorColor: enabled
+            ? _MeColors.green
+            : _MeColors.destructiveFor(context),
+      ),
+      iconBuilder: (enabled) => Icon(
+        enabled ? Icons.check_rounded : Icons.close_rounded,
+        color: enabled ? _MeColors.green : _MeColors.destructiveFor(context),
+        size: 17,
+      ),
+      foregroundIndicatorIconBuilder: (context, global) {
+        final enabled = global.current;
+        return Icon(
+          enabled ? Icons.check_rounded : Icons.close_rounded,
+          color: _MeColors.surfaceFor(context),
+          size: 18,
+        );
+      },
+      iconOpacity: 0.72,
+      selectedIconOpacity: 0,
+      selectedIconScale: 1,
+      animationDuration: const Duration(milliseconds: 260),
+      animationCurve: Curves.easeOutCubic,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _CacheUsageCard extends StatelessWidget {
+  const _CacheUsageCard({
     required this.icon,
     required this.title,
     required this.subtitle,
+    required this.isClearing,
+    required this.onClear,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
+  final bool isClearing;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
@@ -1742,7 +1901,7 @@ class _ProfileSettingsDetailPageCard extends StatelessWidget {
                   Text(
                     title,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.text,
+                      color: _MeColors.textFor(context),
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0,
                     ),
@@ -1751,8 +1910,22 @@ class _ProfileSettingsDetailPageCard extends StatelessWidget {
                   Text(
                     subtitle,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryText,
+                      color: _MeColors.secondaryTextFor(context),
                       letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: isClearing ? null : onClear,
+                      icon: isClearing
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.cleaning_services_rounded),
+                      label: Text(isClearing ? 'Clearing' : 'Clear cache data'),
                     ),
                   ),
                 ],
@@ -1783,7 +1956,7 @@ class _StatCell extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: _MeColors.text,
+              color: _MeColors.textFor(context),
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1793,7 +1966,7 @@ class _StatCell extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: _MeColors.secondaryText,
+              color: _MeColors.secondaryTextFor(context),
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -1819,7 +1992,7 @@ class _SettingsSection extends StatelessWidget {
           child: Text(
             section.title.toUpperCase(),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _MeColors.secondaryText,
+              color: _MeColors.secondaryTextFor(context),
               fontSize: 12,
               fontWeight: FontWeight.w500,
               letterSpacing: 0,
@@ -1875,7 +2048,7 @@ class _SettingsCell extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.text,
+                      color: _MeColors.textFor(context),
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
@@ -1886,7 +2059,7 @@ class _SettingsCell extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryText,
+                      color: _MeColors.secondaryTextFor(context),
                       letterSpacing: 0,
                     ),
                   ),
@@ -1898,9 +2071,9 @@ class _SettingsCell extends StatelessWidget {
               _MiniPill(label: countLabel),
               const SizedBox(width: 8),
             ],
-            const Icon(
+            Icon(
               CupertinoIcons.chevron_forward,
-              color: _MeColors.chevron,
+              color: _MeColors.chevronFor(context),
               size: 16,
             ),
           ],
@@ -1926,7 +2099,7 @@ class _SignOutCell extends StatelessWidget {
             child: Text(
               'Sign Out',
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: _MeColors.destructive,
+                color: _MeColors.destructiveFor(context),
                 fontWeight: FontWeight.w400,
               ),
             ),
@@ -1949,7 +2122,7 @@ class _SectionTitle extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _MeColors.secondaryText,
+          color: _MeColors.secondaryTextFor(context),
           fontSize: 12,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
@@ -1976,7 +2149,7 @@ class _InfoLine extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _MeColors.text,
+                color: _MeColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -1988,7 +2161,7 @@ class _InfoLine extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _MeColors.secondaryText,
+                color: _MeColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -2010,7 +2183,7 @@ class _MiniPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: _MeColors.greenSoft,
+        color: _MeColors.greenSoftFor(context),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -2072,7 +2245,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _MeColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -2086,7 +2259,11 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(height: 1, thickness: 0.7, color: _MeColors.separator);
+    return Divider(
+      height: 1,
+      thickness: 0.7,
+      color: _MeColors.separatorFor(context),
+    );
   }
 }
 
@@ -2095,12 +2272,12 @@ class _VerticalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       height: 32,
       child: VerticalDivider(
         width: 1,
         thickness: 0.7,
-        color: _MeColors.separator,
+        color: _MeColors.separatorFor(context),
       ),
     );
   }
@@ -2115,4 +2292,31 @@ abstract final class _MeColors {
   static const Color secondaryText = Color(0xFF6E6E73);
   static const Color chevron = Color(0xFFC7C7CC);
   static const Color destructive = Color(0xFFFF3B30);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color greenSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF183625) : greenSoft;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color chevronFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF6F8175) : chevron;
+
+  static Color destructiveFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFFF6B61) : destructive;
 }

@@ -157,7 +157,7 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _LocationColors.background,
+      backgroundColor: _LocationColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -219,8 +219,8 @@ class _Header extends StatelessWidget {
               child: Container(
                 width: 36,
                 height: 36,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
+                decoration: BoxDecoration(
+                  color: _LocationColors.surfaceFor(context),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -241,7 +241,7 @@ class _Header extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _LocationColors.text,
+                    color: _LocationColors.textFor(context),
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -253,7 +253,7 @@ class _Header extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _LocationColors.secondaryText,
+                    color: _LocationColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w400,
                     letterSpacing: 0,
                   ),
@@ -285,14 +285,14 @@ class _MapPanel extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
-        decoration: const BoxDecoration(color: Colors.white),
+        decoration: BoxDecoration(color: _LocationColors.surfaceFor(context)),
         child: Stack(
           fit: StackFit.expand,
           children: [
             if (location case final location?)
               _OpenStreetMap(location: location)
             else
-              const ColoredBox(color: _LocationColors.mapFallback),
+              ColoredBox(color: _LocationColors.mapFallbackFor(context)),
             const Center(child: _MapPin()),
             if (isLoading)
               Positioned(
@@ -317,7 +317,9 @@ class _MapPanel extends StatelessWidget {
                   onPressed: isLoading ? null : onRefresh,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.94),
+                      color: _LocationColors.surfaceFor(
+                        context,
+                      ).withValues(alpha: 0.94),
                       shape: BoxShape.circle,
                       boxShadow: const [
                         BoxShadow(
@@ -400,8 +402,8 @@ class _OpenStreetMap extends StatelessWidget {
                       ),
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
-                        return const ColoredBox(
-                          color: _LocationColors.mapFallback,
+                        return ColoredBox(
+                          color: _LocationColors.mapFallbackFor(context),
                         );
                       },
                     ),
@@ -412,7 +414,7 @@ class _OpenStreetMap extends StatelessWidget {
                 child: Text(
                   'OpenStreetMap contributors',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: _LocationColors.secondaryText,
+                    color: _LocationColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
@@ -489,7 +491,7 @@ class _MapMessage extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.94),
+          color: _LocationColors.surfaceFor(context).withValues(alpha: 0.94),
           borderRadius: BorderRadius.circular(8),
           boxShadow: const [
             BoxShadow(
@@ -505,7 +507,7 @@ class _MapMessage extends StatelessWidget {
             message,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _LocationColors.text,
+              color: _LocationColors.textFor(context),
               fontWeight: FontWeight.w600,
               letterSpacing: 0,
             ),
@@ -535,7 +537,7 @@ class _LocationDetails extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
-        decoration: const BoxDecoration(color: Colors.white),
+        decoration: BoxDecoration(color: _LocationColors.surfaceFor(context)),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
@@ -567,7 +569,7 @@ class _LocationDetails extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: _LocationColors.text,
+                        color: _LocationColors.textFor(context),
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
@@ -578,7 +580,7 @@ class _LocationDetails extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _LocationColors.secondaryText,
+                        color: _LocationColors.secondaryTextFor(context),
                         fontWeight: FontWeight.w400,
                         letterSpacing: 0,
                       ),
@@ -622,7 +624,7 @@ class _LiveLocationControls extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
-        decoration: const BoxDecoration(color: Colors.white),
+        decoration: BoxDecoration(color: _LocationColors.surfaceFor(context)),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -636,7 +638,7 @@ class _LiveLocationControls extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: isActive
                           ? _LocationColors.green
-                          : _LocationColors.secondaryText,
+                          : _LocationColors.secondaryTextFor(context),
                       borderRadius: BorderRadius.circular(7),
                     ),
                     child: Icon(
@@ -658,7 +660,7 @@ class _LiveLocationControls extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(
-                                color: _LocationColors.text,
+                                color: _LocationColors.textFor(context),
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 0,
                               ),
@@ -670,7 +672,9 @@ class _LiveLocationControls extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
-                                color: _LocationColors.secondaryText,
+                                color: _LocationColors.secondaryTextFor(
+                                  context,
+                                ),
                                 fontWeight: FontWeight.w400,
                                 letterSpacing: 0,
                               ),
@@ -744,4 +748,22 @@ abstract final class _LocationColors {
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
   static const Color destructive = Color(0xFFFF3B30);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color mapFallbackFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF102217) : mapFallback;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
 }

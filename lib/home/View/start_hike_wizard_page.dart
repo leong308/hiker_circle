@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -78,7 +82,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     final step = _stepForIndex(_stepIndex);
 
     return Scaffold(
-      backgroundColor: _WizardColors.background,
+      backgroundColor: _WizardColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -184,7 +188,7 @@ class _Header extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _WizardColors.text,
+                  color: _WizardColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
@@ -193,7 +197,7 @@ class _Header extends StatelessWidget {
               Text(
                 'Plan timing, safety, and offline preparation',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _WizardColors.secondaryText,
+                  color: _WizardColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -222,7 +226,7 @@ class _StepProgress extends StatelessWidget {
               decoration: BoxDecoration(
                 color: index <= currentStep
                     ? _WizardColors.green
-                    : _WizardColors.separator,
+                    : _WizardColors.separatorFor(context),
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
@@ -285,16 +289,8 @@ class _TrailSelectionStep extends StatelessWidget {
 
     return _StepCard(
       title: 'Select Trail',
-      subtitle: 'Pick a verified trail or add custom checkpoints later.',
+      subtitle: 'Pick a verified trail and pin any extra checkpoints.',
       children: [
-        TextField(
-          decoration: const InputDecoration(
-            hintText: 'Search trail name or location...',
-            prefixIcon: Icon(Icons.search_rounded),
-          ),
-          onSubmitted: (_) {},
-        ),
-        const SizedBox(height: 12),
         DropdownButtonFormField<String>(
           initialValue: draft.trail.trailId,
           decoration: const InputDecoration(labelText: 'Selected Trail'),
@@ -356,20 +352,17 @@ class _TrailSelectionStep extends StatelessWidget {
           },
         ),
         const SizedBox(height: 14),
-        _CheckpointList(checkpoints: draft.trail.checkpoints),
+        _CheckpointList(
+          checkpoints: draft.trail.checkpoints,
+          onPreview: (checkpoint) =>
+              _showCheckpointPreview(context, draft.trail, checkpoint),
+        ),
         const SizedBox(height: 10),
         Row(
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Manual checkpoint drafting will be added next.',
-                    ),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                ),
+                onPressed: () => _addCheckpoint(context),
                 icon: const Icon(Icons.add_location_alt_rounded),
                 label: const Text('Add Checkpoint'),
               ),
@@ -377,12 +370,7 @@ class _TrailSelectionStep extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Route preview uses the trail detail map.'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                ),
+                onPressed: () => _viewRoute(context),
                 icon: const Icon(Icons.route_rounded),
                 label: const Text('View Route'),
               ),
@@ -390,6 +378,126 @@ class _TrailSelectionStep extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+
+  Future<void> _addCheckpoint(BuildContext context) async {
+    final checkpoint = await showModalBottomSheet<TrailCheckpoint>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: _WizardColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              6,
+              18,
+              18 + MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: _CheckpointPickerSheet(trail: draft.trail),
+          ),
+        );
+      },
+    );
+    if (checkpoint == null) {
+      return;
+    }
+    if (!context.mounted) {
+      return;
+    }
+
+    final deviationMeters = _distanceFromRouteMeters(
+      draft.trail.checkpoints,
+      checkpoint.latitude,
+      checkpoint.longitude,
+    );
+    if (deviationMeters > 120) {
+      final shouldAdd = await showCupertinoDialog<bool>(
+        context: context,
+        builder: (context) {
+          return CupertinoAlertDialog(
+            title: const Text('Checkpoint Away From Route'),
+            content: Text(
+              'This pinned checkpoint is about ${deviationMeters.round()} m away from the obtained trail route. Add it anyway?',
+            ),
+            actions: [
+              CupertinoDialogAction(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              CupertinoDialogAction(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Add Checkpoint'),
+              ),
+            ],
+          );
+        },
+      );
+      if (shouldAdd != true) {
+        return;
+      }
+    }
+
+    final checkpoints = [...draft.trail.checkpoints, checkpoint]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    onChanged(
+      draft.copyWith(
+        trail: draft.trail.copyWith(checkpoints: checkpoints),
+        destinationName: checkpoint.name,
+      ),
+    );
+  }
+
+  void _viewRoute(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _WizardColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 6, 18, 22),
+            child: _RoutePreviewSheet(trail: draft.trail),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showCheckpointPreview(
+    BuildContext context,
+    Trail trail,
+    TrailCheckpoint checkpoint,
+  ) {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(checkpoint.name),
+          content: SizedBox(
+            width: 320,
+            height: 240,
+            child: _CheckpointRouteMap(
+              trail: trail,
+              highlightedCheckpoint: checkpoint,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -407,7 +515,12 @@ class _TimingStep extends StatelessWidget {
     Duration(hours: 1),
   ];
   static const List<Duration> _recordingOptions = [
+    Duration(seconds: 5),
+    Duration(seconds: 15),
+    Duration(seconds: 30),
     Duration(minutes: 1),
+    Duration(minutes: 2),
+    Duration(minutes: 3),
     Duration(minutes: 5),
     Duration(minutes: 10),
     Duration(minutes: 15),
@@ -429,6 +542,20 @@ class _TimingStep extends StatelessWidget {
           label: 'Departure Time',
           value: _formatTime(draft.departureTime),
           icon: Icons.schedule_rounded,
+        ),
+        const SizedBox(height: 12),
+        _DurationPickerField(
+          label: 'Expected Hours and Minutes Needed',
+          value: draft.expectedArrivalTime.difference(draft.departureTime),
+          onChanged: (duration) {
+            final arrival = draft.departureTime.add(duration);
+            onChanged(
+              draft.copyWith(
+                expectedArrivalTime: arrival,
+                expectedReturnTime: arrival.add(const Duration(hours: 2)),
+              ),
+            );
+          },
         ),
         const SizedBox(height: 12),
         _ReadOnlyField(
@@ -478,11 +605,34 @@ class _TimingStep extends StatelessWidget {
           ],
           onChanged: (duration) {
             if (duration != null) {
+              if (duration < const Duration(minutes: 1)) {
+                unawaited(_showFrequentRecordingWarning(context));
+              }
               onChanged(draft.copyWith(locationRecordingInterval: duration));
             }
           },
         ),
       ],
+    );
+  }
+
+  Future<void> _showFrequentRecordingWarning(BuildContext context) async {
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (context) {
+        return CupertinoAlertDialog(
+          title: const Text('Frequent GPS Recording'),
+          content: const Text(
+            'Recording below 1 minute can drain battery faster than usual, but it is recommended when you want stronger safety tracking.',
+          ),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -494,11 +644,13 @@ class _SafetySettingsStep extends StatelessWidget {
   final ValueChanged<HikeSessionDraft> onChanged;
 
   static const List<Duration> _responseCountdownOptions = [
+    Duration(seconds: 5),
     Duration(seconds: 15),
     Duration(seconds: 30),
-    Duration(seconds: 45),
     Duration(minutes: 1),
     Duration(minutes: 2),
+    Duration(minutes: 3),
+    Duration(minutes: 5),
   ];
 
   @override
@@ -509,11 +661,6 @@ class _SafetySettingsStep extends StatelessWidget {
       title: 'Safety Settings',
       subtitle: 'Choose who receives updates and which monitors are active.',
       children: [
-        _SafetyProfileSwitch(
-          value: _profileForDraft(draft),
-          onChanged: (profile) => onChanged(_draftForProfile(draft, profile)),
-        ),
-        const SizedBox(height: 12),
         _ContactsPreview(names: draft.emergencyContactNames),
         const SizedBox(height: 12),
         _SwitchRow(
@@ -584,141 +731,41 @@ class _SafetySettingsStep extends StatelessWidget {
         Text(
           'After free fall, impact, and a fixed stillness check, HikerCircle uses this countdown for the final tap response before sending Fall SOS.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _WizardColors.secondaryText,
+            color: _WizardColors.secondaryTextFor(context),
             letterSpacing: 0,
           ),
         ),
         _SwitchRow(
           label: 'Path Deviation Alert',
           value: draft.pathDeviationEnabled,
-          onChanged: (value) =>
-              onChanged(draft.copyWith(pathDeviationEnabled: value)),
-        ),
-        _SwitchRow(
-          label: 'Offline Flash and Audio SOS',
-          value: draft.offlinePhysicalAlertEnabled,
-          onChanged: (value) =>
-              onChanged(draft.copyWith(offlinePhysicalAlertEnabled: value)),
-        ),
-        _SwitchRow(
-          label: 'Duress Silent SOS',
-          value: draft.duressEnabled,
-          onChanged: (value) => onChanged(draft.copyWith(duressEnabled: value)),
+          onChanged: (value) {
+            if (!value) {
+              unawaited(_showPathDeviationWarning(context));
+            }
+            onChanged(draft.copyWith(pathDeviationEnabled: value));
+          },
         ),
       ],
     );
   }
 
-  _SafetyProfile _profileForDraft(HikeSessionDraft draft) {
-    if (draft.fallDetectionEnabled &&
-        draft.pathDeviationEnabled &&
-        draft.offlinePhysicalAlertEnabled &&
-        draft.duressEnabled &&
-        draft.shareLiveLocation) {
-      return _SafetyProfile.maximum;
-    }
-    if (!draft.fallDetectionEnabled &&
-        !draft.offlinePhysicalAlertEnabled &&
-        !draft.pathDeviationEnabled) {
-      return _SafetyProfile.light;
-    }
-    return _SafetyProfile.balanced;
-  }
-
-  HikeSessionDraft _draftForProfile(
-    HikeSessionDraft draft,
-    _SafetyProfile profile,
-  ) {
-    switch (profile) {
-      case _SafetyProfile.light:
-        return draft.copyWith(
-          shareLiveLocation: true,
-          fallDetectionEnabled: false,
-          pathDeviationEnabled: false,
-          offlinePhysicalAlertEnabled: false,
-          duressEnabled: true,
-        );
-      case _SafetyProfile.balanced:
-        return draft.copyWith(
-          shareLiveLocation: true,
-          fallDetectionEnabled: true,
-          pathDeviationEnabled: true,
-          offlinePhysicalAlertEnabled: true,
-          duressEnabled: true,
-        );
-      case _SafetyProfile.maximum:
-        return draft.copyWith(
-          shareLiveLocation: true,
-          fallDetectionEnabled: true,
-          pathDeviationEnabled: true,
-          offlinePhysicalAlertEnabled: true,
-          duressEnabled: true,
-          fallDetectionSettings: const FallDetectionSettings(
-            sensorSensitivity: 8,
-            stillnessDuration: Duration(seconds: 30),
+  Future<void> _showPathDeviationWarning(BuildContext context) async {
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (context) {
+        return CupertinoAlertDialog(
+          title: const Text('Path Deviation Alert Off'),
+          content: const Text(
+            'HikerCircle will stop warning you when your recorded route moves away from the selected trail. This can reduce safety on unfamiliar hikes.',
           ),
-        );
-    }
-  }
-}
-
-enum _SafetyProfile {
-  light,
-  balanced,
-  maximum;
-
-  String get label {
-    switch (this) {
-      case _SafetyProfile.light:
-        return 'Light';
-      case _SafetyProfile.balanced:
-        return 'Balanced';
-      case _SafetyProfile.maximum:
-        return 'Maximum';
-    }
-  }
-
-  IconData get icon {
-    switch (this) {
-      case _SafetyProfile.light:
-        return Icons.battery_saver_rounded;
-      case _SafetyProfile.balanced:
-        return Icons.verified_user_rounded;
-      case _SafetyProfile.maximum:
-        return Icons.health_and_safety_rounded;
-    }
-  }
-}
-
-class _SafetyProfileSwitch extends StatelessWidget {
-  const _SafetyProfileSwitch({required this.value, required this.onChanged});
-
-  final _SafetyProfile value;
-  final ValueChanged<_SafetyProfile> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return InputDecorator(
-      decoration: const InputDecoration(
-        labelText: 'Safety Profile',
-        prefixIcon: Icon(Icons.tune_rounded),
-      ),
-      child: Row(
-        children: [
-          for (final profile in _SafetyProfile.values) ...[
-            Expanded(
-              child: _IconSegment<_SafetyProfile>(
-                value: profile,
-                groupValue: value,
-                label: profile.label,
-                icon: profile.icon,
-                onChanged: onChanged,
-              ),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
             ),
-            if (profile != _SafetyProfile.values.last) const SizedBox(width: 6),
           ],
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -756,7 +803,7 @@ class _SensorSensitivitySlider extends StatelessWidget {
                   child: Text(
                     '$label (${value.round()}/10)',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _WizardColors.text,
+                      color: _WizardColors.textFor(context),
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0,
                     ),
@@ -767,7 +814,7 @@ class _SensorSensitivitySlider extends StatelessWidget {
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: enabled
                         ? _WizardColors.green
-                        : _WizardColors.secondaryText,
+                        : _WizardColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
@@ -783,7 +830,7 @@ class _SensorSensitivitySlider extends StatelessWidget {
                           FallDetectionSettings.minSensorSensitivity)
                       .round(),
               activeColor: _WizardColors.green,
-              inactiveColor: _WizardColors.separator,
+              inactiveColor: _WizardColors.separatorFor(context),
               label: '$label ${value.round()}/10',
               onChanged: enabled ? onChanged : null,
             ),
@@ -792,7 +839,7 @@ class _SensorSensitivitySlider extends StatelessWidget {
               Text(
                 'High sensitivity can detect softer hiking falls, but it may also cause more false alarms from backpack drops or sitting down hard.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _WizardColors.red,
+                  color: _WizardColors.redFor(context),
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0,
                 ),
@@ -827,7 +874,7 @@ class _PreparationStep extends StatelessWidget {
         Text(
           'Equipment Checklist',
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: _WizardColors.text,
+            color: _WizardColors.textFor(context),
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
@@ -877,7 +924,7 @@ class _StepCard extends StatelessWidget {
             Text(
               title,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _WizardColors.text,
+                color: _WizardColors.textFor(context),
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0,
               ),
@@ -886,7 +933,7 @@ class _StepCard extends StatelessWidget {
             Text(
               subtitle,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _WizardColors.secondaryText,
+                color: _WizardColors.secondaryTextFor(context),
                 letterSpacing: 0,
               ),
             ),
@@ -916,10 +963,14 @@ class _ChoiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? _WizardColors.green : _WizardColors.secondaryText;
+    final color = selected
+        ? _WizardColors.green
+        : _WizardColors.secondaryTextFor(context);
 
     return Material(
-      color: selected ? _WizardColors.greenSoft : Colors.white,
+      color: selected
+          ? _WizardColors.greenSoftFor(context)
+          : _WizardColors.surfaceFor(context),
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -929,7 +980,9 @@ class _ChoiceTile extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: selected ? _WizardColors.green : _WizardColors.separator,
+              color: selected
+                  ? _WizardColors.green
+                  : _WizardColors.separatorFor(context),
             ),
           ),
           child: Row(
@@ -943,7 +996,7 @@ class _ChoiceTile extends StatelessWidget {
                     Text(
                       title,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: _WizardColors.text,
+                        color: _WizardColors.textFor(context),
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
@@ -952,7 +1005,7 @@ class _ChoiceTile extends StatelessWidget {
                     Text(
                       subtitle,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _WizardColors.secondaryText,
+                        color: _WizardColors.secondaryTextFor(context),
                         letterSpacing: 0,
                       ),
                     ),
@@ -981,7 +1034,7 @@ class _TrailSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _WizardColors.greenSoft,
+        color: _WizardColors.greenSoftFor(context),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Padding(
@@ -992,7 +1045,7 @@ class _TrailSummary extends StatelessWidget {
             Text(
               trail.name,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _WizardColors.text,
+                color: _WizardColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -1001,7 +1054,7 @@ class _TrailSummary extends StatelessWidget {
             Text(
               '${trail.locationLabel} - ${trail.distanceLabel} - ${trail.difficulty}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _WizardColors.secondaryText,
+                color: _WizardColors.secondaryTextFor(context),
                 letterSpacing: 0,
               ),
             ),
@@ -1012,27 +1065,535 @@ class _TrailSummary extends StatelessWidget {
   }
 }
 
+class _CheckpointPickerSheet extends StatefulWidget {
+  const _CheckpointPickerSheet({required this.trail});
+
+  final Trail trail;
+
+  @override
+  State<_CheckpointPickerSheet> createState() => _CheckpointPickerSheetState();
+}
+
+class _CheckpointPickerSheetState extends State<_CheckpointPickerSheet> {
+  late final TextEditingController _nameController;
+  late final int _nextOrder;
+  late double _latitude;
+  late double _longitude;
+
+  @override
+  void initState() {
+    super.initState();
+    final checkpoints = widget.trail.checkpoints;
+    _nextOrder =
+        checkpoints.fold<int>(
+          0,
+          (maxOrder, checkpoint) => math.max(maxOrder, checkpoint.order),
+        ) +
+        1;
+    _nameController = TextEditingController(text: 'Checkpoint $_nextOrder');
+    _latitude = widget.trail.latitude;
+    _longitude = widget.trail.longitude;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = TrailCheckpoint(
+      name: _nameController.text.trim().isEmpty
+          ? 'Checkpoint $_nextOrder'
+          : _nameController.text.trim(),
+      latitude: _latitude,
+      longitude: _longitude,
+      order: _nextOrder,
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Pin Checkpoint',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            color: _WizardColors.textFor(context),
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Tap the route map to place the checkpoint at the actual trail position.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: _WizardColors.secondaryTextFor(context),
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _nameController,
+          decoration: const InputDecoration(
+            labelText: 'Checkpoint Name',
+            prefixIcon: Icon(Icons.flag_rounded),
+          ),
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 280,
+          child: _TappableCheckpointRouteMap(
+            trail: widget.trail,
+            selectedCheckpoint: selected,
+            onSelected: (latitude, longitude) {
+              setState(() {
+                _latitude = latitude;
+                _longitude = longitude;
+              });
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '${_latitude.toStringAsFixed(5)}, ${_longitude.toStringAsFixed(5)}',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: _WizardColors.secondaryTextFor(context),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 14),
+        FilledButton.icon(
+          onPressed: () => Navigator.of(context).pop(selected),
+          icon: const Icon(Icons.add_location_alt_rounded),
+          label: const Text('Add Checkpoint'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RoutePreviewSheet extends StatelessWidget {
+  const _RoutePreviewSheet({required this.trail});
+
+  final Trail trail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Route Preview',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            color: _WizardColors.textFor(context),
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${trail.name} - ${trail.checkpoints.length} checkpoints',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: _WizardColors.secondaryTextFor(context),
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(height: 320, child: _CheckpointRouteMap(trail: trail)),
+      ],
+    );
+  }
+}
+
+class _TappableCheckpointRouteMap extends StatelessWidget {
+  const _TappableCheckpointRouteMap({
+    required this.trail,
+    required this.selectedCheckpoint,
+    required this.onSelected,
+  });
+
+  final Trail trail;
+  final TrailCheckpoint selectedCheckpoint;
+  final void Function(double latitude, double longitude) onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        final bounds = _RouteBounds.fromCheckpoints(
+          trail.checkpoints,
+          extra: selectedCheckpoint,
+        );
+        return GestureDetector(
+          onTapDown: (details) {
+            final coordinate = bounds.unproject(details.localPosition, size);
+            onSelected(coordinate.latitude, coordinate.longitude);
+          },
+          child: _CheckpointRouteMap(
+            trail: trail,
+            highlightedCheckpoint: selectedCheckpoint,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CheckpointRouteMap extends StatelessWidget {
+  const _CheckpointRouteMap({required this.trail, this.highlightedCheckpoint});
+
+  final Trail trail;
+  final TrailCheckpoint? highlightedCheckpoint;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: CustomPaint(
+        painter: _CheckpointRoutePainter(
+          trail: trail,
+          highlightedCheckpoint: highlightedCheckpoint,
+        ),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+}
+
+class _CheckpointRoutePainter extends CustomPainter {
+  const _CheckpointRoutePainter({
+    required this.trail,
+    required this.highlightedCheckpoint,
+  });
+
+  final Trail trail;
+  final TrailCheckpoint? highlightedCheckpoint;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final background = Paint()..color = _WizardColors.greenSoft;
+    final grid = Paint()
+      ..color = _WizardColors.green.withValues(alpha: 0.12)
+      ..strokeWidth = 1;
+    final routePaint = Paint()
+      ..color = _WizardColors.green
+      ..strokeWidth = 5
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final routeGlowPaint = Paint()
+      ..color = _WizardColors.green.withValues(alpha: 0.22)
+      ..strokeWidth = 11
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawRect(Offset.zero & size, background);
+    for (var index = 1; index < 5; index++) {
+      final x = size.width * index / 5;
+      final y = size.height * index / 5;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+
+    final checkpoints = [...trail.checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    if (checkpoints.isEmpty) {
+      return;
+    }
+
+    final bounds = _RouteBounds.fromCheckpoints(
+      checkpoints,
+      extra: highlightedCheckpoint,
+    );
+    final points = checkpoints
+        .map(
+          (checkpoint) =>
+              bounds.project(checkpoint.latitude, checkpoint.longitude, size),
+        )
+        .toList();
+    if (points.length >= 2) {
+      final route = Path()..moveTo(points.first.dx, points.first.dy);
+      for (final point in points.skip(1)) {
+        route.lineTo(point.dx, point.dy);
+      }
+      canvas.drawPath(route, routeGlowPaint);
+      canvas.drawPath(route, routePaint);
+    }
+
+    for (var index = 0; index < checkpoints.length; index++) {
+      _drawMarker(
+        canvas,
+        points[index],
+        index == 0
+            ? _WizardColors.green
+            : index == checkpoints.length - 1
+            ? _WizardColors.red
+            : _WizardColors.secondaryText,
+        7,
+      );
+    }
+
+    final highlighted = highlightedCheckpoint;
+    if (highlighted != null) {
+      _drawMarker(
+        canvas,
+        bounds.project(highlighted.latitude, highlighted.longitude, size),
+        _WizardColors.orange,
+        11,
+      );
+    }
+  }
+
+  void _drawMarker(Canvas canvas, Offset center, Color color, double radius) {
+    final fill = Paint()..color = color;
+    final stroke = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3;
+    canvas.drawCircle(center, radius, fill);
+    canvas.drawCircle(center, radius, stroke);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheckpointRoutePainter oldDelegate) {
+    return oldDelegate.trail != trail ||
+        oldDelegate.highlightedCheckpoint != highlightedCheckpoint;
+  }
+}
+
+class _RouteBounds {
+  const _RouteBounds({
+    required this.minLatitude,
+    required this.maxLatitude,
+    required this.minLongitude,
+    required this.maxLongitude,
+  });
+
+  factory _RouteBounds.fromCheckpoints(
+    List<TrailCheckpoint> checkpoints, {
+    TrailCheckpoint? extra,
+  }) {
+    final points = [...checkpoints, if (extra != null) extra];
+    var minLatitude = points.first.latitude;
+    var maxLatitude = points.first.latitude;
+    var minLongitude = points.first.longitude;
+    var maxLongitude = points.first.longitude;
+    for (final point in points.skip(1)) {
+      minLatitude = math.min(minLatitude, point.latitude);
+      maxLatitude = math.max(maxLatitude, point.latitude);
+      minLongitude = math.min(minLongitude, point.longitude);
+      maxLongitude = math.max(maxLongitude, point.longitude);
+    }
+    if ((maxLatitude - minLatitude).abs() < 0.0001) {
+      minLatitude -= 0.00005;
+      maxLatitude += 0.00005;
+    }
+    if ((maxLongitude - minLongitude).abs() < 0.0001) {
+      minLongitude -= 0.00005;
+      maxLongitude += 0.00005;
+    }
+    return _RouteBounds(
+      minLatitude: minLatitude,
+      maxLatitude: maxLatitude,
+      minLongitude: minLongitude,
+      maxLongitude: maxLongitude,
+    );
+  }
+
+  final double minLatitude;
+  final double maxLatitude;
+  final double minLongitude;
+  final double maxLongitude;
+
+  Offset project(double latitude, double longitude, Size size) {
+    const padding = 24.0;
+    final xRatio = (longitude - minLongitude) / (maxLongitude - minLongitude);
+    final yRatio = 1 - (latitude - minLatitude) / (maxLatitude - minLatitude);
+    return Offset(
+      padding + xRatio * (size.width - padding * 2),
+      padding + yRatio * (size.height - padding * 2),
+    );
+  }
+
+  ({double latitude, double longitude}) unproject(Offset offset, Size size) {
+    const padding = 24.0;
+    final xRatio = ((offset.dx - padding) / (size.width - padding * 2))
+        .clamp(0.0, 1.0)
+        .toDouble();
+    final yRatio =
+        1 -
+        ((offset.dy - padding) / (size.height - padding * 2))
+            .clamp(0.0, 1.0)
+            .toDouble();
+    return (
+      latitude: minLatitude + yRatio * (maxLatitude - minLatitude),
+      longitude: minLongitude + xRatio * (maxLongitude - minLongitude),
+    );
+  }
+}
+
+double _distanceFromRouteMeters(
+  List<TrailCheckpoint> checkpoints,
+  double latitude,
+  double longitude,
+) {
+  if (checkpoints.isEmpty) {
+    return 0;
+  }
+  if (checkpoints.length == 1) {
+    return _haversineMeters(
+      latitude,
+      longitude,
+      checkpoints.first.latitude,
+      checkpoints.first.longitude,
+    );
+  }
+
+  final originLatitude = checkpoints.first.latitude;
+  final target = _projectMeters(latitude, longitude, originLatitude);
+  var closest = double.infinity;
+  for (var index = 1; index < checkpoints.length; index++) {
+    final start = _projectMeters(
+      checkpoints[index - 1].latitude,
+      checkpoints[index - 1].longitude,
+      originLatitude,
+    );
+    final end = _projectMeters(
+      checkpoints[index].latitude,
+      checkpoints[index].longitude,
+      originLatitude,
+    );
+    closest = math.min(closest, _pointSegmentDistance(target, start, end));
+  }
+  return closest;
+}
+
+({double x, double y}) _projectMeters(
+  double latitude,
+  double longitude,
+  double originLatitude,
+) {
+  const metersPerDegreeLatitude = 111320.0;
+  final metersPerDegreeLongitude =
+      metersPerDegreeLatitude * math.cos(originLatitude * math.pi / 180);
+  return (
+    x: longitude * metersPerDegreeLongitude,
+    y: latitude * metersPerDegreeLatitude,
+  );
+}
+
+double _pointSegmentDistance(
+  ({double x, double y}) point,
+  ({double x, double y}) start,
+  ({double x, double y}) end,
+) {
+  final dx = end.x - start.x;
+  final dy = end.y - start.y;
+  if (dx == 0 && dy == 0) {
+    return math.sqrt(
+      math.pow(point.x - start.x, 2) + math.pow(point.y - start.y, 2),
+    );
+  }
+  final t =
+      (((point.x - start.x) * dx + (point.y - start.y) * dy) /
+              (dx * dx + dy * dy))
+          .clamp(0.0, 1.0)
+          .toDouble();
+  final projectedX = start.x + t * dx;
+  final projectedY = start.y + t * dy;
+  return math.sqrt(
+    math.pow(point.x - projectedX, 2) + math.pow(point.y - projectedY, 2),
+  );
+}
+
+double _haversineMeters(
+  double startLatitude,
+  double startLongitude,
+  double endLatitude,
+  double endLongitude,
+) {
+  const earthRadiusMeters = 6371000.0;
+  final deltaLatitude = (endLatitude - startLatitude) * math.pi / 180;
+  final deltaLongitude = (endLongitude - startLongitude) * math.pi / 180;
+  final startRadians = startLatitude * math.pi / 180;
+  final endRadians = endLatitude * math.pi / 180;
+  final haversine =
+      math.sin(deltaLatitude / 2) * math.sin(deltaLatitude / 2) +
+      math.cos(startRadians) *
+          math.cos(endRadians) *
+          math.sin(deltaLongitude / 2) *
+          math.sin(deltaLongitude / 2);
+  final centralAngle =
+      2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine));
+  return earthRadiusMeters * centralAngle;
+}
+
 class _CheckpointList extends StatelessWidget {
-  const _CheckpointList({required this.checkpoints});
+  const _CheckpointList({required this.checkpoints, required this.onPreview});
 
   final List<TrailCheckpoint> checkpoints;
+  final ValueChanged<TrailCheckpoint> onPreview;
 
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separator),
+        border: Border.all(color: _WizardColors.separatorFor(context)),
       ),
       child: Column(
         children: [
           for (var index = 0; index < checkpoints.length; index++) ...[
-            _StatusRow(
-              label: '${checkpoints[index].order}. ${checkpoints[index].name}',
-              value: 'Checkpoint',
+            _CheckpointStatusRow(
+              checkpoint: checkpoints[index],
+              onPreview: () => onPreview(checkpoints[index]),
             ),
             if (index != checkpoints.length - 1) const _HorizontalSeparator(),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckpointStatusRow extends StatelessWidget {
+  const _CheckpointStatusRow({
+    required this.checkpoint,
+    required this.onPreview,
+  });
+
+  final TrailCheckpoint checkpoint;
+  final VoidCallback onPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '${checkpoint.order}. ${checkpoint.name}',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: _WizardColors.textFor(context),
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+          Tooltip(
+            message: 'Preview pinned location',
+            child: IconButton(
+              onPressed: onPreview,
+              icon: const Icon(Icons.map_rounded),
+              color: _WizardColors.green,
+            ),
+          ),
         ],
       ),
     );
@@ -1057,11 +1618,149 @@ class _ReadOnlyField extends StatelessWidget {
       child: Text(
         value,
         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: _WizardColors.text,
+          color: _WizardColors.textFor(context),
           fontWeight: FontWeight.w600,
           letterSpacing: 0,
         ),
       ),
+    );
+  }
+}
+
+class _DurationPickerField extends StatelessWidget {
+  const _DurationPickerField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final Duration value;
+  final ValueChanged<Duration> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showPicker(context),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Expected Hours and Minutes Needed',
+          prefixIcon: Icon(Icons.timer_rounded),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _durationLabel(value),
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  color: _WizardColors.textFor(context),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+            const Icon(Icons.keyboard_arrow_down_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPicker(BuildContext context) async {
+    var selectedHours = value.inHours.clamp(0, 23).toInt();
+    var selectedMinutes = value.inMinutes.remainder(60);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _WizardColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: SizedBox(
+            height: 280,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          label,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: _WizardColors.textFor(context),
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          final duration = Duration(
+                            hours: selectedHours,
+                            minutes: selectedMinutes,
+                          );
+                          onChanged(
+                            duration == Duration.zero
+                                ? const Duration(minutes: 1)
+                                : duration,
+                          );
+                          Navigator.of(context).pop();
+                        },
+                        child: const Text('Done'),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: CupertinoPicker(
+                          itemExtent: 42,
+                          scrollController: FixedExtentScrollController(
+                            initialItem: selectedHours,
+                          ),
+                          onSelectedItemChanged: (value) {
+                            selectedHours = value;
+                          },
+                          children: [
+                            for (var hour = 0; hour <= 23; hour++)
+                              Center(child: Text('$hour h')),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: CupertinoPicker(
+                          itemExtent: 42,
+                          scrollController: FixedExtentScrollController(
+                            initialItem: selectedMinutes,
+                          ),
+                          onSelectedItemChanged: (value) {
+                            selectedMinutes = value;
+                          },
+                          children: [
+                            for (var minute = 0; minute < 60; minute++)
+                              Center(
+                                child: Text(
+                                  '${minute.toString().padLeft(2, '0')} min',
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1076,7 +1775,7 @@ class _ContactsPreview extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separator),
+        border: Border.all(color: _WizardColors.separatorFor(context)),
       ),
       child: Column(
         children: [
@@ -1111,106 +1810,65 @@ class _SwitchRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: _WizardColors.text,
+                color: _WizardColors.textFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
             ),
           ),
           const SizedBox(width: 12),
-          SizedBox(
-            width: 138,
-            child: Row(
-              children: [
-                Expanded(
-                  child: _IconSegment<bool>(
-                    value: false,
-                    groupValue: value,
-                    label: 'Off',
-                    icon: Icons.close_rounded,
-                    onChanged: onChanged,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _IconSegment<bool>(
-                    value: true,
-                    groupValue: value,
-                    label: 'On',
-                    icon: Icons.check_rounded,
-                    onChanged: onChanged,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _WizardAnimatedToggle(value: value, onChanged: onChanged),
         ],
       ),
     );
   }
 }
 
-class _IconSegment<T> extends StatelessWidget {
-  const _IconSegment({
-    required this.value,
-    required this.groupValue,
-    required this.label,
-    required this.icon,
-    required this.onChanged,
-  });
+class _WizardAnimatedToggle extends StatelessWidget {
+  const _WizardAnimatedToggle({required this.value, required this.onChanged});
 
-  final T value;
-  final T groupValue;
-  final String label;
-  final IconData icon;
-  final ValueChanged<T> onChanged;
+  final bool value;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    final selected = value == groupValue;
-
-    return Tooltip(
-      message: label,
-      child: InkWell(
+    return AnimatedToggleSwitch<bool>.size(
+      current: value,
+      values: const [false, true],
+      height: 38,
+      spacing: 2,
+      indicatorSize: const Size.square(32),
+      borderWidth: 2,
+      style: ToggleStyle(
+        backgroundColor: _WizardColors.greenSoftFor(context),
+        borderColor: _WizardColors.separatorFor(context),
         borderRadius: BorderRadius.circular(999),
-        onTap: () => onChanged(value),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 170),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
-          decoration: BoxDecoration(
-            color: selected
-                ? _WizardColors.green
-                : _WizardColors.green.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: selected ? _WizardColors.green : _WizardColors.separator,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 16,
-                color: selected ? Colors.white : _WizardColors.green,
-              ),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: selected ? Colors.white : _WizardColors.green,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+        indicatorBorderRadius: BorderRadius.circular(999),
       ),
+      styleBuilder: (enabled) => ToggleStyle(
+        indicatorColor: enabled
+            ? _WizardColors.green
+            : _WizardColors.redFor(context),
+      ),
+      iconBuilder: (enabled) => Icon(
+        enabled ? Icons.check_rounded : Icons.close_rounded,
+        color: enabled ? _WizardColors.green : _WizardColors.redFor(context),
+        size: 17,
+      ),
+      foregroundIndicatorIconBuilder: (context, global) {
+        final enabled = global.current;
+        return Icon(
+          enabled ? Icons.check_rounded : Icons.close_rounded,
+          color: _WizardColors.surfaceFor(context),
+          size: 18,
+        );
+      },
+      iconOpacity: 0.72,
+      selectedIconOpacity: 0,
+      selectedIconScale: 1,
+      animationDuration: const Duration(milliseconds: 260),
+      animationCurve: Curves.easeOutCubic,
+      onChanged: onChanged,
     );
   }
 }
@@ -1223,7 +1881,7 @@ class _PreparationStatusList extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separator),
+        border: Border.all(color: _WizardColors.separatorFor(context)),
       ),
       child: const Column(
         children: [
@@ -1254,7 +1912,7 @@ class _ChecklistGroup extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separator),
+        border: Border.all(color: _WizardColors.separatorFor(context)),
       ),
       child: Column(
         children: [
@@ -1270,7 +1928,7 @@ class _ChecklistGroup extends StatelessWidget {
                 title: Text(
                   items[index],
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _WizardColors.text,
+                    color: _WizardColors.textFor(context),
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0,
                   ),
@@ -1294,7 +1952,7 @@ class _ForecastCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _WizardColors.greenSoft,
+        color: _WizardColors.greenSoftFor(context),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Padding(
@@ -1305,7 +1963,7 @@ class _ForecastCard extends StatelessWidget {
             Text(
               'Current Forecast',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _WizardColors.text,
+                color: _WizardColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -1314,7 +1972,7 @@ class _ForecastCard extends StatelessWidget {
             Text(
               trail.weather.summary,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _WizardColors.secondaryText,
+                color: _WizardColors.secondaryTextFor(context),
                 letterSpacing: 0,
               ),
             ),
@@ -1322,7 +1980,7 @@ class _ForecastCard extends StatelessWidget {
             Text(
               'Temperature: ${trail.weather.temperatureRange}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _WizardColors.secondaryText,
+                color: _WizardColors.secondaryTextFor(context),
                 letterSpacing: 0,
               ),
             ),
@@ -1351,7 +2009,7 @@ class _StartupActionsCard extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separator),
+        border: Border.all(color: _WizardColors.separatorFor(context)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -1361,7 +2019,7 @@ class _StartupActionsCard extends StatelessWidget {
             Text(
               'When session starts',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _WizardColors.text,
+                color: _WizardColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -1373,7 +2031,7 @@ class _StartupActionsCard extends StatelessWidget {
                 child: Text(
                   '- $action',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _WizardColors.secondaryText,
+                    color: _WizardColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
@@ -1401,7 +2059,7 @@ class _StatusRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _WizardColors.text,
+                color: _WizardColors.textFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -1413,7 +2071,7 @@ class _StatusRow extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _WizardColors.secondaryText,
+                color: _WizardColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -1435,8 +2093,8 @@ class _CircleIcon extends StatelessWidget {
     return Container(
       width: 36,
       height: 36,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: _WizardColors.surfaceFor(context),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: _WizardColors.green, size: 20),
@@ -1475,7 +2133,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _WizardColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -1489,10 +2147,10 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(
+    return Divider(
       height: 1,
       thickness: 0.7,
-      color: _WizardColors.separator,
+      color: _WizardColors.separatorFor(context),
     );
   }
 }
@@ -1524,12 +2182,19 @@ String _formatTime(DateTime dateTime) {
 
 String _durationLabel(Duration duration) {
   if (duration.inSeconds < 60) {
-    return '${duration.inSeconds} seconds';
+    final seconds = duration.inSeconds;
+    return '$seconds sec';
   }
   if (duration.inMinutes < 60) {
-    return '${duration.inMinutes} minutes';
+    final minutes = duration.inMinutes;
+    return '$minutes min';
   }
-  return '${duration.inHours} hour';
+  final hours = duration.inHours;
+  final minutes = duration.inMinutes.remainder(60);
+  if (minutes == 0) {
+    return '${hours}h';
+  }
+  return '${hours}h ${minutes}m';
 }
 
 abstract final class _WizardColors {
@@ -1540,4 +2205,29 @@ abstract final class _WizardColors {
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
   static const Color red = Color(0xFFE11D48);
+  static const Color orange = Color(0xFFFF9500);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color greenSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF183625) : greenSoft;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color redFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFFF6B88) : red;
 }

@@ -174,4 +174,11 @@ class SosViewModel extends ChangeNotifier {
 
     return null;
   }
+
+  Future<List<SosContactDispatch>> sendWhatsAppTestMessage() async {
+    return _sosAlertRepository.sendWhatsAppTestMessage(
+      session: _session,
+      contacts: emergencyContacts,
+    );
+  }
 }

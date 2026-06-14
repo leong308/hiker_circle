@@ -94,16 +94,17 @@ private struct HikeLiveActivityLockScreenView: View {
   let context: ActivityViewContext<ManualHikeAttributes>
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
+    VStack(alignment: .leading, spacing: 8) {
       HStack {
         VStack(alignment: .leading, spacing: 3) {
-          Text("Active Hike")
-            .font(.caption.bold())
-            .foregroundStyle(.white.opacity(0.75))
-
           Text(context.state.trailName)
             .font(.headline.bold())
             .foregroundStyle(.white)
+            .lineLimit(1)
+
+          Text(statusLine)
+            .font(.caption2)
+            .foregroundStyle(.white.opacity(0.72))
             .lineLimit(1)
         }
 
@@ -127,15 +128,10 @@ private struct HikeLiveActivityLockScreenView: View {
         metricTile(label: "Pins", value: "\(context.state.manualPins)")
         metricTile(label: "Battery", value: "\(context.state.batteryLevel)%")
       }
-      HStack(spacing: 8) {
-        metricTile(label: "GPS points", value: "\(context.state.routePointCount)")
-        metricTile(label: "Queued", value: "\(context.state.queuedUpdates)")
-        metricTile(label: "ETA", value: etaText(context.state.expectedReturnAt))
-      }
 
       HStack(spacing: 8) {
         liveLink(
-          title: "View Details",
+          title: "View",
           url: deepLink("active", sessionId: context.attributes.sessionId),
           background: Color.white.opacity(0.18)
         )
@@ -147,7 +143,11 @@ private struct HikeLiveActivityLockScreenView: View {
         )
       }
     }
-    .padding(14)
+    .padding(12)
+  }
+
+  private var statusLine: String {
+    "GPS \(context.state.routePointCount) | Queue \(context.state.queuedUpdates) | ETA \(etaText(context.state.expectedReturnAt))"
   }
 
   private func metricTile(label: String, value: String) -> some View {
@@ -161,7 +161,7 @@ private struct HikeLiveActivityLockScreenView: View {
         .foregroundStyle(.white.opacity(0.72))
     }
     .frame(maxWidth: .infinity)
-    .padding(.vertical, 8)
+    .padding(.vertical, 7)
     .background(Color.black.opacity(0.22))
     .clipShape(RoundedRectangle(cornerRadius: 10))
   }
@@ -185,7 +185,7 @@ private func liveLink(
       .font(.caption.bold())
       .foregroundStyle(.white)
       .frame(maxWidth: .infinity)
-      .padding(.vertical, 9)
+      .padding(.vertical, 7)
       .background(background)
       .clipShape(Capsule())
   }

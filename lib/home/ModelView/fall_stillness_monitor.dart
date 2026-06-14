@@ -18,15 +18,13 @@ class FallStillnessMonitor extends ChangeNotifier {
 
   static const Duration _sensorSamplingPeriod = Duration(milliseconds: 100);
   static const Duration _barometerSamplingPeriod = Duration(milliseconds: 500);
-  static const Duration _stillnessVarianceWindow = Duration(seconds: 1);
-  static const Duration _stillnessWarmupDuration = Duration(seconds: 1);
   static const double _seaLevelPressureHpa = 1013.25;
-  static const double _gravityLowPassAlpha = 0.82;
 
   final FallStillnessEmergencyCallback? _onEmergencyReady;
   final DateTime Function() _clock;
 
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
+  StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
   StreamSubscription<BarometerEvent>? _barometerSubscription;
   Timer? _countdownTimer;
   FallDetectionSettings? _settings;
@@ -36,18 +34,16 @@ class FallStillnessMonitor extends ChangeNotifier {
   DateTime? _freeFallObservedAt;
   DateTime? _impactWindowEndsAt;
   DateTime? _bounceGraceEndsAt;
-  DateTime? _stillnessStartedAt;
+  DateTime? _gyroscopeQuietStartedAt;
+  DateTime? _gyroscopeMonitoringEndsAt;
   DateTime? _lastCandidateAt;
   double? _latestImpactAcceleration;
   double? _lastAltitudeDropMeters;
   bool _isBackpackTrapLikely = false;
+  bool _isStationaryLocationWatch = false;
   bool _isStarted = false;
   bool _isHandlingEmergency = false;
   bool _isDisposed = false;
-  double? _gravityX;
-  double? _gravityY;
-  double? _gravityZ;
-  final List<_TimedValue> _linearAccelerationWindow = <_TimedValue>[];
   final List<_TimedValue> _altitudeHistory = <_TimedValue>[];
 
   FallStillnessMonitorSnapshot get snapshot => _snapshot;
@@ -86,6 +82,16 @@ class FallStillnessMonitor extends ChangeNotifier {
           cancelOnError: true,
         );
 
+    _gyroscopeSubscription =
+        gyroscopeEventStream(samplingPeriod: _sensorSamplingPeriod).listen(
+          _handleGyroscope,
+          onError: (_) {
+            _gyroscopeSubscription?.cancel();
+            _gyroscopeSubscription = null;
+          },
+          cancelOnError: true,
+        );
+
     _barometerSubscription =
         barometerEventStream(samplingPeriod: _barometerSamplingPeriod).listen(
           _handleBarometer,
@@ -104,8 +110,10 @@ class FallStillnessMonitor extends ChangeNotifier {
     _countdownTimer?.cancel();
     _countdownTimer = null;
     await _accelerometerSubscription?.cancel();
+    await _gyroscopeSubscription?.cancel();
     await _barometerSubscription?.cancel();
     _accelerometerSubscription = null;
+    _gyroscopeSubscription = null;
     _barometerSubscription = null;
     _resetTransientState();
     if (notify) {
@@ -126,6 +134,50 @@ class FallStillnessMonitor extends ChangeNotifier {
     _resetToNormal(
       settings: settings,
       message: '$reason. Fall SOS response countdown cancelled.',
+      lastCancelledAt: _clock(),
+    );
+  }
+
+  void beginStationaryLocationWatch(FallDetectionSettings settings) {
+    if (!_isStarted || _isHandlingEmergency) {
+      return;
+    }
+    _settings = settings;
+    final now = _clock();
+    _phase = _FallDetectionPhase.stillnessVerification;
+    _isStationaryLocationWatch = true;
+    _lastCandidateAt = now;
+    _latestImpactAcceleration = null;
+    _lastAltitudeDropMeters = null;
+    _isBackpackTrapLikely = false;
+    _gyroscopeQuietStartedAt = null;
+    _gyroscopeMonitoringEndsAt = null;
+    _setSnapshot(
+      FallStillnessMonitorSnapshot.verifyingStillness(
+        settings: settings,
+        detectedAt: now,
+        countdownEndsAt: now.add(const Duration(minutes: 1)),
+        secondsRemaining: 60,
+        accelerationMagnitude: null,
+        altitudeDropMeters: null,
+        isBackpackTrapLikely: false,
+        message:
+            'Location has not changed for 3 minutes. Checking phone movement with gyroscope.',
+      ),
+    );
+    _startCountdownTimer();
+  }
+
+  void cancelStationaryLocationWatch(String reason) {
+    final settings = _settings;
+    if (settings == null ||
+        !_isStationaryLocationWatch ||
+        _phase != _FallDetectionPhase.stillnessVerification) {
+      return;
+    }
+    _resetToNormal(
+      settings: settings,
+      message: '$reason. Stationary movement check ended.',
       lastCancelledAt: _clock(),
     );
   }
@@ -170,13 +222,68 @@ class FallStillnessMonitor extends ChangeNotifier {
           _startStillnessVerification(settings: settings, now: now);
         }
       case _FallDetectionPhase.stillnessVerification:
-        _handleStillnessVerification(
-          settings: settings,
-          now: now,
-          event: event,
-        );
+        break;
       case _FallDetectionPhase.responseCountdown:
         break;
+    }
+  }
+
+  void _handleGyroscope(GyroscopeEvent event) {
+    final settings = _settings;
+    if (!_isStarted ||
+        settings == null ||
+        _isHandlingEmergency ||
+        _phase != _FallDetectionPhase.stillnessVerification) {
+      return;
+    }
+
+    final now = _clock();
+    final current = _snapshot;
+    final axisMoved =
+        event.x.abs() > 0.05 || event.y.abs() > 0.05 || event.z.abs() > 0.05;
+
+    if (axisMoved) {
+      _gyroscopeQuietStartedAt = null;
+      final monitoringEndsAt = _gyroscopeMonitoringEndsAt;
+      if (!_isStationaryLocationWatch &&
+          monitoringEndsAt != null &&
+          !now.isBefore(monitoringEndsAt)) {
+        _resetToNormal(
+          settings: settings,
+          message:
+              'Gyroscope movement continued for 1 minute. Fall alert cancelled.',
+          lastCancelledAt: now,
+        );
+        return;
+      }
+      if (current.countdownEndsAt != null) {
+        _setSnapshot(
+          current.copyWith(
+            secondsRemaining: math.max(
+              0,
+              current.countdownEndsAt!.difference(now).inSeconds,
+            ),
+            message:
+                'Phone is still moving. Monitoring gyroscope before starting SOS countdown.',
+          ),
+        );
+      }
+      return;
+    }
+
+    _gyroscopeQuietStartedAt ??= now;
+    final quietDuration = now.difference(_gyroscopeQuietStartedAt!);
+    final secondsUntilResponse =
+        settings.stillnessDuration.inSeconds - quietDuration.inSeconds;
+    _setSnapshot(
+      current.copyWith(
+        secondsRemaining: math.max(0, secondsUntilResponse),
+        message:
+            'Phone is still. SOS response countdown starts if stillness continues.',
+      ),
+    );
+    if (quietDuration >= settings.stillnessDuration) {
+      _startResponseCountdown(settings: settings, now: now);
     }
   }
 
@@ -270,63 +377,24 @@ class FallStillnessMonitor extends ChangeNotifier {
     required DateTime now,
   }) {
     _phase = _FallDetectionPhase.stillnessVerification;
-    _stillnessStartedAt = now;
-    _resetLinearAccelerationFilter();
-    final stillnessDuration = _stillnessDurationFor(settings);
-    final stillnessEndsAt = now.add(stillnessDuration);
+    _isStationaryLocationWatch = false;
+    _gyroscopeQuietStartedAt = null;
+    final monitoringDuration = const Duration(minutes: 1);
+    _gyroscopeMonitoringEndsAt = now.add(monitoringDuration);
     _setSnapshot(
       FallStillnessMonitorSnapshot.verifyingStillness(
         settings: settings,
         detectedAt: _lastCandidateAt ?? now,
-        countdownEndsAt: stillnessEndsAt,
-        secondsRemaining: stillnessDuration.inSeconds,
+        countdownEndsAt: _gyroscopeMonitoringEndsAt!,
+        secondsRemaining: monitoringDuration.inSeconds,
         accelerationMagnitude: _latestImpactAcceleration,
         altitudeDropMeters: _lastAltitudeDropMeters,
         isBackpackTrapLikely: _isBackpackTrapLikely,
+        message:
+            'Impact confirmed. Monitoring gyroscope for stillness before alerting.',
       ),
     );
     _startCountdownTimer();
-  }
-
-  void _handleStillnessVerification({
-    required FallDetectionSettings settings,
-    required DateTime now,
-    required AccelerometerEvent event,
-  }) {
-    final current = _snapshot;
-    if (current.countdownEndsAt == null) {
-      _resetToNormal(settings: settings);
-      return;
-    }
-
-    final linearMagnitude = _linearAccelerationMagnitude(event);
-    _linearAccelerationWindow.add(_TimedValue(now, linearMagnitude));
-    _linearAccelerationWindow.removeWhere(
-      (sample) => now.difference(sample.recordedAt) > _stillnessVarianceWindow,
-    );
-
-    final elapsed = _stillnessStartedAt == null
-        ? Duration.zero
-        : now.difference(_stillnessStartedAt!);
-    final variance = _variance(_linearAccelerationWindow);
-    final movedSignificantly =
-        linearMagnitude > settings.significantLinearMovementThreshold;
-    final varianceExceeded =
-        elapsed >= _stillnessWarmupDuration &&
-        variance > settings.stillnessVarianceThreshold;
-
-    if (movedSignificantly || varianceExceeded) {
-      _resetToNormal(
-        settings: settings,
-        message: 'Movement detected after impact. Listening restarted.',
-        lastCancelledAt: now,
-      );
-      return;
-    }
-
-    if (!now.isBefore(current.countdownEndsAt!)) {
-      _startResponseCountdown(settings: settings, now: now);
-    }
   }
 
   void _startResponseCountdown({
@@ -372,7 +440,22 @@ class FallStillnessMonitor extends ChangeNotifier {
     }
 
     if (_phase == _FallDetectionPhase.stillnessVerification) {
-      _startResponseCountdown(settings: settings, now: _clock());
+      if (_isStationaryLocationWatch) {
+        _setSnapshot(
+          current.copyWith(
+            secondsRemaining: 0,
+            message:
+                'Still checking phone movement. Monitoring continues until location changes.',
+          ),
+        );
+      } else {
+        _resetToNormal(
+          settings: settings,
+          message:
+              'Gyroscope movement continued for 1 minute. Listening restarted.',
+          lastCancelledAt: _clock(),
+        );
+      }
       return;
     }
 
@@ -445,64 +528,10 @@ class FallStillnessMonitor extends ChangeNotifier {
     return math.max(0, highestBeforeImpact - latestAltitude);
   }
 
-  Duration _stillnessDurationFor(FallDetectionSettings settings) {
-    if (_isBackpackTrapLikely) {
-      return FallDetectionSettings.backpackTrapStillnessDuration;
-    }
-    return FallDetectionSettings.stillnessVerificationDuration;
-  }
-
-  double _linearAccelerationMagnitude(AccelerometerEvent event) {
-    if (_gravityX == null || _gravityY == null || _gravityZ == null) {
-      _gravityX = event.x;
-      _gravityY = event.y;
-      _gravityZ = event.z;
-      return 0;
-    }
-
-    _gravityX =
-        _gravityLowPassAlpha * _gravityX! +
-        (1 - _gravityLowPassAlpha) * event.x;
-    _gravityY =
-        _gravityLowPassAlpha * _gravityY! +
-        (1 - _gravityLowPassAlpha) * event.y;
-    _gravityZ =
-        _gravityLowPassAlpha * _gravityZ! +
-        (1 - _gravityLowPassAlpha) * event.z;
-
-    return _magnitude(
-      event.x - _gravityX!,
-      event.y - _gravityY!,
-      event.z - _gravityZ!,
-    );
-  }
-
-  double _variance(List<_TimedValue> samples) {
-    if (samples.length < 2) {
-      return 0;
-    }
-
-    final mean =
-        samples.fold<double>(0, (sum, sample) => sum + sample.value) /
-        samples.length;
-    return samples.fold<double>(0, (sum, sample) {
-          final delta = sample.value - mean;
-          return sum + delta * delta;
-        }) /
-        samples.length;
-  }
-
   double _altitudeFromPressure(double pressureHpa) {
     return 44330.0 *
         (1 - math.pow(pressureHpa / _seaLevelPressureHpa, 1 / 5.255))
             .toDouble();
-  }
-
-  void _resetLinearAccelerationFilter() {
-    _gravityX = null;
-    _gravityY = null;
-    _gravityZ = null;
-    _linearAccelerationWindow.clear();
   }
 
   void _resetTransientState() {
@@ -510,12 +539,13 @@ class FallStillnessMonitor extends ChangeNotifier {
     _freeFallObservedAt = null;
     _impactWindowEndsAt = null;
     _bounceGraceEndsAt = null;
-    _stillnessStartedAt = null;
+    _gyroscopeQuietStartedAt = null;
+    _gyroscopeMonitoringEndsAt = null;
     _lastCandidateAt = null;
     _latestImpactAcceleration = null;
     _lastAltitudeDropMeters = null;
     _isBackpackTrapLikely = false;
-    _resetLinearAccelerationFilter();
+    _isStationaryLocationWatch = false;
   }
 
   void _resetToNormal({
@@ -551,6 +581,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     _isDisposed = true;
     _countdownTimer?.cancel();
     unawaited(_accelerometerSubscription?.cancel());
+    unawaited(_gyroscopeSubscription?.cancel());
     unawaited(_barometerSubscription?.cancel());
     super.dispose();
   }
@@ -678,6 +709,7 @@ class FallStillnessMonitorSnapshot {
     required double? accelerationMagnitude,
     required double? altitudeDropMeters,
     required bool isBackpackTrapLikely,
+    String? message,
   }) {
     return FallStillnessMonitorSnapshot(
       status: FallStillnessMonitorStatus.verifyingStillness,
@@ -688,9 +720,11 @@ class FallStillnessMonitorSnapshot {
       accelerationMagnitude: accelerationMagnitude,
       altitudeDropMeters: altitudeDropMeters,
       isBackpackTrapLikely: isBackpackTrapLikely,
-      message: isBackpackTrapLikely
-          ? 'Impact had little altitude drop. Extending stillness check.'
-          : 'Impact confirmed. Verifying stillness before alerting.',
+      message:
+          message ??
+          (isBackpackTrapLikely
+              ? 'Impact had little altitude drop. Extending stillness check.'
+              : 'Impact confirmed. Verifying stillness before alerting.'),
     );
   }
 

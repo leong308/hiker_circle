@@ -169,13 +169,12 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   }
 
   void _selectDeviceContact(EmergencyContactCandidate contact) {
-    _nameController.text = contact.displayName;
-    _phoneController.text = PhoneNumberFormatter.normalize(
-      contact.primaryPhoneNumber,
-    );
-    if (_relationshipController.text.trim().isEmpty) {
-      _relationshipController.text = 'Emergency contact';
-    }
+    setState(() {
+      _nameController.text = contact.displayName;
+      _phoneController.text = PhoneNumberFormatter.normalize(
+        contact.primaryPhoneNumber,
+      );
+    });
     FocusScope.of(context).unfocus();
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -190,7 +189,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _ContactsColors.background,
+      backgroundColor: _ContactsColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -222,7 +221,6 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
                     isLoading: _isLoadingDeviceContacts,
                     message: _deviceContactsMessage,
                     canSelect: viewModel.canAddContact && !viewModel.isSaving,
-                    onRefresh: () => unawaited(_loadDeviceContacts()),
                     onSelectContact: _selectDeviceContact,
                   ),
                   const SizedBox(height: 18),
@@ -288,7 +286,7 @@ class _Header extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _ContactsColors.text,
+                    color: _ContactsColors.textFor(context),
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -300,7 +298,7 @@ class _Header extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _ContactsColors.secondaryText,
+                    color: _ContactsColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w400,
                     letterSpacing: 0,
                   ),
@@ -347,7 +345,7 @@ class _SummaryCard extends StatelessWidget {
                         '$count/$max contacts added',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _ContactsColors.text,
+                              color: _ContactsColors.textFor(context),
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0,
                             ),
@@ -358,7 +356,7 @@ class _SummaryCard extends StatelessWidget {
                             ? 'Saving emergency contacts...'
                             : 'These contacts receive emergency SOS messages first.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _ContactsColors.secondaryText,
+                          color: _ContactsColors.secondaryTextFor(context),
                           fontWeight: FontWeight.w400,
                           letterSpacing: 0,
                         ),
@@ -377,7 +375,7 @@ class _SummaryCard extends StatelessWidget {
               Text(
                 message,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _ContactsColors.destructive,
+                  color: _ContactsColors.destructiveFor(context),
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0,
                 ),
@@ -397,7 +395,6 @@ class _DeviceContactsPicker extends StatelessWidget {
     required this.isLoading,
     required this.message,
     required this.canSelect,
-    required this.onRefresh,
     required this.onSelectContact,
   });
 
@@ -406,7 +403,6 @@ class _DeviceContactsPicker extends StatelessWidget {
   final bool isLoading;
   final String? message;
   final bool canSelect;
-  final VoidCallback onRefresh;
   final ValueChanged<EmergencyContactCandidate> onSelectContact;
 
   @override
@@ -415,13 +411,9 @@ class _DeviceContactsPicker extends StatelessWidget {
       return PhoneNumberFormatter.normalize(contact.phoneNumber);
     }).toSet();
     final candidates = contacts
-        .where((contact) {
-          return PhoneNumberFormatter.isValid(contact.primaryPhoneNumber) &&
-              !savedNumbers.contains(
-                PhoneNumberFormatter.normalize(contact.primaryPhoneNumber),
-              );
-        })
-        .take(8)
+        .where(
+          (contact) => PhoneNumberFormatter.isValid(contact.primaryPhoneNumber),
+        )
         .toList();
 
     return _InsetGroup(
@@ -442,7 +434,7 @@ class _DeviceContactsPicker extends StatelessWidget {
                         'From phone contacts',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _ContactsColors.text,
+                              color: _ContactsColors.textFor(context),
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0,
                             ),
@@ -450,17 +442,12 @@ class _DeviceContactsPicker extends StatelessWidget {
                       Text(
                         'Tap a contact to fill name and number.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _ContactsColors.secondaryText,
+                          color: _ContactsColors.secondaryTextFor(context),
                           letterSpacing: 0,
                         ),
                       ),
                     ],
                   ),
-                ),
-                IconButton(
-                  tooltip: 'Refresh phone contacts',
-                  onPressed: isLoading ? null : onRefresh,
-                  icon: const Icon(Icons.refresh_rounded),
                 ),
               ],
             ),
@@ -470,9 +457,9 @@ class _DeviceContactsPicker extends StatelessWidget {
             ] else if (candidates.isEmpty) ...[
               const SizedBox(height: 12),
               Text(
-                message ?? 'No new phone contacts to add.',
+                message ?? 'No phone contacts available.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _ContactsColors.secondaryText,
+                  color: _ContactsColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -486,6 +473,11 @@ class _DeviceContactsPicker extends StatelessWidget {
                       const _HorizontalSeparator(),
                   itemBuilder: (context, index) {
                     final contact = candidates[index];
+                    final isAdded = savedNumbers.contains(
+                      PhoneNumberFormatter.normalize(
+                        contact.primaryPhoneNumber,
+                      ),
+                    );
                     return ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
@@ -500,13 +492,17 @@ class _DeviceContactsPicker extends StatelessWidget {
                           contact.primaryPhoneNumber,
                         ),
                       ),
-                      trailing: const Icon(
-                        CupertinoIcons.chevron_forward,
-                        color: _ContactsColors.chevron,
-                        size: 16,
-                      ),
-                      enabled: canSelect,
-                      onTap: canSelect ? () => onSelectContact(contact) : null,
+                      trailing: isAdded
+                          ? const _StatusPill(
+                              label: 'Added',
+                              color: _ContactsColors.green,
+                            )
+                          : FilledButton(
+                              onPressed: canSelect
+                                  ? () => onSelectContact(contact)
+                                  : null,
+                              child: const Text('Add'),
+                            ),
                     );
                   },
                 ),
@@ -544,7 +540,7 @@ class _ContactsList extends StatelessWidget {
             child: Text(
               'No emergency contacts yet',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _ContactsColors.secondaryText,
+                color: _ContactsColors.secondaryTextFor(context),
                 letterSpacing: 0,
               ),
             ),
@@ -616,9 +612,9 @@ class _SwipeContactCell extends StatelessWidget {
         icon: Icons.edit_rounded,
         label: 'Edit',
       ),
-      secondaryBackground: const _SwipeActionBackground(
+      secondaryBackground: _SwipeActionBackground(
         alignment: Alignment.centerRight,
-        color: _ContactsColors.destructive,
+        color: _ContactsColors.destructiveFor(context),
         icon: Icons.delete_rounded,
         label: 'Delete',
       ),
@@ -649,18 +645,18 @@ class _ContactCell extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _ContactsColors.text,
+                    color: _ContactsColors.textFor(context),
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${contact.relationship} • ${contact.phoneNumber}',
+                  '${contact.relationship} - ${contact.phoneNumber}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _ContactsColors.secondaryText,
+                    color: _ContactsColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w400,
                     letterSpacing: 0,
                   ),
@@ -669,9 +665,9 @@ class _ContactCell extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          const Icon(
+          Icon(
             CupertinoIcons.chevron_forward,
-            color: _ContactsColors.chevron,
+            color: _ContactsColors.chevronFor(context),
             size: 16,
           ),
         ],
@@ -723,6 +719,86 @@ class _SwipeActionBackground extends StatelessWidget {
   }
 }
 
+const List<String> _relationshipOptions = [
+  'Parent',
+  'Child',
+  'Partner',
+  'Friend',
+  'Colleague',
+  'Relative',
+  'Sibling',
+  'Guardian',
+  'Neighbor',
+  'Doctor',
+];
+
+class _RelationshipDropdown extends StatelessWidget {
+  const _RelationshipDropdown({
+    required this.controller,
+    required this.decoration,
+    required this.validator,
+    this.enabled = true,
+  });
+
+  final TextEditingController controller;
+  final InputDecoration decoration;
+  final FormFieldValidator<String> validator;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final currentValue = _relationshipOptions.contains(controller.text)
+        ? controller.text
+        : null;
+
+    return DropdownButtonFormField<String>(
+      initialValue: currentValue,
+      decoration: decoration,
+      validator: validator,
+      items: [
+        for (final relationship in _relationshipOptions)
+          DropdownMenuItem<String>(
+            value: relationship,
+            child: Text(relationship),
+          ),
+      ],
+      onChanged: enabled
+          ? (value) {
+              if (value != null) {
+                controller.text = value;
+              }
+            }
+          : null,
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
 class _AddContactForm extends StatelessWidget {
   const _AddContactForm({
     required this.formKey,
@@ -755,7 +831,7 @@ class _AddContactForm extends StatelessWidget {
               Text(
                 'Add Contact',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: _ContactsColors.text,
+                  color: _ContactsColors.textFor(context),
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                 ),
@@ -766,7 +842,7 @@ class _AddContactForm extends StatelessWidget {
                     ? '$remainingSlots slots remaining'
                     : 'Maximum of 3 contacts reached',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _ContactsColors.secondaryText,
+                  color: _ContactsColors.secondaryTextFor(context),
                   fontWeight: FontWeight.w400,
                   letterSpacing: 0,
                 ),
@@ -780,7 +856,7 @@ class _AddContactForm extends StatelessWidget {
                   labelText: 'Name',
                   prefixIcon: Icon(Icons.person_outline_rounded),
                 ),
-                validator: _phoneValidator,
+                validator: _requiredValidator,
               ),
               const SizedBox(height: 10),
               TextFormField(
@@ -792,23 +868,17 @@ class _AddContactForm extends StatelessWidget {
                   labelText: 'Phone number',
                   prefixIcon: Icon(Icons.phone_iphone_rounded),
                 ),
-                validator: _requiredValidator,
+                validator: _phoneValidator,
               ),
               const SizedBox(height: 10),
-              TextFormField(
+              _RelationshipDropdown(
                 controller: relationshipController,
                 enabled: canAddContact,
-                textInputAction: TextInputAction.done,
                 decoration: const InputDecoration(
                   labelText: 'Relationship',
                   prefixIcon: Icon(Icons.group_outlined),
                 ),
                 validator: _requiredValidator,
-                onFieldSubmitted: (_) {
-                  if (canAddContact) {
-                    unawaited(onAddContact());
-                  }
-                },
               ),
               const SizedBox(height: 14),
               FilledButton.icon(
@@ -905,7 +975,9 @@ class _EditContactSheetState extends State<_EditContactSheet> {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(14),
               child: DecoratedBox(
-                decoration: const BoxDecoration(color: Colors.white),
+                decoration: BoxDecoration(
+                  color: _ContactsColors.surfaceFor(context),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Form(
@@ -921,7 +993,7 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                                 'Edit Contact',
                                 style: Theme.of(context).textTheme.titleMedium
                                     ?.copyWith(
-                                      color: _ContactsColors.text,
+                                      color: _ContactsColors.textFor(context),
                                       fontWeight: FontWeight.w700,
                                       letterSpacing: 0,
                                     ),
@@ -931,9 +1003,11 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                               padding: EdgeInsets.zero,
                               minimumSize: const Size.square(32),
                               onPressed: () => Navigator.of(context).pop(),
-                              child: const Icon(
+                              child: Icon(
                                 CupertinoIcons.xmark,
-                                color: _ContactsColors.secondaryText,
+                                color: _ContactsColors.secondaryTextFor(
+                                  context,
+                                ),
                                 size: 18,
                               ),
                             ),
@@ -961,15 +1035,13 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                           validator: _AddContactForm._phoneValidator,
                         ),
                         const SizedBox(height: 10),
-                        TextFormField(
+                        _RelationshipDropdown(
                           controller: _relationshipController,
-                          textInputAction: TextInputAction.done,
                           decoration: const InputDecoration(
                             labelText: 'Relationship',
                             prefixIcon: Icon(Icons.group_outlined),
                           ),
                           validator: _AddContactForm._requiredValidator,
-                          onFieldSubmitted: (_) => _save(),
                         ),
                         const SizedBox(height: 14),
                         FilledButton.icon(
@@ -1020,7 +1092,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _ContactsColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -1034,10 +1106,10 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(
+    return Divider(
       height: 1,
       thickness: 0.7,
-      color: _ContactsColors.separator,
+      color: _ContactsColors.separatorFor(context),
     );
   }
 }
@@ -1051,4 +1123,28 @@ abstract final class _ContactsColors {
   static const Color chevron = Color(0xFFC7C7CC);
   static const Color edit = Color(0xFF2F8E50);
   static const Color destructive = Color(0xFFFF3B30);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color chevronFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF6F8175) : chevron;
+
+  static Color destructiveFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFFF6B61) : destructive;
 }

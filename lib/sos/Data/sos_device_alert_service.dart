@@ -24,6 +24,12 @@ class SosDeviceAlertService {
     await startManualSosPattern(alarmAsset: alarmAssetForMode(mode));
   }
 
+  Future<void> startSirenOnlyForMode(SosAlertMode mode) async {
+    await _channel.invokeMethod<void>('startSirenOnly', {
+      'alarmAsset': alarmAssetForMode(mode),
+    });
+  }
+
   String alarmAssetForMode(SosAlertMode mode) {
     return switch (mode) {
       SosAlertMode.medical => medicalAlarmAsset,
@@ -135,6 +141,16 @@ class SosDeviceAlertService {
     }
 
     return SosTriggerLocation.fromPlatform(locationData);
+  }
+
+  Future<void> setPreciseLocationEnabled(bool enabled) async {
+    try {
+      await _channel.invokeMethod<void>('setPreciseLocationEnabled', {
+        'enabled': enabled,
+      });
+    } on MissingPluginException {
+      // Platforms without the native helper will use their default accuracy.
+    }
   }
 
   Future<void> shareText({

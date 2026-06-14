@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 import '../ModelView/fall_stillness_monitor.dart';
+import 'active_tracking_map_view.dart';
 import 'first_aid_guide_page.dart';
 import 'gear_checklist_page.dart';
 
@@ -53,7 +53,7 @@ class HomeDashboardPage extends StatelessWidget {
     final active = activeHike;
 
     return ColoredBox(
-      color: _HomeColors.background,
+      color: _HomeColors.backgroundFor(context),
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 112),
@@ -360,7 +360,7 @@ class _HomeHeader extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _HomeColors.text,
+                    color: _HomeColors.textFor(context),
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -372,7 +372,7 @@ class _HomeHeader extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _HomeColors.secondaryText,
+                    color: _HomeColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w400,
                     letterSpacing: 0,
                   ),
@@ -459,7 +459,7 @@ class _UpcomingHikeCard extends StatelessWidget {
                         'Upcoming Hike',
                         style: Theme.of(context).textTheme.labelMedium
                             ?.copyWith(
-                              color: _HomeColors.secondaryText,
+                              color: _HomeColors.secondaryTextFor(context),
                               fontWeight: FontWeight.w600,
                               letterSpacing: 0,
                             ),
@@ -470,7 +470,7 @@ class _UpcomingHikeCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _HomeColors.text,
+                              color: _HomeColors.textFor(context),
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0,
                             ),
@@ -568,7 +568,7 @@ class _PreparationWarning extends StatelessWidget {
                               'Preparation reminder',
                               style: Theme.of(context).textTheme.titleMedium
                                   ?.copyWith(
-                                    color: _HomeColors.text,
+                                    color: _HomeColors.textFor(context),
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 0,
                                   ),
@@ -584,7 +584,7 @@ class _PreparationWarning extends StatelessWidget {
                       Text(
                         '${missingItems.length} item${missingItems.length == 1 ? '' : 's'} need attention before ${plannedHike.trail.name}. Tap to review the full prep list.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _HomeColors.secondaryText,
+                          color: _HomeColors.secondaryTextFor(context),
                           letterSpacing: 0,
                         ),
                       ),
@@ -604,9 +604,9 @@ class _PreparationWarning extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Icon(
+                Icon(
                   CupertinoIcons.chevron_forward,
-                  color: _HomeColors.secondaryText,
+                  color: _HomeColors.secondaryTextFor(context),
                   size: 16,
                 ),
               ],
@@ -705,7 +705,7 @@ class _ToolTile extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _HomeColors.text,
+                    color: _HomeColors.textFor(context),
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
@@ -715,7 +715,7 @@ class _ToolTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: _HomeColors.secondaryText,
+                    color: _HomeColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0,
                   ),
@@ -772,7 +772,7 @@ class _HazardRow extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.titleMedium
                                   ?.copyWith(
-                                    color: _HomeColors.text,
+                                    color: _HomeColors.textFor(context),
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 0,
                                   ),
@@ -790,7 +790,7 @@ class _HazardRow extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _HomeColors.secondaryText,
+                          color: _HomeColors.secondaryTextFor(context),
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0,
                         ),
@@ -801,7 +801,7 @@ class _HazardRow extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: _HomeColors.text,
+                          color: _HomeColors.textFor(context),
                           fontWeight: FontWeight.w500,
                           letterSpacing: 0,
                         ),
@@ -810,7 +810,7 @@ class _HazardRow extends StatelessWidget {
                       Text(
                         'Reported ${_formatRelativeDate(hazard.reportedAt)} - Tap for route impact and advice',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: _HomeColors.secondaryText,
+                          color: _HomeColors.secondaryTextFor(context),
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0,
                         ),
@@ -819,9 +819,9 @@ class _HazardRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Icon(
+                Icon(
                   CupertinoIcons.chevron_forward,
-                  color: _HomeColors.secondaryText,
+                  color: _HomeColors.secondaryTextFor(context),
                   size: 16,
                 ),
               ],
@@ -850,7 +850,7 @@ class _PreparationReminderPage extends StatelessWidget {
     ];
 
     return Scaffold(
-      backgroundColor: _HomeColors.background,
+      backgroundColor: _HomeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -881,7 +881,7 @@ class _PreparationReminderPage extends StatelessWidget {
                                   '${plannedHike.preparationPercent}% ready',
                                   style: Theme.of(context).textTheme.titleLarge
                                       ?.copyWith(
-                                        color: _HomeColors.text,
+                                        color: _HomeColors.textFor(context),
                                         fontWeight: FontWeight.w800,
                                         letterSpacing: 0,
                                       ),
@@ -981,7 +981,7 @@ class _SafetyToolDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _HomeColors.background,
+      backgroundColor: _HomeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1009,7 +1009,7 @@ class _SafetyToolDetailPage extends StatelessWidget {
                             subtitle,
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(
-                                  color: _HomeColors.text,
+                                  color: _HomeColors.textFor(context),
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0,
                                 ),
@@ -1043,7 +1043,7 @@ class _HazardDetailPage extends StatelessWidget {
     final severityColor = _severityColor(hazard.severity);
 
     return Scaffold(
-      backgroundColor: _HomeColors.background,
+      backgroundColor: _HomeColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1077,7 +1077,7 @@ class _HazardDetailPage extends StatelessWidget {
                                   hazard.type,
                                   style: Theme.of(context).textTheme.titleLarge
                                       ?.copyWith(
-                                        color: _HomeColors.text,
+                                        color: _HomeColors.textFor(context),
                                         fontWeight: FontWeight.w800,
                                         letterSpacing: 0,
                                       ),
@@ -1094,7 +1094,7 @@ class _HazardDetailPage extends StatelessWidget {
                             hazard.description,
                             style: Theme.of(context).textTheme.bodyLarge
                                 ?.copyWith(
-                                  color: _HomeColors.text,
+                                  color: _HomeColors.textFor(context),
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0,
                                 ),
@@ -1184,7 +1184,7 @@ class _ChecklistInsightRow extends StatelessWidget {
                   Text(
                     title,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: _HomeColors.text,
+                      color: _HomeColors.textFor(context),
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
@@ -1193,7 +1193,7 @@ class _ChecklistInsightRow extends StatelessWidget {
                   Text(
                     subtitle,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _HomeColors.secondaryText,
+                      color: _HomeColors.secondaryTextFor(context),
                       letterSpacing: 0,
                     ),
                   ),
@@ -1241,7 +1241,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _HomeColors.text,
+                  color: _HomeColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
@@ -1252,7 +1252,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _HomeColors.secondaryText,
+                  color: _HomeColors.secondaryTextFor(context),
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0,
                 ),
@@ -1374,7 +1374,7 @@ class _ActiveHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _HomeColors.text,
+                  color: _HomeColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
@@ -1449,7 +1449,7 @@ class _MetricCell extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: _HomeColors.text,
+            color: _HomeColors.textFor(context),
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
@@ -1460,7 +1460,7 @@ class _MetricCell extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: _HomeColors.secondaryText,
+            color: _HomeColors.secondaryTextFor(context),
             letterSpacing: 0,
           ),
         ),
@@ -1567,7 +1567,7 @@ class _ConnectionStatusCard extends StatelessWidget {
               child: Text(
                 'Connection: Offline - Recording Locally. Your trail and emergency data are being stored on this phone. $queuedUpdates location updates are waiting to sync.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _HomeColors.text,
+                  color: _HomeColors.textFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -1596,14 +1596,9 @@ class _MiniMapCard extends StatelessWidget {
               height: 190,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: CustomPaint(
-                  painter: _MiniTrailPainter(
-                    color: Color(activeHike.trail.coverColorValue),
-                    routePoints: activeHike.routePoints,
-                    manualPins: activeHike.manualPinLocations,
-                    latestLocation: activeHike.latestLocation,
-                  ),
-                  child: const SizedBox.expand(),
+                child: ActiveTrackingMapView(
+                  activeHike: activeHike,
+                  interactive: false,
                 ),
               ),
             ),
@@ -1841,7 +1836,7 @@ class _StatusRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _HomeColors.text,
+                color: _HomeColors.textFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -1853,7 +1848,7 @@ class _StatusRow extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _HomeColors.secondaryText,
+                color: _HomeColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -1861,168 +1856,6 @@ class _StatusRow extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _MiniTrailPainter extends CustomPainter {
-  const _MiniTrailPainter({
-    required this.color,
-    required this.routePoints,
-    required this.manualPins,
-    required this.latestLocation,
-  });
-
-  final Color color;
-  final List<HikeCoordinate> routePoints;
-  final List<HikeManualPin> manualPins;
-  final HikeCoordinate? latestLocation;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final background = Paint()..color = color.withValues(alpha: 0.12);
-    final routePaint = Paint()
-      ..color = _HomeColors.green
-      ..strokeWidth = 4.5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-    final recordedPaint = Paint()
-      ..color = _HomeColors.green.withValues(alpha: 0.32)
-      ..strokeWidth = 2
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawRect(Offset.zero & size, background);
-
-    final visiblePoints = <HikeCoordinate>[
-      ...routePoints,
-      for (final pin in manualPins) pin.coordinate,
-      if (latestLocation != null) latestLocation!,
-    ];
-    if (visiblePoints.length < 2) {
-      _drawEmptyGrid(canvas, size);
-      final center = Offset(size.width * 0.5, size.height * 0.5);
-      _drawMarker(canvas, center, _HomeColors.blue);
-      return;
-    }
-
-    final bounds = _CoordinateBounds.from(visiblePoints);
-    final projectedRoute = routePoints
-        .map((point) => bounds.project(point, size))
-        .toList();
-    final path = Path();
-    if (projectedRoute.isNotEmpty) {
-      path.moveTo(projectedRoute.first.dx, projectedRoute.first.dy);
-      for (final point in projectedRoute.skip(1)) {
-        path.lineTo(point.dx, point.dy);
-      }
-    }
-    canvas.drawPath(path, recordedPaint);
-    canvas.drawPath(path, routePaint);
-
-    if (projectedRoute.isNotEmpty) {
-      _drawMarker(canvas, projectedRoute.first, _HomeColors.green);
-    }
-
-    for (final pin in manualPins) {
-      _drawMarker(
-        canvas,
-        bounds.project(pin.coordinate, size),
-        _HomeColors.red,
-      );
-    }
-
-    if (latestLocation != null) {
-      _drawMarker(
-        canvas,
-        bounds.project(latestLocation!, size),
-        _HomeColors.blue,
-      );
-    }
-  }
-
-  void _drawEmptyGrid(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.44)
-      ..strokeWidth = 1;
-    for (var index = 1; index < 4; index++) {
-      final x = size.width * index / 4;
-      final y = size.height * index / 4;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-  }
-
-  void _drawMarker(Canvas canvas, Offset center, Color color) {
-    final fill = Paint()..color = color;
-    final stroke = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.4;
-    canvas.drawCircle(center, 8, fill);
-    canvas.drawCircle(center, 8, stroke);
-  }
-
-  @override
-  bool shouldRepaint(covariant _MiniTrailPainter oldDelegate) {
-    return oldDelegate.color != color ||
-        oldDelegate.routePoints != routePoints ||
-        oldDelegate.manualPins != manualPins ||
-        oldDelegate.latestLocation != latestLocation;
-  }
-}
-
-class _CoordinateBounds {
-  const _CoordinateBounds({
-    required this.minLatitude,
-    required this.maxLatitude,
-    required this.minLongitude,
-    required this.maxLongitude,
-  });
-
-  factory _CoordinateBounds.from(List<HikeCoordinate> points) {
-    var minLatitude = points.first.latitude;
-    var maxLatitude = points.first.latitude;
-    var minLongitude = points.first.longitude;
-    var maxLongitude = points.first.longitude;
-    for (final point in points.skip(1)) {
-      minLatitude = math.min(minLatitude, point.latitude);
-      maxLatitude = math.max(maxLatitude, point.latitude);
-      minLongitude = math.min(minLongitude, point.longitude);
-      maxLongitude = math.max(maxLongitude, point.longitude);
-    }
-
-    if ((maxLatitude - minLatitude).abs() < 0.0001) {
-      minLatitude -= 0.00005;
-      maxLatitude += 0.00005;
-    }
-    if ((maxLongitude - minLongitude).abs() < 0.0001) {
-      minLongitude -= 0.00005;
-      maxLongitude += 0.00005;
-    }
-
-    return _CoordinateBounds(
-      minLatitude: minLatitude,
-      maxLatitude: maxLatitude,
-      minLongitude: minLongitude,
-      maxLongitude: maxLongitude,
-    );
-  }
-
-  final double minLatitude;
-  final double maxLatitude;
-  final double minLongitude;
-  final double maxLongitude;
-
-  Offset project(HikeCoordinate coordinate, Size size) {
-    const padding = 18.0;
-    final xRatio =
-        (coordinate.longitude - minLongitude) / (maxLongitude - minLongitude);
-    final yRatio =
-        1 - (coordinate.latitude - minLatitude) / (maxLatitude - minLatitude);
-    return Offset(
-      padding + xRatio * (size.width - padding * 2),
-      padding + yRatio * (size.height - padding * 2),
     );
   }
 }
@@ -2043,7 +1876,7 @@ class _InfoLine extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _HomeColors.secondaryText,
+                color: _HomeColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0,
               ),
@@ -2055,7 +1888,7 @@ class _InfoLine extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _HomeColors.text,
+                color: _HomeColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -2079,7 +1912,7 @@ class _SectionTitle extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _HomeColors.secondaryText,
+          color: _HomeColors.secondaryTextFor(context),
           fontSize: 12,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
@@ -2103,7 +1936,7 @@ class _EmptyState extends StatelessWidget {
           child: Text(
             message,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: _HomeColors.secondaryText,
+              color: _HomeColors.secondaryTextFor(context),
               letterSpacing: 0,
             ),
           ),
@@ -2149,8 +1982,8 @@ class _CircleIcon extends StatelessWidget {
     return Container(
       width: 36,
       height: 36,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: _HomeColors.surfaceFor(context),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: _HomeColors.green, size: 19),
@@ -2189,7 +2022,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _HomeColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -2203,10 +2036,10 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(
+    return Divider(
       height: 1,
       thickness: 0.7,
-      color: _HomeColors.separator,
+      color: _HomeColors.separatorFor(context),
     );
   }
 }
@@ -2216,12 +2049,12 @@ class _VerticalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       height: 32,
       child: VerticalDivider(
         width: 1,
         thickness: 0.7,
-        color: _HomeColors.separator,
+        color: _HomeColors.separatorFor(context),
       ),
     );
   }
@@ -2310,4 +2143,22 @@ abstract final class _HomeColors {
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
 }

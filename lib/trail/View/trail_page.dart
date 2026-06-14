@@ -136,7 +136,7 @@ class _TrailPageState extends State<TrailPage> {
         .toList();
 
     return ColoredBox(
-      color: _TrailColors.background,
+      color: _TrailColors.backgroundFor(context),
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 112),
@@ -324,7 +324,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
     final trail = widget.trail;
 
     return Scaffold(
-      backgroundColor: _TrailColors.background,
+      backgroundColor: _TrailColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -433,7 +433,7 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _TrailColors.background,
+      backgroundColor: _TrailColors.backgroundFor(context),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -457,7 +457,7 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
                             'Offline Trail Map',
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
-                                  color: _TrailColors.text,
+                                  color: _TrailColors.textFor(context),
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
@@ -467,7 +467,7 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
                             widget.trail.name,
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(
-                                  color: _TrailColors.secondaryText,
+                                  color: _TrailColors.secondaryTextFor(context),
                                   letterSpacing: 0,
                                 ),
                           ),
@@ -491,7 +491,7 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
                             minHeight: 5,
                             borderRadius: BorderRadius.circular(4),
                             color: _TrailColors.green,
-                            backgroundColor: _TrailColors.greenSoft,
+                            backgroundColor: _TrailColors.greenSoftFor(context),
                           ),
                           const SizedBox(height: 14),
                           FilledButton.icon(
@@ -620,7 +620,7 @@ class _HazardReportPageState extends State<HazardReportPage> {
     ];
 
     return Scaffold(
-      backgroundColor: _TrailColors.background,
+      backgroundColor: _TrailColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -642,7 +642,7 @@ class _HazardReportPageState extends State<HazardReportPage> {
                             'Report Trail Hazard',
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
-                                  color: _TrailColors.text,
+                                  color: _TrailColors.textFor(context),
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
@@ -759,7 +759,7 @@ class _Header extends StatelessWidget {
                 Text(
                   'Discover Trails',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _TrailColors.text,
+                    color: _TrailColors.textFor(context),
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -768,7 +768,7 @@ class _Header extends StatelessWidget {
                 Text(
                   'Pick a route by conditions, safety, and team fit',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _TrailColors.secondaryText,
+                    color: _TrailColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0,
                   ),
@@ -812,7 +812,7 @@ class _DiscoverHero extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: _TrailColors.text,
+                      color: _TrailColors.textFor(context),
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0,
                     ),
@@ -821,7 +821,7 @@ class _DiscoverHero extends StatelessWidget {
                   Text(
                     'Compare difficulty, forecast, hazard reports, and offline readiness before you commit.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TrailColors.secondaryText,
+                      color: _TrailColors.secondaryTextFor(context),
                       fontWeight: FontWeight.w500,
                       letterSpacing: 0,
                     ),
@@ -932,7 +932,7 @@ class _InsightTile extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _TrailColors.text,
+                color: _TrailColors.textFor(context),
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0,
               ),
@@ -942,7 +942,7 @@ class _InsightTile extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: _TrailColors.secondaryText,
+                color: _TrailColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -977,7 +977,7 @@ class _DetailHeader extends StatelessWidget {
           child: Text(
             'Trail',
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: _TrailColors.text,
+              color: _TrailColors.textFor(context),
               fontSize: 24,
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
@@ -1051,7 +1051,7 @@ class _TrailCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _TrailColors.text,
+                              color: _TrailColors.textFor(context),
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0,
                             ),
@@ -1062,7 +1062,7 @@ class _TrailCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _TrailColors.secondaryText,
+                          color: _TrailColors.secondaryTextFor(context),
                           letterSpacing: 0,
                         ),
                       ),
@@ -1072,7 +1072,7 @@ class _TrailCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _TrailColors.text,
+                          color: _TrailColors.textFor(context),
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0,
                         ),
@@ -1128,7 +1128,7 @@ class _DownloadedMapCard extends StatelessWidget {
               child: Text(
                 trail.name,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _TrailColors.text,
+                  color: _TrailColors.textFor(context),
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                 ),
@@ -1265,7 +1265,7 @@ class _TrailPlanCard extends StatelessWidget {
                         'Plan this hike',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _TrailColors.text,
+                              color: _TrailColors.textFor(context),
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0,
                             ),
@@ -1275,7 +1275,7 @@ class _TrailPlanCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _TrailColors.secondaryText,
+                          color: _TrailColors.secondaryTextFor(context),
                           letterSpacing: 0,
                         ),
                       ),
@@ -1377,7 +1377,7 @@ class _CheckpointRow extends StatelessWidget {
                 alignment: Alignment.center,
                 margin: const EdgeInsets.only(top: 10),
                 decoration: BoxDecoration(
-                  color: _TrailColors.greenSoft,
+                  color: _TrailColors.greenSoftFor(context),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -1390,11 +1390,11 @@ class _CheckpointRow extends StatelessWidget {
                 ),
               ),
               if (!isLast)
-                const Expanded(
+                Expanded(
                   child: VerticalDivider(
                     width: 1,
                     thickness: 1,
-                    color: _TrailColors.separator,
+                    color: _TrailColors.separatorFor(context),
                   ),
                 ),
             ],
@@ -1409,7 +1409,7 @@ class _CheckpointRow extends StatelessWidget {
                   Text(
                     checkpoint.name,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _TrailColors.text,
+                      color: _TrailColors.textFor(context),
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
@@ -1418,7 +1418,7 @@ class _CheckpointRow extends StatelessWidget {
                   Text(
                     'Dummy ETA checkpoint - ${checkpoint.latitude.toStringAsFixed(4)}, ${checkpoint.longitude.toStringAsFixed(4)}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TrailColors.secondaryText,
+                      color: _TrailColors.secondaryTextFor(context),
                       letterSpacing: 0,
                     ),
                   ),
@@ -1605,7 +1605,7 @@ class _MetricCell extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: _TrailColors.text,
+            color: _TrailColors.textFor(context),
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
@@ -1616,7 +1616,7 @@ class _MetricCell extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: _TrailColors.secondaryText,
+            color: _TrailColors.secondaryTextFor(context),
             letterSpacing: 0,
           ),
         ),
@@ -2075,7 +2075,7 @@ class _MapZoomControls extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
+        color: _TrailColors.elevatedSurfaceFor(context).withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(8),
         boxShadow: const [
           BoxShadow(
@@ -2135,7 +2135,7 @@ class _MapZoomButton extends StatelessWidget {
       child: IconButton(
         visualDensity: VisualDensity.compact,
         iconSize: 18,
-        color: _TrailColors.text,
+        color: _TrailColors.textFor(context),
         onPressed: onPressed,
         icon: Icon(icon),
       ),
@@ -2148,12 +2148,12 @@ class _MiniDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       height: 28,
       child: VerticalDivider(
         width: 1,
         thickness: 0.7,
-        color: _TrailColors.separator,
+        color: _TrailColors.separatorFor(context),
       ),
     );
   }
@@ -2177,7 +2177,7 @@ class _MapScaleBar extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.9),
+        color: _TrailColors.elevatedSurfaceFor(context).withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(3),
         border: Border.all(color: const Color(0x77000000), width: 1),
       ),
@@ -2190,7 +2190,7 @@ class _MapScaleBar extends StatelessWidget {
             Text(
               _distanceLabel(distanceMeters),
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: _TrailColors.text,
+                color: _TrailColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -2262,7 +2262,7 @@ class _OpenFreeMapAttribution extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.78),
+        color: _TrailColors.elevatedSurfaceFor(context).withValues(alpha: 0.78),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Padding(
@@ -2270,7 +2270,7 @@ class _OpenFreeMapAttribution extends StatelessWidget {
         child: Text(
           'OpenFreeMap | OpenMapTiles | OSM',
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: _TrailColors.secondaryText,
+            color: _TrailColors.secondaryTextFor(context),
             fontSize: 9,
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
@@ -2341,7 +2341,7 @@ class _GoogleRouteStatusCard extends StatelessWidget {
                     ? errorMessage!
                     : '${route?.sourceLabel ?? 'Live route'}: ${route?.distanceLabel ?? '-'} in ${route?.durationLabel ?? '-'}.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _TrailColors.text,
+                  color: _TrailColors.textFor(context),
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0,
                 ),
@@ -2413,7 +2413,7 @@ class _HazardCard extends StatelessWidget {
                   Text(
                     hazard.description,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: _TrailColors.text,
+                      color: _TrailColors.textFor(context),
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
@@ -2431,7 +2431,7 @@ class _HazardCard extends StatelessWidget {
                   Text(
                     'Reported ${_formatDate(hazard.reportedAt)} at ${hazard.locationLabel}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TrailColors.secondaryText,
+                      color: _TrailColors.secondaryTextFor(context),
                       letterSpacing: 0,
                     ),
                   ),
@@ -2463,7 +2463,7 @@ class _ReadOnlyField extends StatelessWidget {
       child: Text(
         value,
         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: _TrailColors.text,
+          color: _TrailColors.textFor(context),
           fontWeight: FontWeight.w600,
           letterSpacing: 0,
         ),
@@ -2488,7 +2488,7 @@ class _StatusRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _TrailColors.text,
+                color: _TrailColors.textFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -2500,7 +2500,7 @@ class _StatusRow extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _TrailColors.secondaryText,
+                color: _TrailColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0,
               ),
@@ -2524,7 +2524,7 @@ class _SectionTitle extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _TrailColors.secondaryText,
+          color: _TrailColors.secondaryTextFor(context),
           fontSize: 12,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
@@ -2548,7 +2548,7 @@ class _EmptyState extends StatelessWidget {
           child: Text(
             message,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: _TrailColors.secondaryText,
+              color: _TrailColors.secondaryTextFor(context),
               letterSpacing: 0,
             ),
           ),
@@ -2596,8 +2596,8 @@ class _CircleIcon extends StatelessWidget {
     return Container(
       width: 36,
       height: 36,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: _TrailColors.surfaceFor(context),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: _TrailColors.green, size: 20),
@@ -2636,7 +2636,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _TrailColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -2650,10 +2650,10 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(
+    return Divider(
       height: 1,
       thickness: 0.7,
-      color: _TrailColors.separator,
+      color: _TrailColors.separatorFor(context),
     );
   }
 }
@@ -2663,12 +2663,12 @@ class _VerticalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       height: 32,
       child: VerticalDivider(
         width: 1,
         thickness: 0.7,
-        color: _TrailColors.separator,
+        color: _TrailColors.separatorFor(context),
       ),
     );
   }
@@ -2754,4 +2754,28 @@ abstract final class _TrailColors {
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color elevatedSurfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF1B261F) : Colors.white;
+
+  static Color greenSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF183625) : greenSoft;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
 }

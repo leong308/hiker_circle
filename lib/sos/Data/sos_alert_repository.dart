@@ -167,6 +167,42 @@ class SosAlertRepository {
     return SosAlertResult(alert: alert);
   }
 
+  Future<List<SosContactDispatch>> sendWhatsAppTestMessage({
+    required AppSession session,
+    required List<EmergencyContact> contacts,
+  }) async {
+    _throwIfFirebaseUnavailable();
+
+    final sentAt = DateTime.now().toUtc();
+    final message = [
+      'HikerCircle cloud messaging TEST',
+      'Hiker: ${session.phoneNumber}',
+      'Sent: ${sentAt.toIso8601String()}',
+      'This is NOT an emergency or SOS alert.',
+      'The hiker is testing cloud messaging during pre-hike preparation so emergency contacts can receive real alerts later.',
+      'No action is required.',
+    ].join('\n');
+    final dispatches = <SosContactDispatch>[];
+    for (final contact in contacts) {
+      dispatches.add(await _sendToContact(contact: contact, message: message));
+    }
+
+    await _userDocumentFor(session).set({
+      'latest_sos_messaging_test': {
+        'sentAtLocal': sentAt.toIso8601String(),
+        'contactCount': contacts.length,
+        'sentCount': dispatches.where((dispatch) => dispatch.wasSent).length,
+        'dispatches': dispatches
+            .map((dispatch) => dispatch.toFirestore())
+            .toList(),
+      },
+      'sosMessagingTestUpdatedAt': FieldValue.serverTimestamp(),
+      'sosMessagingTestUpdatedAtLocal': sentAt.toIso8601String(),
+      'phoneNumber': session.phoneNumber,
+    }, SetOptions(merge: true));
+    return dispatches;
+  }
+
   Future<SosContactDispatch> _sendToContact({
     required EmergencyContact contact,
     required String message,

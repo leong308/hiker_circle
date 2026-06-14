@@ -135,6 +135,28 @@ class MainActivity : FlutterActivity() {
                         stopManualSosPattern()
                         result.success(null)
                     }
+                    "startSirenOnly" -> {
+                        try {
+                            startSirenOnly(
+                                call.argument<String>("alarmAsset") ?: ALARM_ASSET,
+                            )
+                            result.success(null)
+                        } catch (error: Exception) {
+                            result.error(
+                                "sos_device_alert_start_failed",
+                                error.message,
+                                null,
+                            )
+                        }
+                    }
+                    "startFlashlightPattern" -> {
+                        startTorchPattern()
+                        result.success(null)
+                    }
+                    "stopFlashlightPattern" -> {
+                        stopTorchPattern()
+                        result.success(null)
+                    }
                     "beginOutputVolumeMonitoring" -> {
                         result.success(null)
                     }
@@ -256,6 +278,11 @@ class MainActivity : FlutterActivity() {
     private fun startManualSosPattern(alarmAsset: String = ALARM_ASSET) {
         startAlarm(normalizedAlarmAsset(alarmAsset))
         startTorchPattern()
+    }
+
+    private fun startSirenOnly(alarmAsset: String = ALARM_ASSET) {
+        stopTorchPattern()
+        startAlarm(normalizedAlarmAsset(alarmAsset))
     }
 
     private fun stopManualSosPattern() {

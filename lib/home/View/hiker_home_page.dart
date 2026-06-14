@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Model/app_session.dart';
@@ -52,7 +54,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     'hiker_circle/deeplinks',
   );
   static const Duration _minimumActiveHikeRecordingInterval = Duration(
-    minutes: 1,
+    seconds: 5,
   );
   static const Duration _activeHikeLiveStatusThrottle = Duration(seconds: 20);
   static const String _fallStillnessPrompt =
@@ -81,6 +83,9 @@ class _HikerHomePageState extends State<HikerHomePage>
   Duration? activeHikeRecordingInterval;
   DateTime? lastActiveHikeLocationRecordedAt;
   DateTime? lastActiveHikeLiveStatusSentAt;
+  HikeCoordinate? stationaryWatchReferenceLocation;
+  DateTime? stationaryWatchStartedAt;
+  bool isStationaryLocationWatchActive = false;
   FallStillnessMonitorStatus lastFallStillnessStatus =
       FallStillnessMonitorStatus.inactive;
   ActiveHikeSession? activeHike;
@@ -248,7 +253,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     final shouldAdd = await showModalBottomSheet<bool>(
       context: context,
       showDragHandle: true,
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -1306,6 +1311,9 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   void _startActiveHikeLocationRecording(ActiveHikeSession hike) {
     final interval = _effectiveActiveHikeRecordingInterval(hike);
+    final monitorInterval = interval < const Duration(seconds: 30)
+        ? interval
+        : const Duration(seconds: 30);
     final isSameRecordingLoop =
         activeHikeRecordingTimer?.isActive == true &&
         activeHikeRecordingSessionId == hike.sessionId &&
@@ -1317,10 +1325,13 @@ class _HikerHomePageState extends State<HikerHomePage>
     activeHikeRecordingTimer?.cancel();
     activeHikeRecordingSessionId = hike.sessionId;
     activeHikeRecordingInterval = interval;
+    stationaryWatchReferenceLocation = null;
+    stationaryWatchStartedAt = null;
+    isStationaryLocationWatchActive = false;
     LocationSnapshotService.instance.setRefreshInterval(
       _snapshotIntervalForActiveHike(interval),
     );
-    activeHikeRecordingTimer = Timer.periodic(interval, (_) {
+    activeHikeRecordingTimer = Timer.periodic(monitorInterval, (_) {
       unawaited(_recordActiveHikeLocationTick());
     });
   }
@@ -1337,6 +1348,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     activeHikeRecordingInterval = null;
     lastActiveHikeLocationRecordedAt = null;
     lastActiveHikeLiveStatusSentAt = null;
+    stationaryWatchReferenceLocation = null;
+    stationaryWatchStartedAt = null;
+    isStationaryLocationWatchActive = false;
     LocationSnapshotService.instance.setRefreshInterval(
       LiveLocationSharingService.instance.isActive
           ? LocationSnapshotService.liveSnapshotInterval
@@ -1372,19 +1386,29 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   Future<void> _recordActiveHikeLocationTick({bool force = false}) async {
     final hike = activeHike;
-    if (hike == null ||
-        isRecordingActiveHikeLocation ||
-        (!force && !_isActiveHikeLocationRecordDue(hike))) {
+    if (hike == null || isRecordingActiveHikeLocation) {
+      return;
+    }
+
+    final shouldRecord = force || _isActiveHikeLocationRecordDue(hike);
+    if (!shouldRecord && !hike.draft.fallDetectionEnabled) {
       return;
     }
 
     isRecordingActiveHikeLocation = true;
     final sessionId = hike.sessionId;
+    var didRecordLocation = false;
     try {
       final location = await LocationSnapshotService.instance.refresh();
       if (location == null) {
         return;
       }
+      final coordinate = HikeCoordinate.fromTriggerLocation(location);
+      _evaluateStationaryLocationWatch(hike, coordinate);
+      if (!shouldRecord) {
+        return;
+      }
+
       final batteryLevel = await _readBatteryLevel(fallback: hike.batteryLevel);
 
       final queuedUpdates = await hikerCircleRepository.recordLocationPoint(
@@ -1413,10 +1437,49 @@ class _HikerHomePageState extends State<HikerHomePage>
         activeHike = updatedHike;
       });
       _syncActiveHikeLiveStatus(updatedHike, force: true);
+      didRecordLocation = true;
     } finally {
-      lastActiveHikeLocationRecordedAt = DateTime.now();
+      if (didRecordLocation) {
+        lastActiveHikeLocationRecordedAt = DateTime.now();
+      }
       isRecordingActiveHikeLocation = false;
     }
+  }
+
+  void _evaluateStationaryLocationWatch(
+    ActiveHikeSession hike,
+    HikeCoordinate coordinate,
+  ) {
+    const stationaryMovementThresholdMeters = 5.0;
+    const stationaryTriggerDuration = Duration(minutes: 3);
+    final now = DateTime.now();
+    final reference = stationaryWatchReferenceLocation;
+    final movedEnough =
+        reference == null ||
+        reference.distanceTo(coordinate) > stationaryMovementThresholdMeters;
+
+    if (movedEnough) {
+      stationaryWatchReferenceLocation = coordinate;
+      stationaryWatchStartedAt = now;
+      if (isStationaryLocationWatchActive) {
+        fallStillnessMonitor.cancelStationaryLocationWatch(
+          'New location recorded',
+        );
+        isStationaryLocationWatchActive = false;
+      }
+      return;
+    }
+
+    stationaryWatchStartedAt ??= now;
+    if (isStationaryLocationWatchActive ||
+        now.difference(stationaryWatchStartedAt!) < stationaryTriggerDuration) {
+      return;
+    }
+
+    fallStillnessMonitor.beginStationaryLocationWatch(
+      hike.draft.fallDetectionSettings,
+    );
+    isStationaryLocationWatchActive = true;
   }
 
   void _syncActiveHikeLiveStatus(ActiveHikeSession hike, {bool force = false}) {
@@ -1866,6 +1929,8 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                     ),
                   ),
                   const SizedBox(height: 18),
+                  _SummaryChartCard(report: report),
+                  const SizedBox(height: 18),
                   Text(
                     'INSIGHTS',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -1936,11 +2001,128 @@ class _SummaryCard extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
-        decoration: const BoxDecoration(color: Colors.white),
+        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface),
         child: child,
       ),
     );
   }
+}
+
+class _SummaryChartCard extends StatelessWidget {
+  const _SummaryChartCard({required this.report});
+
+  final HikeSummaryReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final batteryUsed = math.max(
+      0,
+      report.batteryStartPercent - report.batteryEndPercent,
+    );
+    final chartValues = [
+      _ChartValue('KM', report.distanceKm),
+      _ChartValue('HRS', math.max(report.duration.inMinutes / 60, 0.1)),
+      _ChartValue('GPS', math.max(report.routePointCount / 10, 0.1)),
+      _ChartValue('BAT', math.max(batteryUsed.toDouble(), 0.1)),
+    ];
+    final maxY =
+        chartValues.map((value) => value.amount).reduce(math.max) * 1.25;
+
+    return _SummaryCard(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Hike Stats Chart',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: const Color(0xFF111111),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 180,
+              child: BarChart(
+                BarChartData(
+                  maxY: maxY,
+                  minY: 0,
+                  barTouchData: BarTouchData(enabled: false),
+                  gridData: const FlGridData(show: false),
+                  borderData: FlBorderData(show: false),
+                  titlesData: FlTitlesData(
+                    leftTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        getTitlesWidget: (value, meta) {
+                          final index = value.toInt();
+                          if (index < 0 || index >= chartValues.length) {
+                            return const SizedBox.shrink();
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              chartValues[index].label,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: const Color(0xFF6E6E73),
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0,
+                                  ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  barGroups: [
+                    for (var index = 0; index < chartValues.length; index++)
+                      BarChartGroupData(
+                        x: index,
+                        barRods: [
+                          BarChartRodData(
+                            toY: chartValues[index].amount,
+                            width: 18,
+                            borderRadius: BorderRadius.circular(4),
+                            color: const Color(0xFF34A853),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'GPS is scaled as points / 10. Battery is percentage used.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF6E6E73),
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChartValue {
+  const _ChartValue(this.label, this.amount);
+
+  final String label;
+  final double amount;
 }
 
 class _SummaryMetric extends StatelessWidget {

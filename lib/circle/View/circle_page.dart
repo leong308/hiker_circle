@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -176,7 +177,7 @@ class _CirclePageState extends State<CirclePage> {
         .toList();
 
     return ColoredBox(
-      color: _CircleColors.background,
+      color: _CircleColors.backgroundFor(context),
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 112),
@@ -332,7 +333,7 @@ class _Header extends StatelessWidget {
                 Text(
                   'Circle',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _CircleColors.text,
+                    color: _CircleColors.textFor(context),
                     fontSize: 24,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
@@ -344,7 +345,7 @@ class _Header extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _CircleColors.secondaryText,
+                    color: _CircleColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
@@ -493,7 +494,7 @@ class _ComposerCard extends StatelessWidget {
                         ? 'Share a trail note, photo, or question...'
                         : 'Share live progress from ${activeHike!.trail.name}...',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: _CircleColors.secondaryText,
+                      color: _CircleColors.secondaryTextFor(context),
                       fontWeight: FontWeight.w500,
                       letterSpacing: 0,
                     ),
@@ -535,7 +536,7 @@ class _ComposerCard extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: Colors.white,
+      backgroundColor: _CircleColors.surfaceFor(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -550,7 +551,7 @@ class _ComposerCard extends StatelessWidget {
               Text(
                 'New community post',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: _CircleColors.text,
+                  color: _CircleColors.textFor(context),
                   fontWeight: FontWeight.w800,
                   letterSpacing: 0,
                 ),
@@ -624,7 +625,7 @@ class _BuddySuggestionCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyLarge
                               ?.copyWith(
-                                color: _CircleColors.text,
+                                color: _CircleColors.textFor(context),
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 0,
                               ),
@@ -635,7 +636,7 @@ class _BuddySuggestionCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(
-                                color: _CircleColors.secondaryText,
+                                color: _CircleColors.secondaryTextFor(context),
                                 fontWeight: FontWeight.w600,
                                 letterSpacing: 0,
                               ),
@@ -651,7 +652,7 @@ class _BuddySuggestionCard extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _CircleColors.secondaryText,
+                  color: _CircleColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -723,7 +724,7 @@ class _CommunityPostCard extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.bodyLarge
                                       ?.copyWith(
-                                        color: _CircleColors.text,
+                                        color: _CircleColors.textFor(context),
                                         fontWeight: FontWeight.w800,
                                         letterSpacing: 0,
                                       ),
@@ -737,7 +738,9 @@ class _CommunityPostCard extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.bodySmall
                                       ?.copyWith(
-                                        color: _CircleColors.secondaryText,
+                                        color: _CircleColors.secondaryTextFor(
+                                          context,
+                                        ),
                                         letterSpacing: 0,
                                       ),
                                 ),
@@ -749,7 +752,9 @@ class _CommunityPostCard extends StatelessWidget {
                             '${post.timeLabel} - ${post.trail}',
                             style: Theme.of(context).textTheme.labelSmall
                                 ?.copyWith(
-                                  color: _CircleColors.secondaryText,
+                                  color: _CircleColors.secondaryTextFor(
+                                    context,
+                                  ),
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0,
                                 ),
@@ -773,7 +778,7 @@ class _CommunityPostCard extends StatelessWidget {
                 Text(
                   post.body,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _CircleColors.text,
+                    color: _CircleColors.textFor(context),
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0,
                   ),
@@ -924,7 +929,7 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
     final post = widget.post;
 
     return Scaffold(
-      backgroundColor: _CircleColors.background,
+      backgroundColor: _CircleColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1044,7 +1049,7 @@ class _CommentRow extends StatelessWidget {
                 Text(
                   '${comment.author} ${comment.handle}',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _CircleColors.text,
+                    color: _CircleColors.textFor(context),
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0,
                   ),
@@ -1053,7 +1058,7 @@ class _CommentRow extends StatelessWidget {
                 Text(
                   comment.body,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _CircleColors.text,
+                    color: _CircleColors.textFor(context),
                     letterSpacing: 0,
                   ),
                 ),
@@ -1061,7 +1066,7 @@ class _CommentRow extends StatelessWidget {
                 Text(
                   comment.timeLabel,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: _CircleColors.secondaryText,
+                    color: _CircleColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
@@ -1162,7 +1167,7 @@ class _TeamBuilderCard extends StatelessWidget {
                         'Build a hiking team',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _CircleColors.text,
+                              color: _CircleColors.textFor(context),
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0,
                             ),
@@ -1170,7 +1175,7 @@ class _TeamBuilderCard extends StatelessWidget {
                       Text(
                         '${buddies.length} buddies available for invites',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _CircleColors.secondaryText,
+                          color: _CircleColors.secondaryTextFor(context),
                           letterSpacing: 0,
                         ),
                       ),
@@ -1257,7 +1262,7 @@ class _TeamPlanCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleMedium
                                 ?.copyWith(
-                                  color: _CircleColors.text,
+                                  color: _CircleColors.textFor(context),
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
@@ -1268,7 +1273,9 @@ class _TeamPlanCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(
-                                  color: _CircleColors.secondaryText,
+                                  color: _CircleColors.secondaryTextFor(
+                                    context,
+                                  ),
                                   letterSpacing: 0,
                                 ),
                           ),
@@ -1300,7 +1307,7 @@ class _TeamPlanCard extends StatelessWidget {
                 Text(
                   '${team.readiness}% team readiness - tap to manage roles, invites, and check-ins',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: _CircleColors.secondaryText,
+                    color: _CircleColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0,
                   ),
@@ -1322,7 +1329,7 @@ class _TeamDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _CircleColors.background,
+      backgroundColor: _CircleColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1460,7 +1467,7 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _CircleColors.background,
+      backgroundColor: _CircleColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -1566,30 +1573,88 @@ class _SettingsSwitchTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: Material(
-        color: Colors.transparent,
-        child: SwitchListTile.adaptive(
-          value: value,
-          onChanged: onChanged,
-          activeThumbColor: _CircleColors.green,
-          activeTrackColor: _CircleColors.green.withValues(alpha: 0.24),
-          title: Text(
-            title,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: _CircleColors.text,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _CircleColors.textFor(context),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _CircleColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          subtitle: Text(
-            subtitle,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _CircleColors.secondaryText,
-              letterSpacing: 0,
-            ),
-          ),
+            const SizedBox(width: 12),
+            _CircleAnimatedToggle(value: value, onChanged: onChanged),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _CircleAnimatedToggle extends StatelessWidget {
+  const _CircleAnimatedToggle({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedToggleSwitch<bool>.size(
+      current: value,
+      values: const [false, true],
+      height: 38,
+      spacing: 2,
+      indicatorSize: const Size.square(32),
+      borderWidth: 2,
+      style: ToggleStyle(
+        backgroundColor: _CircleColors.greenSoftFor(context),
+        borderColor: _CircleColors.separatorFor(context),
+        borderRadius: BorderRadius.circular(999),
+        indicatorBorderRadius: BorderRadius.circular(999),
+      ),
+      styleBuilder: (enabled) => ToggleStyle(
+        indicatorColor: enabled
+            ? _CircleColors.green
+            : _CircleColors.redFor(context),
+      ),
+      iconBuilder: (enabled) => Icon(
+        enabled ? Icons.check_rounded : Icons.close_rounded,
+        color: enabled ? _CircleColors.green : _CircleColors.redFor(context),
+        size: 17,
+      ),
+      foregroundIndicatorIconBuilder: (context, global) {
+        final enabled = global.current;
+        return Icon(
+          enabled ? Icons.check_rounded : Icons.close_rounded,
+          color: Colors.white,
+          size: 18,
+        );
+      },
+      iconOpacity: 0.72,
+      selectedIconOpacity: 0,
+      selectedIconScale: 1,
+      animationDuration: const Duration(milliseconds: 260),
+      animationCurve: Curves.easeOutCubic,
+      onChanged: onChanged,
     );
   }
 }
@@ -1612,7 +1677,7 @@ class _RosterRow extends StatelessWidget {
             child: Text(
               name,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: _CircleColors.text,
+                color: _CircleColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -1652,7 +1717,7 @@ class _TeamFlowRow extends StatelessWidget {
                 Text(
                   title,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _CircleColors.text,
+                    color: _CircleColors.textFor(context),
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                   ),
@@ -1661,7 +1726,7 @@ class _TeamFlowRow extends StatelessWidget {
                 Text(
                   subtitle,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _CircleColors.secondaryText,
+                    color: _CircleColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
@@ -1695,12 +1760,16 @@ class _PostAction extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 18, color: _CircleColors.secondaryText),
+            Icon(
+              icon,
+              size: 18,
+              color: _CircleColors.secondaryTextFor(context),
+            ),
             const SizedBox(width: 5),
             Text(
               label,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: _CircleColors.secondaryText,
+                color: _CircleColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -1728,7 +1797,7 @@ class _InfoLine extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _CircleColors.secondaryText,
+                color: _CircleColors.secondaryTextFor(context),
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0,
               ),
@@ -1740,7 +1809,7 @@ class _InfoLine extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _CircleColors.text,
+                color: _CircleColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -1764,7 +1833,7 @@ class _SectionTitle extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _CircleColors.secondaryText,
+          color: _CircleColors.secondaryTextFor(context),
           fontSize: 12,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
@@ -1808,7 +1877,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _CircleColors.text,
+                  color: _CircleColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
@@ -1819,7 +1888,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _CircleColors.secondaryText,
+                  color: _CircleColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -1866,8 +1935,8 @@ class _CircleIcon extends StatelessWidget {
     return Container(
       width: 36,
       height: 36,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: _CircleColors.surfaceFor(context),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: _CircleColors.green, size: 19),
@@ -1933,7 +2002,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _CircleColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -1947,10 +2016,10 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(
+    return Divider(
       height: 1,
       thickness: 0.7,
-      color: _CircleColors.separator,
+      color: _CircleColors.separatorFor(context),
     );
   }
 }
@@ -2224,10 +2293,36 @@ void _showDummySnack(BuildContext context, String message) {
 abstract final class _CircleColors {
   static const Color background = Color(0xFFF2F2F7);
   static const Color green = Color(0xFF34A853);
+  static const Color greenSoft = Color(0xFFEAF7EE);
+  static const Color red = Color(0xFFE11D48);
   static const Color blue = Color(0xFF2563EB);
   static const Color orange = Color(0xFFF59E0B);
   static const Color purple = Color(0xFF7C3AED);
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color greenSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF183625) : greenSoft;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color redFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFFF6B88) : red;
 }

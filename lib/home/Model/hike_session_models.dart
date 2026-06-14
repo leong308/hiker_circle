@@ -171,15 +171,25 @@ class HikeSessionDraft {
   });
 
   factory HikeSessionDraft.fromTrail(Trail trail) {
-    final departure = DateTime(2026, 6, 5, 6, 30);
+    final now = DateTime.now();
+    final departure = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      now.hour,
+      now.minute,
+    );
+    final expectedArrival = departure.add(
+      Duration(minutes: trail.estimatedDurationMinutes),
+    );
     return HikeSessionDraft(
       hikeType: HikeType.solo,
       trail: trail,
       startPointName: trail.checkpoints.first.name,
       destinationName: trail.checkpoints.last.name,
       departureTime: departure,
-      expectedArrivalTime: DateTime(2026, 6, 5, 8, 30),
-      expectedReturnTime: DateTime(2026, 6, 5, 11, 30),
+      expectedArrivalTime: expectedArrival,
+      expectedReturnTime: expectedArrival.add(const Duration(hours: 2)),
       safetyCheckInInterval: const Duration(minutes: 30),
       locationRecordingInterval: const Duration(minutes: 5),
       emergencyContactNames: const ['Mother', 'Brother'],

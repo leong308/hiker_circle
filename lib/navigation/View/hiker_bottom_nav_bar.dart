@@ -32,6 +32,17 @@ class HikerBottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final activeColor = isDark
+        ? const Color(0xFF5FAF78)
+        : const Color(0xFF3F8F5E);
+    final inactiveColor = isDark
+        ? const Color(0xFFA8B8AE)
+        : const Color(0xFF5F7568);
+    final glassColor = isDark
+        ? const Color(0xFF141C17).withValues(alpha: 0.9)
+        : const Color(0xFFEAF7EE).withValues(alpha: 0.86);
+
     return LiquidGlassBar(
       items: [
         for (final destination in destinations)
@@ -43,8 +54,8 @@ class HikerBottomNavBar extends StatelessWidget {
       currentIndex: currentIndex,
       onTap: onDestinationSelected,
       style: LiquidGlassBarStyle(
-        activeColor: const Color(0xFF3F8F5E),
-        inactiveColor: const Color(0xFF5F7568),
+        activeColor: activeColor,
+        inactiveColor: inactiveColor,
         borderRadius: 34,
         height: 57,
         iconSize: 23,
@@ -53,8 +64,8 @@ class HikerBottomNavBar extends StatelessWidget {
         liquidGlassSettings: LiquidGlassSettings(
           thickness: 20,
           blur: 18,
-          glassColor: const Color(0xFFEAF7EE).withValues(alpha: 0.86),
-          lightIntensity: 0.7,
+          glassColor: glassColor,
+          lightIntensity: isDark ? 0.32 : 0.7,
           refractiveIndex: 1.45,
         ),
       ),

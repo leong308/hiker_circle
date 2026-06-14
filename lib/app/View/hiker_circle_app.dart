@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../authentication/View/phone_sign_in_page.dart';
 import '../../home/View/hiker_home_page.dart';
+import '../Data/app_settings_controller.dart';
 import '../Data/firebase_bootstrap.dart';
 import '../Data/firebase_user_repository.dart';
 import '../Data/session_repository.dart';
@@ -86,6 +87,8 @@ class HikerCircleApp extends StatefulWidget {
 
 class _HikerCircleAppState extends State<HikerCircleApp> {
   late final AppViewModel _appViewModel;
+  final AppSettingsController _settingsController =
+      AppSettingsController.instance;
 
   @override
   void initState() {
@@ -98,12 +101,14 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
       ),
     );
     _appViewModel.addListener(_refresh);
+    _settingsController.addListener(_refresh);
     _appViewModel.initialize();
   }
 
   @override
   void dispose() {
     _appViewModel.removeListener(_refresh);
+    _settingsController.removeListener(_refresh);
     _appViewModel.dispose();
     super.dispose();
   }
@@ -117,7 +122,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
     return MaterialApp(
       title: 'HikerCircle',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.light,
+      themeMode: _settingsController.themeMode,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
@@ -163,6 +168,47 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: _appGreen, width: 1.5),
+          ),
+        ),
+      ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        fontFamily: _appFontFamily,
+        cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
+          brightness: Brightness.dark,
+          primaryColor: Color(0xFF7AD69C),
+          primaryContrastingColor: Color(0xFF07100A),
+          scaffoldBackgroundColor: Color(0xFF0C120F),
+        ),
+        scaffoldBackgroundColor: const Color(0xFF0C120F),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: _appGreen,
+          brightness: Brightness.dark,
+          primary: const Color(0xFF7AD69C),
+          secondary: const Color(0xFF9FDDB2),
+          primaryContainer: const Color(0xFF183625),
+          secondaryContainer: const Color(0xFF1B2E23),
+          surface: const Color(0xFF141C17),
+          surfaceContainerHighest: const Color(0xFF1B261F),
+          outline: const Color(0xFF2B3A31),
+        ),
+        cardColor: const Color(0xFF141C17),
+        dividerColor: const Color(0xFF2B3A31),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFF111915),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFF294535)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFF294535)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFF7AD69C), width: 1.5),
           ),
         ),
       ),

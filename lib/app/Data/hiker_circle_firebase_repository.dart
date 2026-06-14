@@ -65,6 +65,8 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('networkObservations');
   CollectionReference<Map<String, dynamic>> get _downloadedMaps =>
       _resolvedFirestore.collection('downloadedMaps');
+  CollectionReference<Map<String, dynamic>> get _hikeRouteCaptures =>
+      _resolvedFirestore.collection('hikeRouteCaptures');
 
   Future<List<Trail>> loadTrails() async {
     if (!_firebaseBootstrapResult.isAvailable) {
@@ -142,6 +144,8 @@ class HikerCircleFirebaseRepository {
         'safetyCheckInIntervalMinutes': draft.safetyCheckInInterval.inMinutes,
         'locationRecordingIntervalMinutes':
             draft.locationRecordingInterval.inMinutes,
+        'locationRecordingIntervalSeconds':
+            draft.locationRecordingInterval.inSeconds,
         'emergencyContactNames': draft.emergencyContactNames,
         'shareLiveLocation': draft.shareLiveLocation,
         'fallDetectionEnabled': draft.fallDetectionEnabled,
@@ -276,6 +280,24 @@ class HikerCircleFirebaseRepository {
       'routePointCount': activeHike.routePointCount,
       if (summary != null) 'summaryReport': summary.toFirestore(),
       'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    await _hikeRouteCaptures.doc(activeHike.sessionId).set({
+      'sessionId': activeHike.sessionId,
+      'userId': _userIdFor(session),
+      'userPhoneNumber': session.phoneNumber,
+      'trailId': activeHike.trail.trailId,
+      'trailName': activeHike.trail.name,
+      'captureType': 'recorded_actual_trail',
+      'anonymousRecommendationEligible': true,
+      'routePoints': activeHike.routePoints
+          .map((point) => point.toFirestore())
+          .toList(),
+      'manualPins': activeHike.manualPinLocations
+          .map((pin) => pin.toFirestore())
+          .toList(),
+      if (summary != null) 'summaryReport': summary.toFirestore(),
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdAtLocal': now.toIso8601String(),
     }, SetOptions(merge: true));
     await awardAchievement(
       session: session,
