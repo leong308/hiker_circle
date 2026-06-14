@@ -12,11 +12,13 @@ class ActiveTrackingMapView extends StatefulWidget {
   const ActiveTrackingMapView({
     super.key,
     required this.activeHike,
+    this.teamHikeSession,
     this.interactive = true,
     this.showLegend = false,
   });
 
   final ActiveHikeSession activeHike;
+  final TeamHikeSession? teamHikeSession;
   final bool interactive;
   final bool showLegend;
 
@@ -66,6 +68,23 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
         .toList();
   }
 
+  List<maplibre.LatLng> get _teamMatePoints {
+    final teamSession =
+        widget.teamHikeSession ?? widget.activeHike.teamHikeSession;
+    if (teamSession == null) {
+      return const [];
+    }
+    return teamSession.participants
+        .where((participant) => participant.latestLocation != null)
+        .map(
+          (participant) => maplibre.LatLng(
+            participant.latestLocation!.latitude,
+            participant.latestLocation!.longitude,
+          ),
+        )
+        .toList();
+  }
+
   maplibre.LatLng? get _latestPoint {
     final latest = widget.activeHike.latestLocation;
     if (latest == null) {
@@ -78,6 +97,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     return [
       ..._recordedRoutePoints,
       ..._manualPinPoints,
+      ..._teamMatePoints,
       if (_latestPoint != null) _latestPoint!,
       if (_recordedRoutePoints.isEmpty) ..._checkpointPoints,
     ];
@@ -139,6 +159,21 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     }
 
     await controller.addCircles([
+      for (final participant
+          in (widget.teamHikeSession ?? widget.activeHike.teamHikeSession)
+                  ?.participants ??
+              const <TeamHikeParticipant>[])
+        if (participant.latestLocation != null)
+          maplibre.CircleOptions(
+            geometry: maplibre.LatLng(
+              participant.latestLocation!.latitude,
+              participant.latestLocation!.longitude,
+            ),
+            circleColor: participant.isLeader ? '#F59E0B' : '#7C3AED',
+            circleRadius: participant.isLeader ? 8 : 6,
+            circleStrokeColor: '#FFFFFF',
+            circleStrokeWidth: 2,
+          ),
       for (final point in _manualPinPoints)
         maplibre.CircleOptions(
           geometry: point,
@@ -244,7 +279,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
           left: 10,
           top: 10,
           child: _MapPill(
-            label: widget.activeHike.routePoints.length >= 2
+            label:
+                (widget.teamHikeSession ?? widget.activeHike.teamHikeSession) !=
+                    null
+                ? 'Live team map'
+                : widget.activeHike.routePoints.length >= 2
                 ? 'Live MapLibre trail'
                 : 'Checkpoint route',
             color: widget.activeHike.routePoints.length >= 2
@@ -330,6 +369,8 @@ class _ActiveTrackingLegend extends StatelessWidget {
             _LegendDot(color: Color(0xFF34A853), label: 'Recorded trail'),
             _LegendDot(color: Color(0xFFE11D48), label: 'Pinned location'),
             _LegendDot(color: Color(0xFF0A84FF), label: 'Latest GPS'),
+            _LegendDot(color: Color(0xFF7C3AED), label: 'Teammate'),
+            _LegendDot(color: Color(0xFFF59E0B), label: 'Leader'),
           ],
         ),
       ),

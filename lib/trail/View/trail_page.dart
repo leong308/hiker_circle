@@ -13,7 +13,6 @@ import '../../core/services/google_routes_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/trail_cover_image_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
-import '../Data/trail_repository.dart';
 import '../Model/trail_models.dart';
 
 class TrailPage extends StatefulWidget {
@@ -23,14 +22,12 @@ class TrailPage extends StatefulWidget {
     required this.hikerCircleRepository,
     required this.onStartHike,
     this.initialTrails,
-    this.trailRepository = const TrailRepository(),
   });
 
   final AppSession session;
   final HikerCircleFirebaseRepository hikerCircleRepository;
   final Future<void> Function(Trail trail) onStartHike;
   final List<Trail>? initialTrails;
-  final TrailRepository trailRepository;
 
   @override
   State<TrailPage> createState() => _TrailPageState();
@@ -46,9 +43,7 @@ class _TrailPageState extends State<TrailPage> {
   @override
   void initState() {
     super.initState();
-    _trails = List.of(
-      widget.initialTrails ?? widget.trailRepository.loadTrails(),
-    );
+    _trails = List.of(widget.initialTrails ?? const []);
     _downloadedTrailIds = {
       for (final trail in _trails)
         if (trail.offlineMapDownloaded) trail.trailId,
@@ -61,8 +56,17 @@ class _TrailPageState extends State<TrailPage> {
       _isLoadingTrails = true;
     });
     try {
+      if (widget.session.isAdmin) {
+        try {
+          await widget.hikerCircleRepository.deleteLegacyFirebaseDummyData(
+            session: widget.session,
+          );
+        } catch (_) {
+          // Cleanup is best effort; trail loading should still continue.
+        }
+      }
       final liveTrails = await widget.hikerCircleRepository.loadTrails();
-      if (!mounted || liveTrails.isEmpty) {
+      if (!mounted) {
         return;
       }
       setState(() {
@@ -114,6 +118,67 @@ class _TrailPageState extends State<TrailPage> {
     );
   }
 
+  Future<void> _addTrail() async {
+    if (!widget.session.isAdmin) {
+      return;
+    }
+
+    final trail = await showModalBottomSheet<Trail>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _TrailColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) => const _AddTrailSheet(),
+    );
+    if (trail == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingTrails = true;
+    });
+    try {
+      await widget.hikerCircleRepository.createTrailByAdmin(
+        session: widget.session,
+        trail: trail,
+      );
+      await _loadLiveTrails();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('${trail.name} added to Firebase trails.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _TrailColors.redFor(context),
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingTrails = false;
+        });
+      }
+    }
+  }
+
   void _openTrail(Trail trail) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -146,7 +211,10 @@ class _TrailPageState extends State<TrailPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const _Header(),
+                  _Header(
+                    isAdmin: widget.session.isAdmin,
+                    onAddTrail: () => unawaited(_addTrail()),
+                  ),
                   if (_isLoadingTrails) ...[
                     const SizedBox(height: 10),
                     const LinearProgressIndicator(minHeight: 2),
@@ -190,7 +258,11 @@ class _TrailPageState extends State<TrailPage> {
                   _SectionTitle(label: 'Best Matches'),
                   const SizedBox(height: 8),
                   if (_visibleTrails.isEmpty)
-                    const _EmptyState(message: 'No trails match this filter.')
+                    _EmptyState(
+                      message: _trails.isEmpty
+                          ? 'No Firebase trails are available yet. Add a real trail from the admin tools.'
+                          : 'No trails match this filter.',
+                    )
                   else
                     for (final trail in _visibleTrails) ...[
                       _TrailCard(
@@ -248,15 +320,17 @@ class TrailDetailPage extends StatefulWidget {
 }
 
 class _TrailDetailPageState extends State<TrailDetailPage> {
+  late Trail _trail = widget.trail;
   late bool _isOfflineDownloaded = widget.isOfflineDownloaded;
   bool _isLoadingRoute = false;
+  bool _isSavingAdminTrail = false;
   GoogleRouteResult? _routeResult;
   String? _routeErrorMessage;
 
   Future<void> _downloadMap() async {
     final downloaded = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (context) => OfflineMapDownloadPage(trail: widget.trail),
+        builder: (context) => OfflineMapDownloadPage(trail: _trail),
       ),
     );
 
@@ -274,10 +348,73 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
         builder: (context) => HazardReportPage(
           session: widget.session,
           hikerCircleRepository: widget.hikerCircleRepository,
-          trail: widget.trail,
+          trail: _trail,
         ),
       ),
     );
+  }
+
+  Future<void> _editTrail() async {
+    if (!widget.session.isAdmin || _isSavingAdminTrail) {
+      return;
+    }
+
+    final updatedTrail = await showModalBottomSheet<Trail>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _TrailColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) => _EditTrailSheet(trail: _trail),
+    );
+    if (updatedTrail == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isSavingAdminTrail = true;
+    });
+    try {
+      await widget.hikerCircleRepository.updateTrailByAdmin(
+        session: widget.session,
+        trail: updatedTrail,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _trail = updatedTrail;
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Trail updated.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _TrailColors.redFor(context),
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingAdminTrail = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadOnlineRoute() async {
@@ -288,7 +425,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
 
     try {
       final result = await const HikingRouteService().findHikingRouteForTrail(
-        widget.trail,
+        _trail,
       );
       if (!mounted) {
         return;
@@ -321,7 +458,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final trail = widget.trail;
+    final trail = _trail;
 
     return Scaffold(
       backgroundColor: _TrailColors.backgroundFor(context),
@@ -361,6 +498,13 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                         ? () => unawaited(_downloadMap())
                         : null,
                   ),
+                  if (widget.session.isAdmin) ...[
+                    const SizedBox(height: 10),
+                    _AdminTrailEditCard(
+                      isSaving: _isSavingAdminTrail,
+                      onEdit: () => unawaited(_editTrail()),
+                    ),
+                  ],
                   if (_routeResult != null || _routeErrorMessage != null) ...[
                     const SizedBox(height: 10),
                     _GoogleRouteStatusCard(
@@ -744,7 +888,10 @@ class _HazardReportPageState extends State<HazardReportPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header();
+  const _Header({required this.isAdmin, required this.onAddTrail});
+
+  final bool isAdmin;
+  final VoidCallback onAddTrail;
 
   @override
   Widget build(BuildContext context) {
@@ -776,8 +923,784 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
-          const _CircleIcon(icon: Icons.tune_rounded),
+          Tooltip(
+            message: isAdmin ? 'Add trail' : 'Trail filters',
+            child: IconButton(
+              onPressed: isAdmin ? onAddTrail : null,
+              icon: Icon(isAdmin ? Icons.add_rounded : Icons.tune_rounded),
+              color: _TrailColors.green,
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _AddTrailSheet extends StatefulWidget {
+  const _AddTrailSheet();
+
+  @override
+  State<_AddTrailSheet> createState() => _AddTrailSheetState();
+}
+
+class _AddTrailSheetState extends State<_AddTrailSheet> {
+  static const String _defaultRouteFilePath =
+      'offline/maps/admin_added_trail.mbtiles';
+
+  final _nameController = TextEditingController();
+  final _areaController = TextEditingController();
+  final _stateController = TextEditingController();
+  final _latitudeController = TextEditingController();
+  final _longitudeController = TextEditingController();
+  final _distanceController = TextEditingController();
+  final _durationController = TextEditingController(text: '120');
+  final _elevationController = TextEditingController();
+  final _ratingController = TextEditingController(text: '4.5');
+  final _coverImageController = TextEditingController();
+  final List<_CheckpointDraft> _checkpoints = [
+    _CheckpointDraft(order: 1, name: 'Trailhead'),
+    _CheckpointDraft(order: 2, name: 'Summit'),
+  ];
+  String _difficulty = 'Moderate';
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _areaController.dispose();
+    _stateController.dispose();
+    _latitudeController.dispose();
+    _longitudeController.dispose();
+    _distanceController.dispose();
+    _durationController.dispose();
+    _elevationController.dispose();
+    _ratingController.dispose();
+    _coverImageController.dispose();
+    for (final checkpoint in _checkpoints) {
+      checkpoint.dispose();
+    }
+    super.dispose();
+  }
+
+  void _addCheckpoint() {
+    setState(() {
+      _checkpoints.add(
+        _CheckpointDraft(
+          order: _checkpoints.length + 1,
+          name: 'Checkpoint ${_checkpoints.length + 1}',
+        ),
+      );
+    });
+  }
+
+  Future<void> _pickTrailCenter() async {
+    final coordinate = await _pickCoordinate(
+      title: 'Select trail center',
+      latitude: double.tryParse(_latitudeController.text.trim()),
+      longitude: double.tryParse(_longitudeController.text.trim()),
+    );
+    if (coordinate == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _latitudeController.text = coordinate.latitude.toStringAsFixed(6);
+      _longitudeController.text = coordinate.longitude.toStringAsFixed(6);
+    });
+  }
+
+  Future<void> _pickCheckpointLocation(_CheckpointDraft draft) async {
+    final coordinate = await _pickCoordinate(
+      title: 'Select checkpoint location',
+      latitude:
+          double.tryParse(draft.latitudeController.text.trim()) ??
+          double.tryParse(_latitudeController.text.trim()),
+      longitude:
+          double.tryParse(draft.longitudeController.text.trim()) ??
+          double.tryParse(_longitudeController.text.trim()),
+    );
+    if (coordinate == null || !mounted) {
+      return;
+    }
+    setState(() {
+      draft.latitudeController.text = coordinate.latitude.toStringAsFixed(6);
+      draft.longitudeController.text = coordinate.longitude.toStringAsFixed(6);
+      if (_latitudeController.text.trim().isEmpty ||
+          _longitudeController.text.trim().isEmpty) {
+        _latitudeController.text = coordinate.latitude.toStringAsFixed(6);
+        _longitudeController.text = coordinate.longitude.toStringAsFixed(6);
+      }
+    });
+  }
+
+  Future<maplibre.LatLng?> _pickCoordinate({
+    required String title,
+    double? latitude,
+    double? longitude,
+  }) {
+    return showModalBottomSheet<maplibre.LatLng>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _TrailColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return _AdminCoordinatePickerSheet(
+          title: title,
+          initialLatitude: latitude,
+          initialLongitude: longitude,
+        );
+      },
+    );
+  }
+
+  void _removeCheckpoint(int index) {
+    if (_checkpoints.length <= 2) {
+      return;
+    }
+    setState(() {
+      _checkpoints.removeAt(index).dispose();
+      for (var i = 0; i < _checkpoints.length; i++) {
+        _checkpoints[i].orderController.text = '${i + 1}';
+      }
+    });
+  }
+
+  void _saveTrail() {
+    final name = _nameController.text.trim();
+    final area = _areaController.text.trim();
+    final state = _stateController.text.trim();
+    final latitude = double.tryParse(_latitudeController.text.trim());
+    final longitude = double.tryParse(_longitudeController.text.trim());
+    final distance = double.tryParse(_distanceController.text.trim());
+    final duration = int.tryParse(_durationController.text.trim());
+    final elevation = int.tryParse(_elevationController.text.trim());
+    final rating = double.tryParse(_ratingController.text.trim());
+    final checkpoints = _checkpointModels();
+
+    if (name.isEmpty ||
+        area.isEmpty ||
+        state.isEmpty ||
+        latitude == null ||
+        longitude == null ||
+        distance == null ||
+        duration == null ||
+        elevation == null ||
+        rating == null ||
+        checkpoints.length < 2) {
+      setState(() {
+        _errorMessage =
+            'Fill in trail identity, coordinates, metrics, and at least 2 valid checkpoints.';
+      });
+      return;
+    }
+
+    Navigator.of(context).pop(
+      Trail(
+        trailId: '',
+        name: name,
+        area: area,
+        state: state,
+        latitude: latitude,
+        longitude: longitude,
+        distanceKm: distance,
+        difficulty: _difficulty,
+        estimatedDurationMinutes: duration,
+        elevationGainMeters: elevation,
+        ratingAverage: rating.clamp(0, 5).toDouble(),
+        offlineMapAvailable: false,
+        offlineMapDownloaded: false,
+        isVerifiedTrail: true,
+        routeFilePath: _defaultRouteFilePath,
+        coverColorValue: 0xFF34A853,
+        coverImageUrl: _coverImageController.text.trim(),
+        checkpoints: checkpoints,
+        weather: TrailWeather(
+          summary: 'Weather unavailable',
+          temperatureRange: 'Not provided',
+          rainProbability: 0,
+          cachedAt: DateTime.now().toUtc(),
+        ),
+        hazards: const [],
+      ),
+    );
+  }
+
+  List<TrailCheckpoint> _checkpointModels() {
+    final checkpoints = <TrailCheckpoint>[];
+    for (var index = 0; index < _checkpoints.length; index++) {
+      final draft = _checkpoints[index];
+      final name = draft.nameController.text.trim();
+      final latitude = double.tryParse(draft.latitudeController.text.trim());
+      final longitude = double.tryParse(draft.longitudeController.text.trim());
+      final order =
+          int.tryParse(draft.orderController.text.trim()) ?? index + 1;
+      if (name.isEmpty || latitude == null || longitude == null) {
+        continue;
+      }
+      checkpoints.add(
+        TrailCheckpoint(
+          name: name,
+          latitude: latitude,
+          longitude: longitude,
+          order: order,
+        ),
+      );
+    }
+    checkpoints.sort((a, b) => a.order.compareTo(b.order));
+    return checkpoints;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          18,
+          6,
+          18,
+          18 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Add Trail',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: _TrailColors.textFor(context),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Create a Firebase trail with route metadata and checkpoints.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _TrailColors.secondaryTextFor(context),
+                letterSpacing: 0,
+              ),
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 10),
+              _TrailFormError(message: _errorMessage!),
+            ],
+            const SizedBox(height: 14),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Trail name',
+                prefixIcon: Icon(Icons.terrain_rounded),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _areaController,
+                    decoration: const InputDecoration(labelText: 'Area'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _stateController,
+                    decoration: const InputDecoration(labelText: 'State'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _CoordinatePickerTile(
+              title: 'Trail center',
+              subtitle:
+                  'Choose the approximate trail center from the map. This is used for discovery and map framing.',
+              value: _coordinateLabel(
+                _latitudeController.text,
+                _longitudeController.text,
+              ),
+              onPick: _pickTrailCenter,
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _difficulty,
+              decoration: const InputDecoration(labelText: 'Difficulty'),
+              items: const [
+                DropdownMenuItem(value: 'Easy', child: Text('Easy')),
+                DropdownMenuItem(value: 'Moderate', child: Text('Moderate')),
+                DropdownMenuItem(value: 'Hard', child: Text('Hard')),
+                DropdownMenuItem(value: 'Expert', child: Text('Expert')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    _difficulty = value;
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _distanceController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Distance km'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _durationController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Duration min',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _elevationController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Elevation m'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _ratingController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Rating 0-5'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _coverImageController,
+              decoration: const InputDecoration(
+                labelText: 'Cover image URL',
+                hintText: 'https://...',
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const Expanded(child: _SectionTitle(label: 'Checkpoints')),
+                TextButton.icon(
+                  onPressed: _addCheckpoint,
+                  icon: const Icon(Icons.add_location_alt_rounded),
+                  label: const Text('Add'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (var index = 0; index < _checkpoints.length; index++) ...[
+              _CheckpointDraftFields(
+                draft: _checkpoints[index],
+                canRemove: _checkpoints.length > 2,
+                onRemove: () => _removeCheckpoint(index),
+                onPickLocation: () =>
+                    unawaited(_pickCheckpointLocation(_checkpoints[index])),
+              ),
+              const SizedBox(height: 10),
+            ],
+            FilledButton.icon(
+              onPressed: _saveTrail,
+              icon: const Icon(Icons.cloud_upload_rounded),
+              label: const Text('Add Trail to Firebase'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CheckpointDraft {
+  _CheckpointDraft({required int order, required String name})
+    : orderController = TextEditingController(text: '$order'),
+      nameController = TextEditingController(text: name),
+      latitudeController = TextEditingController(),
+      longitudeController = TextEditingController();
+
+  final TextEditingController orderController;
+  final TextEditingController nameController;
+  final TextEditingController latitudeController;
+  final TextEditingController longitudeController;
+
+  void dispose() {
+    orderController.dispose();
+    nameController.dispose();
+    latitudeController.dispose();
+    longitudeController.dispose();
+  }
+}
+
+class _CheckpointDraftFields extends StatelessWidget {
+  const _CheckpointDraftFields({
+    required this.draft,
+    required this.canRemove,
+    required this.onRemove,
+    required this.onPickLocation,
+  });
+
+  final _CheckpointDraft draft;
+  final bool canRemove;
+  final VoidCallback onRemove;
+  final VoidCallback onPickLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                SizedBox(
+                  width: 74,
+                  child: TextField(
+                    controller: draft.orderController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Order'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: draft.nameController,
+                    decoration: const InputDecoration(labelText: 'Name'),
+                  ),
+                ),
+                if (canRemove) ...[
+                  const SizedBox(width: 6),
+                  IconButton(
+                    tooltip: 'Remove checkpoint',
+                    onPressed: onRemove,
+                    icon: const Icon(Icons.delete_outline_rounded),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 10),
+            _CoordinatePickerTile(
+              title: 'Checkpoint map location',
+              subtitle: 'Tap to place this checkpoint on the route map.',
+              value: _coordinateLabel(
+                draft.latitudeController.text,
+                draft.longitudeController.text,
+              ),
+              onPick: onPickLocation,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CoordinatePickerTile extends StatelessWidget {
+  const _CoordinatePickerTile({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onPick,
+  });
+
+  final String title;
+  final String subtitle;
+  final String value;
+  final VoidCallback onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const _Glyph(icon: Icons.map_rounded),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _TrailColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _TrailColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    value,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: value == 'Not selected'
+                          ? _TrailColors.redFor(context)
+                          : _TrailColors.green,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            OutlinedButton.icon(
+              onPressed: onPick,
+              icon: const Icon(Icons.add_location_alt_rounded),
+              label: const Text('Map'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminCoordinatePickerSheet extends StatefulWidget {
+  const _AdminCoordinatePickerSheet({
+    required this.title,
+    this.initialLatitude,
+    this.initialLongitude,
+  });
+
+  final String title;
+  final double? initialLatitude;
+  final double? initialLongitude;
+
+  @override
+  State<_AdminCoordinatePickerSheet> createState() =>
+      _AdminCoordinatePickerSheetState();
+}
+
+class _AdminCoordinatePickerSheetState
+    extends State<_AdminCoordinatePickerSheet> {
+  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+  static const _defaultLatitude = 3.1390;
+  static const _defaultLongitude = 101.6869;
+
+  late maplibre.LatLng _selected = maplibre.LatLng(
+    widget.initialLatitude ?? _defaultLatitude,
+    widget.initialLongitude ?? _defaultLongitude,
+  );
+  maplibre.MapLibreMapController? _mapController;
+
+  void _selectCoordinate(maplibre.LatLng coordinate) {
+    setState(() {
+      _selected = coordinate;
+    });
+    unawaited(
+      _mapController?.animateCamera(
+        maplibre.CameraUpdate.newLatLng(coordinate),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          18,
+          6,
+          18,
+          18 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: _TrailColors.textFor(context),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Tap the map to place the pin, then confirm the selected coordinate.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _TrailColors.secondaryTextFor(context),
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 360,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    maplibre.MapLibreMap(
+                      styleString: _styleUrl,
+                      initialCameraPosition: maplibre.CameraPosition(
+                        target: _selected,
+                        zoom: 13,
+                      ),
+                      minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
+                        4,
+                        21,
+                      ),
+                      compassEnabled: false,
+                      logoEnabled: false,
+                      rotateGesturesEnabled: false,
+                      tiltGesturesEnabled: false,
+                      trackCameraPosition: true,
+                      gestureRecognizers: {
+                        Factory<OneSequenceGestureRecognizer>(
+                          () => EagerGestureRecognizer(),
+                        ),
+                      },
+                      onMapCreated: (controller) {
+                        _mapController = controller;
+                      },
+                      onMapClick: (_, coordinate) {
+                        _selectCoordinate(coordinate);
+                      },
+                    ),
+                    Center(
+                      child: Icon(
+                        Icons.location_pin,
+                        color: _TrailColors.redFor(context),
+                        size: 42,
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      bottom: 12,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: _TrailColors.surfaceFor(
+                            context,
+                          ).withValues(alpha: 0.94),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Text(
+                            _coordinateLabel(
+                              _selected.latitude.toStringAsFixed(6),
+                              _selected.longitude.toStringAsFixed(6),
+                            ),
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: _TrailColors.textFor(context),
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pop(_selected),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Use Location'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrailFormSwitch extends StatelessWidget {
+  const _TrailFormSwitch({
+    required this.title,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile.adaptive(
+      contentPadding: EdgeInsets.zero,
+      value: value,
+      onChanged: onChanged,
+      activeThumbColor: _TrailColors.green,
+      title: Text(
+        title,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: _TrailColors.textFor(context),
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _TrailFormError extends StatelessWidget {
+  const _TrailFormError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _TrailColors.redFor(context).withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Text(
+          message,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: _TrailColors.redFor(context),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+          ),
+        ),
       ),
     );
   }
@@ -840,7 +1763,7 @@ class _DiscoverHero extends StatelessWidget {
                         color: _TrailColors.blue,
                       ),
                       const _StatusPill(
-                        label: 'Dummy planning',
+                        label: 'Firebase live',
                         color: _TrailColors.orange,
                       ),
                     ],
@@ -1325,6 +2248,258 @@ class _TrailPlanCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminTrailEditCard extends StatelessWidget {
+  const _AdminTrailEditCard({required this.isSaving, required this.onEdit});
+
+  final bool isSaving;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            const _Glyph(icon: Icons.admin_panel_settings_rounded),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Admin trail controls',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: _TrailColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Edit route metadata after reviewing the normal trail detail.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _TrailColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton.icon(
+              onPressed: isSaving ? null : onEdit,
+              icon: isSaving
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.edit_rounded),
+              label: Text(isSaving ? 'Saving' : 'Edit'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EditTrailSheet extends StatefulWidget {
+  const _EditTrailSheet({required this.trail});
+
+  final Trail trail;
+
+  @override
+  State<_EditTrailSheet> createState() => _EditTrailSheetState();
+}
+
+class _EditTrailSheetState extends State<_EditTrailSheet> {
+  late final _nameController = TextEditingController(text: widget.trail.name);
+  late final _areaController = TextEditingController(text: widget.trail.area);
+  late final _stateController = TextEditingController(text: widget.trail.state);
+  late final _distanceController = TextEditingController(
+    text: widget.trail.distanceKm.toStringAsFixed(1),
+  );
+  late final _durationController = TextEditingController(
+    text: widget.trail.estimatedDurationMinutes.toString(),
+  );
+  late final _elevationController = TextEditingController(
+    text: widget.trail.elevationGainMeters.toString(),
+  );
+  late final _ratingController = TextEditingController(
+    text: widget.trail.ratingAverage.toStringAsFixed(1),
+  );
+  late String _difficulty = widget.trail.difficulty;
+  late bool _isVerified = widget.trail.isVerifiedTrail;
+  late bool _offlineAvailable = widget.trail.offlineMapAvailable;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _areaController.dispose();
+    _stateController.dispose();
+    _distanceController.dispose();
+    _durationController.dispose();
+    _elevationController.dispose();
+    _ratingController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final updatedTrail = widget.trail.copyWith(
+      name: _nameController.text.trim().isEmpty
+          ? widget.trail.name
+          : _nameController.text.trim(),
+      area: _areaController.text.trim().isEmpty
+          ? widget.trail.area
+          : _areaController.text.trim(),
+      state: _stateController.text.trim().isEmpty
+          ? widget.trail.state
+          : _stateController.text.trim(),
+      difficulty: _difficulty,
+      distanceKm:
+          double.tryParse(_distanceController.text.trim()) ??
+          widget.trail.distanceKm,
+      estimatedDurationMinutes:
+          int.tryParse(_durationController.text.trim()) ??
+          widget.trail.estimatedDurationMinutes,
+      elevationGainMeters:
+          int.tryParse(_elevationController.text.trim()) ??
+          widget.trail.elevationGainMeters,
+      ratingAverage:
+          double.tryParse(_ratingController.text.trim()) ??
+          widget.trail.ratingAverage,
+      isVerifiedTrail: _isVerified,
+      offlineMapAvailable: _offlineAvailable,
+    );
+    Navigator.of(context).pop(updatedTrail);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          18,
+          6,
+          18,
+          18 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Edit Trail',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: _TrailColors.textFor(context),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: 'Trail name'),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _areaController,
+                    decoration: const InputDecoration(labelText: 'Area'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _stateController,
+                    decoration: const InputDecoration(labelText: 'State'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _difficulty,
+              decoration: const InputDecoration(labelText: 'Difficulty'),
+              items: const [
+                DropdownMenuItem(value: 'Easy', child: Text('Easy')),
+                DropdownMenuItem(value: 'Moderate', child: Text('Moderate')),
+                DropdownMenuItem(value: 'Hard', child: Text('Hard')),
+                DropdownMenuItem(value: 'Expert', child: Text('Expert')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _difficulty = value);
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _distanceController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Distance km'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _durationController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Minutes'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _elevationController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Elevation m'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _ratingController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Rating'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _TrailFormSwitch(
+              title: 'Verified trail',
+              value: _isVerified,
+              onChanged: (value) => setState(() => _isVerified = value),
+            ),
+            _TrailFormSwitch(
+              title: 'Offline map available',
+              value: _offlineAvailable,
+              onChanged: (value) => setState(() => _offlineAvailable = value),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _save,
+              icon: const Icon(Icons.save_rounded),
+              label: const Text('Save Trail'),
             ),
           ],
         ),
@@ -2738,6 +3913,15 @@ String _formatDate(DateTime dateTime) {
   return '${dateTime.day} ${months[dateTime.month - 1]} ${dateTime.year}';
 }
 
+String _coordinateLabel(String latitudeText, String longitudeText) {
+  final latitude = double.tryParse(latitudeText.trim());
+  final longitude = double.tryParse(longitudeText.trim());
+  if (latitude == null || longitude == null) {
+    return 'Not selected';
+  }
+  return '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
+}
+
 String _planSummary(Trail trail) {
   final hazardText = trail.hazards.isEmpty
       ? 'no active hazard reports'
@@ -2751,6 +3935,7 @@ abstract final class _TrailColors {
   static const Color greenSoft = Color(0xFFEAF7EE);
   static const Color blue = Color(0xFF2563EB);
   static const Color orange = Color(0xFFF59E0B);
+  static const Color red = Color(0xFFE11D48);
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
@@ -2778,4 +3963,7 @@ abstract final class _TrailColors {
 
   static Color secondaryTextFor(BuildContext context) =>
       isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color redFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFFF6B88) : red;
 }

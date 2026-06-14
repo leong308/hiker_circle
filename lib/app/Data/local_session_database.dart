@@ -1,9 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart'
     show databaseFactoryFfi, sqfliteFfiInit;
 
+import '../../sos/Model/sos_models.dart';
 import '../Model/app_session.dart';
 
 class LocalSessionDatabase {
@@ -25,16 +28,77 @@ class LocalSessionDatabase {
 
   Future<void> saveSession(AppSession session) async {
     final database = await _openDatabase();
-    await database.insert(
-      'users',
-      _sessionToRow(session),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await database.transaction((transaction) async {
+      await transaction.delete('users');
+      await transaction.insert(
+        'users',
+        _sessionToRow(session),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
   }
 
   Future<void> clearSession() async {
     final database = await _openDatabase();
     await database.delete('users');
+  }
+
+  Future<String> loadOrCreateAppInstanceId() async {
+    final database = await _openDatabase();
+    final rows = await database.query('app_device', limit: 1);
+    if (rows.isNotEmpty) {
+      final existingId = rows.first['app_instance_id'] as String?;
+      if (existingId != null && existingId.isNotEmpty) {
+        return existingId;
+      }
+    }
+
+    final appInstanceId = _newAppInstanceId();
+    await database.insert('app_device', {
+      'id': 1,
+      'app_instance_id': appInstanceId,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    return appInstanceId;
+  }
+
+  Future<List<EmergencyContact>> loadEmergencyContacts({
+    required String phoneNumber,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'emergency_contacts',
+      where: 'owner_phone_number = ?',
+      whereArgs: [phoneNumber],
+      orderBy: 'position ASC, name ASC',
+    );
+    return rows.map(_emergencyContactFromRow).toList();
+  }
+
+  Future<void> saveEmergencyContacts({
+    required String phoneNumber,
+    required List<EmergencyContact> contacts,
+  }) async {
+    final database = await _openDatabase();
+    final now = DateTime.now().toUtc().toIso8601String();
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'emergency_contacts',
+        where: 'owner_phone_number = ?',
+        whereArgs: [phoneNumber],
+      );
+      for (var index = 0; index < contacts.length; index++) {
+        final contact = contacts[index];
+        await transaction.insert('emergency_contacts', {
+          'owner_phone_number': phoneNumber,
+          'contact_phone_number': contact.phoneNumber,
+          'name': contact.name,
+          'relationship': contact.relationship,
+          'position': index,
+          'updated_at': now,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
   }
 
   Future<CacheUsageSummary> loadCacheUsageSummary() async {
@@ -85,20 +149,40 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 3,
+      version: 4,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
             phone_number TEXT PRIMARY KEY,
             created_at TEXT NOT NULL,
-            signed_in_at TEXT NOT NULL
+            signed_in_at TEXT NOT NULL,
+            app_instance_id TEXT NOT NULL DEFAULT '',
+            is_admin INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await _createSafetyTables(database);
+        await _createDeviceBindingTables(database);
+        await _createEmergencyContactsTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
           await _createSafetyTables(database);
+        }
+        if (oldVersion < 4) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'users',
+            columnName: 'app_instance_id',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'users',
+            columnName: 'is_admin',
+            definition: 'INTEGER NOT NULL DEFAULT 0',
+          );
+          await _createDeviceBindingTables(database);
+          await _createEmergencyContactsTable(database);
         }
       },
     );
@@ -265,6 +349,47 @@ class LocalSessionDatabase {
     ''');
   }
 
+  Future<void> _createDeviceBindingTables(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS app_device (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        app_instance_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _createEmergencyContactsTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS emergency_contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_phone_number TEXT NOT NULL,
+        contact_phone_number TEXT NOT NULL,
+        name TEXT NOT NULL,
+        relationship TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        UNIQUE(owner_phone_number, contact_phone_number)
+      )
+    ''');
+  }
+
+  Future<void> _addColumnIfMissing(
+    Database database, {
+    required String tableName,
+    required String columnName,
+    required String definition,
+  }) async {
+    final columns = await database.rawQuery('PRAGMA table_info($tableName)');
+    final exists = columns.any((column) => column['name'] == columnName);
+    if (exists) {
+      return;
+    }
+    await database.execute(
+      'ALTER TABLE $tableName ADD COLUMN $columnName $definition',
+    );
+  }
+
   void _configureDatabaseFactory() {
     if (kIsWeb || _isDesktopFactoryConfigured) {
       return;
@@ -290,6 +415,8 @@ class LocalSessionDatabase {
       'phone_number': session.phoneNumber,
       'created_at': session.createdAt.toUtc().toIso8601String(),
       'signed_in_at': session.signedInAt.toUtc().toIso8601String(),
+      'app_instance_id': session.appInstanceId,
+      'is_admin': session.isAdmin ? 1 : 0,
     };
   }
 
@@ -304,7 +431,26 @@ class LocalSessionDatabase {
       phoneNumber: row['phone_number'] as String,
       signedInAt: signedInAt,
       createdAt: createdAt,
+      appInstanceId: row['app_instance_id'] as String? ?? '',
+      isAdmin: row['is_admin'] == 1,
     );
+  }
+
+  EmergencyContact _emergencyContactFromRow(Map<String, Object?> row) {
+    return EmergencyContact(
+      name: row['name'] as String? ?? '',
+      phoneNumber: row['contact_phone_number'] as String? ?? '',
+      relationship: row['relationship'] as String? ?? '',
+    );
+  }
+
+  String _newAppInstanceId() {
+    final random = math.Random.secure();
+    final parts = List.generate(
+      4,
+      (_) => random.nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0'),
+    );
+    return 'hc_${DateTime.now().microsecondsSinceEpoch}_${parts.join()}';
   }
 }
 

@@ -19,6 +19,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
 import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
@@ -157,6 +160,14 @@ class MainActivity : FlutterActivity() {
                         stopTorchPattern()
                         result.success(null)
                     }
+                    "startFallStillnessCountdownVibration" -> {
+                        startFallStillnessCountdownVibration()
+                        result.success(null)
+                    }
+                    "stopFallStillnessCountdownVibration" -> {
+                        stopFallStillnessCountdownVibration()
+                        result.success(null)
+                    }
                     "beginOutputVolumeMonitoring" -> {
                         result.success(null)
                     }
@@ -267,6 +278,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        stopFallStillnessCountdownVibration()
         stopSpokenPrompt()
         textToSpeech?.shutdown()
         textToSpeech = null
@@ -288,6 +300,32 @@ class MainActivity : FlutterActivity() {
     private fun stopManualSosPattern() {
         stopAlarm()
         stopTorchPattern()
+        stopFallStillnessCountdownVibration()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startFallStillnessCountdownVibration() {
+        val vibrator = currentVibrator() ?: return
+        stopFallStillnessCountdownVibration()
+        val pattern = longArrayOf(0L, 420L, 520L)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0))
+        } else {
+            vibrator.vibrate(pattern, 0)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun stopFallStillnessCountdownVibration() {
+        currentVibrator()?.cancel()
+    }
+
+    private fun currentVibrator(): Vibrator? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            getSystemService(VIBRATOR_SERVICE) as? Vibrator
+        }
     }
 
     private fun startOrUpdateActiveHikeLiveStatus(status: ActiveHikeLiveStatus) {

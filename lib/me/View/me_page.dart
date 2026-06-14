@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../../app/Data/app_settings_controller.dart';
 import '../../app/Data/firebase_bootstrap.dart';
+import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
@@ -38,6 +39,8 @@ class MePage extends StatefulWidget {
 
 class _MePageState extends State<MePage> {
   late final MeViewModel viewModel;
+  late final HikerCircleFirebaseRepository firebaseRepository;
+  late Future<List<Map<String, dynamic>>> achievementsFuture;
   late final EmergencyContactsRepository emergencyContactsRepository;
   List<EmergencyContact> emergencyContacts = const [
     EmergencyContact(
@@ -56,6 +59,12 @@ class _MePageState extends State<MePage> {
   void initState() {
     super.initState();
     viewModel = MeViewModel(phoneNumber: widget.phoneNumber);
+    firebaseRepository = HikerCircleFirebaseRepository(
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+    );
+    achievementsFuture = firebaseRepository.loadUserAchievementProgress(
+      session: widget.session,
+    );
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
@@ -92,6 +101,11 @@ class _MePageState extends State<MePage> {
                   _StatsGroup(
                     stats: _linkedProfileStats,
                     onTap: _openStatDetail,
+                  ),
+                  const SizedBox(height: 14),
+                  _AchievementsSummaryCard(
+                    achievementsFuture: achievementsFuture,
+                    onTap: _openAchievements,
                   ),
                   const SizedBox(height: 22),
                   for (final section in viewModel.sections) ...[
@@ -146,63 +160,60 @@ class _MePageState extends State<MePage> {
           ),
         );
       case 'Safety preferences':
-        _openSettingsDetail(
-          title: 'Safety Preferences',
-          subtitle: 'Trail safety defaults',
-          icon: Icons.rule_rounded,
-          rows: const [
-            ('Check-in reminder', 'Every 30 minutes during active hikes'),
-            ('Overdue escalation', 'Warn buddies after 15 minutes'),
-            ('Trail visibility', 'Buddies only while hiking'),
-            ('Fallback alert', 'Use local SOS if network is unavailable'),
-          ],
-        );
+        null;
+      // _openSettingsDetail(
+      //   title: 'Safety Preferences',
+      //   subtitle: 'Trail safety defaults',
+      //   icon: Icons.rule_rounded,
+      //   rows: const [
+      //     ('Check-in reminder', 'Every 30 minutes during active hikes'),
+      //     ('Overdue escalation', 'Warn buddies after 15 minutes'),
+      //     ('Trail visibility', 'Buddies only while hiking'),
+      //     ('Fallback alert', 'Use local SOS if network is unavailable'),
+      //   ],
+      // );
       case 'Notifications':
-        _openSettingsDetail(
-          title: 'Notifications',
-          subtitle: 'Community and safety alerts',
-          icon: Icons.notifications_rounded,
-          rows: const [
-            ('SOS delivery updates', 'On'),
-            ('Buddy requests', 'On'),
-            ('Team invite changes', 'On'),
-            ('Nearby hazard reports', 'Priority only'),
-            ('Quiet hours', '11:00 PM - 6:00 AM'),
-          ],
-        );
+        null;
+      // _openSettingsDetail(
+      //   title: 'Notifications',
+      //   subtitle: 'Community and safety alerts',
+      //   icon: Icons.notifications_rounded,
+      //   rows: const [
+      //     ('SOS delivery updates', 'On'),
+      //     ('Buddy requests', 'On'),
+      //     ('Team invite changes', 'On'),
+      //     ('Nearby hazard reports', 'Priority only'),
+      //     ('Quiet hours', '11:00 PM - 6:00 AM'),
+      //   ],
+      // );
       case 'Privacy':
-        _openSettingsDetail(
-          title: 'Privacy',
-          subtitle: 'Profile visibility and sharing',
-          icon: Icons.lock_rounded,
-          rows: const [
-            ('Profile visibility', 'Buddies and team members'),
-            ('Hike history', 'Show completed public hikes'),
-            ('Live location', 'Only during active hike'),
-            ('QR discovery', 'Ask before adding as buddy'),
-          ],
-        );
+        null;
+      // _openSettingsDetail(
+      //   title: 'Privacy',
+      //   subtitle: 'Profile visibility and sharing',
+      //   icon: Icons.lock_rounded,
+      //   rows: const [
+      //     ('Profile visibility', 'Buddies and team members'),
+      //     ('Hike history', 'Show completed public hikes'),
+      //     ('Live location', 'Only during active hike'),
+      //     ('QR discovery', 'Ask before adding as buddy'),
+      //   ],
+      // );
       case 'Help center':
         _openHelpCenter();
       case 'Account preferences':
-        _openSettingsDetail(
-          title: 'Account Preferences',
-          subtitle: 'Profile and sign-in controls',
-          icon: Icons.account_circle_rounded,
-          rows: const [
-            ('Display name', 'Trail Friend'),
-            ('Phone sign-in', 'Verified'),
-            ('Profile QR', 'Enabled'),
-            ('Account recovery', 'Phone number'),
-          ],
-        );
-      case 'Export history':
-        _openSettingsDetail(
-          title: 'Export History',
-          subtitle: 'Downloadable activity records',
-          icon: Icons.download_rounded,
-          rows: _exportHistoryRows,
-        );
+        null;
+      // _openSettingsDetail(
+      //   title: 'Account Preferences',
+      //   subtitle: 'Profile and sign-in controls',
+      //   icon: Icons.account_circle_rounded,
+      //   rows: const [
+      //     ('Display name', 'Trail Friend'),
+      //     ('Phone sign-in', 'Verified'),
+      //     ('Profile QR', 'Enabled'),
+      //     ('Account recovery', 'Phone number'),
+      //   ],
+      // );
     }
   }
 
@@ -250,6 +261,26 @@ class _MePageState extends State<MePage> {
           items: _trailHistoryItems,
         );
     }
+  }
+
+  Future<void> _openAchievements() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _AchievementsPage(
+          session: widget.session,
+          repository: firebaseRepository,
+          firebaseBootstrapResult: widget.firebaseBootstrapResult,
+        ),
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      achievementsFuture = firebaseRepository.loadUserAchievementProgress(
+        session: widget.session,
+      );
+    });
   }
 
   void _openHistoryPage({
@@ -1069,21 +1100,116 @@ String _profileLink(MeProfile profile) {
   return 'hikercircle://buddy/add?h=$handle&n=$name';
 }
 
+class _AchievementProfileItem {
+  const _AchievementProfileItem({
+    required this.achievementId,
+    required this.title,
+    required this.condition,
+    required this.category,
+    required this.iconName,
+    required this.rewardPoints,
+    required this.sortOrder,
+    required this.accentColorValue,
+    required this.isUnlocked,
+    required this.awardedAt,
+  });
+
+  final String achievementId;
+  final String title;
+  final String condition;
+  final String category;
+  final String iconName;
+  final int rewardPoints;
+  final int sortOrder;
+  final int accentColorValue;
+  final bool isUnlocked;
+  final DateTime? awardedAt;
+
+  Color get accentColor {
+    if (accentColorValue == 0) {
+      return _MeColors.green;
+    }
+    return Color(accentColorValue);
+  }
+
+  factory _AchievementProfileItem.fromRow(Map<String, dynamic> row) {
+    final title = _mapString(row['title']);
+    final condition = _mapString(row['condition']);
+    final category = _mapString(row['category']);
+    final iconName = _mapString(row['iconName']);
+
+    return _AchievementProfileItem(
+      achievementId: _mapString(row['achievementId']),
+      title: title.isEmpty ? 'Achievement' : title,
+      condition: condition.isEmpty ? 'Complete a safety milestone' : condition,
+      category: category.isEmpty ? 'Safety' : category,
+      iconName: iconName.isEmpty ? 'emoji_events' : iconName,
+      rewardPoints: _mapInt(row['rewardPoints']),
+      sortOrder: _mapInt(row['sortOrder']),
+      accentColorValue: _mapInt(row['accentColorValue']),
+      isUnlocked: row['isUnlocked'] == true,
+      awardedAt: DateTime.tryParse(_mapString(row['awardedAtLocal'])),
+    );
+  }
+}
+
+List<_AchievementProfileItem> _achievementItemsFromRows(
+  List<Map<String, dynamic>> rows,
+) {
+  return rows.map(_AchievementProfileItem.fromRow).toList()
+    ..sort((left, right) {
+      final orderComparison = left.sortOrder.compareTo(right.sortOrder);
+      if (orderComparison != 0) {
+        return orderComparison;
+      }
+      return left.title.compareTo(right.title);
+    });
+}
+
+String _mapString(Object? value) {
+  return value is String ? value : '';
+}
+
+int _mapInt(Object? value) {
+  return value is num ? value.toInt() : 0;
+}
+
+String _formatAchievementDate(DateTime date) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final local = date.toLocal();
+  return '${local.day} ${months[local.month - 1]} ${local.year}';
+}
+
+IconData _achievementIconFor(String iconName) {
+  return switch (iconName) {
+    'verified_user' => Icons.verified_user_rounded,
+    'map' => Icons.map_rounded,
+    'health_and_safety' => Icons.health_and_safety_rounded,
+    'task_alt' => Icons.task_alt_rounded,
+    'volunteer_activism' => Icons.volunteer_activism_rounded,
+    'groups' => Icons.groups_2_rounded,
+    _ => Icons.emoji_events_rounded,
+  };
+}
+
 List<MeStat> get _linkedProfileStats {
   return [
     MeStat(label: 'Circles', value: '${_circleHistoryItems.length}'),
     MeStat(label: 'Buddies', value: '${_buddyHistoryItems.length}'),
     MeStat(label: 'Trails', value: '${_trailHistoryItems.length}'),
-  ];
-}
-
-List<(String, String)> get _exportHistoryRows {
-  return [
-    ('Hikes', '${_trailHistoryItems.length} completed trails'),
-    ('Posts', '${_postHistoryItems.length} community updates'),
-    ('Circles', '${_circleHistoryItems.length} hiking teams'),
-    ('Buddies', '${_buddyHistoryItems.length} trail buddies'),
-    ('Format', 'CSV and JSON dummy preview'),
   ];
 }
 
@@ -1696,6 +1822,723 @@ class _StatsGroup extends StatelessWidget {
               ),
               if (index != stats.length - 1) const _VerticalSeparator(),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementsSummaryCard extends StatelessWidget {
+  const _AchievementsSummaryCard({
+    required this.achievementsFuture,
+    required this.onTap,
+  });
+
+  final Future<List<Map<String, dynamic>>> achievementsFuture;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: achievementsFuture,
+      builder: (context, snapshot) {
+        final isLoading =
+            snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData;
+        final items = _achievementItemsFromRows(snapshot.data ?? const []);
+        final unlocked = items.where((item) => item.isUnlocked).length;
+        final total = items.isEmpty ? 0 : items.length;
+        final progress = total == 0 ? 0.0 : unlocked / total;
+        final points = items
+            .where((item) => item.isUnlocked)
+            .fold<int>(0, (total, item) => total + item.rewardPoints);
+        final locked = items.where((item) => !item.isUnlocked).toList();
+        final subtitle = isLoading
+            ? 'Loading safety badges'
+            : locked.isEmpty && total > 0
+            ? 'All current badges unlocked'
+            : locked.isEmpty
+            ? 'Track your hike milestones'
+            : 'Next: ${locked.first.title}';
+
+        return _InsetGroup(
+          child: _TapSurface(
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  _Glyph(icon: Icons.emoji_events_rounded),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Achievements',
+                                style: Theme.of(context).textTheme.bodyLarge
+                                    ?.copyWith(
+                                      color: _MeColors.textFor(context),
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0,
+                                    ),
+                              ),
+                            ),
+                            if (isLoading)
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: _MeColors.green,
+                                  backgroundColor: _MeColors.greenSoftFor(
+                                    context,
+                                  ),
+                                ),
+                              )
+                            else
+                              _MiniPill(label: '$points pts'),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          total == 0
+                              ? subtitle
+                              : '$unlocked of $total unlocked - $subtitle',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: _MeColors.secondaryTextFor(context),
+                                letterSpacing: 0,
+                              ),
+                        ),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            minHeight: 7,
+                            backgroundColor: _MeColors.greenSoftFor(context),
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                              _MeColors.green,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Icon(
+                    CupertinoIcons.chevron_forward,
+                    color: _MeColors.chevronFor(context),
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AchievementsPage extends StatefulWidget {
+  const _AchievementsPage({
+    required this.session,
+    required this.repository,
+    required this.firebaseBootstrapResult,
+  });
+
+  final AppSession session;
+  final HikerCircleFirebaseRepository repository;
+  final FirebaseBootstrapResult firebaseBootstrapResult;
+
+  @override
+  State<_AchievementsPage> createState() => _AchievementsPageState();
+}
+
+class _AchievementsPageState extends State<_AchievementsPage> {
+  late Future<List<Map<String, dynamic>>> _achievementsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _achievementsFuture = widget.repository.loadUserAchievementProgress(
+      session: widget.session,
+    );
+  }
+
+  Future<void> _refreshAchievements() async {
+    final future = widget.repository.loadUserAchievementProgress(
+      session: widget.session,
+    );
+    setState(() {
+      _achievementsFuture = future;
+    });
+    await future;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _MeColors.backgroundFor(context),
+      body: SafeArea(
+        child: RefreshIndicator(
+          color: _MeColors.green,
+          onRefresh: _refreshAchievements,
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _achievementsFuture,
+            builder: (context, snapshot) {
+              final isLoading =
+                  snapshot.connectionState == ConnectionState.waiting &&
+                  !snapshot.hasData;
+              final achievements = _achievementItemsFromRows(
+                snapshot.data ?? const [],
+              );
+              final earned = achievements
+                  .where((item) => item.isUnlocked)
+                  .toList();
+              final locked = achievements
+                  .where((item) => !item.isUnlocked)
+                  .toList();
+
+              return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 640),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _DetailHeader(
+                            title: 'Achievements',
+                            subtitle: 'Safety badges and hike milestones',
+                            onBack: () => Navigator.of(context).pop(),
+                          ),
+                          const SizedBox(height: 16),
+                          if (!widget.firebaseBootstrapResult.isAvailable) ...[
+                            _AchievementNoticeCard(
+                              icon: Icons.cloud_off_rounded,
+                              title: 'Cloud achievements unavailable',
+                              message:
+                                  'Showing the local badge catalog until Firebase reconnects.',
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          if (isLoading)
+                            const _AchievementLoadingCard()
+                          else ...[
+                            _AchievementProgressPanel(items: achievements),
+                            const SizedBox(height: 18),
+                            const _SectionTitle(label: 'Earned'),
+                            const SizedBox(height: 8),
+                            if (earned.isEmpty)
+                              const _AchievementNoticeCard(
+                                icon: Icons.emoji_events_outlined,
+                                title: 'No badges unlocked yet',
+                                message:
+                                    'Complete safe hikes, check-ins, and community actions to earn your first badge.',
+                              )
+                            else
+                              for (final item in earned) ...[
+                                _AchievementTile(
+                                  item: item,
+                                  onTap: () => _showAchievementDetail(item),
+                                ),
+                                const SizedBox(height: 10),
+                              ],
+                            const SizedBox(height: 8),
+                            const _SectionTitle(label: 'Locked'),
+                            const SizedBox(height: 8),
+                            for (final item in locked) ...[
+                              _AchievementTile(
+                                item: item,
+                                onTap: () => _showAchievementDetail(item),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showAchievementDetail(_AchievementProfileItem item) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _AchievementDetailSheet(item: item),
+    );
+  }
+}
+
+class _AchievementProgressPanel extends StatelessWidget {
+  const _AchievementProgressPanel({required this.items});
+
+  final List<_AchievementProfileItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final earned = items.where((item) => item.isUnlocked).toList();
+    final locked = items.length - earned.length;
+    final points = earned.fold<int>(
+      0,
+      (total, item) => total + item.rewardPoints,
+    );
+    final progress = items.isEmpty ? 0.0 : earned.length / items.length;
+    final next = items.where((item) => !item.isUnlocked).toList();
+
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: _MeColors.greenSoftFor(context),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.emoji_events_rounded,
+                    color: _MeColors.green,
+                    size: 31,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${(progress * 100).round()}% complete',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: _MeColors.textFor(context),
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        next.isEmpty
+                            ? 'Every current badge is unlocked. Nice safety streak.'
+                            : 'Next badge: ${next.first.title}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _MeColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: _MeColors.greenSoftFor(context),
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                  _MeColors.green,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: _AchievementMetric(
+                    label: 'Earned',
+                    value: '${earned.length}',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _AchievementMetric(label: 'Locked', value: '$locked'),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _AchievementMetric(label: 'Points', value: '$points'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementMetric extends StatelessWidget {
+  const _AchievementMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: _MeColors.greenSoftFor(context),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: _MeColors.textFor(context),
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: _MeColors.secondaryTextFor(context),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementTile extends StatelessWidget {
+  const _AchievementTile({required this.item, required this.onTap});
+
+  final _AchievementProfileItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = item.accentColor;
+    final iconColor = item.isUnlocked
+        ? accent
+        : _MeColors.secondaryTextFor(context);
+    final iconBackground = item.isUnlocked
+        ? accent.withValues(alpha: _MeColors.isDark(context) ? 0.22 : 0.14)
+        : _MeColors.greenSoftFor(context);
+
+    return _InsetGroup(
+      child: _TapSurface(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: iconBackground,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  _achievementIconFor(item.iconName),
+                  color: iconColor,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.title,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: _MeColors.textFor(context),
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                        ),
+                        _MiniPill(
+                          label: item.isUnlocked
+                              ? 'Earned'
+                              : '${item.rewardPoints} pts',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      item.condition,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _MeColors.secondaryTextFor(context),
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 9),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _AchievementTag(label: item.category),
+                        if (item.awardedAt != null)
+                          _AchievementTag(
+                            label:
+                                'Unlocked ${_formatAchievementDate(item.awardedAt!)}',
+                          ),
+                        if (!item.isUnlocked)
+                          const _AchievementTag(label: 'Locked'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                CupertinoIcons.chevron_forward,
+                color: _MeColors.chevronFor(context),
+                size: 16,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementTag extends StatelessWidget {
+  const _AchievementTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: _MeColors.greenSoftFor(context),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: _MeColors.secondaryTextFor(context),
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementDetailSheet extends StatelessWidget {
+  const _AchievementDetailSheet({required this.item});
+
+  final _AchievementProfileItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        child: _InsetGroup(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: _MeColors.separatorFor(context),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  width: 68,
+                  height: 68,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: item.accentColor.withValues(
+                      alpha: _MeColors.isDark(context) ? 0.22 : 0.14,
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    _achievementIconFor(item.iconName),
+                    color: item.accentColor,
+                    size: 34,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  item.title,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: _MeColors.textFor(context),
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  item.isUnlocked
+                      ? 'Unlocked ${item.awardedAt == null ? 'recently' : _formatAchievementDate(item.awardedAt!)}'
+                      : 'Locked - complete the requirement to earn it',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _MeColors.secondaryTextFor(context),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _InfoLine(label: 'Requirement', value: item.condition),
+                const _HorizontalSeparator(),
+                _InfoLine(label: 'Category', value: item.category),
+                const _HorizontalSeparator(),
+                _InfoLine(
+                  label: 'Reward',
+                  value: '${item.rewardPoints} points',
+                ),
+                const SizedBox(height: 12),
+                CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size.fromHeight(46),
+                  color: _MeColors.green,
+                  borderRadius: BorderRadius.circular(8),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text(
+                    'Done',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementNoticeCard extends StatelessWidget {
+  const _AchievementNoticeCard({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Glyph(icon: icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _MeColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    message,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _MeColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementLoadingCard extends StatelessWidget {
+  const _AchievementLoadingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: [
+            CircularProgressIndicator(
+              color: _MeColors.green,
+              backgroundColor: _MeColors.greenSoftFor(context),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                'Loading your achievement progress...',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: _MeColors.textFor(context),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
           ],
         ),
       ),

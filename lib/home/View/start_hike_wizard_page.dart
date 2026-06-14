@@ -5,7 +5,6 @@ import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-import '../../trail/Data/trail_repository.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 
@@ -13,18 +12,17 @@ class StartHikeWizardPage extends StatefulWidget {
   const StartHikeWizardPage({
     super.key,
     this.preselectedTrail,
-    this.trailRepository = const TrailRepository(),
+    this.availableTrails = const [],
   });
 
   final Trail? preselectedTrail;
-  final TrailRepository trailRepository;
+  final List<Trail> availableTrails;
 
   @override
   State<StartHikeWizardPage> createState() => _StartHikeWizardPageState();
 }
 
 class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
-  static const int _lastStep = 4;
   static const List<String> _checklistItems = [
     'Drinking water',
     'Charged phone',
@@ -33,15 +31,56 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     'First-aid kit',
     'Rain protection',
   ];
+  static const List<TeamHikeBuddy> _teamBuddyOptions = [
+    TeamHikeBuddy(
+      name: 'Aina',
+      handle: '@ainatrails',
+      phoneNumber: '+60123001001',
+      role: 'Weather watcher',
+      avatarColorValue: 0xFF34A853,
+    ),
+    TeamHikeBuddy(
+      name: 'Jason',
+      handle: '@jasonridge',
+      phoneNumber: '+60123001002',
+      role: 'Ridge navigator',
+      avatarColorValue: 0xFF2563EB,
+    ),
+    TeamHikeBuddy(
+      name: 'Mei Lin',
+      handle: '@meiclimbs',
+      phoneNumber: '+60123001003',
+      role: 'Checkpoint planner',
+      avatarColorValue: 0xFFF59E0B,
+    ),
+    TeamHikeBuddy(
+      name: 'Farid',
+      handle: '@faridforest',
+      phoneNumber: '+60123001004',
+      role: 'Sweep and camera',
+      avatarColorValue: 0xFF7C3AED,
+    ),
+  ];
 
   late final List<Trail> _trails;
   late HikeSessionDraft _draft;
   int _stepIndex = 0;
 
+  int get _lastStep => _draft.hikeType == HikeType.team ? 5 : 4;
+  int get _stepCount => _lastStep + 1;
+  bool get _isFinalStep => _stepIndex == _lastStep;
+
   @override
   void initState() {
     super.initState();
-    _trails = widget.trailRepository.loadTrails();
+    _trails = [
+      ...widget.availableTrails,
+      if (widget.preselectedTrail != null &&
+          !widget.availableTrails.any(
+            (trail) => trail.trailId == widget.preselectedTrail!.trailId,
+          ))
+        widget.preselectedTrail!,
+    ];
     final selectedTrail = _trails.firstWhere(
       (trail) => trail.trailId == widget.preselectedTrail?.trailId,
       orElse: () => _trails.first,
@@ -50,7 +89,21 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   void _next() {
-    if (_stepIndex == _lastStep) {
+    if (_draft.hikeType == HikeType.team &&
+        _stepIndex == 1 &&
+        _draft.teamBuddies.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Select at least one buddy for a team hike.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    if (_isFinalStep) {
       Navigator.of(context).pop(ActiveHikeSession.fromDraft(_draft));
       return;
     }
@@ -74,6 +127,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   void _updateDraft(HikeSessionDraft draft) {
     setState(() {
       _draft = draft;
+      if (_stepIndex > _lastStep) {
+        _stepIndex = _lastStep;
+      }
     });
   }
 
@@ -94,7 +150,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                 children: [
                   _Header(onBack: _back),
                   const SizedBox(height: 16),
-                  _StepProgress(currentStep: _stepIndex),
+                  _StepProgress(
+                    currentStep: _stepIndex,
+                    totalSteps: _stepCount,
+                  ),
                   const SizedBox(height: 18),
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 180),
@@ -114,14 +173,12 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                         child: FilledButton.icon(
                           onPressed: _next,
                           icon: Icon(
-                            _stepIndex == _lastStep
+                            _isFinalStep
                                 ? Icons.play_arrow_rounded
                                 : Icons.arrow_forward_rounded,
                           ),
                           label: Text(
-                            _stepIndex == _lastStep
-                                ? 'Start Hiking Session'
-                                : 'Continue',
+                            _isFinalStep ? 'Start Hiking Session' : 'Continue',
                           ),
                         ),
                       ),
@@ -137,6 +194,35 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   Widget _stepForIndex(int index) {
+    if (_draft.hikeType == HikeType.team) {
+      switch (index) {
+        case 0:
+          return _HikeTypeStep(draft: _draft, onChanged: _updateDraft);
+        case 1:
+          return _TeamBuddySelectionStep(
+            draft: _draft,
+            buddyOptions: _teamBuddyOptions,
+            onChanged: _updateDraft,
+          );
+        case 2:
+          return _TrailSelectionStep(
+            draft: _draft,
+            trails: _trails,
+            onChanged: _updateDraft,
+          );
+        case 3:
+          return _TimingStep(draft: _draft, onChanged: _updateDraft);
+        case 4:
+          return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);
+        default:
+          return _PreparationStep(
+            draft: _draft,
+            checklistItems: _checklistItems,
+            onChanged: _updateDraft,
+          );
+      }
+    }
+
     switch (index) {
       case 0:
         return _HikeTypeStep(draft: _draft, onChanged: _updateDraft);
@@ -210,15 +296,16 @@ class _Header extends StatelessWidget {
 }
 
 class _StepProgress extends StatelessWidget {
-  const _StepProgress({required this.currentStep});
+  const _StepProgress({required this.currentStep, required this.totalSteps});
 
   final int currentStep;
+  final int totalSteps;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        for (var index = 0; index < 5; index++) ...[
+        for (var index = 0; index < totalSteps; index++) ...[
           Expanded(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 160),
@@ -231,7 +318,7 @@ class _StepProgress extends StatelessWidget {
               ),
             ),
           ),
-          if (index != 4) const SizedBox(width: 6),
+          if (index != totalSteps - 1) const SizedBox(width: 6),
         ],
       ],
     );
@@ -255,7 +342,9 @@ class _HikeTypeStep extends StatelessWidget {
           icon: Icons.person_pin_circle_rounded,
           title: 'Solo Hike',
           subtitle: 'Track your own route and optionally share location.',
-          onTap: () => onChanged(draft.copyWith(hikeType: HikeType.solo)),
+          onTap: () => onChanged(
+            draft.copyWith(hikeType: HikeType.solo, teamBuddies: const []),
+          ),
         ),
         const SizedBox(height: 10),
         _ChoiceTile(
@@ -266,6 +355,184 @@ class _HikeTypeStep extends StatelessWidget {
           onTap: () => onChanged(draft.copyWith(hikeType: HikeType.team)),
         ),
       ],
+    );
+  }
+}
+
+class _TeamBuddySelectionStep extends StatelessWidget {
+  const _TeamBuddySelectionStep({
+    required this.draft,
+    required this.buddyOptions,
+    required this.onChanged,
+  });
+
+  final HikeSessionDraft draft;
+  final List<TeamHikeBuddy> buddyOptions;
+  final ValueChanged<HikeSessionDraft> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _StepCard(
+      title: 'Select Team Buddies',
+      subtitle:
+          'Invite buddies before the team hike starts. Everyone must tap the invite and press READY before the 5 second team countdown begins.',
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: _WizardColors.greenSoftFor(context),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                const _Glyph(icon: Icons.notifications_active_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '${draft.teamBuddies.length} buddy${draft.teamBuddies.length == 1 ? '' : 'ies'} selected. HikerCircle will queue FCM invites and sync readiness in Firestore.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _WizardColors.textFor(context),
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        for (final buddy in buddyOptions) ...[
+          _TeamBuddyTile(
+            buddy: buddy,
+            selected: _isSelected(buddy),
+            onTap: () => _toggleBuddy(buddy),
+          ),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+
+  bool _isSelected(TeamHikeBuddy buddy) {
+    return draft.teamBuddies.any(
+      (selected) =>
+          selected.normalizedPhoneNumber == buddy.normalizedPhoneNumber,
+    );
+  }
+
+  void _toggleBuddy(TeamHikeBuddy buddy) {
+    final isSelected = _isSelected(buddy);
+    final nextBuddies = isSelected
+        ? draft.teamBuddies
+              .where(
+                (selected) =>
+                    selected.normalizedPhoneNumber !=
+                    buddy.normalizedPhoneNumber,
+              )
+              .toList()
+        : [...draft.teamBuddies, buddy];
+    onChanged(draft.copyWith(teamBuddies: nextBuddies));
+  }
+}
+
+class _TeamBuddyTile extends StatelessWidget {
+  const _TeamBuddyTile({
+    required this.buddy,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final TeamHikeBuddy buddy;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Color(buddy.avatarColorValue);
+    return Material(
+      color: selected
+          ? color.withValues(alpha: _WizardColors.isDark(context) ? 0.28 : 0.12)
+          : _WizardColors.surfaceFor(context),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? color : _WizardColors.separatorFor(context),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Text(
+                  buddy.shortName.substring(0, 1).toUpperCase(),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      buddy.name,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: _WizardColors.textFor(context),
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${buddy.handle} - ${buddy.role}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _WizardColors.secondaryTextFor(context),
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 42,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected ? color : _WizardColors.greenSoftFor(context),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: selected
+                        ? color
+                        : _WizardColors.separatorFor(context),
+                  ),
+                ),
+                child: Icon(
+                  selected ? Icons.check_rounded : Icons.add_rounded,
+                  color: selected ? Colors.white : _WizardColors.green,
+                  size: 20,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -308,7 +575,12 @@ class _TrailSelectionStep extends StatelessWidget {
             final nextTrail = trails.firstWhere(
               (trail) => trail.trailId == trailId,
             );
-            onChanged(HikeSessionDraft.fromTrail(nextTrail));
+            onChanged(
+              HikeSessionDraft.fromTrail(nextTrail).copyWith(
+                hikeType: draft.hikeType,
+                teamBuddies: draft.teamBuddies,
+              ),
+            );
           },
         ),
         const SizedBox(height: 12),
