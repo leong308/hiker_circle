@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import AVFoundation
+import AudioToolbox
 import CoreLocation
 import Contacts
 #if canImport(ActivityKit)
@@ -24,6 +25,7 @@ import ActivityKit
   private var isOutputVolumeMonitoringActive = false
   private let speechSynthesizer = AVSpeechSynthesizer()
   private var torchTimer: Timer?
+  private var fallStillnessVibrationTimer: Timer?
   private var torchPatternIndex = 0
   private var locationManager: CLLocationManager?
   private var pendingLocationResult: FlutterResult?
@@ -162,6 +164,12 @@ import ActivityKit
         result(nil)
       case "stopFlashlightPattern":
         self.stopTorchPattern()
+        result(nil)
+      case "startFallStillnessCountdownVibration":
+        self.startFallStillnessCountdownVibration()
+        result(nil)
+      case "stopFallStillnessCountdownVibration":
+        self.stopFallStillnessCountdownVibration()
         result(nil)
       case "getBatteryLevel":
         result(self.currentBatteryLevel())
@@ -367,6 +375,21 @@ import ActivityKit
   private func stopManualSosPattern() {
     stopAlarm()
     stopTorchPattern()
+    stopFallStillnessCountdownVibration()
+  }
+
+  private func startFallStillnessCountdownVibration() {
+    stopFallStillnessCountdownVibration()
+    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+    fallStillnessVibrationTimer = Timer.scheduledTimer(withTimeInterval: 0.95, repeats: true) {
+      _ in
+      AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+    }
+  }
+
+  private func stopFallStillnessCountdownVibration() {
+    fallStillnessVibrationTimer?.invalidate()
+    fallStillnessVibrationTimer = nil
   }
 
   private func currentBatteryLevel() -> Int? {

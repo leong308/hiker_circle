@@ -25,13 +25,14 @@ class HomeDashboardPage extends StatelessWidget {
     required this.onActiveHikeChanged,
     required this.onCheckInRequested,
     required this.onPinLocationRequested,
+    required this.onPingTeamMember,
     required this.onEndHike,
     required this.fallStillnessSnapshot,
     required this.onCancelFallStillnessSos,
   });
 
   final String phoneNumber;
-  final PlannedHike plannedHike;
+  final PlannedHike? plannedHike;
   final ActiveHikeSession? activeHike;
   final bool isVisible;
   final Future<void> Function(Trail trail) onStartHike;
@@ -44,6 +45,7 @@ class HomeDashboardPage extends StatelessWidget {
   onCheckInRequested;
   final Future<PinLocationResult> Function(ActiveHikeSession activeHike)
   onPinLocationRequested;
+  final Future<TeamHikeSession?> Function(String phoneNumber) onPingTeamMember;
   final VoidCallback onEndHike;
   final FallStillnessMonitorSnapshot fallStillnessSnapshot;
   final VoidCallback onCancelFallStillnessSos;
@@ -51,6 +53,7 @@ class HomeDashboardPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = activeHike;
+    final planned = plannedHike;
 
     return ColoredBox(
       color: _HomeColors.backgroundFor(context),
@@ -61,26 +64,30 @@ class HomeDashboardPage extends StatelessWidget {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 640),
               child: active == null
-                  ? _PreparationDashboard(
-                      phoneNumber: phoneNumber,
-                      plannedHike: plannedHike,
-                      onStartHike: () => unawaited(
-                        _confirmPreparationThenStart(
-                          context,
-                          plannedHike.trail,
-                        ),
-                      ),
-                      onJoinTeamHike: onJoinTeamHike,
-                      onOpenTrailDetail: onOpenTrailDetail,
-                      onOpenSosTab: onOpenSosTab,
-                    )
+                  ? planned == null
+                        ? _NoFirebaseTrailDashboard(
+                            onJoinTeamHike: onJoinTeamHike,
+                            onOpenSosTab: onOpenSosTab,
+                          )
+                        : _PreparationDashboard(
+                            phoneNumber: phoneNumber,
+                            plannedHike: planned,
+                            onStartHike: () => unawaited(
+                              _confirmPreparationThenStart(context, planned),
+                            ),
+                            onJoinTeamHike: onJoinTeamHike,
+                            onOpenTrailDetail: onOpenTrailDetail,
+                            onOpenSosTab: onOpenSosTab,
+                          )
                   : _ActiveHikeDashboard(
+                      currentPhoneNumber: phoneNumber,
                       activeHike: active,
                       isVisible: isVisible,
                       fallStillnessSnapshot: fallStillnessSnapshot,
                       onCheckIn: () => unawaited(_checkIn(context, active)),
                       onPinLocation: () =>
                           unawaited(_pinLocation(context, active)),
+                      onPingTeamMember: onPingTeamMember,
                       onEndHike: () => unawaited(_confirmEndHike(context)),
                       onCancelFallStillnessSos: onCancelFallStillnessSos,
                     ),
@@ -93,11 +100,11 @@ class HomeDashboardPage extends StatelessWidget {
 
   Future<void> _confirmPreparationThenStart(
     BuildContext context,
-    Trail trail,
+    PlannedHike plannedHike,
   ) async {
     final missingItems = plannedHike.missingPreparationItems;
     if (missingItems.isEmpty) {
-      await onStartHike(trail);
+      await onStartHike(plannedHike.trail);
       return;
     }
 
@@ -128,7 +135,7 @@ class HomeDashboardPage extends StatelessWidget {
     );
 
     if (shouldStart == true && context.mounted) {
-      await onStartHike(trail);
+      await onStartHike(plannedHike.trail);
     }
   }
 
@@ -332,6 +339,76 @@ class _PreparationDashboard extends StatelessWidget {
     if (result == 'sos') {
       onOpenSosTab();
     }
+  }
+}
+
+class _NoFirebaseTrailDashboard extends StatelessWidget {
+  const _NoFirebaseTrailDashboard({
+    required this.onJoinTeamHike,
+    required this.onOpenSosTab,
+  });
+
+  final VoidCallback onJoinTeamHike;
+  final VoidCallback onOpenSosTab;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _HomeHeader(phoneNumber: ''),
+        const SizedBox(height: 18),
+        _InsetGroup(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _Glyph(icon: Icons.cloud_queue_rounded),
+                const SizedBox(height: 14),
+                Text(
+                  'No Firebase trails available',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: _HomeColors.textFor(context),
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'HikerCircle is no longer showing local demo trails. Ask an admin to add real trails in Firebase, then refresh the app.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _HomeColors.secondaryTextFor(context),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onJoinTeamHike,
+                        icon: const Icon(Icons.group_add_rounded),
+                        label: const Text('Team Invites'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: onOpenSosTab,
+                        icon: const Icon(Icons.sos_rounded),
+                        label: const Text('SOS'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -1134,7 +1211,7 @@ class _HazardDetailPage extends StatelessWidget {
                     color: _HomeColors.green,
                     title: 'Re-check before departure',
                     subtitle:
-                        'This is dummy UI for now. Later this can refresh hazard status from community reports and ranger updates.',
+                        'Refresh the trail detail before departure to review the latest Firebase hazard reports and route notes.',
                   ),
                   const SizedBox(height: 8),
                   _ChecklistInsightRow(
@@ -1268,19 +1345,23 @@ class _DetailHeader extends StatelessWidget {
 class _ActiveHikeDashboard extends StatelessWidget {
   const _ActiveHikeDashboard({
     required this.activeHike,
+    required this.currentPhoneNumber,
     required this.isVisible,
     required this.fallStillnessSnapshot,
     required this.onCheckIn,
     required this.onPinLocation,
+    required this.onPingTeamMember,
     required this.onEndHike,
     required this.onCancelFallStillnessSos,
   });
 
   final ActiveHikeSession activeHike;
+  final String currentPhoneNumber;
   final bool isVisible;
   final FallStillnessMonitorSnapshot fallStillnessSnapshot;
   final VoidCallback onCheckIn;
   final VoidCallback onPinLocation;
+  final Future<TeamHikeSession?> Function(String phoneNumber) onPingTeamMember;
   final VoidCallback onEndHike;
   final VoidCallback onCancelFallStillnessSos;
 
@@ -1342,7 +1423,11 @@ class _ActiveHikeDashboard extends StatelessWidget {
         const SizedBox(height: 22),
         _SectionTitle(label: 'Team Snapshot'),
         const SizedBox(height: 8),
-        const _TeamSnapshotCard(),
+        _TeamSnapshotCard(
+          activeHike: activeHike,
+          currentPhoneNumber: currentPhoneNumber,
+          onPingTeamMember: onPingTeamMember,
+        ),
       ],
     );
   }
@@ -1598,6 +1683,7 @@ class _MiniMapCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
                 child: ActiveTrackingMapView(
                   activeHike: activeHike,
+                  teamHikeSession: activeHike.teamHikeSession,
                   interactive: false,
                 ),
               ),
@@ -1803,17 +1889,263 @@ class _SharedWithCard extends StatelessWidget {
   }
 }
 
-class _TeamSnapshotCard extends StatelessWidget {
-  const _TeamSnapshotCard();
+class _TeamSnapshotCard extends StatefulWidget {
+  const _TeamSnapshotCard({
+    required this.activeHike,
+    required this.currentPhoneNumber,
+    required this.onPingTeamMember,
+  });
+
+  final ActiveHikeSession activeHike;
+  final String currentPhoneNumber;
+  final Future<TeamHikeSession?> Function(String phoneNumber) onPingTeamMember;
+
+  @override
+  State<_TeamSnapshotCard> createState() => _TeamSnapshotCardState();
+}
+
+class _TeamSnapshotCardState extends State<_TeamSnapshotCard> {
+  String _pingingPhoneNumber = '';
 
   @override
   Widget build(BuildContext context) {
-    return const _InsetGroup(
+    final teamSession = widget.activeHike.teamHikeSession;
+    if (widget.activeHike.draft.hikeType != HikeType.team) {
+      return const _InsetGroup(
+        child: Padding(
+          padding: EdgeInsets.all(14),
+          child: Text('Start a team hike to see teammate positions.'),
+        ),
+      );
+    }
+
+    if (teamSession == null) {
+      return const _InsetGroup(
+        child: Padding(
+          padding: EdgeInsets.all(14),
+          child: Text('Waiting for live team status...'),
+        ),
+      );
+    }
+
+    final leader = teamSession.leader;
+    return _InsetGroup(
       child: Column(
         children: [
-          _StatusRow(label: 'Jason - Leader', value: '120 m ahead'),
-          _HorizontalSeparator(),
-          _StatusRow(label: 'Sarah', value: '85 m behind'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            child: Row(
+              children: [
+                const _Glyph(icon: Icons.groups_2_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Team live status',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _HomeColors.textFor(context),
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      Text(
+                        leader == null
+                            ? teamSession.phase.label
+                            : '${leader.buddy.shortName} is currently leading',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _HomeColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _StatusPill(
+                  label: teamSession.phase.label,
+                  color: _HomeColors.green,
+                ),
+              ],
+            ),
+          ),
+          const _HorizontalSeparator(),
+          for (
+            var index = 0;
+            index < teamSession.participants.length;
+            index++
+          ) ...[
+            _TeamParticipantRow(
+              participant: teamSession.participants[index],
+              isSelf: _samePhoneNumber(
+                teamSession.participants[index].phoneNumber,
+                widget.currentPhoneNumber,
+              ),
+              isPinging: _samePhoneNumber(
+                teamSession.participants[index].phoneNumber,
+                _pingingPhoneNumber,
+              ),
+              onPing: () => _ping(teamSession.participants[index]),
+            ),
+            if (index != teamSession.participants.length - 1)
+              const _HorizontalSeparator(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _ping(TeamHikeParticipant participant) async {
+    if (_pingingPhoneNumber.isNotEmpty || !participant.canBePinged) {
+      return;
+    }
+    setState(() {
+      _pingingPhoneNumber = participant.phoneNumber;
+    });
+    try {
+      await widget.onPingTeamMember(participant.phoneNumber);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Ping sent to ${participant.buddy.shortName}.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _pingingPhoneNumber = '';
+        });
+      }
+    }
+  }
+}
+
+class _TeamParticipantRow extends StatelessWidget {
+  const _TeamParticipantRow({
+    required this.participant,
+    required this.isSelf,
+    required this.isPinging,
+    required this.onPing,
+  });
+
+  final TeamHikeParticipant participant;
+  final bool isSelf;
+  final bool isPinging;
+  final VoidCallback onPing;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = participant.isLeader ? _HomeColors.orange : _HomeColors.green;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      child: Row(
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Color(participant.buddy.avatarColorValue),
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  participant.buddy.shortName.substring(0, 1).toUpperCase(),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              if (participant.isLeader)
+                Positioned(
+                  right: -4,
+                  bottom: -4,
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: _HomeColors.orange,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _HomeColors.surfaceFor(context),
+                        width: 2,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.flag_rounded,
+                      color: Colors.white,
+                      size: 12,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        isSelf ? 'You' : participant.buddy.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: _HomeColors.textFor(context),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ),
+                    if (participant.isLeader) ...[
+                      const SizedBox(width: 6),
+                      _StatusPill(label: 'Leader', color: color),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${participant.status.label} - ${(participant.progressMeters / 1000).toStringAsFixed(2)} km - ${participant.responseLabel}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _HomeColors.secondaryTextFor(context),
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (!isSelf)
+            Tooltip(
+              message: participant.canBePinged
+                  ? 'Ping for OK response'
+                  : 'Buddy has not joined yet',
+              child: OutlinedButton(
+                onPressed: participant.canBePinged && !isPinging
+                    ? onPing
+                    : null,
+                child: isPinging
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Ping'),
+              ),
+            ),
         ],
       ),
     );
@@ -2102,6 +2434,12 @@ String _formatRelativeDate(DateTime dateTime) {
     return 'yesterday';
   }
   return '${difference.inDays} days ago';
+}
+
+bool _samePhoneNumber(String first, String second) {
+  final firstKey = first.replaceAll(RegExp(r'[^0-9]'), '');
+  final secondKey = second.replaceAll(RegExp(r'[^0-9]'), '');
+  return firstKey.isNotEmpty && firstKey == secondKey;
 }
 
 String _preparationAdvice(String item) {

@@ -142,6 +142,11 @@ class SosViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      if (_emergencyContacts.isEmpty) {
+        _emergencyContacts = await emergencyContactsRepository
+            .loadEmergencyContacts(session: _session);
+        notifyListeners();
+      }
       final result = await _sosAlertRepository.triggerAlert(
         session: _session,
         mode: mode,

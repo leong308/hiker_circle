@@ -149,6 +149,386 @@ class PlannedHike {
   }
 }
 
+class TeamHikeBuddy {
+  const TeamHikeBuddy({
+    required this.name,
+    required this.handle,
+    required this.phoneNumber,
+    this.role = 'Teammate',
+    this.avatarColorValue = 0xFF34A853,
+  });
+
+  factory TeamHikeBuddy.fromFirestore(Map<String, dynamic> data) {
+    return TeamHikeBuddy(
+      name: _modelStringFrom(data['name']).isEmpty
+          ? 'Trail buddy'
+          : _modelStringFrom(data['name']),
+      handle: _modelStringFrom(data['handle']),
+      phoneNumber: _modelStringFrom(data['phoneNumber']),
+      role: _modelStringFrom(data['role']).isEmpty
+          ? 'Teammate'
+          : _modelStringFrom(data['role']),
+      avatarColorValue: _modelIntFrom(
+        data['avatarColorValue'],
+        fallback: 0xFF34A853,
+      ),
+    );
+  }
+
+  final String name;
+  final String handle;
+  final String phoneNumber;
+  final String role;
+  final int avatarColorValue;
+
+  String get normalizedPhoneNumber =>
+      phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+
+  String get shortName {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      return 'Buddy';
+    }
+    final firstPart = trimmed.split(RegExp(r'\s+')).first;
+    return firstPart.isEmpty ? trimmed : firstPart;
+  }
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'name': name,
+      'handle': handle,
+      'phoneNumber': phoneNumber,
+      'role': role,
+      'avatarColorValue': avatarColorValue,
+    };
+  }
+}
+
+enum TeamHikePhase {
+  inviting,
+  readyCheck,
+  countdown,
+  active,
+  completed;
+
+  String get label {
+    switch (this) {
+      case TeamHikePhase.inviting:
+        return 'Inviting';
+      case TeamHikePhase.readyCheck:
+        return 'Ready Check';
+      case TeamHikePhase.countdown:
+        return 'Starting';
+      case TeamHikePhase.active:
+        return 'Active';
+      case TeamHikePhase.completed:
+        return 'Completed';
+    }
+  }
+}
+
+enum TeamHikeParticipantStatus {
+  invited,
+  joined,
+  ready,
+  active,
+  offline;
+
+  String get label {
+    switch (this) {
+      case TeamHikeParticipantStatus.invited:
+        return 'Invited';
+      case TeamHikeParticipantStatus.joined:
+        return 'Joined';
+      case TeamHikeParticipantStatus.ready:
+        return 'Ready';
+      case TeamHikeParticipantStatus.active:
+        return 'Tracking';
+      case TeamHikeParticipantStatus.offline:
+        return 'Offline';
+    }
+  }
+
+  bool get isReadyForStart {
+    return this == TeamHikeParticipantStatus.ready ||
+        this == TeamHikeParticipantStatus.active;
+  }
+}
+
+class TeamHikeParticipant {
+  const TeamHikeParticipant({
+    required this.buddy,
+    required this.status,
+    this.isHost = false,
+    this.isLeader = false,
+    this.progressMeters = 0,
+    this.latestLocation,
+    this.invitedAt,
+    this.joinedAt,
+    this.readyAt,
+    this.lastPingAt,
+    this.lastOkAt,
+    this.updatedAt,
+  });
+
+  factory TeamHikeParticipant.fromFirestore(Map<String, dynamic> data) {
+    final buddyData = data['buddy'] is Map
+        ? Map<String, dynamic>.from(data['buddy'] as Map)
+        : data;
+    final locationData = data['latestLocation'] is Map
+        ? Map<String, dynamic>.from(data['latestLocation'] as Map)
+        : null;
+    return TeamHikeParticipant(
+      buddy: TeamHikeBuddy.fromFirestore(buddyData),
+      status: _teamHikeParticipantStatusFromName(
+        _modelStringFrom(data['status']),
+      ),
+      isHost: data['isHost'] == true,
+      isLeader: data['isLeader'] == true,
+      progressMeters: _modelDoubleFrom(data['progressMeters']),
+      latestLocation: locationData == null
+          ? null
+          : HikeCoordinate.fromFirestore(locationData),
+      invitedAt: _modelDateFromValue(data['invitedAtLocal']),
+      joinedAt: _modelDateFromValue(data['joinedAtLocal']),
+      readyAt: _modelDateFromValue(data['readyAtLocal']),
+      lastPingAt: _modelDateFromValue(data['lastPingAtLocal']),
+      lastOkAt: _modelDateFromValue(data['lastOkAtLocal']),
+      updatedAt: _modelDateFromValue(data['updatedAtLocal']),
+    );
+  }
+
+  final TeamHikeBuddy buddy;
+  final TeamHikeParticipantStatus status;
+  final bool isHost;
+  final bool isLeader;
+  final double progressMeters;
+  final HikeCoordinate? latestLocation;
+  final DateTime? invitedAt;
+  final DateTime? joinedAt;
+  final DateTime? readyAt;
+  final DateTime? lastPingAt;
+  final DateTime? lastOkAt;
+  final DateTime? updatedAt;
+
+  String get phoneNumber => buddy.phoneNumber;
+
+  bool get canBePinged =>
+      status == TeamHikeParticipantStatus.joined ||
+      status == TeamHikeParticipantStatus.ready ||
+      status == TeamHikeParticipantStatus.active;
+
+  String get responseLabel {
+    final okAt = lastOkAt;
+    if (okAt != null) {
+      return 'OK ${_compactElapsed(DateTime.now().difference(okAt))} ago';
+    }
+    final pingAt = lastPingAt;
+    if (pingAt != null) {
+      return 'Ping sent';
+    }
+    return status.label;
+  }
+
+  TeamHikeParticipant copyWith({
+    TeamHikeBuddy? buddy,
+    TeamHikeParticipantStatus? status,
+    bool? isHost,
+    bool? isLeader,
+    double? progressMeters,
+    HikeCoordinate? latestLocation,
+    DateTime? invitedAt,
+    DateTime? joinedAt,
+    DateTime? readyAt,
+    DateTime? lastPingAt,
+    DateTime? lastOkAt,
+    DateTime? updatedAt,
+  }) {
+    return TeamHikeParticipant(
+      buddy: buddy ?? this.buddy,
+      status: status ?? this.status,
+      isHost: isHost ?? this.isHost,
+      isLeader: isLeader ?? this.isLeader,
+      progressMeters: progressMeters ?? this.progressMeters,
+      latestLocation: latestLocation ?? this.latestLocation,
+      invitedAt: invitedAt ?? this.invitedAt,
+      joinedAt: joinedAt ?? this.joinedAt,
+      readyAt: readyAt ?? this.readyAt,
+      lastPingAt: lastPingAt ?? this.lastPingAt,
+      lastOkAt: lastOkAt ?? this.lastOkAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'buddy': buddy.toFirestore(),
+      'phoneNumber': phoneNumber,
+      'status': status.name,
+      'isHost': isHost,
+      'isLeader': isLeader,
+      'progressMeters': progressMeters,
+      if (latestLocation != null)
+        'latestLocation': latestLocation!.toFirestore(),
+      if (invitedAt != null)
+        'invitedAtLocal': invitedAt!.toUtc().toIso8601String(),
+      if (joinedAt != null)
+        'joinedAtLocal': joinedAt!.toUtc().toIso8601String(),
+      if (readyAt != null) 'readyAtLocal': readyAt!.toUtc().toIso8601String(),
+      if (lastPingAt != null)
+        'lastPingAtLocal': lastPingAt!.toUtc().toIso8601String(),
+      if (lastOkAt != null)
+        'lastOkAtLocal': lastOkAt!.toUtc().toIso8601String(),
+      if (updatedAt != null)
+        'updatedAtLocal': updatedAt!.toUtc().toIso8601String(),
+    };
+  }
+}
+
+class TeamHikeSession {
+  const TeamHikeSession({
+    required this.id,
+    required this.hostPhoneNumber,
+    required this.trailId,
+    required this.trailName,
+    required this.phase,
+    required this.participants,
+    this.activeHikeSessionId = '',
+    this.countdownSeconds = 5,
+    this.createdAt,
+    this.countdownStartedAt,
+    this.startedAt,
+    this.updatedAt,
+  });
+
+  factory TeamHikeSession.fromFirestore(
+    Map<String, dynamic> data, {
+    String id = '',
+  }) {
+    return TeamHikeSession(
+      id: id.isEmpty ? _modelStringFrom(data['teamHikeSessionId']) : id,
+      activeHikeSessionId: _modelStringFrom(data['activeHikeSessionId']),
+      hostPhoneNumber: _modelStringFrom(data['hostPhoneNumber']),
+      trailId: _modelStringFrom(data['trailId']),
+      trailName: _modelStringFrom(data['trailName']),
+      phase: _teamHikePhaseFromName(_modelStringFrom(data['phase'])),
+      countdownSeconds: _modelIntFrom(data['countdownSeconds'], fallback: 5),
+      createdAt: _modelDateFromValue(data['createdAtLocal']),
+      countdownStartedAt: _modelDateFromValue(data['countdownStartedAtLocal']),
+      startedAt: _modelDateFromValue(data['startedAtLocal']),
+      updatedAt: _modelDateFromValue(data['updatedAtLocal']),
+      participants: _modelListOfMaps(
+        data['participants'],
+      ).map(TeamHikeParticipant.fromFirestore).toList(),
+    );
+  }
+
+  final String id;
+  final String activeHikeSessionId;
+  final String hostPhoneNumber;
+  final String trailId;
+  final String trailName;
+  final TeamHikePhase phase;
+  final int countdownSeconds;
+  final DateTime? createdAt;
+  final DateTime? countdownStartedAt;
+  final DateTime? startedAt;
+  final DateTime? updatedAt;
+  final List<TeamHikeParticipant> participants;
+
+  int get readyCount => participants
+      .where((participant) => participant.status.isReadyForStart)
+      .length;
+
+  int get invitedCount => participants
+      .where(
+        (participant) =>
+            participant.status == TeamHikeParticipantStatus.invited,
+      )
+      .length;
+
+  bool get everyoneReady =>
+      participants.isNotEmpty &&
+      participants.every((participant) => participant.status.isReadyForStart);
+
+  TeamHikeParticipant? get leader {
+    final leaders = participants.where((participant) => participant.isLeader);
+    if (leaders.isNotEmpty) {
+      return leaders.first;
+    }
+    if (participants.isEmpty) {
+      return null;
+    }
+    return [
+      ...participants,
+    ].reduce((a, b) => a.progressMeters >= b.progressMeters ? a : b);
+  }
+
+  int get countdownRemainingSeconds {
+    final start = countdownStartedAt;
+    if (phase != TeamHikePhase.countdown || start == null) {
+      return countdownSeconds;
+    }
+    final elapsed = DateTime.now().difference(start).inSeconds;
+    return math.max(0, countdownSeconds - elapsed);
+  }
+
+  TeamHikeSession copyWith({
+    String? id,
+    String? activeHikeSessionId,
+    String? hostPhoneNumber,
+    String? trailId,
+    String? trailName,
+    TeamHikePhase? phase,
+    int? countdownSeconds,
+    DateTime? createdAt,
+    DateTime? countdownStartedAt,
+    DateTime? startedAt,
+    DateTime? updatedAt,
+    List<TeamHikeParticipant>? participants,
+  }) {
+    return TeamHikeSession(
+      id: id ?? this.id,
+      activeHikeSessionId: activeHikeSessionId ?? this.activeHikeSessionId,
+      hostPhoneNumber: hostPhoneNumber ?? this.hostPhoneNumber,
+      trailId: trailId ?? this.trailId,
+      trailName: trailName ?? this.trailName,
+      phase: phase ?? this.phase,
+      countdownSeconds: countdownSeconds ?? this.countdownSeconds,
+      createdAt: createdAt ?? this.createdAt,
+      countdownStartedAt: countdownStartedAt ?? this.countdownStartedAt,
+      startedAt: startedAt ?? this.startedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      participants: participants ?? this.participants,
+    );
+  }
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'teamHikeSessionId': id,
+      'activeHikeSessionId': activeHikeSessionId,
+      'hostPhoneNumber': hostPhoneNumber,
+      'trailId': trailId,
+      'trailName': trailName,
+      'phase': phase.name,
+      'countdownSeconds': countdownSeconds,
+      'participants': participants
+          .map((participant) => participant.toFirestore())
+          .toList(),
+      if (createdAt != null)
+        'createdAtLocal': createdAt!.toUtc().toIso8601String(),
+      if (countdownStartedAt != null)
+        'countdownStartedAtLocal': countdownStartedAt!
+            .toUtc()
+            .toIso8601String(),
+      if (startedAt != null)
+        'startedAtLocal': startedAt!.toUtc().toIso8601String(),
+      if (updatedAt != null)
+        'updatedAtLocal': updatedAt!.toUtc().toIso8601String(),
+    };
+  }
+}
+
 class HikeSessionDraft {
   const HikeSessionDraft({
     required this.hikeType,
@@ -168,6 +548,7 @@ class HikeSessionDraft {
     required this.offlinePhysicalAlertEnabled,
     required this.duressEnabled,
     required this.completedChecklistItems,
+    this.teamBuddies = const [],
   });
 
   factory HikeSessionDraft.fromTrail(Trail trail) {
@@ -228,6 +609,7 @@ class HikeSessionDraft {
   final bool offlinePhysicalAlertEnabled;
   final bool duressEnabled;
   final Set<String> completedChecklistItems;
+  final List<TeamHikeBuddy> teamBuddies;
 
   HikeSessionDraft copyWith({
     HikeType? hikeType,
@@ -247,6 +629,7 @@ class HikeSessionDraft {
     bool? offlinePhysicalAlertEnabled,
     bool? duressEnabled,
     Set<String>? completedChecklistItems,
+    List<TeamHikeBuddy>? teamBuddies,
   }) {
     return HikeSessionDraft(
       hikeType: hikeType ?? this.hikeType,
@@ -272,6 +655,7 @@ class HikeSessionDraft {
       duressEnabled: duressEnabled ?? this.duressEnabled,
       completedChecklistItems:
           completedChecklistItems ?? this.completedChecklistItems,
+      teamBuddies: teamBuddies ?? this.teamBuddies,
     );
   }
 }
@@ -289,9 +673,15 @@ class ActiveHikeSession {
     this.latestLocation,
     this.routePoints = const [],
     this.manualPinLocations = const [],
-  });
+    String? teamHikeSessionId = '',
+    this.teamHikeSession,
+  }) : _teamHikeSessionId = teamHikeSessionId;
 
-  factory ActiveHikeSession.fromDraft(HikeSessionDraft draft) {
+  factory ActiveHikeSession.fromDraft(
+    HikeSessionDraft draft, {
+    String teamHikeSessionId = '',
+    TeamHikeSession? teamHikeSession,
+  }) {
     return ActiveHikeSession(
       sessionId: 'session_${DateTime.now().millisecondsSinceEpoch}',
       draft: draft,
@@ -301,6 +691,8 @@ class ActiveHikeSession {
       manualPins: 0,
       checkIns: 0,
       batteryStartedLevel: 67,
+      teamHikeSessionId: teamHikeSessionId,
+      teamHikeSession: teamHikeSession,
     );
   }
 
@@ -315,7 +707,10 @@ class ActiveHikeSession {
   final HikeCoordinate? latestLocation;
   final List<HikeCoordinate> routePoints;
   final List<HikeManualPin> manualPinLocations;
+  final String? _teamHikeSessionId;
+  final TeamHikeSession? teamHikeSession;
 
+  String get teamHikeSessionId => _teamHikeSessionId ?? '';
   Trail get trail => draft.trail;
   Duration get elapsedDuration => DateTime.now().difference(startedAt);
   int get routePointCount => routePoints.length;
@@ -356,6 +751,8 @@ class ActiveHikeSession {
     HikeCoordinate? latestLocation,
     List<HikeCoordinate>? routePoints,
     List<HikeManualPin>? manualPinLocations,
+    String? teamHikeSessionId,
+    TeamHikeSession? teamHikeSession,
   }) {
     return ActiveHikeSession(
       sessionId: sessionId ?? this.sessionId,
@@ -369,6 +766,8 @@ class ActiveHikeSession {
       latestLocation: latestLocation ?? this.latestLocation,
       routePoints: routePoints ?? this.routePoints,
       manualPinLocations: manualPinLocations ?? this.manualPinLocations,
+      teamHikeSessionId: teamHikeSessionId ?? this.teamHikeSessionId,
+      teamHikeSession: teamHikeSession ?? this.teamHikeSession,
     );
   }
 }
@@ -584,4 +983,60 @@ class HikeSummaryReport {
     }
     return '${hours}h ${minutes}m';
   }
+}
+
+TeamHikePhase _teamHikePhaseFromName(String value) {
+  return TeamHikePhase.values.firstWhere(
+    (phase) => phase.name == value,
+    orElse: () => TeamHikePhase.inviting,
+  );
+}
+
+TeamHikeParticipantStatus _teamHikeParticipantStatusFromName(String value) {
+  return TeamHikeParticipantStatus.values.firstWhere(
+    (status) => status.name == value,
+    orElse: () => TeamHikeParticipantStatus.invited,
+  );
+}
+
+String _compactElapsed(Duration elapsed) {
+  if (elapsed.inSeconds < 60) {
+    return '${math.max(1, elapsed.inSeconds)}s';
+  }
+  if (elapsed.inMinutes < 60) {
+    return '${elapsed.inMinutes}m';
+  }
+  return '${elapsed.inHours}h';
+}
+
+String _modelStringFrom(Object? value) {
+  return value is String ? value : '';
+}
+
+double _modelDoubleFrom(Object? value) {
+  return value is num ? value.toDouble() : 0;
+}
+
+int _modelIntFrom(Object? value, {int fallback = 0}) {
+  return value is num ? value.toInt() : fallback;
+}
+
+DateTime? _modelDateFromValue(Object? value) {
+  if (value is DateTime) {
+    return value;
+  }
+  if (value is String) {
+    return DateTime.tryParse(value);
+  }
+  return null;
+}
+
+List<Map<String, dynamic>> _modelListOfMaps(Object? value) {
+  if (value is! Iterable) {
+    return const [];
+  }
+  return value
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList();
 }

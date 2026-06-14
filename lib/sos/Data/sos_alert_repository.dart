@@ -43,6 +43,10 @@ class SosAlertRepository {
     return _resolvedFirestore.collection('sosAlerts');
   }
 
+  CollectionReference<Map<String, dynamic>> get _whatsAppMessageLogs {
+    return _resolvedFirestore.collection('whatsAppMessageLogs');
+  }
+
   Future<Map<SosAlertMode, String>> loadCustomWhatsAppNotes({
     required AppSession session,
   }) async {
@@ -140,6 +144,15 @@ class SosAlertRepository {
         );
       }
     }
+    await _saveWhatsAppMessageLogs(
+      session: session,
+      messageType: 'sos_alert',
+      sourceId: alertId,
+      mode: mode.firestoreValue,
+      message: message,
+      dispatches: dispatches,
+      sentAt: triggeredAt,
+    );
 
     final sentCount = dispatches.where((dispatch) => dispatch.wasSent).length;
     final failedCount = dispatches.length - sentCount;
@@ -186,6 +199,15 @@ class SosAlertRepository {
     for (final contact in contacts) {
       dispatches.add(await _sendToContact(contact: contact, message: message));
     }
+    await _saveWhatsAppMessageLogs(
+      session: session,
+      messageType: 'sos_test',
+      sourceId: 'sos_test_${sentAt.microsecondsSinceEpoch}',
+      mode: 'test',
+      message: message,
+      dispatches: dispatches,
+      sentAt: sentAt,
+    );
 
     await _userDocumentFor(session).set({
       'latest_sos_messaging_test': {
@@ -282,6 +304,47 @@ class SosAlertRepository {
         'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
       );
     }
+  }
+
+  Future<void> _saveWhatsAppMessageLogs({
+    required AppSession session,
+    required String messageType,
+    required String sourceId,
+    required String mode,
+    required String message,
+    required List<SosContactDispatch> dispatches,
+    required DateTime sentAt,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable || dispatches.isEmpty) {
+      return;
+    }
+
+    final batch = _resolvedFirestore.batch();
+    for (var index = 0; index < dispatches.length; index++) {
+      final dispatch = dispatches[index];
+      final document = _whatsAppMessageLogs.doc(
+        '${sourceId}_${index}_${dispatch.phoneNumber.replaceAll(RegExp(r'[^0-9A-Za-z]+'), '_')}',
+      );
+      batch.set(document, {
+        'messageLogId': document.id,
+        'messageType': messageType,
+        'sourceId': sourceId,
+        'mode': mode,
+        'userId': FirebaseUserRepository.documentIdForPhoneNumber(
+          session.phoneNumber,
+        ),
+        'senderPhoneNumber': session.phoneNumber,
+        'contactName': dispatch.contactName,
+        'recipientPhoneNumber': dispatch.phoneNumber,
+        'wasSent': dispatch.wasSent,
+        if (dispatch.errorMessage != null)
+          'errorMessage': dispatch.errorMessage,
+        'message': message,
+        'sentAt': FieldValue.serverTimestamp(),
+        'sentAtLocal': sentAt.toUtc().toIso8601String(),
+      }, SetOptions(merge: true));
+    }
+    await batch.commit();
   }
 
   DocumentReference<Map<String, dynamic>> _userDocumentFor(AppSession session) {

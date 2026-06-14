@@ -49,6 +49,22 @@ class SosDeviceAlertService {
     await _channel.invokeMethod<void>('stopFlashlightPattern');
   }
 
+  Future<void> startFallStillnessCountdownVibration() async {
+    try {
+      await _channel.invokeMethod<void>('startFallStillnessCountdownVibration');
+    } on MissingPluginException {
+      await HapticFeedback.vibrate();
+    }
+  }
+
+  Future<void> stopFallStillnessCountdownVibration() async {
+    try {
+      await _channel.invokeMethod<void>('stopFallStillnessCountdownVibration');
+    } on MissingPluginException {
+      // Optional native helper. The fallback haptic call is one-shot only.
+    }
+  }
+
   Future<int?> getBatteryLevel() async {
     try {
       final batteryLevel = await _channel.invokeMethod<int>('getBatteryLevel');

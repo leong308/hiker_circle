@@ -8,6 +8,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
+import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../me/View/location_sharing_page.dart';
 import '../Data/emergency_contacts_repository.dart';
@@ -47,6 +48,9 @@ class _SosPageState extends State<SosPage> {
   int _handledImmediateSosRequestId = 0;
   bool _isManualSosPatternActive = false;
   Map<SosAlertMode, String> _customWhatsAppNotes = _defaultWhatsAppNotes();
+  List<Map<String, dynamic>> _adminSosSystemLogs = const [];
+  bool _isLoadingAdminSosSystemLogs = false;
+  String? _adminSosSystemLogsError;
 
   @override
   void initState() {
@@ -64,6 +68,9 @@ class _SosPageState extends State<SosPage> {
     unawaited(viewModel.loadEmergencyContacts());
     unawaited(_loadCustomWhatsAppNotes());
     unawaited(viewModel.loadCloudAlertLogs());
+    if (widget.session.isAdmin) {
+      unawaited(_loadAdminSosSystemLogs());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _handlePendingManualSosRequest();
     });
@@ -117,6 +124,46 @@ class _SosPageState extends State<SosPage> {
   String _customWhatsAppNoteFor(SosAlertMode mode) {
     return _customWhatsAppNotes[mode] ??
         SosAlertMessageComposer.defaultCustomNote;
+  }
+
+  Future<void> _loadAdminSosSystemLogs() async {
+    if (_isLoadingAdminSosSystemLogs) {
+      return;
+    }
+    setState(() {
+      _isLoadingAdminSosSystemLogs = true;
+      _adminSosSystemLogsError = null;
+    });
+
+    try {
+      final logs = await HikerCircleFirebaseRepository(
+        firebaseBootstrapResult: widget.firebaseBootstrapResult,
+      ).loadAdminSosAlerts(session: widget.session);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _adminSosSystemLogs = logs;
+      });
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (mounted) {
+        setState(() {
+          _adminSosSystemLogsError = error.message;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _adminSosSystemLogsError = 'Unable to load SOS system logs.';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingAdminSosSystemLogs = false;
+        });
+      }
+    }
   }
 
   void _handlePendingManualSosRequest() {
@@ -374,27 +421,35 @@ class _SosPageState extends State<SosPage> {
                     onDuressLongPress: () => unawaited(_handleDuressSos()),
                   ),
                   const SizedBox(height: 22),
-                  _SosTriggerLogPanel(
-                    isNetworkAvailable:
-                        widget.firebaseBootstrapResult.isAvailable,
-                    session: widget.session,
-                    latestResult: viewModel.latestSosAlertResult,
-                    customWhatsAppNotes: _customWhatsAppNotes,
-                    cloudAlertLogs: viewModel.cloudAlertLogs,
-                    onCustomWhatsAppNoteChanged: (mode, note) {
-                      setState(() {
-                        _customWhatsAppNotes = {
-                          ..._customWhatsAppNotes,
-                          mode: note,
-                        };
-                      });
-                      unawaited(
-                        viewModel
-                            .saveCustomWhatsAppNote(mode: mode, note: note)
-                            .catchError((_) {}),
-                      );
-                    },
-                  ),
+                  if (widget.session.isAdmin)
+                    _AdminSosSystemLogsPanel(
+                      logs: _adminSosSystemLogs,
+                      isLoading: _isLoadingAdminSosSystemLogs,
+                      errorMessage: _adminSosSystemLogsError,
+                      onRefresh: () => unawaited(_loadAdminSosSystemLogs()),
+                    )
+                  else
+                    _SosTriggerLogPanel(
+                      isNetworkAvailable:
+                          widget.firebaseBootstrapResult.isAvailable,
+                      session: widget.session,
+                      latestResult: viewModel.latestSosAlertResult,
+                      customWhatsAppNotes: _customWhatsAppNotes,
+                      cloudAlertLogs: viewModel.cloudAlertLogs,
+                      onCustomWhatsAppNoteChanged: (mode, note) {
+                        setState(() {
+                          _customWhatsAppNotes = {
+                            ..._customWhatsAppNotes,
+                            mode: note,
+                          };
+                        });
+                        unawaited(
+                          viewModel
+                              .saveCustomWhatsAppNote(mode: mode, note: note)
+                              .catchError((_) {}),
+                        );
+                      },
+                    ),
                   const SizedBox(height: 18),
                   const _SosReadinessPanel(),
                 ],
@@ -867,6 +922,400 @@ class _SosAlertStatusCard extends StatelessWidget {
       return 'Saved to Firebase. Sent to ${alert.sentCount}; ${alert.failedCount} failed.';
     }
     return 'Saved to Firebase, but contact delivery failed.';
+  }
+}
+
+class _AdminSosSystemLogsPanel extends StatelessWidget {
+  const _AdminSosSystemLogsPanel({
+    required this.logs,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.onRefresh,
+  });
+
+  final List<Map<String, dynamic>> logs;
+  final bool isLoading;
+  final String? errorMessage;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = errorMessage != null
+        ? 'Unable to load logs. Tap to inspect the status.'
+        : logs.isEmpty
+        ? 'No SOS system logs found yet.'
+        : '${logs.length} log${logs.length == 1 ? '' : 's'} available. Tap to view all.';
+
+    return _InsetGroup(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showSosSystemLogsSheet(context),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+            child: Row(
+              children: [
+                _Glyph(
+                  icon: Icons.receipt_long_rounded,
+                  color: errorMessage == null
+                      ? _SosColors.green
+                      : _SosColors.orange,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'SOS System Logs',
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: _SosColors.textFor(context),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _SosColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh SOS system logs',
+                  onPressed: isLoading ? null : onRefresh,
+                  icon: isLoading
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded),
+                ),
+                const Icon(Icons.chevron_right_rounded),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showSosSystemLogsSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: _SosColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.72,
+            minChildSize: 0.36,
+            maxChildSize: 0.92,
+            builder: (context, scrollController) {
+              return ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.fromLTRB(18, 4, 18, 22),
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: _SectionTitle(label: 'SOS System Logs'),
+                      ),
+                      IconButton(
+                        tooltip: 'Refresh SOS system logs',
+                        onPressed: isLoading ? null : onRefresh,
+                        icon: isLoading
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.refresh_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _InsetGroup(
+                    child: Column(
+                      children: [
+                        if (errorMessage != null)
+                          _SosSystemLogEmptyState(
+                            icon: Icons.cloud_off_rounded,
+                            message: errorMessage!,
+                          )
+                        else if (logs.isEmpty)
+                          const _SosSystemLogEmptyState(
+                            icon: Icons.fact_check_rounded,
+                            message: 'No SOS system logs found yet.',
+                          )
+                        else
+                          for (var index = 0; index < logs.length; index++) ...[
+                            _SosSystemLogRow(log: logs[index]),
+                            if (index != logs.length - 1)
+                              const _HorizontalSeparator(),
+                          ],
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SosSystemLogRow extends StatelessWidget {
+  const _SosSystemLogRow({required this.log});
+
+  final Map<String, dynamic> log;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _sosLogString(log['status'], fallback: 'unknown');
+    final mode = _sosLogString(log['mode'], fallback: 'sos');
+    final sent = _sosLogInt(log['sentCount']);
+    final failed = _sosLogInt(log['failedCount']);
+    final contactCount = _sosLogInt(log['contactCount']);
+    final color = failed > 0 || status == 'failed'
+        ? _SosColors.orange
+        : _SosColors.green;
+
+    return InkWell(
+      onTap: () => _showSosSystemLogDetails(context, log),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Glyph(
+              icon: failed > 0 || status == 'failed'
+                  ? Icons.warning_amber_rounded
+                  : Icons.verified_rounded,
+              color: color,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${mode.toUpperCase()} - ${status.toUpperCase()}',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _SosColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _sosLogDateLabel(log['triggeredAtLocal']),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _SosColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _StatusPill(
+                        label: '$sent sent',
+                        color: _SosColors.green,
+                        surface: _SosColors.greenSoftFor(context),
+                      ),
+                      _StatusPill(
+                        label: '$failed failed',
+                        color: failed > 0
+                            ? _SosColors.orange
+                            : _SosColors.secondaryTextFor(context),
+                        surface: _SosColors.surfaceFor(context),
+                      ),
+                      _StatusPill(
+                        label: '$contactCount contacts',
+                        color: _SosColors.secondaryTextFor(context),
+                        surface: _SosColors.surfaceFor(context),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SosSystemLogEmptyState extends StatelessWidget {
+  const _SosSystemLogEmptyState({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          _Glyph(icon: icon, color: _SosColors.orange),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: _SosColors.secondaryTextFor(context),
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void _showSosSystemLogDetails(BuildContext context, Map<String, dynamic> log) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    backgroundColor: _SosColors.surfaceFor(context),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (context) {
+      return _SosSystemLogDetailSheet(log: log);
+    },
+  );
+}
+
+class _SosSystemLogDetailSheet extends StatelessWidget {
+  const _SosSystemLogDetailSheet({required this.log});
+
+  final Map<String, dynamic> log;
+
+  @override
+  Widget build(BuildContext context) {
+    final location = _sosLogLocationSummary(log['triggerLocation']);
+    final dispatches = log['dispatches'];
+    final dispatchCount = dispatches is Iterable ? dispatches.length : 0;
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          18,
+          6,
+          18,
+          18 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const _Glyph(icon: Icons.sos_rounded, color: _SosColors.green),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'SOS System Log',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: _SosColors.textFor(context),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      Text(
+                        _sosLogDateLabel(log['triggeredAtLocal']),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _SosColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _InsetGroup(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  children: [
+                    _StatusRow(
+                      label: 'Alert ID',
+                      value: _sosLogString(log['alertId'], fallback: '-'),
+                    ),
+                    const _HorizontalSeparator(),
+                    _StatusRow(
+                      label: 'Type',
+                      value: _sosLogString(log['mode'], fallback: 'SOS'),
+                    ),
+                    const _HorizontalSeparator(),
+                    _StatusRow(
+                      label: 'Status',
+                      value: _sosLogString(log['status'], fallback: 'unknown'),
+                    ),
+                    const _HorizontalSeparator(),
+                    _StatusRow(
+                      label: 'Hiker',
+                      value: _sosLogString(
+                        log['phoneNumber'],
+                        fallback: _sosLogString(
+                          log['triggeredByPhoneNumber'],
+                          fallback: '-',
+                        ),
+                      ),
+                    ),
+                    const _HorizontalSeparator(),
+                    _StatusRow(label: 'Location', value: location),
+                    const _HorizontalSeparator(),
+                    _StatusRow(
+                      label: 'Contacts',
+                      value:
+                          '${_sosLogInt(log['sentCount'])}/${_sosLogInt(log['contactCount'])} sent, ${_sosLogInt(log['failedCount'])} failed',
+                    ),
+                    const _HorizontalSeparator(),
+                    _StatusRow(
+                      label: 'Dispatch records',
+                      value: '$dispatchCount',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -2351,8 +2800,8 @@ class _SosDetailHeader extends StatelessWidget {
             child: Container(
               width: 36,
               height: 36,
-              decoration: const BoxDecoration(
-                color: Colors.white,
+              decoration: BoxDecoration(
+                color: _SosColors.surfaceFor(context),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -2608,6 +3057,48 @@ class _VerticalSeparator extends StatelessWidget {
       ),
     );
   }
+}
+
+String _sosLogString(Object? value, {required String fallback}) {
+  if (value is String && value.trim().isNotEmpty) {
+    return value.trim();
+  }
+  return fallback;
+}
+
+int _sosLogInt(Object? value) {
+  return value is num ? value.toInt() : 0;
+}
+
+String _sosLogDateLabel(Object? value) {
+  final parsed = value is String ? DateTime.tryParse(value) : null;
+  if (parsed == null) {
+    return 'Time unavailable';
+  }
+  final local = parsed.toLocal();
+  final date =
+      '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  final time =
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  return '$date $time';
+}
+
+String _sosLogLocationSummary(Object? value) {
+  if (value is! Map || value.isEmpty) {
+    return 'Unavailable';
+  }
+  final latitude = value['latitude'];
+  final longitude = value['longitude'];
+  final accuracy = value['accuracyMeters'];
+  if (latitude is! num || longitude is! num) {
+    return 'Captured';
+  }
+  final coordinate =
+      '${latitude.toDouble().toStringAsFixed(5)}, ${longitude.toDouble().toStringAsFixed(5)}';
+  if (accuracy is num) {
+    return '$coordinate (+/- ${accuracy.round()} m)';
+  }
+  return coordinate;
 }
 
 abstract final class _SosColors {

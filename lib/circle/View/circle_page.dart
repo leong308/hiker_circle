@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
@@ -31,7 +35,7 @@ class _CirclePageState extends State<CirclePage> {
   int _selectedSection = 0;
   final Set<String> _buddyHandles = {'@ainatrails', '@jasonridge'};
   late final List<_CommunityPerson> _people = _seedPeople();
-  late List<_CommunityPost> _posts = _seedPosts();
+  late List<_CommunityPost> _posts = const [];
   late final List<_TeamPlan> _teams = _seedTeams();
   bool _isLoadingPosts = false;
 
@@ -50,9 +54,7 @@ class _CirclePageState extends State<CirclePage> {
       return;
     }
     setState(() {
-      if (posts.isNotEmpty) {
-        _posts = posts.map(_communityPostFromFirestore).toList();
-      }
+      _posts = posts.map(_communityPostFromFirestore).toList();
       _isLoadingPosts = false;
     });
   }
@@ -113,9 +115,39 @@ class _CirclePageState extends State<CirclePage> {
     if (hike == null) {
       return;
     }
-    await _createCommunityPost(
-      'Live update from ${hike.trail.name}: ${hike.checkIns} check-ins, ${hike.manualPins} pins, ${hike.recordedDistanceKm.toStringAsFixed(2)} km tracked so far.',
-    );
+    try {
+      await widget.hikerCircleRepository.createCompletedHikePost(
+        session: widget.session,
+        activeHike: hike,
+        postType: 'active_hike_update',
+        caption:
+            'Live update from ${hike.trail.name}: ${hike.checkIns} check-ins, ${hike.manualPins} pins, ${hike.recordedDistanceKm.toStringAsFixed(2)} km tracked so far.',
+      );
+      await _loadCommunityPosts();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Hike route shared to community.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
   void _openPostDetail(_CommunityPost post) {
@@ -270,6 +302,9 @@ class _CommunityPost {
     required this.likes,
     required this.replies,
     required this.color,
+    this.routeCaptureId = '',
+    this.routePointCount = 0,
+    this.routePreviewPoints = const [],
   });
 
   final String? postId;
@@ -281,6 +316,11 @@ class _CommunityPost {
   final int likes;
   final int replies;
   final Color color;
+  final String routeCaptureId;
+  final int routePointCount;
+  final List<HikeCoordinate> routePreviewPoints;
+
+  bool get hasRouteMap => routePreviewPoints.length >= 2;
 }
 
 class _CommunityComment {
@@ -438,6 +478,15 @@ class _CommunitySection extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
             child: LinearProgressIndicator(minHeight: 2),
+          ),
+        if (!isLoadingPosts && posts.isEmpty)
+          const _InsetGroup(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'No Firebase community posts yet. Shared hikes will appear here with their recorded route map.',
+              ),
+            ),
           ),
         for (final post in posts) ...[
           _CommunityPostCard(
@@ -786,9 +835,10 @@ class _CommunityPostCard extends StatelessWidget {
                 const SizedBox(height: 12),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: CustomPaint(
-                    painter: _CommunityImagePainter(color: post.color),
-                    child: const SizedBox(height: 152, width: double.infinity),
+                  child: SizedBox(
+                    height: 152,
+                    width: double.infinity,
+                    child: _CommunityRouteThumbnail(post: post),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -2024,6 +2074,194 @@ class _HorizontalSeparator extends StatelessWidget {
   }
 }
 
+class _CommunityRouteThumbnail extends StatefulWidget {
+  const _CommunityRouteThumbnail({required this.post});
+
+  final _CommunityPost post;
+
+  @override
+  State<_CommunityRouteThumbnail> createState() =>
+      _CommunityRouteThumbnailState();
+}
+
+class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
+  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+  maplibre.MapLibreMapController? _controller;
+  var _styleLoaded = false;
+  var _routeRendered = false;
+
+  List<maplibre.LatLng> get _routePoints {
+    return widget.post.routePreviewPoints
+        .map((point) => maplibre.LatLng(point.latitude, point.longitude))
+        .toList();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CommunityRouteThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.post.postId != widget.post.postId ||
+        oldWidget.post.routePointCount != widget.post.routePointCount) {
+      _routeRendered = false;
+      unawaited(_renderRoute());
+    }
+  }
+
+  Future<void> _onMapCreated(maplibre.MapLibreMapController controller) async {
+    _controller = controller;
+    await _renderRoute();
+  }
+
+  Future<void> _onStyleLoaded() async {
+    _styleLoaded = true;
+    _routeRendered = false;
+    await _renderRoute();
+  }
+
+  Future<void> _renderRoute() async {
+    final controller = _controller;
+    final points = _routePoints;
+    if (controller == null ||
+        !_styleLoaded ||
+        _routeRendered ||
+        points.length < 2) {
+      return;
+    }
+
+    _routeRendered = true;
+    await controller.clearLines();
+    await controller.clearCircles();
+    await controller.addLine(
+      maplibre.LineOptions(
+        geometry: points,
+        lineColor: '#34A853',
+        lineOpacity: 0.94,
+        lineWidth: 4.0,
+        lineJoin: 'round',
+      ),
+    );
+    await controller.addCircles([
+      maplibre.CircleOptions(
+        geometry: points.first,
+        circleColor: '#7BC90E',
+        circleRadius: 6,
+        circleStrokeColor: '#FFFFFF',
+        circleStrokeWidth: 2,
+      ),
+      maplibre.CircleOptions(
+        geometry: points.last,
+        circleColor: '#0A84FF',
+        circleRadius: 7,
+        circleStrokeColor: '#FFFFFF',
+        circleStrokeWidth: 2,
+      ),
+    ]);
+    await _fitRoute();
+  }
+
+  Future<void> _fitRoute() async {
+    final controller = _controller;
+    final points = _routePoints;
+    if (controller == null || points.length < 2) {
+      return;
+    }
+    await controller.animateCamera(
+      maplibre.CameraUpdate.newLatLngBounds(
+        _boundsFor(points),
+        left: 28,
+        top: 28,
+        right: 28,
+        bottom: 28,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final points = _routePoints;
+    if (points.length < 2) {
+      return CustomPaint(
+        painter: _CommunityImagePainter(color: widget.post.color),
+        child: const SizedBox.expand(),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        maplibre.MapLibreMap(
+          key: ValueKey('${widget.post.postId}:${widget.post.routePointCount}'),
+          styleString: _styleUrl,
+          initialCameraPosition: maplibre.CameraPosition(
+            target: _centerFor(points),
+            zoom: 13.5,
+          ),
+          compassEnabled: false,
+          logoEnabled: false,
+          rotateGesturesEnabled: false,
+          scrollGesturesEnabled: false,
+          tiltGesturesEnabled: false,
+          zoomGesturesEnabled: false,
+          gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+          onMapCreated: _onMapCreated,
+          onStyleLoadedCallback: _onStyleLoaded,
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0x11000000), Color(0x00000000), Color(0x77000000)],
+            ),
+          ),
+        ),
+        Positioned(
+          left: 10,
+          bottom: 9,
+          child: _StatusPill(
+            label: '${widget.post.routePointCount} GPS points',
+            color: _CircleColors.green,
+          ),
+        ),
+      ],
+    );
+  }
+
+  maplibre.LatLng _centerFor(List<maplibre.LatLng> points) {
+    var latitude = 0.0;
+    var longitude = 0.0;
+    for (final point in points) {
+      latitude += point.latitude;
+      longitude += point.longitude;
+    }
+    return maplibre.LatLng(latitude / points.length, longitude / points.length);
+  }
+
+  maplibre.LatLngBounds _boundsFor(List<maplibre.LatLng> points) {
+    var minLatitude = points.first.latitude;
+    var maxLatitude = points.first.latitude;
+    var minLongitude = points.first.longitude;
+    var maxLongitude = points.first.longitude;
+    for (final point in points.skip(1)) {
+      minLatitude = math.min(minLatitude, point.latitude);
+      maxLatitude = math.max(maxLatitude, point.latitude);
+      minLongitude = math.min(minLongitude, point.longitude);
+      maxLongitude = math.max(maxLongitude, point.longitude);
+    }
+    if ((maxLatitude - minLatitude).abs() < 0.0001) {
+      minLatitude -= 0.00005;
+      maxLatitude += 0.00005;
+    }
+    if ((maxLongitude - minLongitude).abs() < 0.0001) {
+      minLongitude -= 0.00005;
+      maxLongitude += 0.00005;
+    }
+    return maplibre.LatLngBounds(
+      southwest: maplibre.LatLng(minLatitude, minLongitude),
+      northeast: maplibre.LatLng(maxLatitude, maxLongitude),
+    );
+  }
+}
+
 class _CommunityImagePainter extends CustomPainter {
   const _CommunityImagePainter({required this.color});
 
@@ -2125,44 +2363,6 @@ List<_CommunityPerson> _seedPeople() {
   ];
 }
 
-List<_CommunityPost> _seedPosts() {
-  return const [
-    _CommunityPost(
-      author: 'Aina',
-      handle: '@ainatrails',
-      timeLabel: '12 min',
-      trail: 'Broga Hill Trail',
-      body:
-          'Started before sunrise and the upper section dried faster than expected. Bring a headlamp and avoid the muddy right fork.',
-      likes: 42,
-      replies: 8,
-      color: _CircleColors.green,
-    ),
-    _CommunityPost(
-      author: 'Mei Lin',
-      handle: '@meiclimbs',
-      timeLabel: '48 min',
-      trail: 'Bukit Tabur Trail',
-      body:
-          'Loose stones near the ridge are still a problem. Smaller groups moved better today. I would not bring first-timers this week.',
-      likes: 31,
-      replies: 12,
-      color: _CircleColors.orange,
-    ),
-    _CommunityPost(
-      author: 'Farid',
-      handle: '@faridforest',
-      timeLabel: '2 hr',
-      trail: 'Penang Hill Heritage Trail',
-      body:
-          'Misty but calm. The middle station checkpoint is a good regroup spot before the climb gets steeper.',
-      likes: 64,
-      replies: 15,
-      color: _CircleColors.purple,
-    ),
-  ];
-}
-
 List<_TeamPlan> _seedTeams() {
   return const [
     _TeamPlan(
@@ -2198,6 +2398,9 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
   final caption = _stringFrom(data['caption']).isEmpty
       ? 'Shared a trail update.'
       : _stringFrom(data['caption']);
+  final routePreviewPoints = _listOfMaps(
+    data['routePreviewPoints'],
+  ).map(HikeCoordinate.fromFirestore).toList();
 
   return _CommunityPost(
     postId: _stringFrom(data['postId']),
@@ -2209,6 +2412,9 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
     likes: _intFrom(data['likeCount']),
     replies: _intFrom(data['commentCount']),
     color: _colorForPost(_stringFrom(data['postId'])),
+    routeCaptureId: _stringFrom(data['routeCaptureId']),
+    routePointCount: _intFrom(data['routePointCount']),
+    routePreviewPoints: routePreviewPoints,
   );
 }
 
@@ -2266,6 +2472,16 @@ int _intFrom(Object? value) {
     return value.toInt();
   }
   return 0;
+}
+
+List<Map<String, dynamic>> _listOfMaps(Object? value) {
+  if (value is! Iterable) {
+    return const [];
+  }
+  return value
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList();
 }
 
 Color _colorForPost(String postId) {
