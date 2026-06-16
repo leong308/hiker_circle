@@ -15,6 +15,32 @@ import '../../core/services/trail_cover_image_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/trail_models.dart';
 
+Future<Trail?> showAddTrailSheet(BuildContext context) {
+  return showModalBottomSheet<Trail>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: _TrailColors.surfaceFor(context),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (context) => const _AddTrailSheet(),
+  );
+}
+
+Future<Trail?> showEditTrailSheet(BuildContext context, Trail trail) {
+  return showModalBottomSheet<Trail>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: _TrailColors.surfaceFor(context),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (context) => _EditTrailSheet(trail: trail),
+  );
+}
+
 class TrailPage extends StatefulWidget {
   const TrailPage({
     super.key,
@@ -123,16 +149,7 @@ class _TrailPageState extends State<TrailPage> {
       return;
     }
 
-    final trail = await showModalBottomSheet<Trail>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: _TrailColors.surfaceFor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) => const _AddTrailSheet(),
-    );
+    final trail = await showAddTrailSheet(context);
     if (trail == null || !mounted) {
       return;
     }
@@ -154,6 +171,129 @@ class _TrailPageState extends State<TrailPage> {
         ..showSnackBar(
           SnackBar(
             content: Text('${trail.name} added to Firebase trails.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _TrailColors.redFor(context),
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingTrails = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _editTrailFromCard(Trail trail) async {
+    if (!widget.session.isAdmin) {
+      return;
+    }
+
+    final updatedTrail = await showEditTrailSheet(context, trail);
+    if (updatedTrail == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingTrails = true;
+    });
+    try {
+      await widget.hikerCircleRepository.updateTrailByAdmin(
+        session: widget.session,
+        trail: updatedTrail,
+      );
+      await _loadLiveTrails();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Trail updated.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _TrailColors.redFor(context),
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingTrails = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteTrail(Trail trail) async {
+    if (!widget.session.isAdmin) {
+      return;
+    }
+
+    final shouldDelete = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (context) {
+        return CupertinoAlertDialog(
+          title: const Text('Delete trail?'),
+          content: Text('${trail.name} will be removed from Firebase trails.'),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            CupertinoDialogAction(
+              isDestructiveAction: true,
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (shouldDelete != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingTrails = true;
+    });
+    try {
+      await widget.hikerCircleRepository.deleteTrailByAdmin(
+        session: widget.session,
+        trail: trail,
+      );
+      await _loadLiveTrails();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('${trail.name} deleted.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -271,6 +411,12 @@ class _TrailPageState extends State<TrailPage> {
                           trail.trailId,
                         ),
                         onOpenTrail: () => _openTrail(trail),
+                        onEditTrail: widget.session.isAdmin
+                            ? () => _editTrailFromCard(trail)
+                            : null,
+                        onDeleteTrail: widget.session.isAdmin
+                            ? () => _deleteTrail(trail)
+                            : null,
                       ),
                       const SizedBox(height: 12),
                     ],
@@ -359,16 +505,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
       return;
     }
 
-    final updatedTrail = await showModalBottomSheet<Trail>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: _TrailColors.surfaceFor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) => _EditTrailSheet(trail: _trail),
-    );
+    final updatedTrail = await showEditTrailSheet(context, _trail);
     if (updatedTrail == null || !mounted) {
       return;
     }
@@ -1506,14 +1643,47 @@ class _AdminCoordinatePickerSheetState
     widget.initialLongitude ?? _defaultLongitude,
   );
   maplibre.MapLibreMapController? _mapController;
+  bool _styleLoaded = false;
 
   void _selectCoordinate(maplibre.LatLng coordinate) {
     setState(() {
       _selected = coordinate;
     });
+    unawaited(_syncSelectedPin());
     unawaited(
       _mapController?.animateCamera(
         maplibre.CameraUpdate.newLatLng(coordinate),
+      ),
+    );
+  }
+
+  Future<void> _syncSelectedPin() async {
+    final controller = _mapController;
+    if (!_styleLoaded || controller == null) {
+      return;
+    }
+
+    await controller.clearCircles();
+    await controller.clearSymbols();
+    await controller.addCircle(
+      maplibre.CircleOptions(
+        geometry: _selected,
+        circleRadius: 10,
+        circleColor: '#E11D48',
+        circleStrokeColor: '#FFFFFF',
+        circleStrokeWidth: 3,
+      ),
+    );
+    await controller.addSymbol(
+      maplibre.SymbolOptions(
+        geometry: _selected,
+        textField: 'Pin',
+        textSize: 12,
+        textColor: '#FFFFFF',
+        textHaloColor: '#111111',
+        textHaloWidth: 0.8,
+        textOffset: const Offset(0, 1.35),
+        textAnchor: 'top',
       ),
     );
   }
@@ -1571,6 +1741,16 @@ class _AdminCoordinatePickerSheetState
                       rotateGesturesEnabled: false,
                       tiltGesturesEnabled: false,
                       trackCameraPosition: true,
+                      featureTapsTriggersMapClick: true,
+                      annotationConsumeTapEvents: const [
+                        maplibre.AnnotationType.fill,
+                      ],
+                      annotationOrder: const [
+                        maplibre.AnnotationType.circle,
+                        maplibre.AnnotationType.symbol,
+                        maplibre.AnnotationType.line,
+                        maplibre.AnnotationType.fill,
+                      ],
                       gestureRecognizers: {
                         Factory<OneSequenceGestureRecognizer>(
                           () => EagerGestureRecognizer(),
@@ -1579,16 +1759,13 @@ class _AdminCoordinatePickerSheetState
                       onMapCreated: (controller) {
                         _mapController = controller;
                       },
+                      onStyleLoadedCallback: () {
+                        _styleLoaded = true;
+                        unawaited(_syncSelectedPin());
+                      },
                       onMapClick: (_, coordinate) {
                         _selectCoordinate(coordinate);
                       },
-                    ),
-                    Center(
-                      child: Icon(
-                        Icons.location_pin,
-                        color: _TrailColors.redFor(context),
-                        size: 42,
-                      ),
                     ),
                     Positioned(
                       left: 12,
@@ -1945,15 +2122,19 @@ class _TrailCard extends StatelessWidget {
     required this.trail,
     required this.isDownloaded,
     required this.onOpenTrail,
+    this.onEditTrail,
+    this.onDeleteTrail,
   });
 
   final Trail trail;
   final bool isDownloaded;
   final VoidCallback onOpenTrail;
+  final Future<void> Function()? onEditTrail;
+  final Future<void> Function()? onDeleteTrail;
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    final card = _InsetGroup(
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -2028,6 +2209,79 @@ class _TrailCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+
+    if (onEditTrail == null || onDeleteTrail == null) {
+      return card;
+    }
+
+    return Dismissible(
+      key: ValueKey('trail-${trail.trailId}-${trail.name}'),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          await onEditTrail?.call();
+          return false;
+        }
+
+        await onDeleteTrail?.call();
+        return false;
+      },
+      background: const _TrailSwipeActionBackground(
+        alignment: Alignment.centerLeft,
+        color: _TrailColors.green,
+        icon: Icons.edit_rounded,
+        label: 'Edit',
+      ),
+      secondaryBackground: _TrailSwipeActionBackground(
+        alignment: Alignment.centerRight,
+        color: _TrailColors.redFor(context),
+        icon: Icons.delete_rounded,
+        label: 'Delete',
+      ),
+      child: card,
+    );
+  }
+}
+
+class _TrailSwipeActionBackground extends StatelessWidget {
+  const _TrailSwipeActionBackground({
+    required this.alignment,
+    required this.color,
+    required this.icon,
+    required this.label,
+  });
+
+  final Alignment alignment;
+  final Color color;
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLeft = alignment == Alignment.centerLeft;
+
+    return Container(
+      color: color,
+      alignment: alignment,
+      padding: EdgeInsets.only(left: isLeft ? 18 : 0, right: isLeft ? 0 : 18),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: isLeft
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.end,
+        children: [
+          Icon(icon, color: Colors.white, size: 20),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
       ),
     );
   }

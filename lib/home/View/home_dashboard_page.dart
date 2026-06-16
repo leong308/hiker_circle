@@ -20,6 +20,9 @@ class HomeDashboardPage extends StatelessWidget {
     required this.isVisible,
     required this.onStartHike,
     required this.onOpenTrailDetail,
+    this.onAddTrailByAdmin,
+    this.onEditTrailByAdmin,
+    this.onDeleteTrailByAdmin,
     required this.onActiveHikeChanged,
     required this.onCheckInRequested,
     required this.onPinLocationRequested,
@@ -37,6 +40,9 @@ class HomeDashboardPage extends StatelessWidget {
   final bool isVisible;
   final Future<void> Function(Trail? trail) onStartHike;
   final ValueChanged<Trail> onOpenTrailDetail;
+  final VoidCallback? onAddTrailByAdmin;
+  final Future<void> Function(Trail trail)? onEditTrailByAdmin;
+  final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
   final ValueChanged<ActiveHikeSession> onActiveHikeChanged;
   final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
   onCheckInRequested;
@@ -68,6 +74,9 @@ class HomeDashboardPage extends StatelessWidget {
                             onStartHike: () =>
                                 unawaited(_startHikeFromDashboard(context)),
                             onOpenTrailDetail: onOpenTrailDetail,
+                            onAddTrailByAdmin: onAddTrailByAdmin,
+                            onEditTrailByAdmin: onEditTrailByAdmin,
+                            onDeleteTrailByAdmin: onDeleteTrailByAdmin,
                           )
                         : _PreparationDashboard(
                             plannedHike: planned,
@@ -77,6 +86,9 @@ class HomeDashboardPage extends StatelessWidget {
                               _confirmPreparationThenStart(context, planned),
                             ),
                             onOpenTrailDetail: onOpenTrailDetail,
+                            onAddTrailByAdmin: onAddTrailByAdmin,
+                            onEditTrailByAdmin: onEditTrailByAdmin,
+                            onDeleteTrailByAdmin: onDeleteTrailByAdmin,
                           )
                   : _ActiveHikeDashboard(
                       currentPhoneNumber: phoneNumber,
@@ -233,6 +245,9 @@ class _PreparationDashboard extends StatelessWidget {
     required this.isLoadingTrails,
     required this.onStartHike,
     required this.onOpenTrailDetail,
+    this.onAddTrailByAdmin,
+    this.onEditTrailByAdmin,
+    this.onDeleteTrailByAdmin,
   });
 
   final PlannedHike plannedHike;
@@ -240,6 +255,9 @@ class _PreparationDashboard extends StatelessWidget {
   final bool isLoadingTrails;
   final VoidCallback onStartHike;
   final ValueChanged<Trail> onOpenTrailDetail;
+  final VoidCallback? onAddTrailByAdmin;
+  final Future<void> Function(Trail trail)? onEditTrailByAdmin;
+  final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
 
   @override
   Widget build(BuildContext context) {
@@ -269,6 +287,9 @@ class _PreparationDashboard extends StatelessWidget {
           trails: trails,
           isLoading: isLoadingTrails,
           onOpenTrail: onOpenTrailDetail,
+          onAddTrailByAdmin: onAddTrailByAdmin,
+          onEditTrailByAdmin: onEditTrailByAdmin,
+          onDeleteTrailByAdmin: onDeleteTrailByAdmin,
         ),
         if (plannedHike.missingPreparationItems.isNotEmpty) ...[
           const SizedBox(height: 14),
@@ -315,12 +336,18 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
     required this.isLoadingTrails,
     required this.onStartHike,
     required this.onOpenTrailDetail,
+    this.onAddTrailByAdmin,
+    this.onEditTrailByAdmin,
+    this.onDeleteTrailByAdmin,
   });
 
   final List<Trail> trails;
   final bool isLoadingTrails;
   final VoidCallback onStartHike;
   final ValueChanged<Trail> onOpenTrailDetail;
+  final VoidCallback? onAddTrailByAdmin;
+  final Future<void> Function(Trail trail)? onEditTrailByAdmin;
+  final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
 
   @override
   Widget build(BuildContext context) {
@@ -338,6 +365,9 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
           trails: trails,
           isLoading: isLoadingTrails,
           onOpenTrail: onOpenTrailDetail,
+          onAddTrailByAdmin: onAddTrailByAdmin,
+          onEditTrailByAdmin: onEditTrailByAdmin,
+          onDeleteTrailByAdmin: onDeleteTrailByAdmin,
         ),
       ],
     );
@@ -390,11 +420,17 @@ class _BestMatchesSection extends StatelessWidget {
     required this.trails,
     required this.isLoading,
     required this.onOpenTrail,
+    this.onAddTrailByAdmin,
+    this.onEditTrailByAdmin,
+    this.onDeleteTrailByAdmin,
   });
 
   final List<Trail> trails;
   final bool isLoading;
   final ValueChanged<Trail> onOpenTrail;
+  final VoidCallback? onAddTrailByAdmin;
+  final Future<void> Function(Trail trail)? onEditTrailByAdmin;
+  final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
 
   @override
   Widget build(BuildContext context) {
@@ -402,7 +438,7 @@ class _BestMatchesSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _SectionTitle(label: 'Best Matches'),
+        _BestMatchesHeader(onAddTrailByAdmin: onAddTrailByAdmin),
         const SizedBox(height: 8),
         if (isLoading && visibleTrails.isEmpty)
           const _BestMatchesLoading()
@@ -412,7 +448,16 @@ class _BestMatchesSection extends StatelessWidget {
           )
         else
           for (final trail in visibleTrails) ...[
-            _BestMatchTrailCard(trail: trail, onTap: () => onOpenTrail(trail)),
+            _BestMatchTrailCard(
+              trail: trail,
+              onTap: () => onOpenTrail(trail),
+              onEditTrail: onEditTrailByAdmin == null
+                  ? null
+                  : () => onEditTrailByAdmin!(trail),
+              onDeleteTrail: onDeleteTrailByAdmin == null
+                  ? null
+                  : () => onDeleteTrailByAdmin!(trail),
+            ),
             const SizedBox(height: 12),
           ],
       ],
@@ -420,15 +465,62 @@ class _BestMatchesSection extends StatelessWidget {
   }
 }
 
-class _BestMatchTrailCard extends StatelessWidget {
-  const _BestMatchTrailCard({required this.trail, required this.onTap});
+class _BestMatchesHeader extends StatelessWidget {
+  const _BestMatchesHeader({this.onAddTrailByAdmin});
 
-  final Trail trail;
-  final VoidCallback onTap;
+  final VoidCallback? onAddTrailByAdmin;
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    return Row(
+      children: [
+        const Expanded(child: _SectionTitle(label: 'Best Matches')),
+        if (onAddTrailByAdmin != null)
+          Tooltip(
+            message: 'Add trail',
+            child: CupertinoButton(
+              minimumSize: Size.zero,
+              padding: EdgeInsets.zero,
+              onPressed: onAddTrailByAdmin,
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: _HomeColors.green.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _HomeColors.green.withValues(alpha: 0.28),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.add_rounded,
+                  color: _HomeColors.green,
+                  size: 22,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _BestMatchTrailCard extends StatelessWidget {
+  const _BestMatchTrailCard({
+    required this.trail,
+    required this.onTap,
+    this.onEditTrail,
+    this.onDeleteTrail,
+  });
+
+  final Trail trail;
+  final VoidCallback onTap;
+  final Future<void> Function()? onEditTrail;
+  final Future<void> Function()? onDeleteTrail;
+
+  @override
+  Widget build(BuildContext context) {
+    final card = _InsetGroup(
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -514,6 +606,79 @@ class _BestMatchTrailCard extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+
+    if (onEditTrail == null || onDeleteTrail == null) {
+      return card;
+    }
+
+    return Dismissible(
+      key: ValueKey('home-trail-${trail.trailId}-${trail.name}'),
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          await onEditTrail?.call();
+          return false;
+        }
+
+        await onDeleteTrail?.call();
+        return false;
+      },
+      background: const _HomeSwipeActionBackground(
+        alignment: Alignment.centerLeft,
+        color: _HomeColors.green,
+        icon: Icons.edit_rounded,
+        label: 'Edit',
+      ),
+      secondaryBackground: const _HomeSwipeActionBackground(
+        alignment: Alignment.centerRight,
+        color: _HomeColors.red,
+        icon: Icons.delete_rounded,
+        label: 'Delete',
+      ),
+      child: card,
+    );
+  }
+}
+
+class _HomeSwipeActionBackground extends StatelessWidget {
+  const _HomeSwipeActionBackground({
+    required this.alignment,
+    required this.color,
+    required this.icon,
+    required this.label,
+  });
+
+  final Alignment alignment;
+  final Color color;
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLeft = alignment == Alignment.centerLeft;
+
+    return Container(
+      color: color,
+      alignment: alignment,
+      padding: EdgeInsets.only(left: isLeft ? 18 : 0, right: isLeft ? 0 : 18),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: isLeft
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.end,
+        children: [
+          Icon(icon, color: Colors.white, size: 20),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1059,6 +1059,29 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  Future<List<Trail>> loadAdminTrails({required AppSession session}) async {
+    _throwIfAdminUnavailable(session);
+    try {
+      final snapshot = await _trails
+          .orderBy('isVerifiedTrail', descending: true)
+          .orderBy('ratingAverage', descending: true)
+          .get();
+      return snapshot.docs
+          .map(
+            (document) => _trailFromFirestore({
+              'trailId': document.id,
+              ...document.data(),
+            }),
+          )
+          .whereType<Trail>()
+          .toList();
+    } on FirebaseException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        'Failed to load trails: ${error.message ?? error.code}',
+      );
+    }
+  }
+
   Future<void> updateTrailByAdmin({
     required AppSession session,
     required Trail trail,
@@ -1091,6 +1114,26 @@ class HikerCircleFirebaseRepository {
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
     }, SetOptions(merge: true));
+  }
+
+  Future<void> deleteTrailByAdmin({
+    required AppSession session,
+    required Trail trail,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    if (trail.trailId.trim().isEmpty) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Trail is missing an id.',
+      );
+    }
+
+    try {
+      await _trails.doc(trail.trailId).delete();
+    } on FirebaseException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        'Failed to delete trail: ${error.message ?? error.code}',
+      );
+    }
   }
 
   Future<List<Map<String, dynamic>>> loadAdminSosAlerts({

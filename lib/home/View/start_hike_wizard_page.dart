@@ -1598,6 +1598,7 @@ class _CheckpointRouteMapState extends State<_CheckpointRouteMap> {
         compassEnabled: false,
         logoEnabled: false,
         featureTapsTriggersMapClick: true,
+        annotationConsumeTapEvents: const [maplibre.AnnotationType.fill],
         annotationOrder: const [
           maplibre.AnnotationType.line,
           maplibre.AnnotationType.circle,

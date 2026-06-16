@@ -391,6 +391,184 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
   }
 
+  Future<void> addTrailByAdminFromHome() async {
+    if (!widget.session.isAdmin) {
+      return;
+    }
+
+    final trail = await showAddTrailSheet(context);
+    if (trail == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      isLoadingLiveData = true;
+    });
+    try {
+      await hikerCircleRepository.createTrailByAdmin(
+        session: widget.session,
+        trail: trail,
+      );
+      await loadLiveData();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('${trail.name} added to Firebase trails.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingLiveData = false;
+        });
+      }
+    }
+  }
+
+  Future<void> editTrailByAdminFromHome(Trail trail) async {
+    if (!widget.session.isAdmin) {
+      return;
+    }
+
+    final updatedTrail = await showEditTrailSheet(context, trail);
+    if (updatedTrail == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      isLoadingLiveData = true;
+    });
+    try {
+      await hikerCircleRepository.updateTrailByAdmin(
+        session: widget.session,
+        trail: updatedTrail,
+      );
+      await loadLiveData();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Trail updated.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingLiveData = false;
+        });
+      }
+    }
+  }
+
+  Future<void> deleteTrailByAdminFromHome(Trail trail) async {
+    if (!widget.session.isAdmin) {
+      return;
+    }
+
+    final shouldDelete = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (context) {
+        return CupertinoAlertDialog(
+          title: const Text('Delete trail?'),
+          content: Text('${trail.name} will be removed from Firebase trails.'),
+          actions: [
+            CupertinoDialogAction(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            CupertinoDialogAction(
+              isDestructiveAction: true,
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (shouldDelete != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      isLoadingLiveData = true;
+      if (plannedHike?.trail.trailId == trail.trailId) {
+        plannedHike = null;
+      }
+    });
+    try {
+      await hikerCircleRepository.deleteTrailByAdmin(
+        session: widget.session,
+        trail: trail,
+      );
+      await loadLiveData();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('${trail.name} deleted.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoadingLiveData = false;
+        });
+      }
+    }
+  }
+
   Future<int> _readBatteryLevel({required int fallback}) async {
     return await _sosDeviceAlertService.getBatteryLevel() ?? fallback;
   }
@@ -1305,6 +1483,15 @@ class _HikerHomePageState extends State<HikerHomePage>
           isVisible: selectedTabIndex == 0,
           onStartHike: (trail) => openStartHikeWizard(trail),
           onOpenTrailDetail: openTrailDetail,
+          onAddTrailByAdmin: widget.session.isAdmin
+              ? () => unawaited(addTrailByAdminFromHome())
+              : null,
+          onEditTrailByAdmin: widget.session.isAdmin
+              ? editTrailByAdminFromHome
+              : null,
+          onDeleteTrailByAdmin: widget.session.isAdmin
+              ? deleteTrailByAdminFromHome
+              : null,
           onActiveHikeChanged: (updatedHike) {
             setState(() {
               activeHike = updatedHike;
