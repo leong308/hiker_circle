@@ -21,18 +21,53 @@ class TrailCheckpoint {
   }
 }
 
+class HourlyForecast {
+  const HourlyForecast({
+    required this.time,
+    required this.temperature,
+    required this.precipitationProbability,
+    required this.weatherCode,
+  });
+
+  final DateTime time;
+  final double temperature;
+  final int precipitationProbability;
+  final int weatherCode;
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'timeLocal': time.toUtc().toIso8601String(),
+      'temperature': temperature,
+      'precipitationProbability': precipitationProbability,
+      'weatherCode': weatherCode,
+    };
+  }
+
+  String get weatherLabel => _wmoSummary(weatherCode);
+}
+
 class TrailWeather {
   const TrailWeather({
     required this.summary,
     required this.temperatureRange,
     required this.rainProbability,
     required this.cachedAt,
+    this.humidity,
+    this.windSpeed,
+    this.uvIndex,
+    this.feelsLike,
+    this.hourlyForecast = const [],
   });
 
   final String summary;
   final String temperatureRange;
   final int rainProbability;
   final DateTime cachedAt;
+  final int? humidity;
+  final double? windSpeed;
+  final double? uvIndex;
+  final double? feelsLike;
+  final List<HourlyForecast> hourlyForecast;
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -40,8 +75,52 @@ class TrailWeather {
       'temperatureRange': temperatureRange,
       'rainProbability': rainProbability,
       'cachedAtLocal': cachedAt.toUtc().toIso8601String(),
+      if (humidity != null) 'humidity': humidity,
+      if (windSpeed != null) 'windSpeed': windSpeed,
+      if (uvIndex != null) 'uvIndex': uvIndex,
+      if (feelsLike != null) 'feelsLike': feelsLike,
+      if (hourlyForecast.isNotEmpty)
+        'hourlyForecast': hourlyForecast.map((h) => h.toFirestore()).toList(),
     };
   }
+
+  bool get isStale {
+    return DateTime.now().toUtc().difference(cachedAt.toUtc()).inHours >= 4;
+  }
+}
+
+String _wmoSummary(int code) {
+  const mapping = {
+    0: 'Clear sky',
+    1: 'Mainly clear',
+    2: 'Partly cloudy',
+    3: 'Cloudy',
+    45: 'Foggy',
+    48: 'Depositing rime fog',
+    51: 'Light drizzle',
+    53: 'Moderate drizzle',
+    55: 'Dense drizzle',
+    56: 'Light freezing drizzle',
+    57: 'Dense freezing drizzle',
+    61: 'Slight rain',
+    63: 'Moderate rain',
+    65: 'Heavy rain',
+    66: 'Light freezing rain',
+    67: 'Heavy freezing rain',
+    71: 'Slight snow',
+    73: 'Moderate snow',
+    75: 'Heavy snow',
+    77: 'Snow grains',
+    80: 'Slight rain showers',
+    81: 'Moderate rain showers',
+    82: 'Violent rain showers',
+    85: 'Slight snow showers',
+    86: 'Heavy snow showers',
+    95: 'Thunderstorm',
+    96: 'Thunderstorm with slight hail',
+    99: 'Thunderstorm with heavy hail',
+  };
+  return mapping[code] ?? 'Unknown';
 }
 
 class TrailHazard {

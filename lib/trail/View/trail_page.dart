@@ -658,7 +658,13 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                   const SizedBox(height: 8),
                   _CheckpointTimeline(trail: trail),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Conditions and Safety'),
+                  _SectionTitle(
+                    label: 'Conditions and Safety',
+                    trailing: _WeatherInsightsButton(
+                      trail: trail,
+                      repository: widget.hikerCircleRepository,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   _WeatherCard(trail: trail),
                   const SizedBox(height: 10),
@@ -3710,6 +3716,288 @@ class _OpenFreeMapAttribution extends StatelessWidget {
   }
 }
 
+class _WeatherInsightsButton extends StatelessWidget {
+  const _WeatherInsightsButton({
+    required this.trail,
+    required this.repository,
+  });
+
+  final Trail trail;
+  final HikerCircleFirebaseRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        onPressed: () => showWeatherInsightsSheet(
+          context,
+          trail: trail,
+          repository: repository,
+        ),
+        icon: const Icon(Icons.analytics_rounded, size: 18),
+        padding: EdgeInsets.zero,
+        color: _TrailColors.secondaryTextFor(context),
+        tooltip: 'Weather insights',
+      ),
+    );
+  }
+}
+
+void showWeatherInsightsSheet(
+  BuildContext context, {
+  required Trail trail,
+  required HikerCircleFirebaseRepository repository,
+}) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: _TrailColors.surfaceFor(context),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (sheetContext) => _WeatherInsightsSheet(
+      trail: trail,
+      repository: repository,
+    ),
+  );
+}
+
+class _WeatherInsightsSheet extends StatefulWidget {
+  const _WeatherInsightsSheet({
+    required this.trail,
+    required this.repository,
+  });
+
+  final Trail trail;
+  final HikerCircleFirebaseRepository repository;
+
+  @override
+  State<_WeatherInsightsSheet> createState() => _WeatherInsightsSheetState();
+}
+
+class _WeatherInsightsSheetState extends State<_WeatherInsightsSheet> {
+  late final Trail _trail = widget.trail;
+
+  String _timeAgo(DateTime dateTime) {
+    final diff = DateTime.now().toUtc().difference(dateTime.toUtc());
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final weather = _trail.weather;
+    final hourlyForecasts = weather.hourlyForecast;
+    final hasExtraDetails = weather.feelsLike != null ||
+        weather.windSpeed != null ||
+        weather.humidity != null ||
+        weather.uvIndex != null;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Hourly Forecast',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: _TrailColors.textFor(context),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Last refreshed ${_timeAgo(weather.cachedAt)}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _TrailColors.secondaryTextFor(context),
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (hasExtraDetails) ...[
+                    _ExtraDetailCard(weather: weather, uvLabel: _uvLabel),
+                    const SizedBox(height: 16),
+                  ],
+                  if (hourlyForecasts.isNotEmpty) ...[
+                    Text(
+                      'HOURLY FORECAST',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: _TrailColors.secondaryTextFor(context),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _InsetGroup(
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          children: [
+                            for (var i = 0;
+                                i < hourlyForecasts.length;
+                                i++) ...[
+                              if (i > 0) const _HorizontalSeparator(),
+                              _HourlyForecastRow(
+                                  forecast: hourlyForecasts[i]),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _uvLabel(double uvIndex) {
+    if (uvIndex < 3) return '${uvIndex.toStringAsFixed(1)} (Low)';
+    if (uvIndex < 6) return '${uvIndex.toStringAsFixed(1)} (Moderate)';
+    if (uvIndex < 8) return '${uvIndex.toStringAsFixed(1)} (High)';
+    if (uvIndex < 11) return '${uvIndex.toStringAsFixed(1)} (Very High)';
+    return '${uvIndex.toStringAsFixed(1)} (Extreme)';
+  }
+}
+
+class _ExtraDetailCard extends StatelessWidget {
+  const _ExtraDetailCard({
+    required this.weather,
+    required this.uvLabel,
+  });
+
+  final TrailWeather weather;
+  final String Function(double uvIndex) uvLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    void addRow(String label, String value) {
+      if (rows.isNotEmpty) {
+        rows.add(const _HorizontalSeparator());
+      }
+      rows.add(_StatusRow(label: label, value: value));
+    }
+
+    if (weather.feelsLike != null) {
+      addRow('Feels like', '${weather.feelsLike!.round()} °C');
+    }
+    if (weather.humidity != null) {
+      addRow('Humidity', '${weather.humidity}%');
+    }
+    if (weather.windSpeed != null) {
+      addRow('Wind', '${weather.windSpeed!.toStringAsFixed(1)} km/h');
+    }
+    if (weather.uvIndex != null) {
+      addRow('UV Index', uvLabel(weather.uvIndex!));
+    }
+
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(children: rows),
+      ),
+    );
+  }
+}
+
+class _HourlyForecastRow extends StatelessWidget {
+  const _HourlyForecastRow({required this.forecast});
+
+  final HourlyForecast forecast;
+
+  @override
+  Widget build(BuildContext context) {
+    final hour = forecast.time.hour.toString().padLeft(2, '0');
+    final minute = forecast.time.minute.toString().padLeft(2, '0');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 44,
+            child: Text(
+              '$hour:$minute',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: _TrailColors.textFor(context),
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(
+            _weatherIcon(forecast.weatherCode),
+            size: 18,
+            color: _TrailColors.secondaryTextFor(context),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              forecast.weatherLabel,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _TrailColors.secondaryTextFor(context),
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+          Text(
+            '${forecast.temperature.round()}°C',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: _TrailColors.textFor(context),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 36,
+            child: Text(
+              '${forecast.precipitationProbability}%',
+              textAlign: TextAlign.end,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: forecast.precipitationProbability > 50
+                    ? _TrailColors.orange
+                    : _TrailColors.secondaryTextFor(context),
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _weatherIcon(int code) {
+    if (code == 0) return Icons.light_mode_rounded;
+    if (code <= 2) return Icons.cloud_rounded;
+    if (code <= 3) return Icons.cloud_queue_rounded;
+    if (code <= 48) return Icons.foggy;
+    if (code <= 67) return Icons.water_drop_rounded;
+    if (code <= 77) return Icons.ac_unit_rounded;
+    if (code <= 86) return Icons.umbrella_rounded;
+    return Icons.thunderstorm_rounded;
+  }
+}
+
 class _WeatherCard extends StatelessWidget {
   const _WeatherCard({required this.trail});
 
@@ -3717,22 +4005,49 @@ class _WeatherCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final weather = trail.weather;
+    final cachedAt = weather.cachedAt;
+    final diff = DateTime.now().toUtc().difference(cachedAt.toUtc());
+    final refreshedText = diff.inMinutes < 1
+        ? 'Just now'
+        : diff.inMinutes < 60
+            ? '${diff.inMinutes}m ago'
+            : diff.inHours < 24
+                ? '${diff.inHours}h ago'
+                : '${diff.inDays}d ago';
+
     return _InsetGroup(
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           children: [
-            _StatusRow(label: 'Today', value: trail.weather.summary),
+            _StatusRow(label: 'Today', value: weather.summary),
             const _HorizontalSeparator(),
             _StatusRow(
               label: 'Temperature',
-              value: trail.weather.temperatureRange,
+              value: weather.temperatureRange,
             ),
             const _HorizontalSeparator(),
             _StatusRow(
               label: 'Rain Probability',
-              value: '${trail.weather.rainProbability}%',
+              value: '${weather.rainProbability}%',
             ),
+            if (weather.windSpeed != null) ...[
+              const _HorizontalSeparator(),
+              _StatusRow(
+                label: 'Wind',
+                value: '${weather.windSpeed!.toStringAsFixed(0)} km/h',
+              ),
+            ],
+            if (weather.humidity != null) ...[
+              const _HorizontalSeparator(),
+              _StatusRow(
+                label: 'Humidity',
+                value: '${weather.humidity}%',
+              ),
+            ],
+            const _HorizontalSeparator(),
+            _StatusRow(label: 'Refreshed', value: refreshedText),
           ],
         ),
       ),
@@ -3942,22 +4257,29 @@ class _StatusRow extends StatelessWidget {
 }
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.label});
+  const _SectionTitle({required this.label, this.trailing});
 
   final String label;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(left: 14),
-      child: Text(
-        label.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _TrailColors.secondaryTextFor(context),
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          letterSpacing: 0,
-        ),
+      child: Row(
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: _TrailColors.secondaryTextFor(context),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0,
+            ),
+          ),
+          if (trailing != null) const Spacer(),
+          if (trailing != null) trailing!,
+        ],
       ),
     );
   }

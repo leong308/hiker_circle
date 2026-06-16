@@ -9,6 +9,7 @@ import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
+import '../../core/services/open_meteo_service.dart';
 
 class HikerCircleFirebaseRepositoryException implements Exception {
   const HikerCircleFirebaseRepositoryException(this.message);
@@ -25,13 +26,16 @@ class HikerCircleFirebaseRepository {
     LocalSessionDatabase? localDatabase,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
+    OpenMeteoService? openMeteoService,
   }) : _firestore = firestore,
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
-       _firebaseBootstrapResult = firebaseBootstrapResult;
+       _firebaseBootstrapResult = firebaseBootstrapResult,
+       _openMeteoService = openMeteoService ?? const OpenMeteoService();
 
   final FirebaseFirestore? _firestore;
   final LocalSessionDatabase _localDatabase;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
+  final OpenMeteoService _openMeteoService;
 
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
@@ -149,7 +153,7 @@ class HikerCircleFirebaseRepository {
           .orderBy('isVerifiedTrail', descending: true)
           .orderBy('ratingAverage', descending: true)
           .get();
-      final liveTrails = snapshot.docs
+      var liveTrails = snapshot.docs
           .map(
             (document) => _trailFromFirestore({
               'trailId': document.id,
@@ -159,9 +163,101 @@ class HikerCircleFirebaseRepository {
           .whereType<Trail>()
           .toList();
 
+      await _enrichWithLiveWeather(liveTrails, snapshot.docs);
+
       return liveTrails;
     } catch (_) {
       return const [];
+    }
+  }
+
+  Future<void> _enrichWithLiveWeather(
+    List<Trail> liveTrails,
+    List<DocumentSnapshot<Map<String, dynamic>>> docs,
+  ) async {
+    final fetchIndices = <int>[];
+    final batch = _resolvedFirestore.batch();
+    var hasChanges = false;
+
+    for (var i = 0; i < liveTrails.length; i++) {
+      if (liveTrails[i].weather.isStale) {
+        fetchIndices.add(i);
+      }
+    }
+
+    if (fetchIndices.isEmpty) {
+      return;
+    }
+
+    final weatherResults = await Future.wait(
+      fetchIndices.map(
+        (i) => _fetchWeatherOrNull(
+          liveTrails[i].latitude,
+          liveTrails[i].longitude,
+        ),
+      ),
+    );
+
+    for (var j = 0; j < fetchIndices.length; j++) {
+      final weather = weatherResults[j];
+      if (weather == null) {
+        continue;
+      }
+      final i = fetchIndices[j];
+      liveTrails[i] = liveTrails[i].copyWith(weather: weather);
+
+      if (i < docs.length && docs[i].exists) {
+        batch.update(docs[i].reference, {
+          'weather': weather.toFirestore(),
+        });
+        hasChanges = true;
+      }
+    }
+
+    if (hasChanges) {
+      try {
+        await batch.commit();
+      } catch (_) {
+        // Cache write is best-effort; stale Firestore data is acceptable.
+      }
+    }
+  }
+
+  Future<TrailWeather?> _fetchWeatherOrNull(
+    double latitude,
+    double longitude,
+  ) async {
+    try {
+      return await _openMeteoService.fetchWeather(
+        latitude: latitude,
+        longitude: longitude,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Trail> refreshTrailWeather(Trail trail) async {
+    try {
+      final weather = await _openMeteoService.fetchWeather(
+        latitude: trail.latitude,
+        longitude: trail.longitude,
+      );
+      final updated = trail.copyWith(weather: weather);
+
+      if (_firebaseBootstrapResult.isAvailable) {
+        try {
+          await _trails.doc(trail.trailId).update({
+            'weather': weather.toFirestore(),
+          });
+        } catch (_) {
+          // Cache write is best-effort.
+        }
+      }
+
+      return updated;
+    } catch (_) {
+      return trail;
     }
   }
 
@@ -1821,12 +1917,45 @@ class HikerCircleFirebaseRepository {
 
   TrailWeather _weatherFromFirestore(Object? value) {
     final data = value is Map ? Map<String, dynamic>.from(value) : {};
+    final hourlyData = data['hourlyForecast'];
     return TrailWeather(
       summary: _stringFrom(data['summary']),
       temperatureRange: _stringFrom(data['temperatureRange']),
       rainProbability: _intFrom(data['rainProbability']),
       cachedAt: _dateFromValue(data['cachedAtLocal']) ?? DateTime.now().toUtc(),
+      humidity: _nullableIntFrom(data['humidity']),
+      windSpeed: _nullableDoubleFrom(data['windSpeed']),
+      uvIndex: _nullableDoubleFrom(data['uvIndex']),
+      feelsLike: _nullableDoubleFrom(data['feelsLike']),
+      hourlyForecast: hourlyData is List
+          ? hourlyData
+              .map((h) => _hourlyForecastFromFirestore(h))
+              .whereType<HourlyForecast>()
+              .toList()
+          : const [],
     );
+  }
+
+  HourlyForecast? _hourlyForecastFromFirestore(Object? value) {
+    final data = value is Map ? Map<String, dynamic>.from(value) : {};
+    final time = _dateFromValue(data['timeLocal']);
+    if (time == null) {
+      return null;
+    }
+    return HourlyForecast(
+      time: time,
+      temperature: _doubleFrom(data['temperature']),
+      precipitationProbability: _intFrom(data['precipitationProbability']),
+      weatherCode: _intFrom(data['weatherCode']),
+    );
+  }
+
+  int? _nullableIntFrom(Object? value) {
+    return value is num ? value.toInt() : null;
+  }
+
+  double? _nullableDoubleFrom(Object? value) {
+    return value is num ? value.toDouble() : null;
   }
 
   TrailHazard? _hazardFromFirestore(Map<String, dynamic> data) {

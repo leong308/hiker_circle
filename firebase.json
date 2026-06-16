@@ -38,5 +38,9 @@
         "destination": "/live-location.html"
       }
     ]
+  },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs20"
   }
 }
