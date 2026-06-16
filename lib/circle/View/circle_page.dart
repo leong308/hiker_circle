@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/foundation.dart';
@@ -11,6 +10,8 @@ import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/widgets/map_controls.dart';
+import '../../core/widgets/map_utils.dart';
 import '../../home/Model/hike_session_models.dart';
 
 class CirclePage extends StatefulWidget {
@@ -2089,11 +2090,22 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   maplibre.MapLibreMapController? _controller;
   var _styleLoaded = false;
   var _routeRendered = false;
+  late double _currentZoom = 13.5;
+  late double _scaleLatitude;
 
   List<maplibre.LatLng> get _routePoints {
     return widget.post.routePreviewPoints
         .map((point) => maplibre.LatLng(point.latitude, point.longitude))
         .toList();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final pts = _routePoints;
+    if (pts.isNotEmpty) {
+      _scaleLatitude = pts.first.latitude;
+    }
   }
 
   @override
@@ -2109,6 +2121,7 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   Future<void> _onMapCreated(maplibre.MapLibreMapController controller) async {
     _controller = controller;
     await _renderRoute();
+    await _syncScaleFromCamera();
   }
 
   Future<void> _onStyleLoaded() async {
@@ -2166,13 +2179,48 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
     }
     await controller.animateCamera(
       maplibre.CameraUpdate.newLatLngBounds(
-        _boundsFor(points),
+        boundsFor(points),
         left: 28,
         top: 28,
         right: 28,
         bottom: 28,
       ),
     );
+    await _syncScaleFromCamera();
+  }
+
+  Future<void> _zoomBy(double amount) async {
+    await _controller?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
+    await _syncScaleFromCamera();
+  }
+
+  void _onCameraMove(maplibre.CameraPosition position) {
+    _updateScale(position);
+  }
+
+  Future<void> _syncScaleFromCamera() async {
+    final controller = _controller;
+    if (controller == null) return;
+
+    final position =
+        controller.cameraPosition ?? await controller.queryCameraPosition();
+    if (position != null) {
+      _updateScale(position);
+    }
+  }
+
+  void _updateScale(maplibre.CameraPosition position) {
+    final nextZoom = position.zoom;
+    final nextLatitude = position.target.latitude;
+    if (!mounted ||
+        ((nextZoom - _currentZoom).abs() < 0.005 &&
+            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
+      return;
+    }
+    setState(() {
+      _currentZoom = nextZoom;
+      _scaleLatitude = nextLatitude;
+    });
   }
 
   @override
@@ -2192,18 +2240,25 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
           key: ValueKey('${widget.post.postId}:${widget.post.routePointCount}'),
           styleString: _styleUrl,
           initialCameraPosition: maplibre.CameraPosition(
-            target: _centerFor(points),
-            zoom: 13.5,
+            target: centerFor(points),
+            zoom: _currentZoom,
           ),
           compassEnabled: false,
           logoEnabled: false,
           rotateGesturesEnabled: false,
-          scrollGesturesEnabled: false,
           tiltGesturesEnabled: false,
-          zoomGesturesEnabled: false,
-          gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+          scrollGesturesEnabled: true,
+          zoomGesturesEnabled: true,
+          trackCameraPosition: true,
+          gestureRecognizers: {
+            Factory<OneSequenceGestureRecognizer>(
+              () => EagerGestureRecognizer(),
+            ),
+          },
           onMapCreated: _onMapCreated,
           onStyleLoadedCallback: _onStyleLoaded,
+          onCameraMove: _onCameraMove,
+          onCameraIdle: () => unawaited(_syncScaleFromCamera()),
         ),
         const DecoratedBox(
           decoration: BoxDecoration(
@@ -2222,42 +2277,28 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
             color: _CircleColors.green,
           ),
         ),
+        Align(
+          alignment: Alignment.topRight,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: MapZoomControls(
+              onZoomIn: () => _zoomBy(1),
+              onZoomOut: () => _zoomBy(-1),
+              onReset: _fitRoute,
+            ),
+          ),
+        ),
+        Align(
+          alignment: Alignment.bottomLeft,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: MapScaleBar(
+              zoom: _currentZoom,
+              latitude: _scaleLatitude,
+            ),
+          ),
+        ),
       ],
-    );
-  }
-
-  maplibre.LatLng _centerFor(List<maplibre.LatLng> points) {
-    var latitude = 0.0;
-    var longitude = 0.0;
-    for (final point in points) {
-      latitude += point.latitude;
-      longitude += point.longitude;
-    }
-    return maplibre.LatLng(latitude / points.length, longitude / points.length);
-  }
-
-  maplibre.LatLngBounds _boundsFor(List<maplibre.LatLng> points) {
-    var minLatitude = points.first.latitude;
-    var maxLatitude = points.first.latitude;
-    var minLongitude = points.first.longitude;
-    var maxLongitude = points.first.longitude;
-    for (final point in points.skip(1)) {
-      minLatitude = math.min(minLatitude, point.latitude);
-      maxLatitude = math.max(maxLatitude, point.latitude);
-      minLongitude = math.min(minLongitude, point.longitude);
-      maxLongitude = math.max(maxLongitude, point.longitude);
-    }
-    if ((maxLatitude - minLatitude).abs() < 0.0001) {
-      minLatitude -= 0.00005;
-      maxLatitude += 0.00005;
-    }
-    if ((maxLongitude - minLongitude).abs() < 0.0001) {
-      minLongitude -= 0.00005;
-      maxLongitude += 0.00005;
-    }
-    return maplibre.LatLngBounds(
-      southwest: maplibre.LatLng(minLatitude, minLongitude),
-      northeast: maplibre.LatLng(maxLatitude, maxLongitude),
     );
   }
 }

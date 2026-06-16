@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
 
+import '../../core/widgets/map_controls.dart';
 import '../Data/google_city_geocoding_service.dart';
 
 class ResidentialCityPickerPage extends StatefulWidget {
@@ -35,6 +36,8 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
     widget.initialLatitude ?? _defaultLatitude,
     widget.initialLongitude ?? _defaultLongitude,
   );
+  late double _currentZoom = 10.5;
+  late double _scaleLatitude = _selected.latitude;
   late final GoogleCityGeocodingService _geocodingService =
       widget.geocodingService ?? GoogleCityGeocodingService();
   maplibre.MapLibreMapController? _mapController;
@@ -84,6 +87,50 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
     }
   }
 
+  Future<void> _fitToPin() async {
+    final controller = _mapController;
+    if (controller == null) return;
+    await controller.animateCamera(
+      maplibre.CameraUpdate.newLatLngZoom(_selected, 14),
+    );
+    await _syncScaleFromCamera();
+  }
+
+  Future<void> _zoomBy(double amount) async {
+    await _mapController?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
+    await _syncScaleFromCamera();
+  }
+
+  void _onCameraMove(maplibre.CameraPosition position) {
+    _selected = position.target;
+    _updateScale(position);
+  }
+
+  Future<void> _syncScaleFromCamera() async {
+    final controller = _mapController;
+    if (controller == null) return;
+
+    final position =
+        controller.cameraPosition ?? await controller.queryCameraPosition();
+    if (position != null) {
+      _updateScale(position);
+    }
+  }
+
+  void _updateScale(maplibre.CameraPosition position) {
+    final nextZoom = position.zoom;
+    final nextLatitude = position.target.latitude;
+    if (!mounted ||
+        ((nextZoom - _currentZoom).abs() < 0.005 &&
+            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
+      return;
+    }
+    setState(() {
+      _currentZoom = nextZoom;
+      _scaleLatitude = nextLatitude;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -103,7 +150,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                     styleString: _styleUrl,
                     initialCameraPosition: maplibre.CameraPosition(
                       target: _selected,
-                      zoom: 10.5,
+                      zoom: _currentZoom,
                     ),
                     minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
                       3,
@@ -123,9 +170,8 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                       _mapController = controller;
                     },
                     onMapClick: (_, coordinate) => _movePin(coordinate),
-                    onCameraMove: (position) {
-                      _selected = position.target;
-                    },
+                    onCameraMove: _onCameraMove,
+                    onCameraIdle: () => unawaited(_syncScaleFromCamera()),
                   ),
                   const Center(
                     child: IgnorePointer(
@@ -155,6 +201,27 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: MapZoomControls(
+                        onZoomIn: () => _zoomBy(1),
+                        onZoomOut: () => _zoomBy(-1),
+                        onReset: _fitToPin,
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: MapScaleBar(
+                        zoom: _currentZoom,
+                        latitude: _scaleLatitude,
                       ),
                     ),
                   ),

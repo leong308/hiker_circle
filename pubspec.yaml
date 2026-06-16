@@ -46,6 +46,7 @@ dependencies:
   path: ^1.9.1
   animated_toggle_switch: ^0.8.7
   fl_chart: ^1.2.0
+  flutter_dotenv: ^5.2.1
 
 dev_dependencies:
   flutter_test:
@@ -71,6 +72,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - .env
     - assets/audios/sos_alarm.mp3
     - assets/audios/med_alarm.mp3
     - assets/guides/first_aid_guide.json

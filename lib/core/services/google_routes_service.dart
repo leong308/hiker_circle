@@ -19,12 +19,14 @@ class GoogleRouteResult {
     required this.distanceMeters,
     required this.duration,
     required this.encodedPolyline,
+    this.elevationGainMeters,
     this.sourceLabel = 'Google Walking Route',
   });
 
   final int distanceMeters;
   final Duration duration;
   final String encodedPolyline;
+  final double? elevationGainMeters;
   final String sourceLabel;
 
   GoogleRouteResult copyWith({
@@ -63,11 +65,11 @@ class GoogleRouteResult {
 }
 
 class GoogleRoutesService {
-  const GoogleRoutesService({
+  GoogleRoutesService({
     http.Client? client,
-    String apiKey = GoogleApiConfig.routesApiKey,
-  }) : _client = client,
-       _apiKey = apiKey;
+    String? apiKey,
+  })  : _client = client,
+        _apiKey = apiKey ?? GoogleApiConfig.routesApiKey;
 
   final http.Client? _client;
   final String _apiKey;

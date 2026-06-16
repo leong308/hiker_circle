@@ -8,6 +8,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
 
+import '../../core/widgets/map_controls.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 
@@ -1564,6 +1565,14 @@ class _CheckpointRouteMapState extends State<_CheckpointRouteMap> {
 
   maplibre.MapLibreMapController? _controller;
   bool _styleLoaded = false;
+  late double _currentZoom = 15;
+  late double _scaleLatitude;
+
+  @override
+  void initState() {
+    super.initState();
+    _scaleLatitude = _initialCenter().latitude;
+  }
 
   @override
   void didUpdateWidget(covariant _CheckpointRouteMap oldWidget) {
@@ -1583,45 +1592,76 @@ class _CheckpointRouteMapState extends State<_CheckpointRouteMap> {
     final center = _initialCenter();
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: maplibre.MapLibreMap(
-        styleString: _styleUrl,
-        initialCameraPosition: maplibre.CameraPosition(
-          target: center,
-          zoom: 15,
-        ),
-        minMaxZoomPreference: const maplibre.MinMaxZoomPreference(10, 18),
-        rotateGesturesEnabled: false,
-        tiltGesturesEnabled: false,
-        scrollGesturesEnabled: true,
-        zoomGesturesEnabled: true,
-        dragEnabled: true,
-        compassEnabled: false,
-        logoEnabled: false,
-        featureTapsTriggersMapClick: true,
-        annotationConsumeTapEvents: const [maplibre.AnnotationType.fill],
-        annotationOrder: const [
-          maplibre.AnnotationType.line,
-          maplibre.AnnotationType.circle,
-          maplibre.AnnotationType.symbol,
-          maplibre.AnnotationType.fill,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          maplibre.MapLibreMap(
+            styleString: _styleUrl,
+            initialCameraPosition: maplibre.CameraPosition(
+              target: center,
+              zoom: _currentZoom,
+            ),
+            minMaxZoomPreference: const maplibre.MinMaxZoomPreference(10, 18),
+            rotateGesturesEnabled: false,
+            tiltGesturesEnabled: false,
+            scrollGesturesEnabled: true,
+            zoomGesturesEnabled: true,
+            dragEnabled: true,
+            compassEnabled: false,
+            logoEnabled: false,
+            trackCameraPosition: true,
+            featureTapsTriggersMapClick: true,
+            annotationConsumeTapEvents: const [maplibre.AnnotationType.fill],
+            annotationOrder: const [
+              maplibre.AnnotationType.line,
+              maplibre.AnnotationType.circle,
+              maplibre.AnnotationType.symbol,
+              maplibre.AnnotationType.fill,
+            ],
+            attributionButtonPosition:
+                maplibre.AttributionButtonPosition.bottomLeft,
+            gestureRecognizers: {
+              Factory<OneSequenceGestureRecognizer>(
+                () => EagerGestureRecognizer(),
+              ),
+            },
+            onMapCreated: (controller) {
+              _controller = controller;
+            },
+            onStyleLoadedCallback: () {
+              _styleLoaded = true;
+              unawaited(_syncAnnotations(fitBounds: true));
+            },
+            onCameraMove: _onCameraMove,
+            onCameraIdle: () => unawaited(_syncScaleFromCamera()),
+            onMapClick: widget.onMapTap == null
+                ? null
+                : (_, coordinate) {
+                    widget.onMapTap!(coordinate.latitude, coordinate.longitude);
+                  },
+          ),
+          Align(
+            alignment: Alignment.topRight,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: MapZoomControls(
+                onZoomIn: () => _zoomBy(1),
+                onZoomOut: () => _zoomBy(-1),
+                onReset: () => _fitMapToRoute(),
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.bottomLeft,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: MapScaleBar(
+                zoom: _currentZoom,
+                latitude: _scaleLatitude,
+              ),
+            ),
+          ),
         ],
-        attributionButtonPosition:
-            maplibre.AttributionButtonPosition.bottomLeft,
-        gestureRecognizers: {
-          Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
-        },
-        onMapCreated: (controller) {
-          _controller = controller;
-        },
-        onStyleLoadedCallback: () {
-          _styleLoaded = true;
-          unawaited(_syncAnnotations(fitBounds: true));
-        },
-        onMapClick: widget.onMapTap == null
-            ? null
-            : (_, coordinate) {
-                widget.onMapTap!(coordinate.latitude, coordinate.longitude);
-              },
       ),
     );
   }
@@ -1759,6 +1799,41 @@ class _CheckpointRouteMapState extends State<_CheckpointRouteMap> {
         bottom: 44,
       ),
     );
+    await _syncScaleFromCamera();
+  }
+
+  Future<void> _zoomBy(double amount) async {
+    await _controller?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
+    await _syncScaleFromCamera();
+  }
+
+  void _onCameraMove(maplibre.CameraPosition position) {
+    _updateScale(position);
+  }
+
+  Future<void> _syncScaleFromCamera() async {
+    final controller = _controller;
+    if (controller == null) return;
+
+    final position =
+        controller.cameraPosition ?? await controller.queryCameraPosition();
+    if (position != null) {
+      _updateScale(position);
+    }
+  }
+
+  void _updateScale(maplibre.CameraPosition position) {
+    final nextZoom = position.zoom;
+    final nextLatitude = position.target.latitude;
+    if (!mounted ||
+        ((nextZoom - _currentZoom).abs() < 0.005 &&
+            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
+      return;
+    }
+    setState(() {
+      _currentZoom = nextZoom;
+      _scaleLatitude = nextLatitude;
+    });
   }
 
   maplibre.LatLng _initialCenter() {

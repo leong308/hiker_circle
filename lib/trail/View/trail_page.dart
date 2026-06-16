@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+
+import 'package:http/http.dart' as http;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -9,9 +12,13 @@ import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
-import '../../core/services/google_routes_service.dart';
+import '../../core/config/google_api_config.dart';
+import '../../core/services/geoapify_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/trail_cover_image_service.dart';
+import '../../core/widgets/map_controls.dart';
+import '../../core/widgets/map_utils.dart';
+import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/trail_models.dart';
 
@@ -29,15 +36,10 @@ Future<Trail?> showAddTrailSheet(BuildContext context) {
 }
 
 Future<Trail?> showEditTrailSheet(BuildContext context, Trail trail) {
-  return showModalBottomSheet<Trail>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    backgroundColor: _TrailColors.surfaceFor(context),
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+  return Navigator.of(context).push<Trail>(
+    MaterialPageRoute(
+      builder: (_) => _EditTrailPage(trail: trail),
     ),
-    builder: (context) => _EditTrailSheet(trail: trail),
   );
 }
 
@@ -470,8 +472,28 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
   late bool _isOfflineDownloaded = widget.isOfflineDownloaded;
   bool _isLoadingRoute = false;
   bool _isSavingAdminTrail = false;
-  GoogleRouteResult? _routeResult;
+  HikingRouteResult? _routeResult;
   String? _routeErrorMessage;
+  final _scrollController = ScrollController();
+  final _routePreviewKey = GlobalKey();
+  int? _highlightedCheckpointIndex;
+
+  void _showCheckpointOnMap(int index) {
+    setState(() {
+      _highlightedCheckpointIndex = index;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _routePreviewKey.currentContext;
+      if (context != null) {
+        Scrollable.ensureVisible(
+          context,
+          alignment: 0.3,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
 
   Future<void> _downloadMap() async {
     final downloaded = await Navigator.of(context).push<bool>(
@@ -561,7 +583,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
     });
 
     try {
-      final result = await const HikingRouteService().findHikingRouteForTrail(
+      final result = await HikingRouteService().findHikingRouteForTrail(
         _trail,
       );
       if (!mounted) {
@@ -601,6 +623,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
       backgroundColor: _TrailColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
+          controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
           child: Center(
             child: ConstrainedBox(
@@ -652,11 +675,24 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Route Preview'),
                   const SizedBox(height: 8),
-                  _RoutePreview(trail: trail),
+                  _RoutePreview(
+                    key: _routePreviewKey,
+                    trail: trail,
+                    highlightedCheckpointIndex: _highlightedCheckpointIndex,
+                    onHighlightCleared: () {
+                      if (_highlightedCheckpointIndex != null) {
+                        setState(() => _highlightedCheckpointIndex = null);
+                      }
+                    },
+                  ),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Checkpoint Flow'),
                   const SizedBox(height: 8),
-                  _CheckpointTimeline(trail: trail),
+                  _CheckpointTimeline(
+                    trail: trail,
+                    highlightedIndex: _highlightedCheckpointIndex,
+                    onShowOnMap: _showCheckpointOnMap,
+                  ),
                   const SizedBox(height: 22),
                   _SectionTitle(
                     label: 'Conditions and Safety',
@@ -722,7 +758,7 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
     return Scaffold(
       backgroundColor: _TrailColors.backgroundFor(context),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
           child: Center(
             child: ConstrainedBox(
@@ -1080,6 +1116,8 @@ class _Header extends StatelessWidget {
   }
 }
 
+enum _AddTrailStep { pickCheckpoints, loading, form }
+
 class _AddTrailSheet extends StatefulWidget {
   const _AddTrailSheet();
 
@@ -1091,30 +1129,28 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   static const String _defaultRouteFilePath =
       'offline/maps/admin_added_trail.mbtiles';
 
+  var _step = _AddTrailStep.pickCheckpoints;
+  final _trailPins = <maplibre.LatLng>[];
+
   final _nameController = TextEditingController();
   final _areaController = TextEditingController();
   final _stateController = TextEditingController();
-  final _latitudeController = TextEditingController();
-  final _longitudeController = TextEditingController();
   final _distanceController = TextEditingController();
   final _durationController = TextEditingController(text: '120');
   final _elevationController = TextEditingController();
   final _ratingController = TextEditingController(text: '4.5');
   final _coverImageController = TextEditingController();
-  final List<_CheckpointDraft> _checkpoints = [
-    _CheckpointDraft(order: 1, name: 'Trailhead'),
-    _CheckpointDraft(order: 2, name: 'Summit'),
-  ];
+  final List<_CheckpointDraft> _checkpoints = [];
   String _difficulty = 'Moderate';
   String? _errorMessage;
+  bool _hasFetchedRoute = false;
+  HikingRouteResult? _pendingRouteResult;
 
   @override
   void dispose() {
     _nameController.dispose();
     _areaController.dispose();
     _stateController.dispose();
-    _latitudeController.dispose();
-    _longitudeController.dispose();
     _distanceController.dispose();
     _durationController.dispose();
     _elevationController.dispose();
@@ -1124,6 +1160,45 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       checkpoint.dispose();
     }
     super.dispose();
+  }
+
+  void _onPinsConfirmed(List<maplibre.LatLng> pins) {
+    _trailPins
+      ..clear()
+      ..addAll(pins);
+
+    var finalPins = List<maplibre.LatLng>.of(_trailPins);
+    if (finalPins.length == 1) {
+      final endLatLng = _offsetLatLng(
+        finalPins.first.latitude,
+        finalPins.first.longitude,
+        3000,
+        math.pi / 4,
+      );
+      finalPins.add(endLatLng);
+    }
+
+    _checkpoints.clear();
+    for (var i = 0; i < finalPins.length; i++) {
+      final name = i == 0
+          ? 'Trailhead'
+          : i == finalPins.length - 1
+              ? 'End point'
+              : 'Waypoint $i';
+      final draft = _CheckpointDraft(order: i + 1, name: name);
+      draft.latitudeController.text =
+          finalPins[i].latitude.toStringAsFixed(6);
+      draft.longitudeController.text =
+          finalPins[i].longitude.toStringAsFixed(6);
+      _checkpoints.add(draft);
+    }
+
+    setState(() {
+      _step = _AddTrailStep.loading;
+      _errorMessage = null;
+    });
+    unawaited(_resolveTrailName(finalPins.first));
+    _startAutoFetch(_checkpointModels());
   }
 
   void _addCheckpoint() {
@@ -1137,51 +1212,16 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     });
   }
 
-  Future<void> _pickTrailCenter() async {
-    final coordinate = await _pickCoordinate(
-      title: 'Select trail center',
-      latitude: double.tryParse(_latitudeController.text.trim()),
-      longitude: double.tryParse(_longitudeController.text.trim()),
-    );
-    if (coordinate == null || !mounted) {
-      return;
+  Future<void> _openCheckpointMap(int index) async {
+    final draft = _checkpoints[index];
+    double? initialLat = double.tryParse(draft.latitudeController.text.trim());
+    double? initialLng = double.tryParse(draft.longitudeController.text.trim());
+    if ((initialLat == null || initialLng == null) && index > 0) {
+      final prev = _checkpoints[index - 1];
+      initialLat = double.tryParse(prev.latitudeController.text.trim());
+      initialLng = double.tryParse(prev.longitudeController.text.trim());
     }
-    setState(() {
-      _latitudeController.text = coordinate.latitude.toStringAsFixed(6);
-      _longitudeController.text = coordinate.longitude.toStringAsFixed(6);
-    });
-  }
-
-  Future<void> _pickCheckpointLocation(_CheckpointDraft draft) async {
-    final coordinate = await _pickCoordinate(
-      title: 'Select checkpoint location',
-      latitude:
-          double.tryParse(draft.latitudeController.text.trim()) ??
-          double.tryParse(_latitudeController.text.trim()),
-      longitude:
-          double.tryParse(draft.longitudeController.text.trim()) ??
-          double.tryParse(_longitudeController.text.trim()),
-    );
-    if (coordinate == null || !mounted) {
-      return;
-    }
-    setState(() {
-      draft.latitudeController.text = coordinate.latitude.toStringAsFixed(6);
-      draft.longitudeController.text = coordinate.longitude.toStringAsFixed(6);
-      if (_latitudeController.text.trim().isEmpty ||
-          _longitudeController.text.trim().isEmpty) {
-        _latitudeController.text = coordinate.latitude.toStringAsFixed(6);
-        _longitudeController.text = coordinate.longitude.toStringAsFixed(6);
-      }
-    });
-  }
-
-  Future<maplibre.LatLng?> _pickCoordinate({
-    required String title,
-    double? latitude,
-    double? longitude,
-  }) {
-    return showModalBottomSheet<maplibre.LatLng>(
+    final coordinate = await showModalBottomSheet<maplibre.LatLng>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -1190,38 +1230,274 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (context) {
-        return _AdminCoordinatePickerSheet(
-          title: title,
-          initialLatitude: latitude,
-          initialLongitude: longitude,
+        return _SinglePinPickerSheet(
+          title: 'Select checkpoint location',
+          initialLatitude: initialLat,
+          initialLongitude: initialLng,
         );
       },
     );
+    if (coordinate == null || !mounted) return;
+    setState(() {
+      draft.latitudeController.text = coordinate.latitude.toStringAsFixed(6);
+      draft.longitudeController.text = coordinate.longitude.toStringAsFixed(6);
+    });
   }
 
   void _removeCheckpoint(int index) {
-    if (_checkpoints.length <= 2) {
-      return;
-    }
+    if (_checkpoints.length <= 2) return;
     setState(() {
       _checkpoints.removeAt(index).dispose();
-      for (var i = 0; i < _checkpoints.length; i++) {
-        _checkpoints[i].orderController.text = '${i + 1}';
-      }
     });
+  }
+
+  static maplibre.LatLng _offsetLatLng(
+    double lat,
+    double lng,
+    double distanceMeters,
+    double bearingRadians,
+  ) {
+    const earthRadius = 6371000.0;
+    final lat1 = lat * math.pi / 180;
+    final lng1 = lng * math.pi / 180;
+    final d = distanceMeters / earthRadius;
+
+    final lat2 = math.asin(
+      math.sin(lat1) * math.cos(d) +
+          math.cos(lat1) * math.sin(d) * math.cos(bearingRadians),
+    );
+    final lng2 = lng1 + math.atan2(
+      math.sin(bearingRadians) * math.sin(d) * math.cos(lat1),
+      math.cos(d) - math.sin(lat1) * math.sin(lat2),
+    );
+
+    return maplibre.LatLng(lat2 * 180 / math.pi, lng2 * 180 / math.pi);
+  }
+
+  Future<void> _resolveTrailName(maplibre.LatLng location) async {
+    try {
+      final response = await http.get(
+        Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
+          'latlng': '${location.latitude},${location.longitude}',
+          'key': GoogleApiConfig.geocodingApiKey,
+          'language': 'en',
+        }),
+      );
+      if (response.statusCode != 200 || !mounted) return;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) return;
+      final results = decoded['results'];
+      if (results is! List || results.isEmpty) return;
+
+      String? name;
+      for (final result in results) {
+        if (result is! Map) continue;
+        final formattedAddress = result['formatted_address'] as String?;
+        final components = result['address_components'];
+        if (components is! List) continue;
+        for (final component in components) {
+          if (component is! Map) continue;
+          final longName = component['long_name'] as String?;
+          final types = component['types'] as List?;
+          if (longName == null || types == null) continue;
+          if (types.contains('route') ||
+              types.contains('natural_feature') ||
+              types.contains('park') ||
+              types.contains('establishment') ||
+              types.contains('premise') ||
+              types.contains('point_of_interest')) {
+            name = longName;
+            break;
+          }
+        }
+        if (name == null &&
+            formattedAddress != null &&
+            formattedAddress.contains(',')) {
+          name = formattedAddress.split(',').first.trim();
+        }
+      }
+
+      final trailName = name;
+      if (trailName != null && mounted) {
+        setState(() {
+          if (_nameController.text.isEmpty) {
+            _nameController.text = trailName;
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _startAutoFetch(List<TrailCheckpoint> checkpoints) async {
+    final minTimer = Future.delayed(const Duration(seconds: 3));
+
+    try {
+      final routeFuture = _fetchRoute(checkpoints);
+      final result = await Future.any([
+        routeFuture,
+        minTimer,
+      ]);
+
+      if (!mounted) return;
+
+      if (result is HikingRouteResult) {
+        _applyRouteData(result, checkpoints);
+        if (mounted) {
+          setState(() => _step = _AddTrailStep.form);
+        }
+      } else {
+        if (mounted) {
+          setState(() => _step = _AddTrailStep.form);
+        }
+        final route = await routeFuture;
+        if (route != null && mounted) {
+          _pendingRouteResult = route;
+          _showRouteFoundLateDialog(route);
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _step = _AddTrailStep.form);
+      }
+    }
+  }
+
+  Future<HikingRouteResult?> _fetchRoute(
+    List<TrailCheckpoint> checkpoints,
+  ) async {
+    try {
+      final trail = Trail(
+        trailId: '',
+        name: '',
+        area: '',
+        state: '',
+        latitude: checkpoints.first.latitude,
+        longitude: checkpoints.first.longitude,
+        distanceKm: 0,
+        difficulty: _difficulty,
+        estimatedDurationMinutes: 0,
+        elevationGainMeters: 0,
+        ratingAverage: 4.5,
+        offlineMapAvailable: false,
+        offlineMapDownloaded: false,
+        isVerifiedTrail: true,
+        routeFilePath: '',
+        coverColorValue: 0xFF34A853,
+        checkpoints: checkpoints,
+        weather: TrailWeather(
+          summary: '',
+          temperatureRange: '',
+          rainProbability: 0,
+          cachedAt: DateTime.now().toUtc(),
+        ),
+        hazards: const [],
+      );
+
+      return await HikingRouteService().findHikingRouteForTrail(trail);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _applyRouteData(HikingRouteResult route, List<TrailCheckpoint>? checkpoints) {
+    _distanceController.text =
+        (route.distanceMeters / 1000).toStringAsFixed(1);
+    _durationController.text = route.duration.inMinutes.toString();
+    if (route.elevationGainMeters != null) {
+      _elevationController.text =
+          route.elevationGainMeters!.round().toString();
+    }
+    _hasFetchedRoute = true;
+
+    final pts = checkpoints ?? _checkpointModels();
+    if (pts.isNotEmpty) {
+      unawaited(_resolveLocation(pts.first.latitude, pts.first.longitude));
+    }
+  }
+
+  Future<void> _resolveLocation(double latitude, double longitude) async {
+    try {
+      final geocoding = GoogleCityGeocodingService();
+      final result = await geocoding.resolveCity(
+        latitude: latitude,
+        longitude: longitude,
+      );
+      if (mounted) {
+        setState(() {
+          if (_areaController.text.isEmpty) {
+            _areaController.text = result.city;
+          }
+          if (_stateController.text.isEmpty) {
+            _stateController.text = result.state;
+          }
+        });
+      }
+    } catch (_) {
+      try {
+        final geoapify = GeoapifyService();
+        final result = await geoapify.reverseGeocode(
+          latitude: latitude,
+          longitude: longitude,
+        );
+        if (mounted) {
+          setState(() {
+            if (_areaController.text.isEmpty && result.area.isNotEmpty) {
+              _areaController.text = result.area;
+            }
+            if (_stateController.text.isEmpty && result.state.isNotEmpty) {
+              _stateController.text = result.state;
+            }
+          });
+        }
+      } catch (_) {}
+    }
+  }
+
+  void _showRouteFoundLateDialog(HikingRouteResult route) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _TrailColors.surfaceFor(context),
+        title: Text(
+          'Route found — ${route.distanceLabel}',
+          style: TextStyle(color: _TrailColors.textFor(context)),
+        ),
+        content: Text(
+          'A hiking route connecting your checkpoints was found. '
+          'Apply the distance and duration from this route?',
+          style: TextStyle(color: _TrailColors.secondaryTextFor(context)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Skip'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _applyRouteData(route, null);
+              setState(() {});
+            },
+            icon: const Icon(Icons.route_rounded, size: 18),
+            label: const Text('Apply route'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _saveTrail() {
     final name = _nameController.text.trim();
     final area = _areaController.text.trim();
     final state = _stateController.text.trim();
-    final latitude = double.tryParse(_latitudeController.text.trim());
-    final longitude = double.tryParse(_longitudeController.text.trim());
+    final checkpoints = _checkpointModels();
+    final latitude = checkpoints.isEmpty ? null : checkpoints.first.latitude;
+    final longitude = checkpoints.isEmpty ? null : checkpoints.first.longitude;
     final distance = double.tryParse(_distanceController.text.trim());
     final duration = int.tryParse(_durationController.text.trim());
-    final elevation = int.tryParse(_elevationController.text.trim());
-    final rating = double.tryParse(_ratingController.text.trim());
-    final checkpoints = _checkpointModels();
+    final elevation = int.tryParse(_elevationController.text.trim()) ?? 0;
+    final rating = double.tryParse(_ratingController.text.trim()) ?? 4.5;
 
     if (name.isEmpty ||
         area.isEmpty ||
@@ -1229,17 +1505,114 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         latitude == null ||
         longitude == null ||
         distance == null ||
+        distance <= 0 ||
         duration == null ||
-        elevation == null ||
-        rating == null ||
+        duration <= 0 ||
         checkpoints.length < 2) {
       setState(() {
         _errorMessage =
-            'Fill in trail identity, coordinates, metrics, and at least 2 valid checkpoints.';
+            'Fill in trail identity and ensure a route was fetched. '
+            'Distance and duration are auto-filled from the routing API.';
       });
       return;
     }
 
+    if (_hasFetchedRoute && checkpoints.length == 2) {
+      _confirmSaveWithTwoCheckpoints(
+        name: name,
+        area: area,
+        state: state,
+        latitude: latitude,
+        longitude: longitude,
+        distance: distance,
+        duration: duration,
+        elevation: elevation,
+        rating: rating,
+        checkpoints: checkpoints,
+      );
+      return;
+    }
+
+    _doSaveTrail(
+      name: name,
+      area: area,
+      state: state,
+      latitude: latitude,
+      longitude: longitude,
+      distance: distance,
+      duration: duration,
+      elevation: elevation,
+      rating: rating,
+      checkpoints: checkpoints,
+    );
+  }
+
+  void _confirmSaveWithTwoCheckpoints({
+    required String name,
+    required String area,
+    required String state,
+    required double latitude,
+    required double longitude,
+    required double distance,
+    required int duration,
+    required int elevation,
+    required double rating,
+    required List<TrailCheckpoint> checkpoints,
+  }) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _TrailColors.surfaceFor(context),
+        title: Text(
+          'Only 2 checkpoints',
+          style: TextStyle(color: _TrailColors.textFor(context)),
+        ),
+        content: Text(
+          'A route was found with intermediate waypoints. Adding them '
+          'improves navigation for hikers. Save with just trailhead and summit?',
+          style: TextStyle(color: _TrailColors.secondaryTextFor(context)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _doSaveTrail(
+                name: name,
+                area: area,
+                state: state,
+                latitude: latitude,
+                longitude: longitude,
+                distance: distance,
+                duration: duration,
+                elevation: elevation,
+                rating: rating,
+                checkpoints: checkpoints,
+              );
+            },
+            icon: const Icon(Icons.cloud_upload_rounded, size: 18),
+            label: const Text('Save anyway'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _doSaveTrail({
+    required String name,
+    required String area,
+    required String state,
+    required double latitude,
+    required double longitude,
+    required double distance,
+    required int duration,
+    required int elevation,
+    required double rating,
+    required List<TrailCheckpoint> checkpoints,
+  }) {
     Navigator.of(context).pop(
       Trail(
         trailId: '',
@@ -1278,8 +1651,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       final name = draft.nameController.text.trim();
       final latitude = double.tryParse(draft.latitudeController.text.trim());
       final longitude = double.tryParse(draft.longitudeController.text.trim());
-      final order =
-          int.tryParse(draft.orderController.text.trim()) ?? index + 1;
       if (name.isEmpty || latitude == null || longitude == null) {
         continue;
       }
@@ -1288,16 +1659,85 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           name: name,
           latitude: latitude,
           longitude: longitude,
-          order: order,
+          order: index + 1,
         ),
       );
     }
-    checkpoints.sort((a, b) => a.order.compareTo(b.order));
     return checkpoints;
   }
 
   @override
   Widget build(BuildContext context) {
+    switch (_step) {
+      case _AddTrailStep.pickCheckpoints:
+        return _buildCheckpointPicker();
+      case _AddTrailStep.loading:
+        return _buildLoading();
+      case _AddTrailStep.form:
+        return _buildForm();
+    }
+  }
+
+  Widget _buildCheckpointPicker() {
+    return _MapBasedCheckpointPicker(
+      pins: _trailPins,
+      onPinsChanged: (pins) => _trailPins
+        ..clear()
+        ..addAll(pins),
+      onConfirm: _onPinsConfirmed,
+    );
+  }
+
+  Widget _buildLoading() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 48),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 36,
+              height: 36,
+              child: CircularProgressIndicator(strokeWidth: 3),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Finding a route through your checkpoints…',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: _TrailColors.secondaryTextFor(context),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _routeMetricRow(BuildContext context, String label, String value) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: _TrailColors.secondaryTextFor(context),
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          value,
+          style: TextStyle(
+            color: _TrailColors.textFor(context),
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildForm() {
     return SafeArea(
       child: SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(
@@ -1320,7 +1760,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Create a Firebase trail with route metadata and checkpoints.',
+              'Creating a new hiking trail. '
+              'Route metrics are auto-filled from the routing API.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: _TrailColors.secondaryTextFor(context),
                 letterSpacing: 0,
@@ -1357,17 +1798,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
               ],
             ),
             const SizedBox(height: 10),
-            _CoordinatePickerTile(
-              title: 'Trail center',
-              subtitle:
-                  'Choose the approximate trail center from the map. This is used for discovery and map framing.',
-              value: _coordinateLabel(
-                _latitudeController.text,
-                _longitudeController.text,
-              ),
-              onPick: _pickTrailCenter,
-            ),
-            const SizedBox(height: 10),
             DropdownButtonFormField<String>(
               initialValue: _difficulty,
               decoration: const InputDecoration(labelText: 'Difficulty'),
@@ -1386,54 +1816,90 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
               },
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _distanceController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Distance km'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _durationController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Duration min',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _elevationController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Elevation m'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _ratingController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Rating 0-5'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
             TextField(
               controller: _coverImageController,
               decoration: const InputDecoration(
                 labelText: 'Cover image URL',
                 hintText: 'https://...',
               ),
+            ),
+            if (_hasFetchedRoute) ...[
+              const SizedBox(height: 10),
+              _InsetGroup(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle_rounded,
+                            size: 18,
+                            color: _TrailColors.green,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Route found',
+                            style: TextStyle(
+                              color: _TrailColors.green,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      _routeMetricRow(
+                        context, 'Distance',
+                        '${(double.tryParse(_distanceController.text.trim()) ?? 0).toStringAsFixed(1)} km',
+                      ),
+                      const SizedBox(height: 4),
+                      _routeMetricRow(
+                        context, 'Duration',
+                        '${_durationController.text.trim()} min',
+                      ),
+                      if (_elevationController.text.trim().isNotEmpty &&
+                          double.tryParse(_elevationController.text.trim()) != 0) ...[
+                        const SizedBox(height: 4),
+                        _routeMetricRow(
+                          context, 'Elevation gain',
+                          '${_elevationController.text.trim()} m',
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (_pendingRouteResult != null && !_hasFetchedRoute) ...[
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed: () {
+                  _applyRouteData(_pendingRouteResult!, null);
+                  setState(() => _pendingRouteResult = null);
+                },
+                icon: const Icon(Icons.route_rounded, size: 18),
+                label: const Text('Apply found route data'),
+              ),
+            ],
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: () {
+                _trailPins
+                  ..clear()
+                  ..addAll(
+                    _checkpointModels().map(
+                      (c) => maplibre.LatLng(c.latitude, c.longitude),
+                    ),
+                  );
+                setState(() {
+                  _step = _AddTrailStep.pickCheckpoints;
+                  _errorMessage = null;
+                });
+              },
+              icon: const Icon(Icons.map_rounded, size: 18),
+              label: const Text('Edit checkpoints on map'),
             ),
             const SizedBox(height: 14),
             Row(
@@ -1447,16 +1913,34 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
               ],
             ),
             const SizedBox(height: 8),
-            for (var index = 0; index < _checkpoints.length; index++) ...[
-              _CheckpointDraftFields(
-                draft: _checkpoints[index],
-                canRemove: _checkpoints.length > 2,
-                onRemove: () => _removeCheckpoint(index),
-                onPickLocation: () =>
-                    unawaited(_pickCheckpointLocation(_checkpoints[index])),
-              ),
-              const SizedBox(height: 10),
-            ],
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: _checkpoints.length,
+              onReorderItem: (int oldIndex, int newIndex) {
+                setState(() {
+                  final draft = _checkpoints.removeAt(oldIndex);
+                  _checkpoints.insert(newIndex, draft);
+                });
+              },
+              itemBuilder: (context, index) {
+                final draft = _checkpoints[index];
+                return Padding(
+                  key: ValueKey(draft.id),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _CheckpointDraftFields(
+                    draft: draft,
+                    index: index,
+                    canRemove: _checkpoints.length > 2,
+                    onRemove: () => _removeCheckpoint(index),
+                    onPickLocation: () => unawaited(
+                      _openCheckpointMap(index),
+                    ),
+                  ),
+                );
+              },
+            ),
             FilledButton.icon(
               onPressed: _saveTrail,
               icon: const Icon(Icons.cloud_upload_rounded),
@@ -1469,20 +1953,462 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   }
 }
 
+class _MapBasedCheckpointPicker extends StatefulWidget {
+  const _MapBasedCheckpointPicker({
+    required this.pins,
+    required this.onPinsChanged,
+    required this.onConfirm,
+  });
+
+  final List<maplibre.LatLng> pins;
+  final ValueChanged<List<maplibre.LatLng>> onPinsChanged;
+  final ValueChanged<List<maplibre.LatLng>> onConfirm;
+
+  @override
+  State<_MapBasedCheckpointPicker> createState() =>
+      _MapBasedCheckpointPickerState();
+}
+
+class _MapBasedCheckpointPickerState
+    extends State<_MapBasedCheckpointPicker> {
+  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+
+  maplibre.MapLibreMapController? _controller;
+  bool _styleLoaded = false;
+  late List<maplibre.LatLng> _pins;
+
+  @override
+  void initState() {
+    super.initState();
+    _pins = List<maplibre.LatLng>.of(widget.pins);
+  }
+
+  @override
+  void didUpdateWidget(_MapBasedCheckpointPicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!listEquals(widget.pins, _pins)) {
+      _pins = List<maplibre.LatLng>.of(widget.pins);
+      unawaited(_syncPins());
+    }
+  }
+
+  static bool listEquals(List<maplibre.LatLng>? a, List<maplibre.LatLng>? b) {
+    if (a == null) return b == null;
+    if (b == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].latitude != b[i].latitude ||
+          a[i].longitude != b[i].longitude) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  maplibre.LatLng _initialCenter() =>
+      _pins.isNotEmpty ? _pins.first : const maplibre.LatLng(3.1390, 101.6869);
+
+  Future<void> _onMapCreated(
+    maplibre.MapLibreMapController controller,
+  ) async {
+    _controller = controller;
+  }
+
+  Future<void> _onStyleLoaded() async {
+    _styleLoaded = true;
+    await _syncPins();
+  }
+
+  Future<void> _syncPins() async {
+    final controller = _controller;
+    if (!_styleLoaded || controller == null) return;
+
+    await controller.clearCircles();
+    await controller.clearSymbols();
+
+    for (var i = 0; i < _pins.length; i++) {
+      final point = _pins[i];
+      await controller.addCircle(
+        maplibre.CircleOptions(
+          geometry: point,
+          circleRadius: 10,
+          circleColor: '#34A853',
+          circleStrokeColor: '#FFFFFF',
+          circleStrokeWidth: 2.5,
+        ),
+      );
+      await controller.addSymbol(
+        maplibre.SymbolOptions(
+          geometry: point,
+          textField: '${i + 1}',
+          textSize: 11,
+          textColor: '#FFFFFF',
+          textHaloColor: '#111111',
+          textHaloWidth: 0.7,
+          textAnchor: 'center',
+        ),
+      );
+    }
+  }
+
+  int? _tappedPinIndex(maplibre.LatLng tapped) {
+    for (var i = 0; i < _pins.length; i++) {
+      final dist = (tapped.latitude - _pins[i].latitude).abs() +
+          (tapped.longitude - _pins[i].longitude).abs();
+      if (dist < 0.001) return i;
+    }
+    return null;
+  }
+
+  void _onMapTap(maplibre.LatLng coordinate) {
+    final tappedIndex = _tappedPinIndex(coordinate);
+    if (tappedIndex != null) {
+      setState(() => _pins.removeAt(tappedIndex));
+    } else {
+      setState(() => _pins.add(coordinate));
+    }
+    widget.onPinsChanged(List.of(_pins));
+    unawaited(_syncPins());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Column(
+        children: [
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                maplibre.MapLibreMap(
+                  styleString: _styleUrl,
+                  initialCameraPosition: maplibre.CameraPosition(
+                    target: _initialCenter(),
+                    zoom: 13,
+                  ),
+                  minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
+                    4,
+                    21,
+                  ),
+                  compassEnabled: false,
+                  logoEnabled: false,
+                  rotateGesturesEnabled: false,
+                  tiltGesturesEnabled: false,
+                  trackCameraPosition: true,
+                  featureTapsTriggersMapClick: true,
+                  annotationConsumeTapEvents: const [
+                    maplibre.AnnotationType.fill,
+                  ],
+                  annotationOrder: const [
+                    maplibre.AnnotationType.circle,
+                    maplibre.AnnotationType.symbol,
+                    maplibre.AnnotationType.line,
+                    maplibre.AnnotationType.fill,
+                  ],
+                  gestureRecognizers: {
+                    Factory<OneSequenceGestureRecognizer>(
+                      () => EagerGestureRecognizer(),
+                    ),
+                  },
+                  onMapCreated: _onMapCreated,
+                  onStyleLoadedCallback: _onStyleLoaded,
+                  onMapClick: (_, coordinate) => _onMapTap(coordinate),
+                ),
+                Align(
+                  alignment: Alignment.topRight,
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: MapZoomControls(
+                      onZoomIn: () =>
+                          _controller?.animateCamera(
+                            maplibre.CameraUpdate.zoomBy(1),
+                          ),
+                      onZoomOut: () =>
+                          _controller?.animateCamera(
+                            maplibre.CameraUpdate.zoomBy(-1),
+                          ),
+                      onReset: () async {
+                        if (_pins.length >= 2) {
+                          await _controller?.animateCamera(
+                            maplibre.CameraUpdate.newLatLngBounds(
+                              boundsFor(_pins),
+                              left: 44, top: 44, right: 44, bottom: 44,
+                            ),
+                          );
+                        } else if (_pins.length == 1) {
+                          await _controller?.animateCamera(
+                            maplibre.CameraUpdate.newLatLngZoom(
+                              _pins.first, 15,
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                ),
+                if (_pins.isNotEmpty)
+                  Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: MapScaleBar(
+                        zoom: 13,
+                        latitude: _pins.first.latitude,
+                      ),
+                    ),
+                  ),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 60),
+                    child: Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6,
+                        ),
+                        child: Text(
+                          'Tap to add pins · tap pin to remove',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _pins.isEmpty
+                          ? null
+                          : () => widget.onConfirm(List.of(_pins)),
+                      icon: const Icon(Icons.check_rounded),
+                      label: Text(
+                        'Confirm ${_pins.length} pin${_pins.length == 1 ? '' : 's'}',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SinglePinPickerSheet extends StatefulWidget {
+  const _SinglePinPickerSheet({
+    required this.title,
+    this.initialLatitude,
+    this.initialLongitude,
+  });
+
+  final String title;
+  final double? initialLatitude;
+  final double? initialLongitude;
+
+  @override
+  State<_SinglePinPickerSheet> createState() => _SinglePinPickerSheetState();
+}
+
+class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
+  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+
+  late maplibre.LatLng _selected = maplibre.LatLng(
+    widget.initialLatitude ?? 3.1390,
+    widget.initialLongitude ?? 101.6869,
+  );
+  maplibre.MapLibreMapController? _mapController;
+  bool _styleLoaded = false;
+
+  void _selectCoordinate(maplibre.LatLng coordinate) {
+    setState(() => _selected = coordinate);
+    unawaited(_syncSelectedPin());
+    unawaited(
+      _mapController?.animateCamera(
+        maplibre.CameraUpdate.newLatLng(coordinate),
+      ),
+    );
+  }
+
+  Future<void> _syncSelectedPin() async {
+    final controller = _mapController;
+    if (!_styleLoaded || controller == null) return;
+    await controller.clearCircles();
+    await controller.clearSymbols();
+    await controller.addCircle(
+      maplibre.CircleOptions(
+        geometry: _selected,
+        circleRadius: 10,
+        circleColor: '#E11D48',
+        circleStrokeColor: '#FFFFFF',
+        circleStrokeWidth: 3,
+      ),
+    );
+    await controller.addSymbol(
+      maplibre.SymbolOptions(
+        geometry: _selected,
+        textField: 'Pin',
+        textSize: 12,
+        textColor: '#FFFFFF',
+        textHaloColor: '#111111',
+        textHaloWidth: 0.8,
+        textOffset: const Offset(0, 1.35),
+        textAnchor: 'top',
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          18, 6, 18, 18 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: _TrailColors.textFor(context),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Tap the map to place the pin, then confirm the selected coordinate.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _TrailColors.secondaryTextFor(context),
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 360,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    maplibre.MapLibreMap(
+                      styleString: _styleUrl,
+                      initialCameraPosition: maplibre.CameraPosition(
+                        target: _selected,
+                        zoom: 13,
+                      ),
+                      minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
+                        4, 21,
+                      ),
+                      compassEnabled: false,
+                      logoEnabled: false,
+                      rotateGesturesEnabled: false,
+                      tiltGesturesEnabled: false,
+                      trackCameraPosition: true,
+                      featureTapsTriggersMapClick: true,
+                      annotationConsumeTapEvents: const [
+                        maplibre.AnnotationType.fill,
+                      ],
+                      annotationOrder: const [
+                        maplibre.AnnotationType.circle,
+                        maplibre.AnnotationType.symbol,
+                        maplibre.AnnotationType.line,
+                        maplibre.AnnotationType.fill,
+                      ],
+                      gestureRecognizers: {
+                        Factory<OneSequenceGestureRecognizer>(
+                          () => EagerGestureRecognizer(),
+                        ),
+                      },
+                      onMapCreated: (controller) {
+                        _mapController = controller;
+                      },
+                      onStyleLoadedCallback: () {
+                        _styleLoaded = true;
+                        unawaited(_syncSelectedPin());
+                      },
+                      onMapClick: (_, coordinate) {
+                        _selectCoordinate(coordinate);
+                      },
+                    ),
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: MapZoomControls(
+                          onZoomIn: () =>
+                              _mapController?.animateCamera(
+                                maplibre.CameraUpdate.zoomBy(1),
+                              ),
+                          onZoomOut: () =>
+                              _mapController?.animateCamera(
+                                maplibre.CameraUpdate.zoomBy(-1),
+                              ),
+                          onReset: () =>
+                              _mapController?.animateCamera(
+                                maplibre.CameraUpdate.newLatLngZoom(
+                                  _selected, 15,
+                                ),
+                              ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pop(_selected),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Use Location'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CheckpointDraft {
   _CheckpointDraft({required int order, required String name})
-    : orderController = TextEditingController(text: '$order'),
+    : id = _nextId++,
       nameController = TextEditingController(text: name),
       latitudeController = TextEditingController(),
       longitudeController = TextEditingController();
 
-  final TextEditingController orderController;
+  static int _nextId = 0;
+  final int id;
   final TextEditingController nameController;
   final TextEditingController latitudeController;
   final TextEditingController longitudeController;
 
   void dispose() {
-    orderController.dispose();
     nameController.dispose();
     latitudeController.dispose();
     longitudeController.dispose();
@@ -1492,15 +2418,17 @@ class _CheckpointDraft {
 class _CheckpointDraftFields extends StatelessWidget {
   const _CheckpointDraftFields({
     required this.draft,
+    required this.index,
     required this.canRemove,
-    required this.onRemove,
-    required this.onPickLocation,
+    this.onRemove,
+    this.onPickLocation,
   });
 
   final _CheckpointDraft draft;
+  final int index;
   final bool canRemove;
-  final VoidCallback onRemove;
-  final VoidCallback onPickLocation;
+  final VoidCallback? onRemove;
+  final VoidCallback? onPickLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -1511,22 +2439,33 @@ class _CheckpointDraftFields extends StatelessWidget {
           children: [
             Row(
               children: [
-                SizedBox(
-                  width: 74,
-                  child: TextField(
-                    controller: draft.orderController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Order'),
+                ReorderableDragStartListener(
+                  index: index,
+                  child: const Icon(
+                    Icons.drag_handle_rounded,
+                    color: Colors.grey,
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
+                Container(
+                  width: 24,
+                  alignment: Alignment.center,
+                  child: Text(
+                    '${index + 1}',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: _TrailColors.secondaryTextFor(context),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: TextField(
                     controller: draft.nameController,
                     decoration: const InputDecoration(labelText: 'Name'),
                   ),
                 ),
-                if (canRemove) ...[
+                if (canRemove && onRemove != null) ...[
                   const SizedBox(width: 6),
                   IconButton(
                     tooltip: 'Remove checkpoint',
@@ -1558,13 +2497,13 @@ class _CoordinatePickerTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.value,
-    required this.onPick,
+    this.onPick,
   });
 
   final String title;
   final String subtitle;
   final String value;
-  final VoidCallback onPick;
+  final VoidCallback? onPick;
 
   @override
   Widget build(BuildContext context) {
@@ -1610,252 +2549,13 @@ class _CoordinatePickerTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            OutlinedButton.icon(
-              onPressed: onPick,
-              icon: const Icon(Icons.add_location_alt_rounded),
-              label: const Text('Map'),
-            ),
+            if (onPick != null)
+              OutlinedButton.icon(
+                onPressed: onPick,
+                icon: const Icon(Icons.add_location_alt_rounded),
+                label: const Text('Map'),
+              ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AdminCoordinatePickerSheet extends StatefulWidget {
-  const _AdminCoordinatePickerSheet({
-    required this.title,
-    this.initialLatitude,
-    this.initialLongitude,
-  });
-
-  final String title;
-  final double? initialLatitude;
-  final double? initialLongitude;
-
-  @override
-  State<_AdminCoordinatePickerSheet> createState() =>
-      _AdminCoordinatePickerSheetState();
-}
-
-class _AdminCoordinatePickerSheetState
-    extends State<_AdminCoordinatePickerSheet> {
-  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
-  static const _defaultLatitude = 3.1390;
-  static const _defaultLongitude = 101.6869;
-
-  late maplibre.LatLng _selected = maplibre.LatLng(
-    widget.initialLatitude ?? _defaultLatitude,
-    widget.initialLongitude ?? _defaultLongitude,
-  );
-  maplibre.MapLibreMapController? _mapController;
-  bool _styleLoaded = false;
-
-  void _selectCoordinate(maplibre.LatLng coordinate) {
-    setState(() {
-      _selected = coordinate;
-    });
-    unawaited(_syncSelectedPin());
-    unawaited(
-      _mapController?.animateCamera(
-        maplibre.CameraUpdate.newLatLng(coordinate),
-      ),
-    );
-  }
-
-  Future<void> _syncSelectedPin() async {
-    final controller = _mapController;
-    if (!_styleLoaded || controller == null) {
-      return;
-    }
-
-    await controller.clearCircles();
-    await controller.clearSymbols();
-    await controller.addCircle(
-      maplibre.CircleOptions(
-        geometry: _selected,
-        circleRadius: 10,
-        circleColor: '#E11D48',
-        circleStrokeColor: '#FFFFFF',
-        circleStrokeWidth: 3,
-      ),
-    );
-    await controller.addSymbol(
-      maplibre.SymbolOptions(
-        geometry: _selected,
-        textField: 'Pin',
-        textSize: 12,
-        textColor: '#FFFFFF',
-        textHaloColor: '#111111',
-        textHaloWidth: 0.8,
-        textOffset: const Offset(0, 1.35),
-        textAnchor: 'top',
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          18,
-          6,
-          18,
-          18 + MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              widget.title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _TrailColors.textFor(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Tap the map to place the pin, then confirm the selected coordinate.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _TrailColors.secondaryTextFor(context),
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 360,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    maplibre.MapLibreMap(
-                      styleString: _styleUrl,
-                      initialCameraPosition: maplibre.CameraPosition(
-                        target: _selected,
-                        zoom: 13,
-                      ),
-                      minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
-                        4,
-                        21,
-                      ),
-                      compassEnabled: false,
-                      logoEnabled: false,
-                      rotateGesturesEnabled: false,
-                      tiltGesturesEnabled: false,
-                      trackCameraPosition: true,
-                      featureTapsTriggersMapClick: true,
-                      annotationConsumeTapEvents: const [
-                        maplibre.AnnotationType.fill,
-                      ],
-                      annotationOrder: const [
-                        maplibre.AnnotationType.circle,
-                        maplibre.AnnotationType.symbol,
-                        maplibre.AnnotationType.line,
-                        maplibre.AnnotationType.fill,
-                      ],
-                      gestureRecognizers: {
-                        Factory<OneSequenceGestureRecognizer>(
-                          () => EagerGestureRecognizer(),
-                        ),
-                      },
-                      onMapCreated: (controller) {
-                        _mapController = controller;
-                      },
-                      onStyleLoadedCallback: () {
-                        _styleLoaded = true;
-                        unawaited(_syncSelectedPin());
-                      },
-                      onMapClick: (_, coordinate) {
-                        _selectCoordinate(coordinate);
-                      },
-                    ),
-                    Positioned(
-                      left: 12,
-                      right: 12,
-                      bottom: 12,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: _TrailColors.surfaceFor(
-                            context,
-                          ).withValues(alpha: 0.94),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Text(
-                            _coordinateLabel(
-                              _selected.latitude.toStringAsFixed(6),
-                              _selected.longitude.toStringAsFixed(6),
-                            ),
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: _TrailColors.textFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(_selected),
-                    icon: const Icon(Icons.check_rounded),
-                    label: const Text('Use Location'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TrailFormSwitch extends StatelessWidget {
-  const _TrailFormSwitch({
-    required this.title,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String title;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SwitchListTile.adaptive(
-      contentPadding: EdgeInsets.zero,
-      value: value,
-      onChanged: onChanged,
-      activeThumbColor: _TrailColors.green,
-      title: Text(
-        title,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: _TrailColors.textFor(context),
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0,
         ),
       ),
     );
@@ -2572,48 +3272,148 @@ class _AdminTrailEditCard extends StatelessWidget {
   }
 }
 
-class _EditTrailSheet extends StatefulWidget {
-  const _EditTrailSheet({required this.trail});
+class _EditTrailPage extends StatefulWidget {
+  const _EditTrailPage({required this.trail});
 
   final Trail trail;
 
   @override
-  State<_EditTrailSheet> createState() => _EditTrailSheetState();
+  State<_EditTrailPage> createState() => _EditTrailPageState();
 }
 
-class _EditTrailSheetState extends State<_EditTrailSheet> {
+class _EditTrailPageState extends State<_EditTrailPage> {
   late final _nameController = TextEditingController(text: widget.trail.name);
   late final _areaController = TextEditingController(text: widget.trail.area);
   late final _stateController = TextEditingController(text: widget.trail.state);
-  late final _distanceController = TextEditingController(
-    text: widget.trail.distanceKm.toStringAsFixed(1),
-  );
-  late final _durationController = TextEditingController(
-    text: widget.trail.estimatedDurationMinutes.toString(),
-  );
-  late final _elevationController = TextEditingController(
-    text: widget.trail.elevationGainMeters.toString(),
-  );
-  late final _ratingController = TextEditingController(
-    text: widget.trail.ratingAverage.toStringAsFixed(1),
-  );
   late String _difficulty = widget.trail.difficulty;
-  late bool _isVerified = widget.trail.isVerifiedTrail;
-  late bool _offlineAvailable = widget.trail.offlineMapAvailable;
+  late final List<_CheckpointDraft> _checkpoints = widget.trail.checkpoints
+      .map((c) => _CheckpointDraft(order: c.order, name: c.name)
+        ..latitudeController.text = c.latitude.toStringAsFixed(6)
+        ..longitudeController.text = c.longitude.toStringAsFixed(6))
+      .toList();
+
+  HikingRouteResult? _refreshedRoute;
+  bool _isRefreshing = false;
 
   @override
   void dispose() {
     _nameController.dispose();
     _areaController.dispose();
     _stateController.dispose();
-    _distanceController.dispose();
-    _durationController.dispose();
-    _elevationController.dispose();
-    _ratingController.dispose();
+    for (final c in _checkpoints) {
+      c.dispose();
+    }
     super.dispose();
   }
 
+  void _addCheckpoint() {
+    setState(() {
+      _checkpoints.add(
+        _CheckpointDraft(order: _checkpoints.length + 1, name: 'Waypoint'),
+      );
+    });
+  }
+
+  void _removeCheckpoint(int index) {
+    if (_checkpoints.length <= 2) return;
+    setState(() {
+      _checkpoints.removeAt(index).dispose();
+    });
+  }
+
+  Future<void> _openCheckpointMap(int index) async {
+    final draft = _checkpoints[index];
+    double? initialLat = double.tryParse(draft.latitudeController.text.trim());
+    double? initialLng = double.tryParse(draft.longitudeController.text.trim());
+    if ((initialLat == null || initialLng == null) && index > 0) {
+      final prev = _checkpoints[index - 1];
+      initialLat = double.tryParse(prev.latitudeController.text.trim());
+      initialLng = double.tryParse(prev.longitudeController.text.trim());
+    }
+    final coordinate = await showModalBottomSheet<maplibre.LatLng>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _TrailColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (context) {
+        return _SinglePinPickerSheet(
+          title: 'Select checkpoint location',
+          initialLatitude: initialLat,
+          initialLongitude: initialLng,
+        );
+      },
+    );
+    if (coordinate == null || !mounted) return;
+    setState(() {
+      draft.latitudeController.text = coordinate.latitude.toStringAsFixed(6);
+      draft.longitudeController.text = coordinate.longitude.toStringAsFixed(6);
+    });
+  }
+
+  Future<void> _refreshMetrics() async {
+    final models = _buildCheckpointModels();
+    if (models.length < 2) return;
+
+    setState(() => _isRefreshing = true);
+
+    try {
+      final trail = Trail(
+        trailId: widget.trail.trailId,
+        name: widget.trail.name,
+        area: widget.trail.area,
+        state: widget.trail.state,
+        latitude: models.first.latitude,
+        longitude: models.first.longitude,
+        distanceKm: 0,
+        difficulty: _difficulty,
+        estimatedDurationMinutes: 0,
+        elevationGainMeters: 0,
+        ratingAverage: widget.trail.ratingAverage,
+        offlineMapAvailable: widget.trail.offlineMapAvailable,
+        offlineMapDownloaded: widget.trail.offlineMapDownloaded,
+        isVerifiedTrail: widget.trail.isVerifiedTrail,
+        routeFilePath: widget.trail.routeFilePath,
+        coverColorValue: widget.trail.coverColorValue,
+        coverImageUrl: widget.trail.coverImageUrl,
+        checkpoints: models,
+        weather: widget.trail.weather,
+        hazards: widget.trail.hazards,
+      );
+
+      final route = await HikingRouteService().findHikingRouteForTrail(trail);
+      if (mounted) {
+        setState(() {
+          _refreshedRoute = route;
+          _isRefreshing = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isRefreshing = false);
+      }
+    }
+  }
+
+  List<TrailCheckpoint> _buildCheckpointModels() {
+    final models = <TrailCheckpoint>[];
+    for (var i = 0; i < _checkpoints.length; i++) {
+      final d = _checkpoints[i];
+      final name = d.nameController.text.trim();
+      final lat = double.tryParse(d.latitudeController.text.trim());
+      final lng = double.tryParse(d.longitudeController.text.trim());
+      if (name.isNotEmpty && lat != null && lng != null) {
+        models.add(TrailCheckpoint(name: name, latitude: lat, longitude: lng, order: i + 1));
+      }
+    }
+    return models;
+  }
+
   void _save() {
+    final models = _buildCheckpointModels();
+
     final updatedTrail = widget.trail.copyWith(
       name: _nameController.text.trim().isEmpty
           ? widget.trail.name
@@ -2625,50 +3425,51 @@ class _EditTrailSheetState extends State<_EditTrailSheet> {
           ? widget.trail.state
           : _stateController.text.trim(),
       difficulty: _difficulty,
-      distanceKm:
-          double.tryParse(_distanceController.text.trim()) ??
-          widget.trail.distanceKm,
-      estimatedDurationMinutes:
-          int.tryParse(_durationController.text.trim()) ??
-          widget.trail.estimatedDurationMinutes,
-      elevationGainMeters:
-          int.tryParse(_elevationController.text.trim()) ??
-          widget.trail.elevationGainMeters,
-      ratingAverage:
-          double.tryParse(_ratingController.text.trim()) ??
-          widget.trail.ratingAverage,
-      isVerifiedTrail: _isVerified,
-      offlineMapAvailable: _offlineAvailable,
+      checkpoints: models.length >= 2 ? models : widget.trail.checkpoints,
+      distanceKm: _refreshedRoute != null
+          ? _refreshedRoute!.distanceMeters / 1000
+          : widget.trail.distanceKm,
+      estimatedDurationMinutes: _refreshedRoute != null
+          ? _refreshedRoute!.duration.inMinutes
+          : widget.trail.estimatedDurationMinutes,
+      elevationGainMeters: _refreshedRoute != null
+          ? (_refreshedRoute!.elevationGainMeters ?? widget.trail.elevationGainMeters).round()
+          : widget.trail.elevationGainMeters,
     );
     Navigator.of(context).pop(updatedTrail);
   }
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          18,
-          6,
-          18,
-          18 + MediaQuery.of(context).viewInsets.bottom,
+    return Scaffold(
+      backgroundColor: _TrailColors.backgroundFor(context),
+      appBar: AppBar(
+        title: const Text('Edit Trail'),
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          TextButton.icon(
+            onPressed: _save,
+            icon: const Icon(Icons.save_rounded),
+            label: const Text('Save'),
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'Edit Trail',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _TrailColors.textFor(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 12),
+            const _SectionTitle(label: 'Trail Identity'),
+            const SizedBox(height: 10),
             TextField(
               controller: _nameController,
-              decoration: const InputDecoration(labelText: 'Trail name'),
+              decoration: const InputDecoration(
+                labelText: 'Trail name',
+                prefixIcon: Icon(Icons.terrain_rounded),
+              ),
             ),
             const SizedBox(height: 10),
             Row(
@@ -2688,6 +3489,8 @@ class _EditTrailSheetState extends State<_EditTrailSheet> {
                 ),
               ],
             ),
+            const SizedBox(height: 14),
+            const _SectionTitle(label: 'Difficulty'),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
               initialValue: _difficulty,
@@ -2704,74 +3507,164 @@ class _EditTrailSheetState extends State<_EditTrailSheet> {
                 }
               },
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 20),
+            _InsetGroup(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Route metrics',
+                            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              color: _TrailColors.secondaryTextFor(context),
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _isRefreshing ? null : _refreshMetrics,
+                          icon: _isRefreshing
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.refresh_rounded, size: 18),
+                          label: Text(_isRefreshing ? 'Refreshing' : 'Refresh'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    _metricRow(
+                      context,
+                      Icons.straighten_rounded,
+                      'Distance',
+                      _refreshedRoute?.distanceLabel ?? widget.trail.distanceLabel,
+                    ),
+                    const SizedBox(height: 6),
+                    _metricRow(
+                      context,
+                      Icons.access_time_rounded,
+                      'Duration',
+                      _refreshedRoute?.durationLabel ?? widget.trail.durationLabel,
+                    ),
+                    const SizedBox(height: 6),
+                    _metricRow(
+                      context,
+                      Icons.trending_up_rounded,
+                      'Elevation gain',
+                      _refreshedRoute != null
+                          ? '${_refreshedRoute!.elevationGainMeters ?? 0} m'
+                          : '${widget.trail.elevationGainMeters} m',
+                    ),
+                    const SizedBox(height: 6),
+                    _metricRow(
+                      context,
+                      Icons.star_rounded,
+                      'Rating',
+                      widget.trail.ratingAverage.toStringAsFixed(1),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Route metrics are determined by the routing API and '
+                      'cannot be edited manually.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _TrailColors.secondaryTextFor(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
             Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _distanceController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Distance km'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _durationController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Minutes'),
-                  ),
+                const Expanded(child: _SectionTitle(label: 'Checkpoints')),
+                TextButton.icon(
+                  onPressed: _addCheckpoint,
+                  icon: const Icon(Icons.add_location_alt_rounded),
+                  label: const Text('Add'),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _elevationController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Elevation m'),
+            const SizedBox(height: 8),
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: _checkpoints.length,
+              onReorderItem: (int oldIndex, int newIndex) {
+                setState(() {
+                  final draft = _checkpoints.removeAt(oldIndex);
+                  _checkpoints.insert(newIndex, draft);
+                });
+              },
+              itemBuilder: (context, index) {
+                final draft = _checkpoints[index];
+                return Padding(
+                  key: ValueKey(draft.id),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _CheckpointDraftFields(
+                    draft: draft,
+                    index: index,
+                    canRemove: _checkpoints.length > 2,
+                    onRemove: () => _removeCheckpoint(index),
+                    onPickLocation: () => unawaited(
+                      _openCheckpointMap(index),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _ratingController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Rating'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            _TrailFormSwitch(
-              title: 'Verified trail',
-              value: _isVerified,
-              onChanged: (value) => setState(() => _isVerified = value),
-            ),
-            _TrailFormSwitch(
-              title: 'Offline map available',
-              value: _offlineAvailable,
-              onChanged: (value) => setState(() => _offlineAvailable = value),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _save,
-              icon: const Icon(Icons.save_rounded),
-              label: const Text('Save Trail'),
+                );
+              },
             ),
           ],
         ),
       ),
     );
   }
+
+  Widget _metricRow(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: _TrailColors.secondaryTextFor(context)),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: _TrailColors.secondaryTextFor(context),
+          ),
+        ),
+        const Spacer(),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: _TrailColors.textFor(context),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _CheckpointTimeline extends StatelessWidget {
-  const _CheckpointTimeline({required this.trail});
+  const _CheckpointTimeline({
+    required this.trail,
+    required this.highlightedIndex,
+    required this.onShowOnMap,
+  });
 
   final Trail trail;
+  final int? highlightedIndex;
+  final void Function(int index) onShowOnMap;
 
   @override
   Widget build(BuildContext context) {
@@ -2784,6 +3677,9 @@ class _CheckpointTimeline extends StatelessWidget {
               _CheckpointRow(
                 checkpoint: trail.checkpoints[index],
                 isLast: index == trail.checkpoints.length - 1,
+                index: index,
+                isHighlighted: highlightedIndex == index,
+                onShowOnMap: () => onShowOnMap(index),
               ),
           ],
         ),
@@ -2793,75 +3689,118 @@ class _CheckpointTimeline extends StatelessWidget {
 }
 
 class _CheckpointRow extends StatelessWidget {
-  const _CheckpointRow({required this.checkpoint, required this.isLast});
+  const _CheckpointRow({
+    required this.checkpoint,
+    required this.isLast,
+    required this.index,
+    required this.isHighlighted,
+    required this.onShowOnMap,
+  });
 
   final TrailCheckpoint checkpoint;
   final bool isLast;
+  final int index;
+  final bool isHighlighted;
+  final VoidCallback onShowOnMap;
 
   @override
   Widget build(BuildContext context) {
     return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                alignment: Alignment.center,
-                margin: const EdgeInsets.only(top: 10),
-                decoration: BoxDecoration(
-                  color: _TrailColors.greenSoftFor(context),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${checkpoint.order}',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: _TrailColors.green,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+        decoration: BoxDecoration(
+          color: isHighlighted
+              ? _TrailColors.greenSoftFor(context)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Column(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
+                  margin: const EdgeInsets.only(top: 10),
+                  decoration: BoxDecoration(
+                    color: isHighlighted
+                        ? _TrailColors.green
+                        : _TrailColors.greenSoftFor(context),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                ),
-              ),
-              if (!isLast)
-                Expanded(
-                  child: VerticalDivider(
-                    width: 1,
-                    thickness: 1,
-                    color: _TrailColors.separatorFor(context),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 10, bottom: 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    checkpoint.name,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _TrailColors.textFor(context),
-                      fontWeight: FontWeight.w700,
+                  child: Text(
+                    '${checkpoint.order}',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: isHighlighted
+                          ? Colors.white
+                          : _TrailColors.green,
+                      fontWeight: FontWeight.w800,
                       letterSpacing: 0,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Dummy ETA checkpoint - ${checkpoint.latitude.toStringAsFixed(4)}, ${checkpoint.longitude.toStringAsFixed(4)}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TrailColors.secondaryTextFor(context),
-                      letterSpacing: 0,
+                ),
+                if (!isLast)
+                  Expanded(
+                    child: VerticalDivider(
+                      width: 1,
+                      thickness: 1,
+                      color: _TrailColors.separatorFor(context),
                     ),
                   ),
-                ],
+              ],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 10, bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      checkpoint.name,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: _TrailColors.textFor(context),
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${checkpoint.latitude.toStringAsFixed(5)}, ${checkpoint.longitude.toStringAsFixed(5)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _TrailColors.secondaryTextFor(context),
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 4),
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: IconButton(
+                onPressed: onShowOnMap,
+                icon: Icon(
+                  Icons.near_me_rounded,
+                  size: 20,
+                  color: isHighlighted
+                      ? _TrailColors.green
+                      : _TrailColors.secondaryTextFor(context),
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 36,
+                  minHeight: 36,
+                ),
+                tooltip: 'Show on map',
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3061,16 +4000,23 @@ class _MetricCell extends StatelessWidget {
 }
 
 class _RoutePreview extends StatefulWidget {
-  const _RoutePreview({required this.trail});
+  const _RoutePreview({
+    super.key,
+    required this.trail,
+    this.highlightedCheckpointIndex,
+    this.onHighlightCleared,
+  });
 
   final Trail trail;
+  final int? highlightedCheckpointIndex;
+  final VoidCallback? onHighlightCleared;
 
   @override
   State<_RoutePreview> createState() => _RoutePreviewState();
 }
 
 class _RoutePreviewState extends State<_RoutePreview> {
-  late Future<GoogleRouteResult> _routeFuture;
+  late Future<HikingRouteResult> _routeFuture;
 
   @override
   void initState() {
@@ -3086,8 +4032,8 @@ class _RoutePreviewState extends State<_RoutePreview> {
     }
   }
 
-  Future<GoogleRouteResult> _loadHikingRoute() {
-    return const HikingRouteService().findHikingRouteForTrail(widget.trail);
+  Future<HikingRouteResult> _loadHikingRoute() {
+    return HikingRouteService().findHikingRouteForTrail(widget.trail);
   }
 
   @override
@@ -3097,7 +4043,7 @@ class _RoutePreviewState extends State<_RoutePreview> {
         height: 240,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: FutureBuilder<GoogleRouteResult>(
+          child: FutureBuilder<HikingRouteResult>(
             future: _routeFuture,
             builder: (context, snapshot) {
               final route = snapshot.data;
@@ -3111,6 +4057,8 @@ class _RoutePreviewState extends State<_RoutePreview> {
                 ),
                 trail: widget.trail,
                 route: route?.encodedPolyline.isEmpty == true ? null : route,
+                highlightedCheckpointIndex:
+                    widget.highlightedCheckpointIndex,
               );
             },
           ),
@@ -3121,23 +4069,22 @@ class _RoutePreviewState extends State<_RoutePreview> {
 }
 
 class _OpenFreeMapRouteMap extends StatefulWidget {
-  const _OpenFreeMapRouteMap({super.key, required this.trail, this.route});
+  const _OpenFreeMapRouteMap({
+    super.key,
+    required this.trail,
+    this.route,
+    this.highlightedCheckpointIndex,
+  });
 
   final Trail trail;
-  final GoogleRouteResult? route;
+  final HikingRouteResult? route;
+  final int? highlightedCheckpointIndex;
 
   @override
   State<_OpenFreeMapRouteMap> createState() => _OpenFreeMapRouteMapState();
 }
 
 class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
-  static const _styleUrls = [
-    'https://tiles.openfreemap.org/styles/liberty',
-    'https://tiles.openfreemap.org/styles/positron',
-    'https://tiles.openfreemap.org/styles/bright',
-  ];
-  static const _minZoom = 4.2;
-  static const _maxZoom = 21.0;
   static const _routeLineWidth = 2.65;
 
   late final List<maplibre.LatLng> _routePoints;
@@ -3174,9 +4121,29 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
     _routePoints = route == null
         ? const []
         : _orientRoutePoints(_decodePolyline(route.encodedPolyline));
-    final center = _centerFor(_visibleMapPoints);
+    final center = centerFor(_visibleMapPoints);
     _currentZoom = 13.5;
     _scaleLatitude = center.latitude;
+  }
+
+  @override
+  void didUpdateWidget(covariant _OpenFreeMapRouteMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.highlightedCheckpointIndex !=
+        widget.highlightedCheckpointIndex) {
+      final index = widget.highlightedCheckpointIndex;
+      if (index != null && index >= 0 && index < _checkpointPoints.length) {
+        _focusOnCheckpoint(_checkpointPoints[index]);
+      }
+    }
+  }
+
+  Future<void> _focusOnCheckpoint(maplibre.LatLng point) async {
+    final controller = _mapController;
+    if (controller == null) return;
+    await controller.animateCamera(
+      maplibre.CameraUpdate.newLatLngZoom(point, 16),
+    );
   }
 
   Future<void> _onMapCreated(maplibre.MapLibreMapController controller) async {
@@ -3252,7 +4219,7 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
     }
     await controller.animateCamera(
       maplibre.CameraUpdate.newLatLngBounds(
-        _boundsFor(_visibleMapPoints),
+        boundsFor(_visibleMapPoints),
         left: 30,
         top: 42,
         right: 30,
@@ -3269,7 +4236,7 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
 
   void _cycleStyle() {
     setState(() {
-      _styleIndex = (_styleIndex + 1) % _styleUrls.length;
+      _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
       _styleLoaded = false;
       _routeRendered = false;
     });
@@ -3308,20 +4275,20 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
 
   @override
   Widget build(BuildContext context) {
-    final center = _centerFor(_visibleMapPoints);
+    final center = centerFor(_visibleMapPoints);
     return Stack(
       fit: StackFit.expand,
       children: [
         maplibre.MapLibreMap(
-          key: ValueKey(_styleUrls[_styleIndex]),
-          styleString: _styleUrls[_styleIndex],
+          key: ValueKey(mapStyleUrls[_styleIndex]),
+          styleString: mapStyleUrls[_styleIndex],
           initialCameraPosition: maplibre.CameraPosition(
             target: center,
             zoom: _currentZoom,
           ),
           minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
-            _minZoom,
-            _maxZoom,
+            kMapMinZoom,
+            kMapMaxZoom,
           ),
           compassEnabled: false,
           logoEnabled: false,
@@ -3356,7 +4323,7 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
           alignment: Alignment.topRight,
           child: Padding(
             padding: const EdgeInsets.all(10),
-            child: _MapZoomControls(
+            child: MapZoomControls(
               onZoomIn: () => _zoomBy(1),
               onZoomOut: () => _zoomBy(-1),
               onReset: _fitRoute,
@@ -3368,7 +4335,7 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
           alignment: Alignment.bottomLeft,
           child: Padding(
             padding: const EdgeInsets.all(10),
-            child: _MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
+            child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
           ),
         ),
         const Align(
@@ -3429,11 +4396,11 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
     }
 
     final forwardScore =
-        _distanceMeters(points.first, _startPoint) +
-        _distanceMeters(points.last, _endPoint);
+        distanceMeters(points.first, _startPoint) +
+        distanceMeters(points.last, _endPoint);
     final reverseScore =
-        _distanceMeters(points.first, _endPoint) +
-        _distanceMeters(points.last, _startPoint);
+        distanceMeters(points.first, _endPoint) +
+        distanceMeters(points.last, _startPoint);
 
     if (reverseScore < forwardScore) {
       return points.reversed.toList();
@@ -3441,253 +4408,6 @@ class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
     return points;
   }
 
-  maplibre.LatLng _centerFor(List<maplibre.LatLng> points) {
-    final bounds = _boundsFor(points);
-    return maplibre.LatLng(
-      (bounds.southwest.latitude + bounds.northeast.latitude) / 2,
-      (bounds.southwest.longitude + bounds.northeast.longitude) / 2,
-    );
-  }
-
-  maplibre.LatLngBounds _boundsFor(List<maplibre.LatLng> points) {
-    var minLatitude = points.first.latitude;
-    var maxLatitude = points.first.latitude;
-    var minLongitude = points.first.longitude;
-    var maxLongitude = points.first.longitude;
-
-    for (final point in points.skip(1)) {
-      minLatitude = math.min(minLatitude, point.latitude);
-      maxLatitude = math.max(maxLatitude, point.latitude);
-      minLongitude = math.min(minLongitude, point.longitude);
-      maxLongitude = math.max(maxLongitude, point.longitude);
-    }
-
-    if (minLatitude == maxLatitude) {
-      minLatitude -= 0.0005;
-      maxLatitude += 0.0005;
-    }
-    if (minLongitude == maxLongitude) {
-      minLongitude -= 0.0005;
-      maxLongitude += 0.0005;
-    }
-
-    return maplibre.LatLngBounds(
-      southwest: maplibre.LatLng(minLatitude, minLongitude),
-      northeast: maplibre.LatLng(maxLatitude, maxLongitude),
-    );
-  }
-
-  double _distanceMeters(maplibre.LatLng a, maplibre.LatLng b) {
-    const earthRadiusMeters = 6371000.0;
-    final dLat = (b.latitude - a.latitude) * math.pi / 180;
-    final dLon = (b.longitude - a.longitude) * math.pi / 180;
-    final lat1 = a.latitude * math.pi / 180;
-    final lat2 = b.latitude * math.pi / 180;
-    final h =
-        math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(lat1) *
-            math.cos(lat2) *
-            math.sin(dLon / 2) *
-            math.sin(dLon / 2);
-    return 2 * earthRadiusMeters * math.asin(math.sqrt(h));
-  }
-}
-
-class _MapZoomControls extends StatelessWidget {
-  const _MapZoomControls({
-    required this.onZoomIn,
-    required this.onZoomOut,
-    required this.onReset,
-    required this.onLayer,
-  });
-
-  final VoidCallback onZoomIn;
-  final VoidCallback onZoomOut;
-  final VoidCallback onReset;
-  final VoidCallback onLayer;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _TrailColors.elevatedSurfaceFor(context).withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x22000000),
-            blurRadius: 10,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _MapZoomButton(
-            tooltip: 'Zoom in',
-            icon: Icons.add_rounded,
-            onPressed: onZoomIn,
-          ),
-          const _MiniDivider(),
-          _MapZoomButton(
-            tooltip: 'Zoom out',
-            icon: Icons.remove_rounded,
-            onPressed: onZoomOut,
-          ),
-          const _MiniDivider(),
-          _MapZoomButton(
-            tooltip: 'Fit route',
-            icon: Icons.center_focus_strong_rounded,
-            onPressed: onReset,
-          ),
-          const _MiniDivider(),
-          _MapZoomButton(
-            tooltip: 'Change OpenFreeMap style',
-            icon: Icons.layers_rounded,
-            onPressed: onLayer,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MapZoomButton extends StatelessWidget {
-  const _MapZoomButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: IconButton(
-        visualDensity: VisualDensity.compact,
-        iconSize: 18,
-        color: _TrailColors.textFor(context),
-        onPressed: onPressed,
-        icon: Icon(icon),
-      ),
-    );
-  }
-}
-
-class _MiniDivider extends StatelessWidget {
-  const _MiniDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 28,
-      child: VerticalDivider(
-        width: 1,
-        thickness: 0.7,
-        color: _TrailColors.separatorFor(context),
-      ),
-    );
-  }
-}
-
-class _MapScaleBar extends StatelessWidget {
-  const _MapScaleBar({required this.zoom, required this.latitude});
-
-  final double zoom;
-  final double latitude;
-
-  @override
-  Widget build(BuildContext context) {
-    const targetWidth = 72.0;
-    final metersPerPixel =
-        156543.03392 *
-        math.cos(latitude * math.pi / 180).abs() /
-        math.pow(2, zoom);
-    final distanceMeters = _niceDistance(targetWidth * metersPerPixel);
-    final width = (distanceMeters / metersPerPixel).clamp(34.0, 92.0);
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _TrailColors.elevatedSurfaceFor(context).withValues(alpha: 0.9),
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: const Color(0x77000000), width: 1),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(7, 4, 7, 5),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _distanceLabel(distanceMeters),
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: _TrailColors.textFor(context),
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 3),
-            SizedBox(
-              width: width,
-              height: 8,
-              child: const DecoratedBox(
-                decoration: BoxDecoration(
-                  border: Border(
-                    left: BorderSide(color: Color(0xBB111111), width: 1.4),
-                    bottom: BorderSide(color: Color(0xBB111111), width: 1.4),
-                    right: BorderSide(color: Color(0xBB111111), width: 1.4),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  double _niceDistance(double rawMeters) {
-    const distances = [
-      1000000.0,
-      500000.0,
-      200000.0,
-      100000.0,
-      50000.0,
-      20000.0,
-      10000.0,
-      5000.0,
-      2000.0,
-      1000.0,
-      500.0,
-      200.0,
-      100.0,
-      50.0,
-      20.0,
-      10.0,
-      5.0,
-    ];
-
-    for (final distance in distances) {
-      if (rawMeters >= distance) {
-        return distance;
-      }
-    }
-    return 5;
-  }
-
-  String _distanceLabel(double meters) {
-    if (meters >= 1000) {
-      final kilometers = meters / 1000;
-      return kilometers >= 100
-          ? '${kilometers.round()} km'
-          : '${kilometers.toStringAsFixed(kilometers >= 10 ? 0 : 1)} km';
-    }
-    return '${meters.round()} m';
-  }
 }
 
 class _OpenFreeMapAttribution extends StatelessWidget {
@@ -4058,7 +4778,7 @@ class _WeatherCard extends StatelessWidget {
 class _GoogleRouteStatusCard extends StatelessWidget {
   const _GoogleRouteStatusCard({this.result, this.errorMessage});
 
-  final GoogleRouteResult? result;
+  final HikingRouteResult? result;
   final String? errorMessage;
 
   @override
