@@ -94,18 +94,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   int immediateSosRequestId = 0;
   SosAlertMode? immediateSosRequestMode;
   final List<DateTime> fallStillnessCancelTaps = <DateTime>[];
-  List<EmergencyContact> emergencyContacts = const [
-    EmergencyContact(
-      name: 'Mother',
-      phoneNumber: '+60123456789',
-      relationship: 'Family',
-    ),
-    EmergencyContact(
-      name: 'Brother',
-      phoneNumber: '+60198765432',
-      relationship: 'Family',
-    ),
-  ];
+  List<EmergencyContact> emergencyContacts = const [];
 
   late final List<HikerBottomNavDestination> tabs;
 
@@ -127,6 +116,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    unawaited(_loadEmergencyContacts());
     sosAlertRepository = SosAlertRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
@@ -145,6 +135,22 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
     unawaited(loadLiveData());
     unawaited(_loadInitialDeepLink());
+  }
+
+  Future<void> _loadEmergencyContacts() async {
+    try {
+      final contacts = await emergencyContactsRepository.loadEmergencyContacts(
+        session: widget.session,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        emergencyContacts = contacts;
+      });
+    } catch (_) {
+      return;
+    }
   }
 
   Future<void> _loadInitialDeepLink() async {
@@ -339,9 +345,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     setState(() {
-      selectedTabIndex = 3;
+      selectedTabIndex = 2;
     });
-    tabController.animateTo(3);
+    tabController.animateTo(2);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -370,35 +376,10 @@ class _HikerHomePageState extends State<HikerHomePage>
       if (!mounted) {
         return;
       }
-      final currentPlan = plannedHike;
       setState(() {
         trails
           ..clear()
           ..addAll(liveTrails);
-        plannedHike = liveTrails.isEmpty
-            ? null
-            : PlannedHike(
-                trail: liveTrails.first,
-                plannedStartTime:
-                    currentPlan?.plannedStartTime ??
-                    DateTime.now().add(const Duration(hours: 1)),
-                expectedReturnTime:
-                    currentPlan?.expectedReturnTime ??
-                    DateTime.now().add(
-                      Duration(
-                        minutes:
-                            liveTrails.first.estimatedDurationMinutes + 120,
-                      ),
-                    ),
-                weatherCached: true,
-                offlineMapDownloaded: liveTrails.first.offlineMapDownloaded,
-                emergencyContactsSelected: emergencyContacts.isNotEmpty,
-                checklistCompleted: currentPlan?.checklistCompleted ?? 0,
-                checklistTotal: currentPlan?.checklistTotal ?? 8,
-                phoneBatteryLevel: currentPlan?.phoneBatteryLevel ?? 67,
-                liveLocationConfigured:
-                    currentPlan?.liveLocationConfigured ?? false,
-              );
       });
       await hikerCircleRepository.ensureAchievementSeeds();
     } finally {
@@ -488,7 +469,19 @@ class _HikerHomePageState extends State<HikerHomePage>
     tabController.animateTo(index);
   }
 
-  Future<void> openStartHikeWizard(Trail trail) async {
+  Future<void> openStartHikeWizard([Trail? trail]) async {
+    if (trail == null && trails.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('No trails are available to start yet.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
     final startedHike = await Navigator.of(context).push<ActiveHikeSession>(
       MaterialPageRoute<ActiveHikeSession>(
         builder: (context) => StartHikeWizardPage(
@@ -969,9 +962,9 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   void openJoinTeamHike() {
     setState(() {
-      selectedTabIndex = 3;
+      selectedTabIndex = 2;
     });
-    tabController.animateTo(3);
+    tabController.animateTo(2);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -1170,7 +1163,7 @@ class _HikerHomePageState extends State<HikerHomePage>
               (plannedHike?.trail.trailId == trail.trailId &&
                   (plannedHike?.offlineMapDownloaded ?? false)),
           onMapDownloaded: () => markPlannedMapDownloaded(trail),
-          onStartHike: openStartHikeWizard,
+          onStartHike: (trail) => openStartHikeWizard(trail),
         ),
       ),
     );
@@ -1206,26 +1199,26 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   void openSosTab() {
     setState(() {
-      selectedTabIndex = 2;
+      selectedTabIndex = 1;
     });
-    tabController.animateTo(2);
+    tabController.animateTo(1);
   }
 
   void requestManualSos() {
     setState(() {
-      selectedTabIndex = 2;
+      selectedTabIndex = 1;
       manualSosRequestId += 1;
     });
-    tabController.animateTo(2);
+    tabController.animateTo(1);
   }
 
   void requestImmediateSos(SosAlertMode mode) {
     setState(() {
-      selectedTabIndex = 2;
+      selectedTabIndex = 1;
       immediateSosRequestMode = mode;
       immediateSosRequestId += 1;
     });
-    tabController.animateTo(2);
+    tabController.animateTo(1);
   }
 
   Future<void> _endActiveHikeSession() async {
@@ -1306,13 +1299,12 @@ class _HikerHomePageState extends State<HikerHomePage>
         return HomeDashboardPage(
           phoneNumber: widget.session.phoneNumber,
           plannedHike: plannedHike,
+          trails: trails,
+          isLoadingTrails: isLoadingLiveData,
           activeHike: activeHike,
           isVisible: selectedTabIndex == 0,
-          onStartHike: openStartHikeWizard,
-          onJoinTeamHike: openJoinTeamHike,
-          onOpenEmergencyContacts: () => unawaited(openEmergencyContacts()),
+          onStartHike: (trail) => openStartHikeWizard(trail),
           onOpenTrailDetail: openTrailDetail,
-          onOpenSosTab: openSosTab,
           onActiveHikeChanged: (updatedHike) {
             setState(() {
               activeHike = updatedHike;
@@ -1326,13 +1318,6 @@ class _HikerHomePageState extends State<HikerHomePage>
           fallStillnessSnapshot: fallStillnessMonitor.snapshot,
           onCancelFallStillnessSos: () =>
               _cancelFallStillnessSos('Phone tap response received'),
-        );
-      case 'Trail':
-        return TrailPage(
-          session: widget.session,
-          hikerCircleRepository: hikerCircleRepository,
-          initialTrails: trails,
-          onStartHike: openStartHikeWizard,
         );
       case 'SOS':
         return SosPage(

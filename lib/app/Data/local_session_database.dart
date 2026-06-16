@@ -149,7 +149,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 4,
+      version: 5,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -157,7 +157,10 @@ class LocalSessionDatabase {
             created_at TEXT NOT NULL,
             signed_in_at TEXT NOT NULL,
             app_instance_id TEXT NOT NULL DEFAULT '',
-            is_admin INTEGER NOT NULL DEFAULT 0
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            username TEXT NOT NULL DEFAULT '',
+            requires_onboarding INTEGER NOT NULL DEFAULT 0,
+            onboarding_profile_complete INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await _createSafetyTables(database);
@@ -183,6 +186,26 @@ class LocalSessionDatabase {
           );
           await _createDeviceBindingTables(database);
           await _createEmergencyContactsTable(database);
+        }
+        if (oldVersion < 5) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'users',
+            columnName: 'username',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'users',
+            columnName: 'requires_onboarding',
+            definition: 'INTEGER NOT NULL DEFAULT 0',
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'users',
+            columnName: 'onboarding_profile_complete',
+            definition: 'INTEGER NOT NULL DEFAULT 0',
+          );
         }
       },
     );
@@ -417,6 +440,11 @@ class LocalSessionDatabase {
       'signed_in_at': session.signedInAt.toUtc().toIso8601String(),
       'app_instance_id': session.appInstanceId,
       'is_admin': session.isAdmin ? 1 : 0,
+      'username': session.username,
+      'requires_onboarding': session.requiresOnboarding ? 1 : 0,
+      'onboarding_profile_complete': session.isOnboardingProfileComplete
+          ? 1
+          : 0,
     };
   }
 
@@ -433,6 +461,9 @@ class LocalSessionDatabase {
       createdAt: createdAt,
       appInstanceId: row['app_instance_id'] as String? ?? '',
       isAdmin: row['is_admin'] == 1,
+      username: row['username'] as String? ?? '',
+      requiresOnboarding: row['requires_onboarding'] == 1,
+      isOnboardingProfileComplete: row['onboarding_profile_complete'] == 1,
     );
   }
 

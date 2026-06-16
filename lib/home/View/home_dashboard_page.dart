@@ -7,7 +7,6 @@ import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 import '../ModelView/fall_stillness_monitor.dart';
 import 'active_tracking_map_view.dart';
-import 'first_aid_guide_page.dart';
 import 'gear_checklist_page.dart';
 
 class HomeDashboardPage extends StatelessWidget {
@@ -15,13 +14,12 @@ class HomeDashboardPage extends StatelessWidget {
     super.key,
     required this.phoneNumber,
     required this.plannedHike,
+    required this.trails,
+    required this.isLoadingTrails,
     required this.activeHike,
     required this.isVisible,
     required this.onStartHike,
-    required this.onJoinTeamHike,
-    required this.onOpenEmergencyContacts,
     required this.onOpenTrailDetail,
-    required this.onOpenSosTab,
     required this.onActiveHikeChanged,
     required this.onCheckInRequested,
     required this.onPinLocationRequested,
@@ -33,13 +31,12 @@ class HomeDashboardPage extends StatelessWidget {
 
   final String phoneNumber;
   final PlannedHike? plannedHike;
+  final List<Trail> trails;
+  final bool isLoadingTrails;
   final ActiveHikeSession? activeHike;
   final bool isVisible;
-  final Future<void> Function(Trail trail) onStartHike;
-  final VoidCallback onJoinTeamHike;
-  final VoidCallback onOpenEmergencyContacts;
+  final Future<void> Function(Trail? trail) onStartHike;
   final ValueChanged<Trail> onOpenTrailDetail;
-  final VoidCallback onOpenSosTab;
   final ValueChanged<ActiveHikeSession> onActiveHikeChanged;
   final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
   onCheckInRequested;
@@ -65,19 +62,21 @@ class HomeDashboardPage extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 640),
               child: active == null
                   ? planned == null
-                        ? _NoFirebaseTrailDashboard(
-                            onJoinTeamHike: onJoinTeamHike,
-                            onOpenSosTab: onOpenSosTab,
+                        ? _TrailDiscoveryDashboard(
+                            trails: trails,
+                            isLoadingTrails: isLoadingTrails,
+                            onStartHike: () =>
+                                unawaited(_startHikeFromDashboard(context)),
+                            onOpenTrailDetail: onOpenTrailDetail,
                           )
                         : _PreparationDashboard(
-                            phoneNumber: phoneNumber,
                             plannedHike: planned,
+                            trails: trails,
+                            isLoadingTrails: isLoadingTrails,
                             onStartHike: () => unawaited(
                               _confirmPreparationThenStart(context, planned),
                             ),
-                            onJoinTeamHike: onJoinTeamHike,
                             onOpenTrailDetail: onOpenTrailDetail,
-                            onOpenSosTab: onOpenSosTab,
                           )
                   : _ActiveHikeDashboard(
                       currentPhoneNumber: phoneNumber,
@@ -96,6 +95,26 @@ class HomeDashboardPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _startHikeFromDashboard(BuildContext context) async {
+    if (trails.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              isLoadingTrails
+                  ? 'Trails are still loading. Try again shortly.'
+                  : 'No trails are available to start yet.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    await onStartHike(null);
   }
 
   Future<void> _confirmPreparationThenStart(
@@ -209,20 +228,18 @@ class HomeDashboardPage extends StatelessWidget {
 
 class _PreparationDashboard extends StatelessWidget {
   const _PreparationDashboard({
-    required this.phoneNumber,
     required this.plannedHike,
+    required this.trails,
+    required this.isLoadingTrails,
     required this.onStartHike,
-    required this.onJoinTeamHike,
     required this.onOpenTrailDetail,
-    required this.onOpenSosTab,
   });
 
-  final String phoneNumber;
   final PlannedHike plannedHike;
+  final List<Trail> trails;
+  final bool isLoadingTrails;
   final VoidCallback onStartHike;
-  final VoidCallback onJoinTeamHike;
   final ValueChanged<Trail> onOpenTrailDetail;
-  final VoidCallback onOpenSosTab;
 
   @override
   Widget build(BuildContext context) {
@@ -231,12 +248,12 @@ class _PreparationDashboard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _HomeHeader(phoneNumber: phoneNumber),
-        const SizedBox(height: 16),
-        _StartHikeActions(
-          onStartHike: onStartHike,
-          onJoinTeamHike: onJoinTeamHike,
+        const _HomeDashboardHeader(
+          title: 'Hike Plan Ready',
+          subtitle: 'Review your route, preparation, and nearby trail options.',
         ),
+        const SizedBox(height: 16),
+        _StartHikeActions(onStartHike: onStartHike),
         const SizedBox(height: 18),
         _UpcomingHikeCard(
           plannedHike: plannedHike,
@@ -246,6 +263,12 @@ class _PreparationDashboard extends StatelessWidget {
             ),
           ),
           onOpenTrail: () => onOpenTrailDetail(plannedHike.trail),
+        ),
+        const SizedBox(height: 22),
+        _BestMatchesSection(
+          trails: trails,
+          isLoading: isLoadingTrails,
+          onOpenTrail: onOpenTrailDetail,
         ),
         if (plannedHike.missingPreparationItems.isNotEmpty) ...[
           const SizedBox(height: 14),
@@ -260,50 +283,6 @@ class _PreparationDashboard extends StatelessWidget {
             ),
           ),
         ],
-        const SizedBox(height: 22),
-        _SectionTitle(label: 'Safety Tools'),
-        const SizedBox(height: 8),
-        _SafetyToolsGrid(
-          plannedHike: plannedHike,
-          onOpenFirstAid: () => unawaited(_openFirstAidGuide(context)),
-          onOpenGearChecklist: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (context) => GearChecklistPage(plannedHike: plannedHike),
-            ),
-          ),
-          onOpenWeatherReadiness: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (context) => _SafetyToolDetailPage(
-                icon: Icons.thunderstorm_rounded,
-                title: 'Weather Readiness',
-                subtitle:
-                    'Dummy trail weather checklist for deciding whether to go, delay, or turn back.',
-                rows: const [
-                  ('Rain window', '2:00 PM - 5:00 PM'),
-                  ('Heat index', 'High after noon'),
-                  ('Lightning risk', 'Watch ridges and exposed peaks'),
-                  ('Decision', 'Start early and set a turn-back time'),
-                ],
-              ),
-            ),
-          ),
-          onOpenSignalBeacon: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (context) => _SafetyToolDetailPage(
-                icon: Icons.cell_tower_rounded,
-                title: 'Signal Beacon',
-                subtitle:
-                    'Dummy local signal plan for weak-network areas before the backend is connected.',
-                rows: const [
-                  ('Last known signal', 'Car park and ridge shoulder'),
-                  ('Fallback action', 'Pin location every 30 minutes'),
-                  ('Buddy prompt', 'Ask team to confirm at checkpoints'),
-                  ('Offline note', 'Keep whistle and torch reachable'),
-                ],
-              ),
-            ),
-          ),
-        ),
         const SizedBox(height: 22),
         _SectionTitle(label: 'Recent Hazards Near Saved Trails'),
         const SizedBox(height: 8),
@@ -328,142 +307,76 @@ class _PreparationDashboard extends StatelessWidget {
       ],
     );
   }
-
-  Future<void> _openFirstAidGuide(BuildContext context) async {
-    final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
-        builder: (context) => const FirstAidGuidePage(),
-      ),
-    );
-
-    if (result == 'sos') {
-      onOpenSosTab();
-    }
-  }
 }
 
-class _NoFirebaseTrailDashboard extends StatelessWidget {
-  const _NoFirebaseTrailDashboard({
-    required this.onJoinTeamHike,
-    required this.onOpenSosTab,
+class _TrailDiscoveryDashboard extends StatelessWidget {
+  const _TrailDiscoveryDashboard({
+    required this.trails,
+    required this.isLoadingTrails,
+    required this.onStartHike,
+    required this.onOpenTrailDetail,
   });
 
-  final VoidCallback onJoinTeamHike;
-  final VoidCallback onOpenSosTab;
+  final List<Trail> trails;
+  final bool isLoadingTrails;
+  final VoidCallback onStartHike;
+  final ValueChanged<Trail> onOpenTrailDetail;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _HomeHeader(phoneNumber: ''),
-        const SizedBox(height: 18),
-        _InsetGroup(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const _Glyph(icon: Icons.cloud_queue_rounded),
-                const SizedBox(height: 14),
-                Text(
-                  'No Firebase trails available',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: _HomeColors.textFor(context),
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'HikerCircle is no longer showing local demo trails. Ask an admin to add real trails in Firebase, then refresh the app.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _HomeColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: onJoinTeamHike,
-                        icon: const Icon(Icons.group_add_rounded),
-                        label: const Text('Team Invites'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: onOpenSosTab,
-                        icon: const Icon(Icons.sos_rounded),
-                        label: const Text('SOS'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+        const _HomeDashboardHeader(
+          title: 'Plan Your Hike',
+          subtitle: 'Start a solo session or choose a trail from Best Matches.',
+        ),
+        const SizedBox(height: 16),
+        _StartHikeActions(onStartHike: onStartHike),
+        const SizedBox(height: 22),
+        _BestMatchesSection(
+          trails: trails,
+          isLoading: isLoadingTrails,
+          onOpenTrail: onOpenTrailDetail,
         ),
       ],
     );
   }
 }
 
-class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.phoneNumber});
+class _HomeDashboardHeader extends StatelessWidget {
+  const _HomeDashboardHeader({required this.title, required this.subtitle});
 
-  final String phoneNumber;
+  final String title;
+  final String subtitle;
 
   @override
   Widget build(BuildContext context) {
-    final statusLine = phoneNumber.isEmpty
-        ? 'Ready for your next safe hike?'
-        : 'Ready for your next safe hike? Signed in as $phoneNumber';
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Hello, Trail Friend',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _HomeColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_formatDate(DateTime.now())} - $statusLine',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _HomeColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w400,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: _HomeColors.textFor(context),
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
             ),
           ),
-          Tooltip(
-            message: 'Notifications',
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size.square(36),
-              onPressed: () {},
-              child: const _CircleIcon(icon: CupertinoIcons.bell_fill),
+          const SizedBox(height: 3),
+          Text(
+            subtitle,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _HomeColors.secondaryTextFor(context),
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0,
             ),
           ),
         ],
@@ -472,14 +385,246 @@ class _HomeHeader extends StatelessWidget {
   }
 }
 
-class _StartHikeActions extends StatelessWidget {
-  const _StartHikeActions({
-    required this.onStartHike,
-    required this.onJoinTeamHike,
+class _BestMatchesSection extends StatelessWidget {
+  const _BestMatchesSection({
+    required this.trails,
+    required this.isLoading,
+    required this.onOpenTrail,
   });
 
+  final List<Trail> trails;
+  final bool isLoading;
+  final ValueChanged<Trail> onOpenTrail;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleTrails = trails.take(5).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _SectionTitle(label: 'Best Matches'),
+        const SizedBox(height: 8),
+        if (isLoading && visibleTrails.isEmpty)
+          const _BestMatchesLoading()
+        else if (visibleTrails.isEmpty)
+          const _EmptyState(
+            message: 'No trails are available yet. Check again later.',
+          )
+        else
+          for (final trail in visibleTrails) ...[
+            _BestMatchTrailCard(trail: trail, onTap: () => onOpenTrail(trail)),
+            const SizedBox(height: 12),
+          ],
+      ],
+    );
+  }
+}
+
+class _BestMatchTrailCard extends StatelessWidget {
+  const _BestMatchTrailCard({required this.trail, required this.onTap});
+
+  final Trail trail;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                _BestMatchTrailCover(trail: trail),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        trail.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _HomeColors.textFor(context),
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        trail.locationLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _HomeColors.secondaryTextFor(context),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 5,
+                        children: [
+                          _TrailMeta(
+                            icon: Icons.route_rounded,
+                            label: trail.distanceLabel,
+                          ),
+                          _TrailMeta(
+                            icon: Icons.signal_cellular_alt_rounded,
+                            label: trail.difficulty,
+                          ),
+                          _TrailMeta(
+                            icon: CupertinoIcons.clock_fill,
+                            label: trail.durationLabel,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.star_rounded,
+                            color: Color(0xFFF59E0B),
+                            size: 18,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            trail.ratingAverage.toStringAsFixed(1),
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  color: _HomeColors.textFor(context),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  CupertinoIcons.chevron_forward,
+                  color: _HomeColors.secondaryTextFor(context),
+                  size: 17,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BestMatchTrailCover extends StatelessWidget {
+  const _BestMatchTrailCover({required this.trail});
+
+  final Trail trail;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallbackColor = Color(trail.coverColorValue);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: SizedBox(
+        width: 96,
+        height: 96,
+        child: trail.coverImageUrl.trim().isEmpty
+            ? _TrailCoverFallback(color: fallbackColor)
+            : Image.network(
+                trail.coverImageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return _TrailCoverFallback(color: fallbackColor);
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class _TrailCoverFallback extends StatelessWidget {
+  const _TrailCoverFallback({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color, Color.lerp(color, Colors.black, 0.25)!],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: const Center(
+        child: Icon(Icons.landscape_rounded, color: Colors.white, size: 32),
+      ),
+    );
+  }
+}
+
+class _TrailMeta extends StatelessWidget {
+  const _TrailMeta({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: _HomeColors.secondaryTextFor(context)),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: _HomeColors.secondaryTextFor(context),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BestMatchesLoading extends StatelessWidget {
+  const _BestMatchesLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: [
+            const SizedBox.square(
+              dimension: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'Loading trails...',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: _HomeColors.secondaryTextFor(context),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StartHikeActions extends StatelessWidget {
+  const _StartHikeActions({required this.onStartHike});
+
   final VoidCallback onStartHike;
-  final VoidCallback onJoinTeamHike;
 
   @override
   Widget build(BuildContext context) {
@@ -495,7 +640,7 @@ class _StartHikeActions extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: onJoinTeamHike,
+            onPressed: null,
             icon: const Icon(Icons.group_add_rounded),
             label: const Text('Join Team Hike'),
           ),
@@ -685,117 +830,6 @@ class _PreparationWarning extends StatelessWidget {
                   CupertinoIcons.chevron_forward,
                   color: _HomeColors.secondaryTextFor(context),
                   size: 16,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SafetyToolsGrid extends StatelessWidget {
-  const _SafetyToolsGrid({
-    required this.plannedHike,
-    required this.onOpenFirstAid,
-    required this.onOpenGearChecklist,
-    required this.onOpenWeatherReadiness,
-    required this.onOpenSignalBeacon,
-  });
-
-  final PlannedHike plannedHike;
-  final VoidCallback onOpenFirstAid;
-  final VoidCallback onOpenGearChecklist;
-  final VoidCallback onOpenWeatherReadiness;
-  final VoidCallback onOpenSignalBeacon;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 10,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 1.62,
-      children: [
-        _ToolTile(
-          icon: Icons.medical_services_rounded,
-          title: 'First-Aid Guide',
-          subtitle: 'Offline steps',
-          onTap: onOpenFirstAid,
-        ),
-        _ToolTile(
-          icon: Icons.checklist_rounded,
-          title: 'Gear Checklist',
-          subtitle:
-              '${plannedHike.checklistCompleted}/${plannedHike.checklistTotal} ready',
-          onTap: onOpenGearChecklist,
-        ),
-        _ToolTile(
-          icon: Icons.thunderstorm_rounded,
-          title: 'Weather Readiness',
-          subtitle: '${plannedHike.trail.weather.rainProbability}% rain risk',
-          onTap: onOpenWeatherReadiness,
-        ),
-        _ToolTile(
-          icon: Icons.cell_tower_rounded,
-          title: 'Signal Beacon',
-          subtitle: 'Offline signal',
-          onTap: onOpenSignalBeacon,
-        ),
-      ],
-    );
-  }
-}
-
-class _ToolTile extends StatelessWidget {
-  const _ToolTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _Glyph(icon: icon),
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _HomeColors.textFor(context),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: _HomeColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0,
-                  ),
                 ),
               ],
             ),
@@ -1032,73 +1066,6 @@ class _PreparationReminderPage extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                     ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SafetyToolDetailPage extends StatelessWidget {
-  const _SafetyToolDetailPage({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.rows,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final List<(String, String)> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _HomeColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    title: title,
-                    subtitle: 'Prototype safety tool',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _Glyph(icon: icon),
-                          const SizedBox(height: 12),
-                          Text(
-                            subtitle,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: _HomeColors.textFor(context),
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 14),
-                          for (final row in rows) ...[
-                            _InfoLine(label: row.$1, value: row.$2),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),

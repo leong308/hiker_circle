@@ -36,6 +36,7 @@ class SosViewModel extends ChangeNotifier {
   SosAlertResult? _latestSosAlertResult;
   Map<SosAlertMode, String> _customWhatsAppNotes = const {};
   List<SosAlert> _cloudAlertLogs = const [];
+  bool _isDisposed = false;
 
   List<EmergencyContact> get emergencyContacts {
     return List.unmodifiable(_emergencyContacts);
@@ -69,39 +70,62 @@ class SosViewModel extends ChangeNotifier {
   }
 
   Future<void> loadEmergencyContacts() async {
-    if (_isLoadingEmergencyContacts) {
+    if (_isDisposed || _isLoadingEmergencyContacts) {
       return;
     }
 
     _isLoadingEmergencyContacts = true;
     _emergencyContactsErrorMessage = null;
-    notifyListeners();
+    _notifyListenersIfActive();
 
     try {
-      _emergencyContacts = await emergencyContactsRepository
-          .loadEmergencyContacts(session: _session);
+      final contacts = await emergencyContactsRepository.loadEmergencyContacts(
+        session: _session,
+      );
+      if (_isDisposed) {
+        return;
+      }
+      _emergencyContacts = contacts;
     } on EmergencyContactsRepositoryException catch (error) {
+      if (_isDisposed) {
+        return;
+      }
       _emergencyContactsErrorMessage = error.message;
     } catch (_) {
+      if (_isDisposed) {
+        return;
+      }
       _emergencyContactsErrorMessage =
           'Unable to load emergency contacts right now.';
     } finally {
-      _isLoadingEmergencyContacts = false;
-      notifyListeners();
+      if (!_isDisposed) {
+        _isLoadingEmergencyContacts = false;
+        _notifyListenersIfActive();
+      }
     }
   }
 
   void replaceEmergencyContacts(List<EmergencyContact> contacts) {
+    if (_isDisposed) {
+      return;
+    }
     _emergencyContacts = List.of(contacts);
-    notifyListeners();
+    _notifyListenersIfActive();
   }
 
   Future<void> loadCustomWhatsAppNotes() async {
+    if (_isDisposed) {
+      return;
+    }
     try {
-      _customWhatsAppNotes = await _sosAlertRepository.loadCustomWhatsAppNotes(
+      final notes = await _sosAlertRepository.loadCustomWhatsAppNotes(
         session: _session,
       );
-      notifyListeners();
+      if (_isDisposed) {
+        return;
+      }
+      _customWhatsAppNotes = notes;
+      _notifyListenersIfActive();
     } catch (_) {
       // Custom notes are optional; the composer default remains available.
     }
@@ -111,8 +135,11 @@ class SosViewModel extends ChangeNotifier {
     required SosAlertMode mode,
     required String note,
   }) async {
+    if (_isDisposed) {
+      return;
+    }
     _customWhatsAppNotes = {..._customWhatsAppNotes, mode: note};
-    notifyListeners();
+    _notifyListenersIfActive();
     await _sosAlertRepository.saveCustomWhatsAppNote(
       session: _session,
       mode: mode,
@@ -121,10 +148,15 @@ class SosViewModel extends ChangeNotifier {
   }
 
   Future<void> loadCloudAlertLogs() async {
-    _cloudAlertLogs = await _sosAlertRepository.loadAlertLogs(
-      session: _session,
-    );
-    notifyListeners();
+    if (_isDisposed) {
+      return;
+    }
+    final logs = await _sosAlertRepository.loadAlertLogs(session: _session);
+    if (_isDisposed) {
+      return;
+    }
+    _cloudAlertLogs = logs;
+    _notifyListenersIfActive();
   }
 
   Future<SosAlertResult?> triggerAlert({
@@ -133,19 +165,23 @@ class SosViewModel extends ChangeNotifier {
     required SosTriggerLocation? triggerLocation,
     String? customMessageNote,
   }) async {
-    if (_isSendingSosAlert) {
+    if (_isDisposed || _isSendingSosAlert) {
       return null;
     }
 
     _isSendingSosAlert = true;
     _sosAlertErrorMessage = null;
-    notifyListeners();
+    _notifyListenersIfActive();
 
     try {
       if (_emergencyContacts.isEmpty) {
-        _emergencyContacts = await emergencyContactsRepository
+        final contacts = await emergencyContactsRepository
             .loadEmergencyContacts(session: _session);
-        notifyListeners();
+        if (_isDisposed) {
+          return null;
+        }
+        _emergencyContacts = contacts;
+        _notifyListenersIfActive();
       }
       final result = await _sosAlertRepository.triggerAlert(
         session: _session,
@@ -155,6 +191,9 @@ class SosViewModel extends ChangeNotifier {
         contacts: emergencyContacts,
         customMessageNote: customMessageNote,
       );
+      if (_isDisposed) {
+        return result;
+      }
       _latestSosAlertResult = result;
       _cloudAlertLogs = [result.alert, ..._cloudAlertLogs].fold<List<SosAlert>>(
         <SosAlert>[],
@@ -168,13 +207,19 @@ class SosViewModel extends ChangeNotifier {
       );
       return result;
     } on SosAlertRepositoryException catch (error) {
-      _sosAlertErrorMessage = error.message;
+      if (!_isDisposed) {
+        _sosAlertErrorMessage = error.message;
+      }
     } catch (_) {
-      _sosAlertErrorMessage =
-          'Unable to send SOS alert. Please check your connection and try again.';
+      if (!_isDisposed) {
+        _sosAlertErrorMessage =
+            'Unable to send SOS alert. Please check your connection and try again.';
+      }
     } finally {
-      _isSendingSosAlert = false;
-      notifyListeners();
+      if (!_isDisposed) {
+        _isSendingSosAlert = false;
+        _notifyListenersIfActive();
+      }
     }
 
     return null;
@@ -185,5 +230,17 @@ class SosViewModel extends ChangeNotifier {
       session: _session,
       contacts: emergencyContacts,
     );
+  }
+
+  void _notifyListenersIfActive() {
+    if (!_isDisposed) {
+      notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
   }
 }

@@ -3,7 +3,10 @@ import 'dart:math' as math;
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
 
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
@@ -62,12 +65,16 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     ),
   ];
 
+  static const int _soloFirstStep = 1;
+
   late final List<Trail> _trails;
   late HikeSessionDraft _draft;
-  int _stepIndex = 0;
+  int _stepIndex = _soloFirstStep;
 
   int get _lastStep => _draft.hikeType == HikeType.team ? 5 : 4;
-  int get _stepCount => _lastStep + 1;
+  int get _firstStep => _draft.hikeType == HikeType.team ? 0 : _soloFirstStep;
+  int get _stepCount => _lastStep - _firstStep + 1;
+  int get _visibleStepIndex => _stepIndex - _firstStep;
   bool get _isFinalStep => _stepIndex == _lastStep;
 
   @override
@@ -114,7 +121,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   void _back() {
-    if (_stepIndex == 0) {
+    if (_stepIndex <= _firstStep) {
       Navigator.of(context).pop();
       return;
     }
@@ -127,6 +134,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   void _updateDraft(HikeSessionDraft draft) {
     setState(() {
       _draft = draft;
+      if (_stepIndex < _firstStep) {
+        _stepIndex = _firstStep;
+      }
       if (_stepIndex > _lastStep) {
         _stepIndex = _lastStep;
       }
@@ -151,7 +161,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                   _Header(onBack: _back),
                   const SizedBox(height: 16),
                   _StepProgress(
-                    currentStep: _stepIndex,
+                    currentStep: _visibleStepIndex,
                     totalSteps: _stepCount,
                   ),
                   const SizedBox(height: 18),
@@ -165,7 +175,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                       Expanded(
                         child: OutlinedButton(
                           onPressed: _back,
-                          child: Text(_stepIndex == 0 ? 'Cancel' : 'Back'),
+                          child: Text(
+                            _stepIndex <= _firstStep ? 'Cancel' : 'Back',
+                          ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -760,6 +772,7 @@ class _TrailSelectionStep extends StatelessWidget {
             child: _CheckpointRouteMap(
               trail: trail,
               highlightedCheckpoint: checkpoint,
+              mode: _CheckpointRouteMapMode.checkpointPreview,
             ),
           ),
           actions: [
@@ -1363,8 +1376,9 @@ class _CheckpointPickerSheetState extends State<_CheckpointPickerSheet> {
         ) +
         1;
     _nameController = TextEditingController(text: 'Checkpoint $_nextOrder');
-    _latitude = widget.trail.latitude;
-    _longitude = widget.trail.longitude;
+    final initialCoordinate = _defaultCheckpointCoordinate(widget.trail);
+    _latitude = initialCoordinate.latitude;
+    _longitude = initialCoordinate.longitude;
   }
 
   @override
@@ -1448,6 +1462,22 @@ class _CheckpointPickerSheetState extends State<_CheckpointPickerSheet> {
   }
 }
 
+({double latitude, double longitude}) _defaultCheckpointCoordinate(
+  Trail trail,
+) {
+  final checkpoints = [...trail.checkpoints]
+    ..sort((a, b) => a.order.compareTo(b.order));
+  if (checkpoints.isEmpty) {
+    return (latitude: trail.latitude, longitude: trail.longitude);
+  }
+
+  final middleCheckpoint = checkpoints[checkpoints.length ~/ 2];
+  return (
+    latitude: middleCheckpoint.latitude,
+    longitude: middleCheckpoint.longitude,
+  );
+}
+
 class _RoutePreviewSheet extends StatelessWidget {
   const _RoutePreviewSheet({required this.trail});
 
@@ -1476,11 +1506,19 @@ class _RoutePreviewSheet extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        SizedBox(height: 320, child: _CheckpointRouteMap(trail: trail)),
+        SizedBox(
+          height: 320,
+          child: _CheckpointRouteMap(
+            trail: trail,
+            mode: _CheckpointRouteMapMode.routePreview,
+          ),
+        ),
       ],
     );
   }
 }
+
+enum _CheckpointRouteMapMode { routePreview, addCheckpoint, checkpointPreview }
 
 class _TappableCheckpointRouteMap extends StatelessWidget {
   const _TappableCheckpointRouteMap({
@@ -1495,217 +1533,363 @@ class _TappableCheckpointRouteMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
-        final bounds = _RouteBounds.fromCheckpoints(
-          trail.checkpoints,
-          extra: selectedCheckpoint,
-        );
-        return GestureDetector(
-          onTapDown: (details) {
-            final coordinate = bounds.unproject(details.localPosition, size);
-            onSelected(coordinate.latitude, coordinate.longitude);
-          },
-          child: _CheckpointRouteMap(
-            trail: trail,
-            highlightedCheckpoint: selectedCheckpoint,
-          ),
-        );
-      },
+    return _CheckpointRouteMap(
+      trail: trail,
+      highlightedCheckpoint: selectedCheckpoint,
+      mode: _CheckpointRouteMapMode.addCheckpoint,
+      onMapTap: onSelected,
     );
   }
 }
 
-class _CheckpointRouteMap extends StatelessWidget {
-  const _CheckpointRouteMap({required this.trail, this.highlightedCheckpoint});
+class _CheckpointRouteMap extends StatefulWidget {
+  const _CheckpointRouteMap({
+    required this.trail,
+    required this.mode,
+    this.highlightedCheckpoint,
+    this.onMapTap,
+  });
 
   final Trail trail;
+  final _CheckpointRouteMapMode mode;
   final TrailCheckpoint? highlightedCheckpoint;
+  final void Function(double latitude, double longitude)? onMapTap;
+
+  @override
+  State<_CheckpointRouteMap> createState() => _CheckpointRouteMapState();
+}
+
+class _CheckpointRouteMapState extends State<_CheckpointRouteMap> {
+  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+
+  maplibre.MapLibreMapController? _controller;
+  bool _styleLoaded = false;
+
+  @override
+  void didUpdateWidget(covariant _CheckpointRouteMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.trail != widget.trail) {
+      unawaited(_syncAnnotations(fitBounds: true));
+      return;
+    }
+    if (oldWidget.mode != widget.mode ||
+        oldWidget.highlightedCheckpoint != widget.highlightedCheckpoint) {
+      unawaited(_syncAnnotations());
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final center = _initialCenter();
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: CustomPaint(
-        painter: _CheckpointRoutePainter(
-          trail: trail,
-          highlightedCheckpoint: highlightedCheckpoint,
+      child: maplibre.MapLibreMap(
+        styleString: _styleUrl,
+        initialCameraPosition: maplibre.CameraPosition(
+          target: center,
+          zoom: 15,
         ),
-        child: const SizedBox.expand(),
+        minMaxZoomPreference: const maplibre.MinMaxZoomPreference(10, 18),
+        rotateGesturesEnabled: false,
+        tiltGesturesEnabled: false,
+        scrollGesturesEnabled: true,
+        zoomGesturesEnabled: true,
+        dragEnabled: true,
+        compassEnabled: false,
+        logoEnabled: false,
+        featureTapsTriggersMapClick: true,
+        annotationOrder: const [
+          maplibre.AnnotationType.line,
+          maplibre.AnnotationType.circle,
+          maplibre.AnnotationType.symbol,
+          maplibre.AnnotationType.fill,
+        ],
+        attributionButtonPosition:
+            maplibre.AttributionButtonPosition.bottomLeft,
+        gestureRecognizers: {
+          Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
+        },
+        onMapCreated: (controller) {
+          _controller = controller;
+        },
+        onStyleLoadedCallback: () {
+          _styleLoaded = true;
+          unawaited(_syncAnnotations(fitBounds: true));
+        },
+        onMapClick: widget.onMapTap == null
+            ? null
+            : (_, coordinate) {
+                widget.onMapTap!(coordinate.latitude, coordinate.longitude);
+              },
       ),
     );
   }
-}
 
-class _CheckpointRoutePainter extends CustomPainter {
-  const _CheckpointRoutePainter({
-    required this.trail,
-    required this.highlightedCheckpoint,
-  });
-
-  final Trail trail;
-  final TrailCheckpoint? highlightedCheckpoint;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final background = Paint()..color = _WizardColors.greenSoft;
-    final grid = Paint()
-      ..color = _WizardColors.green.withValues(alpha: 0.12)
-      ..strokeWidth = 1;
-    final routePaint = Paint()
-      ..color = _WizardColors.green
-      ..strokeWidth = 5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-    final routeGlowPaint = Paint()
-      ..color = _WizardColors.green.withValues(alpha: 0.22)
-      ..strokeWidth = 11
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawRect(Offset.zero & size, background);
-    for (var index = 1; index < 5; index++) {
-      final x = size.width * index / 5;
-      final y = size.height * index / 5;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
-    }
-
-    final checkpoints = [...trail.checkpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    if (checkpoints.isEmpty) {
+  Future<void> _syncAnnotations({bool fitBounds = false}) async {
+    final controller = _controller;
+    if (!_styleLoaded || controller == null) {
       return;
     }
 
-    final bounds = _RouteBounds.fromCheckpoints(
-      checkpoints,
-      extra: highlightedCheckpoint,
-    );
-    final points = checkpoints
-        .map(
-          (checkpoint) =>
-              bounds.project(checkpoint.latitude, checkpoint.longitude, size),
-        )
-        .toList();
-    if (points.length >= 2) {
-      final route = Path()..moveTo(points.first.dx, points.first.dy);
-      for (final point in points.skip(1)) {
-        route.lineTo(point.dx, point.dy);
-      }
-      canvas.drawPath(route, routeGlowPaint);
-      canvas.drawPath(route, routePaint);
+    await controller.clearLines();
+    await controller.clearCircles();
+    await controller.clearSymbols();
+
+    final route = _routeCoordinates(widget.trail);
+    if (route.length >= 2) {
+      await controller.addLine(
+        maplibre.LineOptions(
+          geometry: route,
+          lineColor: '#34A853',
+          lineWidth: 5,
+          lineOpacity: 0.94,
+        ),
+      );
     }
+
+    final checkpoints = [...widget.trail.checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    final highlighted = widget.highlightedCheckpoint;
+    final highlightedIndex = highlighted == null
+        ? -1
+        : checkpoints.indexWhere(
+            (checkpoint) => _isSameCheckpoint(checkpoint, highlighted),
+          );
+    final previousIndex =
+        widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
+            highlightedIndex > 0
+        ? highlightedIndex - 1
+        : -1;
 
     for (var index = 0; index < checkpoints.length; index++) {
-      _drawMarker(
-        canvas,
-        points[index],
-        index == 0
-            ? _WizardColors.green
-            : index == checkpoints.length - 1
-            ? _WizardColors.red
-            : _WizardColors.secondaryText,
-        7,
+      final checkpoint = checkpoints[index];
+      final style = _styleForCheckpoint(
+        index: index,
+        total: checkpoints.length,
+        isHighlighted:
+            widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
+            index == highlightedIndex,
+        isPrevious:
+            widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
+            index == previousIndex,
+      );
+      await controller.addCircle(
+        maplibre.CircleOptions(
+          geometry: _latLngFor(checkpoint),
+          circleRadius: style.radius,
+          circleColor: style.color,
+          circleStrokeColor: '#FFFFFF',
+          circleStrokeWidth: 2.5,
+        ),
+      );
+      await controller.addSymbol(
+        maplibre.SymbolOptions(
+          geometry: _latLngFor(checkpoint),
+          textField: '${index + 1}',
+          textSize: 11,
+          textColor: '#FFFFFF',
+          textHaloColor: '#111111',
+          textHaloWidth: 0.7,
+          textAnchor: 'center',
+        ),
       );
     }
 
-    final highlighted = highlightedCheckpoint;
-    if (highlighted != null) {
-      _drawMarker(
-        canvas,
-        bounds.project(highlighted.latitude, highlighted.longitude, size),
-        _WizardColors.orange,
-        11,
+    if (highlighted != null &&
+        (widget.mode == _CheckpointRouteMapMode.addCheckpoint ||
+            highlightedIndex < 0)) {
+      await controller.addCircle(
+        maplibre.CircleOptions(
+          geometry: _latLngFor(highlighted),
+          circleRadius: 11,
+          circleColor: '#E11D48',
+          circleStrokeColor: '#FFFFFF',
+          circleStrokeWidth: 3,
+        ),
       );
+      await controller.addSymbol(
+        maplibre.SymbolOptions(
+          geometry: _latLngFor(highlighted),
+          textField: widget.mode == _CheckpointRouteMapMode.addCheckpoint
+              ? 'New'
+              : '',
+          textSize: 12,
+          textColor: '#FFFFFF',
+          textHaloColor: '#111111',
+          textHaloWidth: 0.8,
+          textOffset: const Offset(0, 1.35),
+          textAnchor: 'top',
+        ),
+      );
+    }
+
+    if (fitBounds) {
+      await _fitMapToRoute();
     }
   }
 
-  void _drawMarker(Canvas canvas, Offset center, Color color, double radius) {
-    final fill = Paint()..color = color;
-    final stroke = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-    canvas.drawCircle(center, radius, fill);
-    canvas.drawCircle(center, radius, stroke);
+  Future<void> _fitMapToRoute() async {
+    final controller = _controller;
+    final bounds =
+        widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
+            widget.highlightedCheckpoint != null
+        ? _checkpointPreviewBounds(widget.trail, widget.highlightedCheckpoint!)
+        : _routeBounds(widget.trail, widget.highlightedCheckpoint);
+    if (controller == null || bounds == null) {
+      return;
+    }
+
+    final singlePoint =
+        bounds.southwest.latitude == bounds.northeast.latitude &&
+        bounds.southwest.longitude == bounds.northeast.longitude;
+    if (singlePoint) {
+      await controller.animateCamera(
+        maplibre.CameraUpdate.newLatLngZoom(bounds.southwest, 15),
+      );
+      return;
+    }
+
+    await controller.animateCamera(
+      maplibre.CameraUpdate.newLatLngBounds(
+        bounds,
+        left: 44,
+        top: 44,
+        right: 44,
+        bottom: 44,
+      ),
+    );
   }
 
-  @override
-  bool shouldRepaint(covariant _CheckpointRoutePainter oldDelegate) {
-    return oldDelegate.trail != trail ||
-        oldDelegate.highlightedCheckpoint != highlightedCheckpoint;
+  maplibre.LatLng _initialCenter() {
+    final highlighted = widget.highlightedCheckpoint;
+    if (highlighted != null &&
+        (widget.mode == _CheckpointRouteMapMode.addCheckpoint ||
+            widget.mode == _CheckpointRouteMapMode.checkpointPreview)) {
+      return _latLngFor(highlighted);
+    }
+    return _routeCenter(widget.trail, highlighted);
   }
-}
 
-class _RouteBounds {
-  const _RouteBounds({
-    required this.minLatitude,
-    required this.maxLatitude,
-    required this.minLongitude,
-    required this.maxLongitude,
-  });
+  static List<maplibre.LatLng> _routeCoordinates(Trail trail) {
+    final checkpoints = [...trail.checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    if (checkpoints.isEmpty) {
+      return [maplibre.LatLng(trail.latitude, trail.longitude)];
+    }
+    return checkpoints.map(_latLngFor).toList();
+  }
 
-  factory _RouteBounds.fromCheckpoints(
-    List<TrailCheckpoint> checkpoints, {
-    TrailCheckpoint? extra,
+  static maplibre.LatLng _routeCenter(
+    Trail trail,
+    TrailCheckpoint? highlightedCheckpoint,
+  ) {
+    final coordinates = [
+      ..._routeCoordinates(trail),
+      if (highlightedCheckpoint != null) _latLngFor(highlightedCheckpoint),
+    ];
+    final latitude =
+        coordinates
+            .map((coordinate) => coordinate.latitude)
+            .reduce((a, b) => a + b) /
+        coordinates.length;
+    final longitude =
+        coordinates
+            .map((coordinate) => coordinate.longitude)
+            .reduce((a, b) => a + b) /
+        coordinates.length;
+    return maplibre.LatLng(latitude, longitude);
+  }
+
+  static maplibre.LatLngBounds? _routeBounds(
+    Trail trail,
+    TrailCheckpoint? highlightedCheckpoint,
+  ) {
+    final coordinates = [
+      ..._routeCoordinates(trail),
+      if (highlightedCheckpoint != null) _latLngFor(highlightedCheckpoint),
+    ];
+    return _boundsFromCoordinates(coordinates);
+  }
+
+  static maplibre.LatLngBounds? _checkpointPreviewBounds(
+    Trail trail,
+    TrailCheckpoint highlightedCheckpoint,
+  ) {
+    final checkpoints = [...trail.checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    final highlightedIndex = checkpoints.indexWhere(
+      (checkpoint) => _isSameCheckpoint(checkpoint, highlightedCheckpoint),
+    );
+    final coordinates = [
+      _latLngFor(highlightedCheckpoint),
+      if (highlightedIndex > 0) _latLngFor(checkpoints[highlightedIndex - 1]),
+    ];
+    return _boundsFromCoordinates(coordinates);
+  }
+
+  static maplibre.LatLngBounds? _boundsFromCoordinates(
+    List<maplibre.LatLng> coordinates,
+  ) {
+    if (coordinates.isEmpty) {
+      return null;
+    }
+
+    var minLatitude = coordinates.first.latitude;
+    var maxLatitude = coordinates.first.latitude;
+    var minLongitude = coordinates.first.longitude;
+    var maxLongitude = coordinates.first.longitude;
+    for (final coordinate in coordinates.skip(1)) {
+      minLatitude = math.min(minLatitude, coordinate.latitude);
+      maxLatitude = math.max(maxLatitude, coordinate.latitude);
+      minLongitude = math.min(minLongitude, coordinate.longitude);
+      maxLongitude = math.max(maxLongitude, coordinate.longitude);
+    }
+
+    if ((maxLatitude - minLatitude).abs() < 0.0008) {
+      minLatitude -= 0.0004;
+      maxLatitude += 0.0004;
+    }
+    if ((maxLongitude - minLongitude).abs() < 0.0008) {
+      minLongitude -= 0.0004;
+      maxLongitude += 0.0004;
+    }
+
+    return maplibre.LatLngBounds(
+      southwest: maplibre.LatLng(minLatitude, minLongitude),
+      northeast: maplibre.LatLng(maxLatitude, maxLongitude),
+    );
+  }
+
+  static maplibre.LatLng _latLngFor(TrailCheckpoint checkpoint) {
+    return maplibre.LatLng(checkpoint.latitude, checkpoint.longitude);
+  }
+
+  static bool _isSameCheckpoint(
+    TrailCheckpoint checkpoint,
+    TrailCheckpoint other,
+  ) {
+    return checkpoint.order == other.order &&
+        checkpoint.name == other.name &&
+        checkpoint.latitude == other.latitude &&
+        checkpoint.longitude == other.longitude;
+  }
+
+  static ({String color, double radius}) _styleForCheckpoint({
+    required int index,
+    required int total,
+    required bool isHighlighted,
+    required bool isPrevious,
   }) {
-    final points = [...checkpoints, if (extra != null) extra];
-    var minLatitude = points.first.latitude;
-    var maxLatitude = points.first.latitude;
-    var minLongitude = points.first.longitude;
-    var maxLongitude = points.first.longitude;
-    for (final point in points.skip(1)) {
-      minLatitude = math.min(minLatitude, point.latitude);
-      maxLatitude = math.max(maxLatitude, point.latitude);
-      minLongitude = math.min(minLongitude, point.longitude);
-      maxLongitude = math.max(maxLongitude, point.longitude);
+    if (isHighlighted) {
+      return (color: '#E11D48', radius: 10);
     }
-    if ((maxLatitude - minLatitude).abs() < 0.0001) {
-      minLatitude -= 0.00005;
-      maxLatitude += 0.00005;
+    if (isPrevious) {
+      return (color: '#FF9500', radius: 9);
     }
-    if ((maxLongitude - minLongitude).abs() < 0.0001) {
-      minLongitude -= 0.00005;
-      maxLongitude += 0.00005;
+    if (total > 0) {
+      return (color: '#9CA3AF', radius: 6.5);
     }
-    return _RouteBounds(
-      minLatitude: minLatitude,
-      maxLatitude: maxLatitude,
-      minLongitude: minLongitude,
-      maxLongitude: maxLongitude,
-    );
-  }
-
-  final double minLatitude;
-  final double maxLatitude;
-  final double minLongitude;
-  final double maxLongitude;
-
-  Offset project(double latitude, double longitude, Size size) {
-    const padding = 24.0;
-    final xRatio = (longitude - minLongitude) / (maxLongitude - minLongitude);
-    final yRatio = 1 - (latitude - minLatitude) / (maxLatitude - minLatitude);
-    return Offset(
-      padding + xRatio * (size.width - padding * 2),
-      padding + yRatio * (size.height - padding * 2),
-    );
-  }
-
-  ({double latitude, double longitude}) unproject(Offset offset, Size size) {
-    const padding = 24.0;
-    final xRatio = ((offset.dx - padding) / (size.width - padding * 2))
-        .clamp(0.0, 1.0)
-        .toDouble();
-    final yRatio =
-        1 -
-        ((offset.dy - padding) / (size.height - padding * 2))
-            .clamp(0.0, 1.0)
-            .toDouble();
-    return (
-      latitude: minLatitude + yRatio * (maxLatitude - minLatitude),
-      longitude: minLongitude + xRatio * (maxLongitude - minLongitude),
-    );
+    return (color: '#9CA3AF', radius: 6.5);
   }
 }
 
@@ -2477,7 +2661,6 @@ abstract final class _WizardColors {
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
   static const Color red = Color(0xFFE11D48);
-  static const Color orange = Color(0xFFFF9500);
 
   static bool isDark(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark;

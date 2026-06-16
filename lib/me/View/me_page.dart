@@ -18,6 +18,7 @@ import '../../sos/View/emergency_contacts_page.dart';
 import '../Model/me_models.dart';
 import '../ModelView/me_view_model.dart';
 import 'location_sharing_page.dart';
+import 'profile_details_page.dart';
 
 class MePage extends StatefulWidget {
   const MePage({
@@ -42,23 +43,12 @@ class _MePageState extends State<MePage> {
   late final HikerCircleFirebaseRepository firebaseRepository;
   late Future<List<Map<String, dynamic>>> achievementsFuture;
   late final EmergencyContactsRepository emergencyContactsRepository;
-  List<EmergencyContact> emergencyContacts = const [
-    EmergencyContact(
-      name: 'Mother',
-      phoneNumber: '+60123456789',
-      relationship: 'Family',
-    ),
-    EmergencyContact(
-      name: 'Brother',
-      phoneNumber: '+60198765432',
-      relationship: 'Family',
-    ),
-  ];
+  List<EmergencyContact> emergencyContacts = const [];
 
   @override
   void initState() {
     super.initState();
-    viewModel = MeViewModel(phoneNumber: widget.phoneNumber);
+    viewModel = MeViewModel(session: widget.session);
     firebaseRepository = HikerCircleFirebaseRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
@@ -68,6 +58,23 @@ class _MePageState extends State<MePage> {
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    unawaited(_loadEmergencyContacts());
+  }
+
+  Future<void> _loadEmergencyContacts() async {
+    try {
+      final contacts = await emergencyContactsRepository.loadEmergencyContacts(
+        session: widget.session,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        emergencyContacts = contacts;
+      });
+    } catch (_) {
+      return;
+    }
   }
 
   @override
@@ -96,7 +103,10 @@ class _MePageState extends State<MePage> {
                     onOpenSettings: _openAdvancedSettings,
                   ),
                   const SizedBox(height: 16),
-                  _ProfileCell(profile: viewModel.profile, onTap: _openQrCode),
+                  _ProfileCell(
+                    profile: viewModel.profile,
+                    onTap: _openProfileDetails,
+                  ),
                   const SizedBox(height: 14),
                   _StatsGroup(
                     stats: _linkedProfileStats,
@@ -341,6 +351,17 @@ class _MePageState extends State<MePage> {
     );
   }
 
+  void _openProfileDetails() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ProfileDetailsPage(
+          session: widget.session,
+          firebaseBootstrapResult: widget.firebaseBootstrapResult,
+        ),
+      ),
+    );
+  }
+
   void _openQrScanner() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -510,12 +531,6 @@ class _ProfileCell extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              const Icon(
-                Icons.qr_code_rounded,
-                color: _MeColors.green,
-                size: 22,
-              ),
-              const SizedBox(width: 12),
               Icon(
                 CupertinoIcons.chevron_forward,
                 color: _MeColors.chevronFor(context),

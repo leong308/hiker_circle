@@ -54,6 +54,9 @@ class FirebaseUserRepository {
         if (!snapshot.exists) {
           transaction.set(userDocument, {
             'phoneNumber': session.phoneNumber,
+            'requiresOnboarding': true,
+            'profileSetupCompleted': false,
+            'onboardingVersion': 1,
             'boundAppInstanceId': appInstanceId,
             'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
             'createdAt': FieldValue.serverTimestamp(),
@@ -66,6 +69,9 @@ class FirebaseUserRepository {
             createdAt: now,
             signedInAt: now,
             appInstanceId: appInstanceId,
+            username: '',
+            requiresOnboarding: true,
+            isOnboardingProfileComplete: false,
           );
         }
 
@@ -79,9 +85,16 @@ class FirebaseUserRepository {
             appInstanceId.isNotEmpty &&
             existingAppInstanceId.isNotEmpty &&
             existingAppInstanceId != appInstanceId;
+        final requiresOnboarding = _requiresOnboarding(data);
+        final isOnboardingProfileComplete = _isProfileSetupComplete(data);
 
         transaction.set(userDocument, {
           'phoneNumber': session.phoneNumber,
+          if (data?['requiresOnboarding'] is! bool)
+            'requiresOnboarding': requiresOnboarding,
+          if (data?['profileSetupCompleted'] is! bool)
+            'profileSetupCompleted': isOnboardingProfileComplete,
+          if (data?['onboardingVersion'] == null) 'onboardingVersion': 1,
           'boundAppInstanceId': appInstanceId,
           'boundAppInstanceUpdatedAt': FieldValue.serverTimestamp(),
           'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
@@ -100,6 +113,9 @@ class FirebaseUserRepository {
           signedInAt: now,
           appInstanceId: appInstanceId,
           isAdmin: _isAdmin(data),
+          username: _username(data),
+          requiresOnboarding: requiresOnboarding,
+          isOnboardingProfileComplete: isOnboardingProfileComplete,
         );
       });
     } on FirebaseException catch (error) {
@@ -132,7 +148,12 @@ class FirebaseUserRepository {
         );
       }
 
-      return session.copyWith(isAdmin: _isAdmin(data));
+      return session.copyWith(
+        isAdmin: _isAdmin(data),
+        username: _username(data),
+        requiresOnboarding: _requiresOnboarding(data),
+        isOnboardingProfileComplete: _isProfileSetupComplete(data),
+      );
     } on FirebaseUserRepositoryException {
       rethrow;
     } on FirebaseException catch (error) {
@@ -163,6 +184,37 @@ class FirebaseUserRepository {
         role == 'super_admin' ||
         (roles is Iterable &&
             roles.any((value) => _stringFrom(value).toLowerCase() == 'admin'));
+  }
+
+  bool _requiresOnboarding(Map<String, dynamic>? data) {
+    final value = data?['requiresOnboarding'];
+    return value is bool ? value : true;
+  }
+
+  String _username(Map<String, dynamic>? data) {
+    final topLevelUsername = _stringFrom(data?['username']).trim();
+    if (topLevelUsername.isNotEmpty) {
+      return topLevelUsername;
+    }
+    final profile = data?['profile'];
+    return profile is Map ? _stringFrom(profile['username']).trim() : '';
+  }
+
+  bool _isProfileSetupComplete(Map<String, dynamic>? data) {
+    if (data?['profileSetupCompleted'] == true) {
+      return true;
+    }
+    final profile = data?['profile'];
+    if (profile is! Map) {
+      return false;
+    }
+    return _stringFrom(profile['username']).trim().isNotEmpty &&
+        _stringFrom(profile['gender']).trim().isNotEmpty &&
+        _stringFrom(profile['hikerExperience']).trim().isNotEmpty &&
+        _stringFrom(profile['hikeFrequency']).trim().isNotEmpty &&
+        _stringFrom(profile['residentialLocation']).trim().isNotEmpty &&
+        profile['residentialLatitude'] is num &&
+        profile['residentialLongitude'] is num;
   }
 
   String _stringFrom(Object? value) {

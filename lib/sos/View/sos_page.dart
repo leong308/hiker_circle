@@ -10,6 +10,7 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../home/View/first_aid_guide_page.dart';
 import '../../me/View/location_sharing_page.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Data/location_snapshot_service.dart';
@@ -254,6 +255,36 @@ class _SosPageState extends State<SosPage> {
     );
   }
 
+  Future<void> _openFirstAidGuide() async {
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (context) => const FirstAidGuidePage(),
+      ),
+    );
+
+    if (result == 'sos' && mounted) {
+      unawaited(_handleManualSos());
+    }
+  }
+
+  void _openSafetyToolDetail({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required List<(String, String)> rows,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _SosSafetyToolDetailPage(
+          icon: icon,
+          title: title,
+          subtitle: subtitle,
+          rows: rows,
+        ),
+      ),
+    );
+  }
+
   void _openLiveLocationPage() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -419,6 +450,62 @@ class _SosPageState extends State<SosPage> {
                     onStopAlarm: () => unawaited(_stopManualSosPattern()),
                     onShowDetailsOverlay: _showManualSosDetailsOverlay,
                     onDuressLongPress: () => unawaited(_handleDuressSos()),
+                  ),
+                  const SizedBox(height: 18),
+                  const _SectionTitle(label: 'Safety Tools'),
+                  const SizedBox(height: 8),
+                  _SosSafetyToolsGrid(
+                    onOpenFirstAid: () => unawaited(_openFirstAidGuide()),
+                    onOpenGearChecklist: () => _openSafetyToolDetail(
+                      icon: Icons.checklist_rounded,
+                      title: 'Gear Checklist',
+                      subtitle:
+                          'Review core items before you start any hike or respond to an emergency.',
+                      rows: const [
+                        ('Water', 'Carry enough water for the route and heat.'),
+                        ('Phone power', 'Charge phone and bring a power bank.'),
+                        ('Light', 'Pack torch or headlamp before sunset.'),
+                        ('First-aid', 'Bring basic wound and sprain supplies.'),
+                        ('Weather', 'Carry rain protection and warm layer.'),
+                        ('Contacts', 'Confirm at least one SOS contact.'),
+                      ],
+                    ),
+                    onOpenWeatherReadiness: () => _openSafetyToolDetail(
+                      icon: Icons.thunderstorm_rounded,
+                      title: 'Weather Readiness',
+                      subtitle:
+                          'Use this checklist before starting, delaying, or turning back.',
+                      rows: const [
+                        ('Forecast', 'Check rain, lightning, and heat risk.'),
+                        (
+                          'Start time',
+                          'Start earlier when heat or storms rise.',
+                        ),
+                        (
+                          'Shelter',
+                          'Identify exits and covered waiting points.',
+                        ),
+                        ('Turn-back', 'Set a fixed time to stop and return.'),
+                      ],
+                    ),
+                    onOpenSignalBeacon: () => _openSafetyToolDetail(
+                      icon: Icons.cell_tower_rounded,
+                      title: 'Signal Beacon',
+                      subtitle:
+                          'Prepare for weak-network areas before backend automation is connected.',
+                      rows: const [
+                        (
+                          'Last signal',
+                          'Note car park, ridge, or rest-point coverage.',
+                        ),
+                        ('Fallback', 'Pin location or check in at intervals.'),
+                        (
+                          'Buddy plan',
+                          'Tell your team when to expect updates.',
+                        ),
+                        ('Offline gear', 'Keep whistle and torch reachable.'),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 22),
                   if (widget.session.isAdmin)
@@ -1546,6 +1633,242 @@ class _ManualSosDetailsOverlay extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SosSafetyToolsGrid extends StatelessWidget {
+  const _SosSafetyToolsGrid({
+    required this.onOpenFirstAid,
+    required this.onOpenGearChecklist,
+    required this.onOpenWeatherReadiness,
+    required this.onOpenSignalBeacon,
+  });
+
+  final VoidCallback onOpenFirstAid;
+  final VoidCallback onOpenGearChecklist;
+  final VoidCallback onOpenWeatherReadiness;
+  final VoidCallback onOpenSignalBeacon;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      crossAxisCount: 2,
+      crossAxisSpacing: 10,
+      mainAxisSpacing: 10,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      childAspectRatio: 1.62,
+      children: [
+        _SosSafetyToolTile(
+          icon: Icons.medical_services_rounded,
+          title: 'First-Aid Guide',
+          subtitle: 'Offline steps',
+          onTap: onOpenFirstAid,
+        ),
+        _SosSafetyToolTile(
+          icon: Icons.checklist_rounded,
+          title: 'Gear Checklist',
+          subtitle: 'Pre-hike essentials',
+          onTap: onOpenGearChecklist,
+        ),
+        _SosSafetyToolTile(
+          icon: Icons.thunderstorm_rounded,
+          title: 'Weather Readiness',
+          subtitle: 'Decision checks',
+          onTap: onOpenWeatherReadiness,
+        ),
+        _SosSafetyToolTile(
+          icon: Icons.cell_tower_rounded,
+          title: 'Signal Beacon',
+          subtitle: 'Offline signal',
+          onTap: onOpenSignalBeacon,
+        ),
+      ],
+    );
+  }
+}
+
+class _SosSafetyToolTile extends StatelessWidget {
+  const _SosSafetyToolTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _Glyph(icon: icon, color: _SosColors.green),
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _SosColors.textFor(context),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: _SosColors.secondaryTextFor(context),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SosSafetyToolDetailPage extends StatelessWidget {
+  const _SosSafetyToolDetailPage({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.rows,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final List<(String, String)> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _SosColors.backgroundFor(context),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SosSafetyToolHeader(
+                    title: title,
+                    subtitle: 'Safety tool',
+                    onBack: () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(height: 16),
+                  _InsetGroup(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _Glyph(icon: icon, color: _SosColors.green),
+                          const SizedBox(height: 12),
+                          Text(
+                            subtitle,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: _SosColors.textFor(context),
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                          const SizedBox(height: 14),
+                          for (var index = 0; index < rows.length; index++) ...[
+                            _StatusRow(
+                              label: rows[index].$1,
+                              value: rows[index].$2,
+                            ),
+                            if (index != rows.length - 1)
+                              const _HorizontalSeparator(),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SosSafetyToolHeader extends StatelessWidget {
+  const _SosSafetyToolHeader({
+    required this.title,
+    required this.subtitle,
+    required this.onBack,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        CupertinoButton(
+          padding: EdgeInsets.zero,
+          minimumSize: const Size.square(36),
+          onPressed: onBack,
+          child: Icon(
+            CupertinoIcons.chevron_back,
+            color: _SosColors.textFor(context),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: _SosColors.textFor(context),
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _SosColors.secondaryTextFor(context),
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

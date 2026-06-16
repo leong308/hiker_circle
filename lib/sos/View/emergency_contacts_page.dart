@@ -16,11 +16,16 @@ class EmergencyContactsPage extends StatefulWidget {
     required this.session,
     required this.initialContacts,
     this.repository = const EmergencyContactsRepository(),
-  });
+    this.onboardingRequired = false,
+    this.onOnboardingCompleted,
+  }) : assert(!onboardingRequired || onOnboardingCompleted != null);
 
   final AppSession session;
   final List<EmergencyContact> initialContacts;
   final EmergencyContactsRepository repository;
+  final bool onboardingRequired;
+  final Future<void> Function(List<EmergencyContact> contacts)?
+  onOnboardingCompleted;
 
   @override
   State<EmergencyContactsPage> createState() => _EmergencyContactsPageState();
@@ -36,7 +41,9 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   late final EmergencyContactsViewModel viewModel;
   List<EmergencyContactCandidate> _deviceContacts = const [];
   bool _isLoadingDeviceContacts = false;
+  bool _isCompletingOnboarding = false;
   String? _deviceContactsMessage;
+  String? _onboardingErrorMessage;
 
   @override
   void initState() {
@@ -64,8 +71,36 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     setState(() {});
   }
 
-  void _close() {
-    Navigator.of(context).pop(viewModel.contacts);
+  Future<void> _close() async {
+    if (!widget.onboardingRequired) {
+      Navigator.of(context).pop(viewModel.contacts);
+      return;
+    }
+    if (viewModel.contacts.isEmpty ||
+        viewModel.isSaving ||
+        _isCompletingOnboarding) {
+      return;
+    }
+
+    setState(() {
+      _isCompletingOnboarding = true;
+      _onboardingErrorMessage = null;
+    });
+    try {
+      await widget.onOnboardingCompleted?.call(viewModel.contacts);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _onboardingErrorMessage = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCompletingOnboarding = false;
+        });
+      }
+    }
   }
 
   Future<void> _addContact() async {
@@ -188,53 +223,70 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _ContactsColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(onBack: _close),
-                  const SizedBox(height: 16),
-                  _SummaryCard(
-                    count: viewModel.contacts.length,
-                    max: EmergencyContactsViewModel.maxContacts,
-                    isSaving: viewModel.isSaving,
-                    saveErrorMessage: viewModel.saveErrorMessage,
-                  ),
-                  const SizedBox(height: 18),
-                  _ContactsList(
-                    contacts: viewModel.contacts,
-                    isSaving: viewModel.isSaving,
-                    onEditContact: _editContact,
-                    onDeleteContact: _deleteContact,
-                  ),
-                  const SizedBox(height: 18),
-                  _DeviceContactsPicker(
-                    contacts: _deviceContacts,
-                    savedContacts: viewModel.contacts,
-                    isLoading: _isLoadingDeviceContacts,
-                    message: _deviceContactsMessage,
-                    canSelect: viewModel.canAddContact && !viewModel.isSaving,
-                    onSelectContact: _selectDeviceContact,
-                  ),
-                  const SizedBox(height: 18),
-                  _AddContactForm(
-                    formKey: _formKey,
-                    nameController: _nameController,
-                    phoneController: _phoneController,
-                    relationshipController: _relationshipController,
-                    canAddContact:
-                        viewModel.canAddContact && !viewModel.isSaving,
-                    remainingSlots: viewModel.remainingSlots,
-                    onAddContact: _addContact,
-                  ),
-                ],
+    final isBusy = viewModel.isSaving || _isCompletingOnboarding;
+    return PopScope(
+      canPop: !widget.onboardingRequired,
+      child: Scaffold(
+        backgroundColor: _ContactsColors.backgroundFor(context),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _Header(
+                      onAction: _close,
+                      onboardingRequired: widget.onboardingRequired,
+                      canContinue: viewModel.contacts.isNotEmpty && !isBusy,
+                    ),
+                    if (widget.onboardingRequired) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        'Step 2 of 2. Add at least one contact, then tap Continue.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: _ContactsColors.secondaryTextFor(context),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    _SummaryCard(
+                      count: viewModel.contacts.length,
+                      max: EmergencyContactsViewModel.maxContacts,
+                      isSaving: isBusy,
+                      saveErrorMessage:
+                          _onboardingErrorMessage ?? viewModel.saveErrorMessage,
+                    ),
+                    const SizedBox(height: 18),
+                    _ContactsList(
+                      contacts: viewModel.contacts,
+                      isSaving: isBusy,
+                      onEditContact: _editContact,
+                      onDeleteContact: _deleteContact,
+                    ),
+                    const SizedBox(height: 18),
+                    _DeviceContactsPicker(
+                      contacts: _deviceContacts,
+                      savedContacts: viewModel.contacts,
+                      isLoading: _isLoadingDeviceContacts,
+                      message: _deviceContactsMessage,
+                      canSelect: viewModel.canAddContact && !isBusy,
+                      onSelectContact: _selectDeviceContact,
+                    ),
+                    const SizedBox(height: 18),
+                    _AddContactForm(
+                      formKey: _formKey,
+                      nameController: _nameController,
+                      phoneController: _phoneController,
+                      relationshipController: _relationshipController,
+                      canAddContact: viewModel.canAddContact && !isBusy,
+                      remainingSlots: viewModel.remainingSlots,
+                      onAddContact: _addContact,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -245,9 +297,15 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onBack});
+  const _Header({
+    required this.onAction,
+    required this.onboardingRequired,
+    required this.canContinue,
+  });
 
-  final VoidCallback onBack;
+  final VoidCallback onAction;
+  final bool onboardingRequired;
+  final bool canContinue;
 
   @override
   Widget build(BuildContext context) {
@@ -256,11 +314,11 @@ class _Header extends StatelessWidget {
       child: Row(
         children: [
           Tooltip(
-            message: 'Back',
+            message: onboardingRequired ? 'Continue' : 'Back',
             child: CupertinoButton(
               padding: EdgeInsets.zero,
               minimumSize: const Size.square(36),
-              onPressed: onBack,
+              onPressed: onboardingRequired && !canContinue ? null : onAction,
               child: Container(
                 width: 36,
                 height: 36,
@@ -268,9 +326,13 @@ class _Header extends StatelessWidget {
                   color: Colors.white,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  CupertinoIcons.chevron_back,
-                  color: _ContactsColors.green,
+                child: Icon(
+                  onboardingRequired
+                      ? CupertinoIcons.check_mark
+                      : CupertinoIcons.chevron_back,
+                  color: onboardingRequired && !canContinue
+                      ? _ContactsColors.secondaryTextFor(context)
+                      : _ContactsColors.green,
                   size: 20,
                 ),
               ),
@@ -306,6 +368,13 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
+          if (onboardingRequired) ...[
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: canContinue ? onAction : null,
+              child: const Text('Continue'),
+            ),
+          ],
         ],
       ),
     );

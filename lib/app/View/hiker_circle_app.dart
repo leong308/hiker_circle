@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../authentication/View/phone_sign_in_page.dart';
 import '../../home/View/hiker_home_page.dart';
+import '../../onboarding/View/first_time_onboarding_flow.dart';
 import '../Data/app_settings_controller.dart';
 import '../Data/firebase_bootstrap.dart';
 import '../Data/firebase_user_repository.dart';
@@ -216,6 +217,12 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           ? const _StartupPage()
           : _appViewModel.session == null
           ? PhoneSignInPage(onSignedIn: _appViewModel.completeSignIn)
+          : _appViewModel.session!.requiresOnboarding
+          ? FirstTimeOnboardingFlow(
+              session: _appViewModel.session!,
+              onCompleted: _appViewModel.completeOnboarding,
+              firebaseBootstrapResult: widget.firebaseBootstrapResult,
+            )
           : HikerHomePage(
               session: _appViewModel.session!,
               onSignOut: _appViewModel.signOut,

@@ -34,6 +34,6 @@ void main() {
     await tester.tap(find.text('SOS'));
     await tester.pumpAndSettle();
 
-    expect(selectedIndex, 2);
+    expect(selectedIndex, 1);
   });
 }

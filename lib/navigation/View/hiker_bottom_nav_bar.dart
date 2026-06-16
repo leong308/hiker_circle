@@ -20,7 +20,6 @@ class HikerBottomNavBar extends StatelessWidget {
 
   static const List<HikerBottomNavDestination> standardDestinations = [
     HikerBottomNavDestination(label: 'Home', icon: Icons.home_rounded),
-    HikerBottomNavDestination(label: 'Trail', icon: Icons.map_rounded),
     HikerBottomNavDestination(label: 'SOS', icon: Icons.sos_rounded),
     HikerBottomNavDestination(label: 'Circle', icon: Icons.groups_2_rounded),
     HikerBottomNavDestination(label: 'Profile', icon: Icons.person_rounded),

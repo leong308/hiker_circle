@@ -84,6 +84,21 @@ class SessionRepository {
     }
   }
 
+  Future<void> refreshCurrentSession() async {
+    final session = _session;
+    if (session == null) {
+      return;
+    }
+    try {
+      final refreshedSession = await _firebaseUserRepository
+          .refreshBoundSession(session);
+      await _localSessionDatabase.saveSession(refreshedSession);
+      _session = refreshedSession;
+    } on FirebaseUserRepositoryException catch (error) {
+      throw SessionRepositoryException(error.message);
+    }
+  }
+
   void signOut() {
     _session = null;
     unawaited(_localSessionDatabase.clearSession());

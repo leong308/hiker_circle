@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../../app/Model/app_session.dart';
 import '../Model/me_models.dart';
 
 class MeRepository {
   const MeRepository();
 
-  MeProfile loadProfile({required String phoneNumber}) {
+  MeProfile loadProfile({required AppSession session}) {
+    final username = session.username.trim();
     return MeProfile(
-      displayName: 'Trail Friend',
-      handle: '@${_profileHandleForPhone(phoneNumber)}',
-      phoneNumber: phoneNumber,
+      displayName: username.isEmpty ? 'Trail Friend' : username,
+      handle:
+          '@${username.isEmpty ? _profileHandleForPhone(session.phoneNumber) : username}',
+      phoneNumber: session.phoneNumber,
       status: 'Ready for the next hike',
     );
   }

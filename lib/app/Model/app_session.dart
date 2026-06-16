@@ -5,6 +5,9 @@ class AppSession {
     DateTime? createdAt,
     this.appInstanceId = '',
     this.isAdmin = false,
+    this.username = '',
+    this.requiresOnboarding = false,
+    this.isOnboardingProfileComplete = false,
   }) : createdAt = createdAt ?? signedInAt;
 
   final String phoneNumber;
@@ -12,6 +15,9 @@ class AppSession {
   final DateTime createdAt;
   final String appInstanceId;
   final bool isAdmin;
+  final String username;
+  final bool requiresOnboarding;
+  final bool isOnboardingProfileComplete;
 
   AppSession copyWith({
     String? phoneNumber,
@@ -19,6 +25,9 @@ class AppSession {
     DateTime? createdAt,
     String? appInstanceId,
     bool? isAdmin,
+    String? username,
+    bool? requiresOnboarding,
+    bool? isOnboardingProfileComplete,
   }) {
     return AppSession(
       phoneNumber: phoneNumber ?? this.phoneNumber,
@@ -26,6 +35,10 @@ class AppSession {
       createdAt: createdAt ?? this.createdAt,
       appInstanceId: appInstanceId ?? this.appInstanceId,
       isAdmin: isAdmin ?? this.isAdmin,
+      username: username ?? this.username,
+      requiresOnboarding: requiresOnboarding ?? this.requiresOnboarding,
+      isOnboardingProfileComplete:
+          isOnboardingProfileComplete ?? this.isOnboardingProfileComplete,
     );
   }
 }

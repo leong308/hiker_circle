@@ -26,6 +26,11 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> completeOnboarding() async {
+    await _sessionRepository.refreshCurrentSession();
+    notifyListeners();
+  }
+
   void signOut() {
     _sessionRepository.signOut();
     notifyListeners();
