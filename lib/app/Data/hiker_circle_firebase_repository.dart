@@ -180,7 +180,9 @@ class HikerCircleFirebaseRepository {
     var hasChanges = false;
 
     for (var i = 0; i < liveTrails.length; i++) {
-      if (liveTrails[i].weather.isStale) {
+      final docData = i < docs.length ? docs[i].data() : null;
+      final hasWeatherField = docData != null && docData.containsKey('weather');
+      if (!hasWeatherField || liveTrails[i].weather.isStale) {
         fetchIndices.add(i);
       }
     }
