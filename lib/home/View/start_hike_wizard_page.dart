@@ -70,7 +70,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   late HikeSessionDraft _draft;
   int _stepIndex = _soloFirstStep;
 
-  int get _lastStep => _draft.hikeType == HikeType.team ? 6 : 4;
+  int get _lastStep => _draft.hikeType == HikeType.team ? 5 : 3;
   int get _firstStep => _draft.hikeType == HikeType.team ? 0 : _soloFirstStep;
   int get _stepCount => _lastStep - _firstStep + 1;
   int get _visibleStepIndex => _stepIndex - _firstStep;
@@ -219,10 +219,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
             onChanged: _updateDraft,
           );
         case 3:
-          return _CheckpointStep(draft: _draft, onChanged: _updateDraft);
-        case 4:
           return _TimingStep(draft: _draft, onChanged: _updateDraft);
-        case 5:
+        case 4:
           return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);
         default:
           return _PreparationStep(
@@ -243,10 +241,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           onChanged: _updateDraft,
         );
       case 2:
-        return _CheckpointStep(draft: _draft, onChanged: _updateDraft);
-      case 3:
         return _TimingStep(draft: _draft, onChanged: _updateDraft);
-      case 4:
+      case 3:
         return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);
       default:
         return _PreparationStep(

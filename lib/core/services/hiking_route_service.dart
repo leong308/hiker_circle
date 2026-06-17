@@ -87,6 +87,9 @@ class HikingRouteService {
     final startLng = start.longitude;
     final endLat = end.latitude;
     final endLng = end.longitude;
+    final waypoints = sorted.length > 2
+        ? sorted.sublist(1, sorted.length - 1)
+        : <TrailCheckpoint>[];
 
     try {
       final ors = await _openRouteService.computeFootHikingRoute(
@@ -94,6 +97,7 @@ class HikingRouteService {
         startLongitude: startLng,
         endLatitude: endLat,
         endLongitude: endLng,
+        waypoints: waypoints,
       );
 
       double elevation = ors.ascentMeters;
@@ -133,6 +137,7 @@ class HikingRouteService {
         startLongitude: startLng,
         endLatitude: endLat,
         endLongitude: endLng,
+        waypoints: waypoints,
       );
 
       double elevation = geoapify.elevationGainMeters ?? 0;

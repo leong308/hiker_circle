@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/google_api_config.dart';
+import '../../trail/Model/trail_models.dart';
 
 class OpenRouteServiceException implements Exception {
   const OpenRouteServiceException(this.message);
@@ -40,6 +41,7 @@ class OpenRouteService {
     required double startLongitude,
     required double endLatitude,
     required double endLongitude,
+    List<TrailCheckpoint> waypoints = const [],
   }) async {
     if (_apiKey.trim().isEmpty) {
       throw const OpenRouteServiceException(
@@ -62,6 +64,7 @@ class OpenRouteService {
         body: jsonEncode({
           'coordinates': [
             [startLongitude, startLatitude],
+            for (final wp in waypoints) [wp.longitude, wp.latitude],
             [endLongitude, endLatitude],
           ],
           'elevation': true,

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/google_api_config.dart';
+import '../../trail/Model/trail_models.dart';
 
 class GeoapifyException implements Exception {
   const GeoapifyException(this.message);
@@ -153,6 +154,7 @@ class GeoapifyService {
     required double startLongitude,
     required double endLatitude,
     required double endLongitude,
+    List<TrailCheckpoint> waypoints = const [],
   }) async {
     if (_apiKey.trim().isEmpty) {
       throw const GeoapifyException(
@@ -162,11 +164,14 @@ class GeoapifyService {
 
     final client = _client ?? http.Client();
     try {
-      final waypoints = '$startLatitude,$startLongitude|'
-          '$endLatitude,$endLongitude';
+      final wpStrings = [
+        '$startLatitude,$startLongitude',
+        for (final wp in waypoints) '${wp.latitude},${wp.longitude}',
+        '$endLatitude,$endLongitude',
+      ].join('|');
       final response = await client.get(
         Uri.https('api.geoapify.com', '/v1/routing', {
-          'waypoints': waypoints,
+          'waypoints': wpStrings,
           'mode': 'hike',
           'format': 'geojson',
           'details': 'elevation',
