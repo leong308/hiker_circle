@@ -202,10 +202,8 @@ class _AdminPageState extends State<AdminPage> {
           session: widget.session,
           hikerCircleRepository: _repository,
           trail: trail,
-          isOfflineDownloaded: trail.offlineMapDownloaded,
-          onMapDownloaded: () {},
           onStartHike: (_) async {
-            _showSnack('Start hikes from the Home tab.');
+            _showSnack('Create hikes from the Home tab.');
           },
         ),
       ),

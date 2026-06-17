@@ -1,12 +1,43 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+
+const mapGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
+  Factory<OneSequenceGestureRecognizer>(ScaleGestureRecognizer.new),
+};
 
 const mapStyleUrls = [
   'https://tiles.openfreemap.org/styles/liberty',
   'https://tiles.openfreemap.org/styles/positron',
   'https://tiles.openfreemap.org/styles/bright',
+  'mapbox://styles/mapbox/streets-v12',
+  'mapbox://styles/mapbox/outdoors-v12',
+  'mapbox://styles/mapbox/satellite-streets-v12',
 ];
+
+Future<void> enableTerrain3D(MapboxMap map) async {
+  try {
+    await map.style.addSource(RasterDemSource(
+      id: 'mapbox-dem',
+      url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+    ));
+  } catch (_) {}
+  try {
+    await map.style
+        .setStyleTerrain('{"source": "mapbox-dem", "exaggeration": 1.5}');
+  } catch (_) {}
+}
+
+void schedulePitch(MapboxMap map, {double pitch = 50}) {
+  Future.delayed(const Duration(milliseconds: 300), () {
+    map.flyTo(
+      CameraOptions(pitch: pitch),
+      MapAnimationOptions(duration: 800),
+    );
+  });
+}
 
 const kMapMinZoom = 4.2;
 const kMapMaxZoom = 21.0;

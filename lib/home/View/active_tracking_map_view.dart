@@ -137,8 +137,8 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
       mapbox.GesturesSettings(
         scrollEnabled: widget.interactive,
         pinchToZoomEnabled: widget.interactive,
-        rotateEnabled: false,
-        pitchEnabled: false,
+        rotateEnabled: true,
+        pitchEnabled: true,
       ),
     );
     await mapboxMap.setBounds(
@@ -153,6 +153,8 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   }
 
   Future<void> _onStyleLoaded() async {
+    await enableTerrain3D(_mapboxMap!);
+    schedulePitch(_mapboxMap!);
     _styleLoaded = true;
     _routeRendered = false;
     await _renderRouteIfReady();
@@ -343,6 +345,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
           child: mapbox.MapWidget(
             key: ValueKey(mapStyleUrls[_styleIndex]),
             styleUri: mapStyleUrls[_styleIndex],
+            gestureRecognizers: mapGestureRecognizers,
             onMapCreated: _onMapCreated,
             onStyleLoadedListener: (_) => _onStyleLoaded(),
             onCameraChangeListener: _onCameraChange,

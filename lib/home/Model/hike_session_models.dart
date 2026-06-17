@@ -1099,3 +1099,209 @@ List<Map<String, dynamic>> _modelListOfMaps(Object? value) {
       .map((item) => Map<String, dynamic>.from(item))
       .toList();
 }
+
+class UpcomingHike {
+  const UpcomingHike({
+    required this.id,
+    required this.sessionId,
+    required this.trailId,
+    required this.trailName,
+    required this.latitude,
+    required this.longitude,
+    required this.area,
+    required this.state,
+    required this.distanceKm,
+    required this.durationMinutes,
+    required this.difficulty,
+    required this.startPointName,
+    required this.destinationName,
+    required this.departureTime,
+    required this.expectedReturnTime,
+    required this.hikeType,
+    required this.participantCount,
+    required this.creatorPhone,
+    required this.createdAt,
+    this.participantPhones = const [],
+  });
+
+  final String id;
+  final String sessionId;
+  final String trailId;
+  final String trailName;
+  final double latitude;
+  final double longitude;
+  final String area;
+  final String state;
+  final double distanceKm;
+  final int durationMinutes;
+  final String difficulty;
+  final String startPointName;
+  final String destinationName;
+  final DateTime departureTime;
+  final DateTime expectedReturnTime;
+  final String hikeType;
+  final int participantCount;
+  final String creatorPhone;
+  final DateTime createdAt;
+  final List<String> participantPhones;
+
+  Map<String, dynamic> toFirestore() => {
+    'sessionId': sessionId,
+    'trailId': trailId,
+    'trailName': trailName,
+    'latitude': latitude,
+    'longitude': longitude,
+    'area': area,
+    'state': state,
+    'distanceKm': distanceKm,
+    'durationMinutes': durationMinutes,
+    'difficulty': difficulty,
+    'startPointName': startPointName,
+    'destinationName': destinationName,
+    'departureTimeLocal': departureTime.toUtc().toIso8601String(),
+    'expectedReturnTimeLocal': expectedReturnTime.toUtc().toIso8601String(),
+    'hikeType': hikeType,
+    'participantCount': participantCount,
+    'creatorPhone': creatorPhone,
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    if (participantPhones.isNotEmpty) 'participantPhones': participantPhones,
+  };
+
+  factory UpcomingHike.fromFirestore(String id, Map<String, dynamic> data) {
+    final phones = data['participantPhones'];
+    final participantPhones = phones is List
+        ? phones.map((e) => e is String ? e : '').where((e) => e.isNotEmpty).toList()
+        : <String>[];
+    return UpcomingHike(
+      id: id,
+      sessionId: _modelStringFrom(data['sessionId']),
+      trailId: _modelStringFrom(data['trailId']),
+      trailName: _modelStringFrom(data['trailName']),
+      latitude: _modelDoubleFrom(data['latitude']),
+      longitude: _modelDoubleFrom(data['longitude']),
+      area: _modelStringFrom(data['area']),
+      state: _modelStringFrom(data['state']),
+      distanceKm: _modelDoubleFrom(data['distanceKm']),
+      durationMinutes: _modelIntFrom(data['durationMinutes']),
+      difficulty: _modelStringFrom(data['difficulty']),
+      startPointName: _modelStringFrom(data['startPointName']),
+      destinationName: _modelStringFrom(data['destinationName']),
+      departureTime: _modelDateFromValue(data['departureTimeLocal']) ?? DateTime.now(),
+      expectedReturnTime: _modelDateFromValue(data['expectedReturnTimeLocal']) ?? DateTime.now(),
+      hikeType: _modelStringFrom(data['hikeType']),
+      participantCount: _modelIntFrom(data['participantCount']),
+      creatorPhone: _modelStringFrom(data['creatorPhone']),
+      createdAt: _modelDateFromValue(data['createdAt']) ?? DateTime.now(),
+      participantPhones: participantPhones,
+    );
+  }
+
+  double distanceFrom(double lat, double lng) {
+    const R = 6371;
+    final dLat = _toRadians(latitude - lat);
+    final dLng = _toRadians(longitude - lng);
+    final sinHalfDLat = math.sin(dLat / 2);
+    final sinHalfDLng = math.sin(dLng / 2);
+    final a = sinHalfDLat * sinHalfDLat +
+        math.cos(_toRadians(lat)) *
+            math.cos(_toRadians(latitude)) *
+            sinHalfDLng *
+            sinHalfDLng;
+    return R * 2 * math.asin(math.sqrt(a));
+  }
+
+  static double _toRadians(double deg) => deg * 3.141592653589793 / 180;
+}
+
+class GroupChat {
+  const GroupChat({
+    required this.id,
+    required this.hikeSessionId,
+    required this.trailName,
+    required this.participantPhones,
+    required this.creatorPhone,
+    required this.createdAt,
+    this.lastMessage,
+    this.lastMessageAt,
+  });
+
+  final String id;
+  final String hikeSessionId;
+  final String trailName;
+  final List<String> participantPhones;
+  final String creatorPhone;
+  final DateTime createdAt;
+  final String? lastMessage;
+  final DateTime? lastMessageAt;
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'hikeSessionId': hikeSessionId,
+      'trailName': trailName,
+      'participantPhones': participantPhones,
+      'creatorPhone': creatorPhone,
+      'createdAtLocal': createdAt.toUtc().toIso8601String(),
+      if (lastMessage != null) 'lastMessage': lastMessage,
+      if (lastMessageAt != null)
+        'lastMessageAtLocal': lastMessageAt!.toUtc().toIso8601String(),
+    };
+  }
+
+  factory GroupChat.fromFirestore(String id, Map<String, dynamic> data) {
+    final phones = (data['participantPhones'] as Iterable?)
+            ?.map((e) => e is String ? e : '')
+            .toList() ??
+        const <String>[];
+    return GroupChat(
+      id: id,
+      hikeSessionId: _modelStringFrom(data['hikeSessionId']),
+      trailName: _modelStringFrom(data['trailName']),
+      participantPhones: phones,
+      creatorPhone: _modelStringFrom(data['creatorPhone']),
+      createdAt: _modelDateFromValue(data['createdAtLocal']) ?? DateTime.now(),
+      lastMessage: data['lastMessage'] is String ? data['lastMessage'] as String : null,
+      lastMessageAt: data['lastMessageAtLocal'] != null
+          ? _modelDateFromValue(data['lastMessageAtLocal'])
+          : null,
+    );
+  }
+}
+
+class ChatMessage {
+  const ChatMessage({
+    required this.id,
+    required this.chatId,
+    required this.senderPhone,
+    required this.senderName,
+    required this.text,
+    required this.sentAt,
+  });
+
+  final String id;
+  final String chatId;
+  final String senderPhone;
+  final String senderName;
+  final String text;
+  final DateTime sentAt;
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'chatId': chatId,
+      'senderPhone': senderPhone,
+      'senderName': senderName,
+      'text': text,
+      'sentAtLocal': sentAt.toUtc().toIso8601String(),
+    };
+  }
+
+  factory ChatMessage.fromFirestore(Map<String, dynamic> data) {
+    return ChatMessage(
+      id: _modelStringFrom(data['id']),
+      chatId: _modelStringFrom(data['chatId']),
+      senderPhone: _modelStringFrom(data['senderPhone']),
+      senderName: _modelStringFrom(data['senderName']),
+      text: _modelStringFrom(data['text']),
+      sentAt: _modelDateFromValue(data['sentAtLocal']) ?? DateTime.now(),
+    );
+  }
+}

@@ -17,6 +17,7 @@ import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/location_snapshot_service.dart';
+import 'find_hike_page.dart';
 import '../../sos/Data/sos_alert_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
 import '../../sos/Model/sos_models.dart';
@@ -665,6 +666,8 @@ class _HikerHomePageState extends State<HikerHomePage>
         builder: (context) => StartHikeWizardPage(
           preselectedTrail: trail,
           availableTrails: trails,
+          repository: hikerCircleRepository,
+          session: widget.session,
         ),
       ),
     );
@@ -693,7 +696,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         title: 'Turn Up iPhone Volume',
         message:
             'Fall SOS and offline audio SOS use iPhone media volume for the local alarm. Turn it up before starting your hike.',
-        proceedLabel: 'Start Hike',
+        proceedLabel: 'Create Hike',
       );
       if (!volumeReady || !mounted) {
         return;
@@ -1138,6 +1141,17 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
   }
 
+  void _openFindHike() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => FindHikePage(
+          session: widget.session,
+          repository: hikerCircleRepository,
+        ),
+      ),
+    );
+  }
+
   void openJoinTeamHike() {
     setState(() {
       selectedTabIndex = 2;
@@ -1336,44 +1350,12 @@ class _HikerHomePageState extends State<HikerHomePage>
           session: widget.session,
           hikerCircleRepository: hikerCircleRepository,
           trail: trail,
-          isOfflineDownloaded:
-              trail.offlineMapDownloaded ||
-              (plannedHike?.trail.trailId == trail.trailId &&
-                  (plannedHike?.offlineMapDownloaded ?? false)),
-          onMapDownloaded: () => markPlannedMapDownloaded(trail),
           onStartHike: (trail) => openStartHikeWizard(trail),
         ),
       ),
     );
   }
 
-  void markPlannedMapDownloaded(Trail trail) {
-    final currentPlan = plannedHike;
-    if (currentPlan == null || currentPlan.trail.trailId != trail.trailId) {
-      return;
-    }
-
-    setState(() {
-      plannedHike = PlannedHike(
-        trail: currentPlan.trail,
-        plannedStartTime: currentPlan.plannedStartTime,
-        expectedReturnTime: currentPlan.expectedReturnTime,
-        weatherCached: currentPlan.weatherCached,
-        offlineMapDownloaded: true,
-        emergencyContactsSelected: currentPlan.emergencyContactsSelected,
-        checklistCompleted: currentPlan.checklistCompleted,
-        checklistTotal: currentPlan.checklistTotal,
-        phoneBatteryLevel: currentPlan.phoneBatteryLevel,
-        liveLocationConfigured: currentPlan.liveLocationConfigured,
-      );
-    });
-    unawaited(
-      hikerCircleRepository.recordOfflineMapDownloaded(
-        session: widget.session,
-        trail: trail,
-      ),
-    );
-  }
 
   void openSosTab() {
     setState(() {
@@ -1482,6 +1464,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           activeHike: activeHike,
           isVisible: selectedTabIndex == 0,
           onStartHike: (trail) => openStartHikeWizard(trail),
+          onFindHike: () => _openFindHike(),
           onOpenTrailDetail: openTrailDetail,
           onAddTrailByAdmin: widget.session.isAdmin
               ? () => unawaited(addTrailByAdminFromHome())

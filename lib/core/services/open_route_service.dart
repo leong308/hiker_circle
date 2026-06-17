@@ -69,6 +69,8 @@ class OpenRouteService {
           ],
           'elevation': true,
           'format': 'geojson',
+          'preference': 'steepest',
+          'avoid_features': ['highways', 'tollways'],
         }),
       );
 

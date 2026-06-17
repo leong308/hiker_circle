@@ -290,8 +290,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       mapbox.GesturesSettings(
         scrollEnabled: true,
         pinchToZoomEnabled: true,
-        rotateEnabled: false,
-        pitchEnabled: false,
+        rotateEnabled: true,
+        pitchEnabled: true,
       ),
     );
     await mapboxMap.setBounds(
@@ -307,6 +307,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   Future<void> _onStyleLoaded() async {
+    await enableTerrain3D(_mapboxMap!);
+    schedulePitch(_mapboxMap!);
     _styleLoaded = true;
     unawaited(_fitRoute());
   }
@@ -331,7 +333,22 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
     if (_routePoints.length >= 2) {
       if (widget.animateRoute && _routePoints.length > 2) {
-        // Create empty polyline first, then animate
+        // Ghost line: full route always visible while animation plays on top
+        await _polylineManager?.create(
+          mapbox.PolylineAnnotationOptions(
+            geometry: mapbox.LineString(
+              coordinates: [
+                for (final pt in _routePoints)
+                  mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+              ],
+            ),
+            lineColor: const Color(0xFF4ADE80).toARGB32(),
+            lineOpacity: 0.25,
+            lineWidth: _routeLineWidth + 3,
+            lineJoin: mapbox.LineJoin.ROUND,
+          ),
+        );
+        // Foreground animated line
         _animatedPolyline = await _polylineManager?.create(
           mapbox.PolylineAnnotationOptions(
             geometry: mapbox.LineString(coordinates: []),
@@ -577,6 +594,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           child: mapbox.MapWidget(
             key: ValueKey(mapStyleUrls[_styleIndex]),
             styleUri: mapStyleUrls[_styleIndex],
+            gestureRecognizers: mapGestureRecognizers,
             onMapCreated: _onMapCreated,
             onStyleLoadedListener: (_) => _onStyleLoaded(),
             onMapLoadedListener: (_) => _onMapLoaded(),

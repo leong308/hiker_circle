@@ -1,4 +1,5 @@
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onCall } = require('firebase-functions/v2/https');
 const { logger } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 
@@ -90,96 +91,7 @@ exports.fetchWeatherForAllTrails = onSchedule(
         }
 
         const body = await response.json();
-        const current = body.current || {};
-        const daily = body.daily || {};
-        const hourly = body.hourly || {};
-
-        const currentTemp = current.temperature_2m;
-        const currentCode = current.weather_code || 0;
-        const tempMax = Array.isArray(daily.temperature_2m_max)
-          ? daily.temperature_2m_max[0]
-          : currentTemp;
-        const tempMin = Array.isArray(daily.temperature_2m_min)
-          ? daily.temperature_2m_min[0]
-          : currentTemp;
-        const precipProb = Array.isArray(daily.precipitation_probability_max)
-          ? daily.precipitation_probability_max[0]
-          : 0;
-        const dailyCodes = Array.isArray(daily.weather_code)
-          ? daily.weather_code[0]
-          : currentCode;
-
-        const maxTemp = typeof tempMax === 'number' ? tempMax : 0;
-        const minTemp = typeof tempMin === 'number' ? tempMin : 0;
-        const dailyCode = typeof dailyCodes === 'number' ? dailyCodes : 0;
-        const rainProb =
-          typeof precipProb === 'number'
-            ? Math.max(0, Math.min(100, Math.round(precipProb)))
-            : 0;
-
-        const now = new Date();
-        const hourlyTimes = hourly.time || [];
-        const hourlyTemps = hourly.temperature_2m || [];
-        const hourlyCodes = hourly.weather_code || [];
-        const hourlyPrecipProbs = hourly.precipitation_probability || [];
-        const hourlyForecast = [];
-        let started = false;
-
-        for (let i = 0; i < hourlyTimes.length && hourlyForecast.length < 24; i++) {
-          const timeStr = hourlyTimes[i];
-          const temp = hourlyTemps[i];
-          const code = hourlyCodes[i];
-
-          if (typeof timeStr !== 'string' || typeof temp !== 'number' || typeof code !== 'number') {
-            continue;
-          }
-
-          const time = new Date(timeStr);
-          if (isNaN(time.getTime())) continue;
-
-          if (!started) {
-            if (time <= now) continue;
-            started = true;
-          }
-
-          const precip =
-            Array.isArray(hourlyPrecipProbs) && i < hourlyPrecipProbs.length
-              ? hourlyPrecipProbs[i]
-              : 0;
-
-          hourlyForecast.push({
-            timeLocal: time.toISOString(),
-            temperature: temp,
-            precipitationProbability:
-              typeof precip === 'number'
-                ? Math.max(0, Math.min(100, Math.round(precip)))
-                : 0,
-            weatherCode: code,
-          });
-        }
-
-        const weather = {
-          summary: wmoSummary(dailyCode),
-          temperatureRange: `${Math.round(minTemp)} °C - ${Math.round(maxTemp)} °C`,
-          rainProbability: rainProb,
-          cachedAtLocal: new Date().toISOString(),
-          humidity:
-            typeof current.relative_humidity_2m === 'number'
-              ? current.relative_humidity_2m
-              : null,
-          windSpeed:
-            typeof current.wind_speed_10m === 'number'
-              ? current.wind_speed_10m
-              : null,
-          uvIndex:
-            typeof current.uv_index === 'number' ? current.uv_index : null,
-          feelsLike:
-            typeof current.apparent_temperature === 'number'
-              ? current.apparent_temperature
-              : null,
-          hourlyForecast:
-            hourlyForecast.length > 0 ? hourlyForecast : null,
-        };
+        const weather = buildWeatherFromApi(body);
 
         batch.update(doc.ref, { weather });
         updatedCount++;
@@ -193,5 +105,155 @@ exports.fetchWeatherForAllTrails = onSchedule(
     }
 
     logger.log(`Updated weather for ${updatedCount} trails.`);
+  }
+);
+
+function buildWeatherFromApi(body) {
+  const current = body.current || {};
+  const daily = body.daily || {};
+  const hourly = body.hourly || {};
+
+  const currentTemp = current.temperature_2m;
+  const currentCode = current.weather_code || 0;
+  const tempMax = Array.isArray(daily.temperature_2m_max)
+    ? daily.temperature_2m_max[0]
+    : currentTemp;
+  const tempMin = Array.isArray(daily.temperature_2m_min)
+    ? daily.temperature_2m_min[0]
+    : currentTemp;
+  const precipProb = Array.isArray(daily.precipitation_probability_max)
+    ? daily.precipitation_probability_max[0]
+    : 0;
+  const dailyCodes = Array.isArray(daily.weather_code)
+    ? daily.weather_code[0]
+    : currentCode;
+
+  const maxTemp = typeof tempMax === 'number' ? tempMax : 0;
+  const minTemp = typeof tempMin === 'number' ? tempMin : 0;
+  const dailyCode = typeof dailyCodes === 'number' ? dailyCodes : 0;
+  const rainProb =
+    typeof precipProb === 'number'
+      ? Math.max(0, Math.min(100, Math.round(precipProb)))
+      : 0;
+
+  const now = new Date();
+  const hourlyTimes = hourly.time || [];
+  const hourlyTemps = hourly.temperature_2m || [];
+  const hourlyCodes = hourly.weather_code || [];
+  const hourlyPrecipProbs = hourly.precipitation_probability || [];
+  const hourlyForecast = [];
+  let started = false;
+
+  for (let i = 0; i < hourlyTimes.length && hourlyForecast.length < 24; i++) {
+    const timeStr = hourlyTimes[i];
+    const temp = hourlyTemps[i];
+    const code = hourlyCodes[i];
+
+    if (typeof timeStr !== 'string' || typeof temp !== 'number' || typeof code !== 'number') {
+      continue;
+    }
+
+    const time = new Date(timeStr);
+    if (isNaN(time.getTime())) continue;
+
+    if (!started) {
+      if (time <= now) continue;
+      started = true;
+    }
+
+    const precip =
+      Array.isArray(hourlyPrecipProbs) && i < hourlyPrecipProbs.length
+        ? hourlyPrecipProbs[i]
+        : 0;
+
+    hourlyForecast.push({
+      timeLocal: time.toISOString(),
+      temperature: temp,
+      precipitationProbability:
+        typeof precip === 'number'
+          ? Math.max(0, Math.min(100, Math.round(precip)))
+          : 0,
+      weatherCode: code,
+    });
+  }
+
+  return {
+    summary: wmoSummary(dailyCode),
+    temperatureRange: `${Math.round(minTemp)} °C - ${Math.round(maxTemp)} °C`,
+    rainProbability: rainProb,
+    cachedAtLocal: new Date().toISOString(),
+    humidity:
+      typeof current.relative_humidity_2m === 'number'
+        ? current.relative_humidity_2m
+        : null,
+    windSpeed:
+      typeof current.wind_speed_10m === 'number'
+        ? current.wind_speed_10m
+        : null,
+    uvIndex:
+      typeof current.uv_index === 'number' ? current.uv_index : null,
+    feelsLike:
+      typeof current.apparent_temperature === 'number'
+        ? current.apparent_temperature
+        : null,
+    hourlyForecast:
+      hourlyForecast.length > 0 ? hourlyForecast : null,
+  };
+}
+
+exports.fetchWeatherForTrail = onCall(
+  { secrets: [] },
+  async (request) => {
+    const { trailId } = request.data;
+    if (!trailId || typeof trailId !== 'string') {
+      throw new Error('trailId must be a non-empty string');
+    }
+
+    const db = admin.firestore();
+    const doc = await db.collection('trails').doc(trailId).get();
+
+    if (!doc.exists) {
+      throw new Error(`Trail ${trailId} not found`);
+    }
+
+    const data = doc.data();
+    const latitude = data.latitude;
+    const longitude = data.longitude;
+
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+      throw new Error(`Trail ${trailId} has no valid coordinates`);
+    }
+
+    const url = new URL('https://api.open-meteo.com/v1/forecast');
+    url.searchParams.set('latitude', latitude.toFixed(4));
+    url.searchParams.set('longitude', longitude.toFixed(4));
+    url.searchParams.set(
+      'current',
+      'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,uv_index'
+    );
+    url.searchParams.set(
+      'daily',
+      'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code'
+    );
+    url.searchParams.set(
+      'hourly',
+      'temperature_2m,precipitation_probability,weather_code'
+    );
+    url.searchParams.set('timezone', 'auto');
+    url.searchParams.set('forecast_hours', '12');
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      throw new Error(`OpenMeteo returned ${response.status}`);
+    }
+
+    const body = await response.json();
+    const weather = buildWeatherFromApi(body);
+
+    await db.collection('trails').doc(trailId).update({ weather });
+
+    logger.log(`Fetched and saved weather for trail ${trailId}`);
+
+    return { weather };
   }
 );

@@ -5,6 +5,8 @@ import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../app/Model/app_session.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../trail/Model/trail_models.dart';
@@ -15,10 +17,14 @@ class StartHikeWizardPage extends StatefulWidget {
     super.key,
     this.preselectedTrail,
     this.availableTrails = const [],
+    this.repository,
+    this.session,
   });
 
   final Trail? preselectedTrail;
   final List<Trail> availableTrails;
+  final HikerCircleFirebaseRepository? repository;
+  final AppSession? session;
 
   @override
   State<StartHikeWizardPage> createState() => _StartHikeWizardPageState();
@@ -110,6 +116,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     }
 
     if (_isFinalStep) {
+      if (_draft.departureTime.isAfter(DateTime.now())) {
+        unawaited(_scheduleAndFinish());
+        return;
+      }
       Navigator.of(context).pop(ActiveHikeSession.fromDraft(_draft));
       return;
     }
@@ -117,6 +127,28 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     setState(() {
       _stepIndex += 1;
     });
+  }
+
+  Future<void> _scheduleAndFinish() async {
+    final repo = widget.repository;
+    final session = widget.session;
+    if (repo == null || session == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    await repo.scheduleUpcomingHike(session: session, draft: _draft);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            'Hike scheduled for ${_formatDate(_draft.departureTime)} at ${_formatTime(_draft.departureTime)}.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    Navigator.of(context).pop();
   }
 
   void _back() {
@@ -564,7 +596,7 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
   bool _showMap = true;
   bool _editMode = false;
   int? _highlightedCheckpointIndex;
-  late final Future<HikingRouteResult> _routeFuture;
+  late Future<HikingRouteResult> _routeFuture;
 
   List<TrailCheckpoint> get _checkpoints => widget.draft.effectiveCheckpoints;
 
@@ -787,7 +819,7 @@ class _CheckpointStepState extends State<_CheckpointStep> {
   bool _showMap = true;
   bool _editMode = false;
   int? _highlightedCheckpointIndex;
-  late final Future<HikingRouteResult> _routeFuture;
+  late Future<HikingRouteResult> _routeFuture;
 
   List<TrailCheckpoint> get _checkpoints => widget.draft.effectiveCheckpoints;
 
@@ -989,22 +1021,72 @@ class _TimingStep extends StatelessWidget {
     Duration(minutes: 15),
   ];
 
+  Future<void> _pickDepartureDate(BuildContext context) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: draft.departureTime,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked == null) return;
+    final updated = DateTime(
+      picked.year,
+      picked.month,
+      picked.day,
+      draft.departureTime.hour,
+      draft.departureTime.minute,
+    );
+    final diff = draft.expectedArrivalTime.difference(draft.departureTime);
+    onChanged(
+      draft.copyWith(
+        departureTime: updated,
+        expectedArrivalTime: updated.add(diff),
+        expectedReturnTime: updated.add(diff).add(const Duration(hours: 2)),
+      ),
+    );
+  }
+
+  Future<void> _pickDepartureTime(BuildContext context) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(draft.departureTime),
+    );
+    if (picked == null) return;
+    final updated = DateTime(
+      draft.departureTime.year,
+      draft.departureTime.month,
+      draft.departureTime.day,
+      picked.hour,
+      picked.minute,
+    );
+    final diff = draft.expectedArrivalTime.difference(draft.departureTime);
+    onChanged(
+      draft.copyWith(
+        departureTime: updated,
+        expectedArrivalTime: updated.add(diff),
+        expectedReturnTime: updated.add(diff).add(const Duration(hours: 2)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return _StepCard(
       title: 'Timing and Tracking',
       subtitle: 'Check-ins ask for confirmation; GPS recording runs quietly.',
       children: [
-        _ReadOnlyField(
+        _TappableField(
           label: 'Departure Date',
           value: _formatDate(draft.departureTime),
           icon: Icons.calendar_today_rounded,
+          onTap: () => _pickDepartureDate(context),
         ),
         const SizedBox(height: 12),
-        _ReadOnlyField(
+        _TappableField(
           label: 'Departure Time',
           value: _formatTime(draft.departureTime),
           icon: Icons.schedule_rounded,
+          onTap: () => _pickDepartureTime(context),
         ),
         const SizedBox(height: 12),
         _DurationPickerField(
@@ -1670,6 +1752,47 @@ class _ReadOnlyField extends StatelessWidget {
           color: _WizardColors.textFor(context),
           fontWeight: FontWeight.w600,
           letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _TappableField extends StatelessWidget {
+  const _TappableField({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          prefixIcon: Icon(icon),
+          suffixIcon: Icon(
+            Icons.edit_rounded,
+            size: 18,
+            color: _WizardColors.secondaryTextFor(context),
+          ),
+        ),
+        child: Text(
+          value,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: _WizardColors.textFor(context),
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0,
+          ),
         ),
       ),
     );

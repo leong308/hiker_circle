@@ -19,6 +19,7 @@ class HomeDashboardPage extends StatelessWidget {
     required this.activeHike,
     required this.isVisible,
     required this.onStartHike,
+    required this.onFindHike,
     required this.onOpenTrailDetail,
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
@@ -39,6 +40,7 @@ class HomeDashboardPage extends StatelessWidget {
   final ActiveHikeSession? activeHike;
   final bool isVisible;
   final Future<void> Function(Trail? trail) onStartHike;
+  final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
@@ -73,6 +75,7 @@ class HomeDashboardPage extends StatelessWidget {
                             isLoadingTrails: isLoadingTrails,
                             onStartHike: () =>
                                 unawaited(_startHikeFromDashboard(context)),
+                            onFindHike: onFindHike,
                             onOpenTrailDetail: onOpenTrailDetail,
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
@@ -85,6 +88,7 @@ class HomeDashboardPage extends StatelessWidget {
                             onStartHike: () => unawaited(
                               _confirmPreparationThenStart(context, planned),
                             ),
+                            onFindHike: onFindHike,
                             onOpenTrailDetail: onOpenTrailDetail,
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
@@ -244,6 +248,7 @@ class _PreparationDashboard extends StatelessWidget {
     required this.trails,
     required this.isLoadingTrails,
     required this.onStartHike,
+    required this.onFindHike,
     required this.onOpenTrailDetail,
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
@@ -254,6 +259,7 @@ class _PreparationDashboard extends StatelessWidget {
   final List<Trail> trails;
   final bool isLoadingTrails;
   final VoidCallback onStartHike;
+  final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
@@ -271,7 +277,10 @@ class _PreparationDashboard extends StatelessWidget {
           subtitle: 'Review your route, preparation, and nearby trail options.',
         ),
         const SizedBox(height: 16),
-        _StartHikeActions(onStartHike: onStartHike),
+        _StartHikeActions(
+          onStartHike: onStartHike,
+          onFindHike: onFindHike,
+        ),
         const SizedBox(height: 18),
         _UpcomingHikeCard(
           plannedHike: plannedHike,
@@ -335,6 +344,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
     required this.trails,
     required this.isLoadingTrails,
     required this.onStartHike,
+    required this.onFindHike,
     required this.onOpenTrailDetail,
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
@@ -344,6 +354,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
   final List<Trail> trails;
   final bool isLoadingTrails;
   final VoidCallback onStartHike;
+  final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
@@ -359,7 +370,10 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
           subtitle: 'Start a solo session or choose a trail from Best Matches.',
         ),
         const SizedBox(height: 16),
-        _StartHikeActions(onStartHike: onStartHike),
+        _StartHikeActions(
+          onStartHike: onStartHike,
+          onFindHike: onFindHike,
+        ),
         const SizedBox(height: 22),
         _BestMatchesSection(
           trails: trails,
@@ -787,9 +801,13 @@ class _BestMatchesLoading extends StatelessWidget {
 }
 
 class _StartHikeActions extends StatelessWidget {
-  const _StartHikeActions({required this.onStartHike});
+  const _StartHikeActions({
+    required this.onStartHike,
+    required this.onFindHike,
+  });
 
   final VoidCallback onStartHike;
+  final VoidCallback onFindHike;
 
   @override
   Widget build(BuildContext context) {
@@ -799,15 +817,15 @@ class _StartHikeActions extends StatelessWidget {
           child: FilledButton.icon(
             onPressed: onStartHike,
             icon: const Icon(Icons.play_arrow_rounded),
-            label: const Text('Start Hike'),
+            label: const Text('Create Hike'),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.group_add_rounded),
-            label: const Text('Join Team Hike'),
+            onPressed: onFindHike,
+            icon: const Icon(Icons.explore_rounded),
+            label: const Text('Find a Hike'),
           ),
         ),
       ],

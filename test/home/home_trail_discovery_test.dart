@@ -46,6 +46,7 @@ void main() {
           activeHike: null,
           isVisible: true,
           onStartHike: (_) async {},
+          onFindHike: () {},
           onOpenTrailDetail: (_) {},
           onActiveHikeChanged: (_) {},
           onCheckInRequested: (_) async => throw UnimplementedError(),
@@ -60,8 +61,8 @@ void main() {
     await tester.pump();
 
     expect(find.text('Upcoming Hike', skipOffstage: false), findsNothing);
-    expect(find.text('Start Hike', skipOffstage: false), findsOneWidget);
-    expect(find.text('Join Team Hike', skipOffstage: false), findsOneWidget);
+    expect(find.text('Create Hike', skipOffstage: false), findsOneWidget);
+    expect(find.text('Find a Hike', skipOffstage: false), findsOneWidget);
     expect(find.text('BEST MATCHES', skipOffstage: false), findsOneWidget);
     expect(find.text('KL Forest Trail', skipOffstage: false), findsOneWidget);
     expect(find.text('Suggested for today'), findsNothing);

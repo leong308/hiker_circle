@@ -156,8 +156,8 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
       mapbox.GesturesSettings(
         scrollEnabled: true,
         pinchToZoomEnabled: true,
-        rotateEnabled: false,
-        pitchEnabled: false,
+        rotateEnabled: true,
+        pitchEnabled: true,
       ),
     );
     await mapboxMap.setBounds(
@@ -201,6 +201,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                     child: mapbox.MapWidget(
                       key: const ValueKey('city-picker'),
                       styleUri: mapStyleUrls[0],
+                      gestureRecognizers: mapGestureRecognizers,
                       onMapCreated: _onMapCreated,
                       onCameraChangeListener: _onCameraChange,
                       onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),

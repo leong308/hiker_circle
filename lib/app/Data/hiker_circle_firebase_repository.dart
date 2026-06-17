@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import '../../home/Model/hike_session_models.dart';
 import '../../sos/Model/sos_models.dart';
@@ -30,9 +31,11 @@ class HikerCircleFirebaseRepository {
   }) : _firestore = firestore,
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
        _firebaseBootstrapResult = firebaseBootstrapResult,
-       _openMeteoService = openMeteoService ?? const OpenMeteoService();
+       _openMeteoService = openMeteoService ?? const OpenMeteoService(),
+       _functions = FirebaseFunctions.instance;
 
   final FirebaseFirestore? _firestore;
+  final FirebaseFunctions _functions;
   final LocalSessionDatabase _localDatabase;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
   final OpenMeteoService _openMeteoService;
@@ -54,6 +57,8 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('checkIns');
   CollectionReference<Map<String, dynamic>> get _hazardReports =>
       _resolvedFirestore.collection('hazardReports');
+  CollectionReference<Map<String, dynamic>> get _upcomingHikes =>
+      _resolvedFirestore.collection('upcomingHikes');
   CollectionReference<Map<String, dynamic>> get _teams =>
       _resolvedFirestore.collection('teams');
   CollectionReference<Map<String, dynamic>> get _teamHikeSessions =>
@@ -82,6 +87,13 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('downloadedMaps');
   CollectionReference<Map<String, dynamic>> get _hikeRouteCaptures =>
       _resolvedFirestore.collection('hikeRouteCaptures');
+  CollectionReference<Map<String, dynamic>> get _groupChats =>
+      _resolvedFirestore.collection('groupChats');
+  CollectionReference<Map<String, dynamic>> _groupChatMessagesFor(
+    String chatId,
+  ) {
+    return _groupChats.doc(chatId).collection('messages');
+  }
 
   static const Map<String, Map<String, Object>> _achievementSeeds = {
     'first_safe_hike': {
@@ -213,9 +225,7 @@ class HikerCircleFirebaseRepository {
       liveTrails[i] = liveTrails[i].copyWith(weather: weather);
 
       if (i < docs.length && docs[i].exists) {
-        batch.update(docs[i].reference, {
-          'weather': weather.toFirestore(),
-        });
+        batch.update(docs[i].reference, {'weather': weather.toFirestore()});
         hasChanges = true;
       }
     }
@@ -264,6 +274,202 @@ class HikerCircleFirebaseRepository {
       return updated;
     } catch (_) {
       return trail;
+    }
+  }
+
+  Future<Trail> refreshTrailWeatherViaCloud(Trail trail) async {
+    try {
+      final result = await _functions
+          .httpsCallable('fetchWeatherForTrail')
+          .call({'trailId': trail.trailId});
+      final weatherMap = result.data['weather'] as Map<String, dynamic>;
+      final weather = weatherFromFirestore(weatherMap);
+      final updated = trail.copyWith(weather: weather);
+      return updated;
+    } catch (_) {
+      return trail;
+    }
+  }
+
+  Future<List<UpcomingHike>> loadUpcomingHikes() async {
+    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    try {
+      final snapshot = await _upcomingHikes.get();
+      return snapshot.docs
+          .map((doc) => UpcomingHike.fromFirestore(doc.id, doc.data()))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<bool> joinUpcomingHike({
+    required String hikeId,
+    required String sessionId,
+    required String trailName,
+    required String creatorPhone,
+    required String phoneNumber,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return false;
+    try {
+      await _upcomingHikes.doc(hikeId).set({
+        'participantPhones': FieldValue.arrayUnion([phoneNumber]),
+        'participantCount': FieldValue.increment(1),
+      }, SetOptions(merge: true));
+
+      final snapshot = await _upcomingHikes.doc(hikeId).get();
+      final data = snapshot.data();
+      if (data == null) return true;
+
+      final raw = data['participantPhones'];
+      final allPhones = raw is List
+          ? raw.whereType<String>().where((p) => p.isNotEmpty).toList()
+          : <String>[creatorPhone, phoneNumber];
+      if (allPhones.length < 2) return true;
+
+      await _groupChats.doc(sessionId).set({
+        'hikeSessionId': sessionId,
+        'trailName': trailName,
+        'participantPhones': FieldValue.arrayUnion(allPhones),
+        'creatorPhone': creatorPhone,
+        'createdAtLocal': DateTime.now().toUtc().toIso8601String(),
+      }, SetOptions(merge: true));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> createGroupChat({
+    required String hikeSessionId,
+    required String trailName,
+    required List<String> participantPhones,
+    required String creatorPhone,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    try {
+      final doc = _groupChats.doc();
+      final chat = GroupChat(
+        id: doc.id,
+        hikeSessionId: hikeSessionId,
+        trailName: trailName,
+        participantPhones: participantPhones,
+        creatorPhone: creatorPhone,
+        createdAt: DateTime.now(),
+      );
+      await doc.set(chat.toFirestore());
+    } catch (_) {}
+  }
+
+  Future<List<GroupChat>> loadUserGroupChats(String phoneNumber) async {
+    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    try {
+      final snapshot = await _groupChats
+          .where('participantPhones', arrayContains: phoneNumber)
+          .orderBy('createdAtLocal', descending: true)
+          .get();
+      return snapshot.docs
+          .map((doc) => GroupChat.fromFirestore(doc.id, doc.data()))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Stream<List<GroupChat>> userGroupChatsStream(String phoneNumber) {
+    return _groupChats
+        .where('participantPhones', arrayContains: phoneNumber)
+        .orderBy('createdAtLocal', descending: true)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => GroupChat.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
+  }
+
+  Future<void> sendGroupChatMessage({
+    required String chatId,
+    required String senderPhone,
+    required String senderName,
+    required String text,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    try {
+      final msgDoc = _groupChatMessagesFor(chatId).doc();
+      final msg = ChatMessage(
+        id: msgDoc.id,
+        chatId: chatId,
+        senderPhone: senderPhone,
+        senderName: senderName,
+        text: text,
+        sentAt: DateTime.now(),
+      );
+      await msgDoc.set(msg.toFirestore());
+      await _groupChats.doc(chatId).update({
+        'lastMessage': text,
+        'lastMessageAtLocal': DateTime.now().toUtc().toIso8601String(),
+      });
+    } catch (_) {}
+  }
+
+  Stream<List<ChatMessage>> groupChatMessagesStream(String chatId) {
+    return _groupChatMessagesFor(chatId)
+        .orderBy('sentAtLocal', descending: false)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => ChatMessage.fromFirestore(doc.data()))
+              .toList(),
+        );
+  }
+
+  Future<void> scheduleUpcomingHike({
+    required AppSession session,
+    required HikeSessionDraft draft,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    try {
+      final now = DateTime.now().toUtc();
+      final upcomingDoc = _upcomingHikes.doc();
+      final participantPhones = [
+        session.phoneNumber,
+        ...draft.teamBuddies.map((b) => b.phoneNumber),
+      ];
+      final upcoming = UpcomingHike(
+        id: upcomingDoc.id,
+        sessionId: upcomingDoc.id,
+        trailId: draft.trail.trailId,
+        trailName: draft.trail.name,
+        latitude: draft.trail.latitude,
+        longitude: draft.trail.longitude,
+        area: draft.trail.area,
+        state: draft.trail.state,
+        distanceKm: draft.trail.distanceKm,
+        durationMinutes: draft.trail.estimatedDurationMinutes,
+        difficulty: draft.trail.difficulty,
+        startPointName: draft.startPointName,
+        destinationName: draft.destinationName,
+        departureTime: draft.departureTime,
+        expectedReturnTime: draft.expectedReturnTime,
+        hikeType: draft.hikeType.name,
+        participantCount: participantPhones.length,
+        creatorPhone: session.phoneNumber,
+        createdAt: now,
+        participantPhones: participantPhones,
+      );
+      await upcomingDoc.set(upcoming.toFirestore());
+
+      if (participantPhones.length > 1) {
+        await createGroupChat(
+          hikeSessionId: upcomingDoc.id,
+          trailName: draft.trail.name,
+          participantPhones: participantPhones,
+          creatorPhone: session.phoneNumber,
+        );
+      }
+    } catch (_) {
+      // Best-effort: scheduling is non-critical.
     }
   }
 
@@ -369,6 +575,56 @@ class HikerCircleFirebaseRepository {
         achievementId: 'prepared_adventurer',
         condition: 'Started a hike with offline preparation enabled.',
       );
+
+      try {
+        final upcomingDoc = _upcomingHikes.doc();
+        final participantPhones = [
+          session.phoneNumber,
+          ...draft.teamBuddies.map((b) => b.phoneNumber),
+        ];
+        final upcoming = UpcomingHike(
+          id: upcomingDoc.id,
+          sessionId: document.id,
+          trailId: draft.trail.trailId,
+          trailName: draft.trail.name,
+          latitude: draft.trail.latitude,
+          longitude: draft.trail.longitude,
+          area: draft.trail.area,
+          state: draft.trail.state,
+          distanceKm: draft.trail.distanceKm,
+          durationMinutes: draft.trail.estimatedDurationMinutes,
+          difficulty: draft.trail.difficulty,
+          startPointName: draft.startPointName,
+          destinationName: draft.destinationName,
+          departureTime: draft.departureTime,
+          expectedReturnTime: draft.expectedReturnTime,
+          hikeType: draft.hikeType.name,
+          participantCount: participantPhones.length,
+          creatorPhone: session.phoneNumber,
+          createdAt: now,
+          participantPhones: participantPhones,
+        );
+        await upcomingDoc.set(upcoming.toFirestore());
+      } catch (_) {
+        // Best-effort: upcoming hike listing is non-critical.
+      }
+
+      try {
+        final participantPhones = [
+          session.phoneNumber,
+          ...draft.teamBuddies.map((b) => b.phoneNumber),
+        ];
+        if (participantPhones.length > 1) {
+          await createGroupChat(
+            hikeSessionId: document.id,
+            trailName: draft.trail.name,
+            participantPhones: participantPhones,
+            creatorPhone: session.phoneNumber,
+          );
+        }
+      } catch (_) {
+        // Best-effort: group chat creation is non-critical.
+      }
 
       if (teamHikeSessionId.isNotEmpty) {
         await attachActiveHikeToTeamSession(
@@ -1907,7 +2163,7 @@ class HikerCircleFirebaseRepository {
       coverColorValue: _intFrom(data['coverColorValue']),
       coverImageUrl: _stringFrom(data['coverImageUrl']),
       checkpoints: checkpoints,
-      weather: _weatherFromFirestore(data['weather']),
+      weather: weatherFromFirestore(data['weather']),
       hazards: _listOfMaps(
         data['hazards'],
       ).map(_hazardFromFirestore).whereType<TrailHazard>().toList(),
@@ -1929,7 +2185,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
-  TrailWeather _weatherFromFirestore(Object? value) {
+  TrailWeather weatherFromFirestore(Object? value) {
     final data = value is Map ? Map<String, dynamic>.from(value) : {};
     final hourlyData = data['hourlyForecast'];
     return TrailWeather(
@@ -1943,9 +2199,9 @@ class HikerCircleFirebaseRepository {
       feelsLike: _nullableDoubleFrom(data['feelsLike']),
       hourlyForecast: hourlyData is List
           ? hourlyData
-              .map((h) => _hourlyForecastFromFirestore(h))
-              .whereType<HourlyForecast>()
-              .toList()
+                .map((h) => _hourlyForecastFromFirestore(h))
+                .whereType<HourlyForecast>()
+                .toList()
           : const [],
     );
   }

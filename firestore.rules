@@ -60,5 +60,14 @@ service cloud.firestore {
     match /hikeRouteCaptures/{captureId} {
       allow read, write: if true;
     }
+    match /upcomingHikes/{hikeId} {
+      allow read, write: if true;
+    }
+    match /groupChats/{chatId} {
+      allow read, write: if true;
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+    }
   }
 }

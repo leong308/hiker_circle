@@ -13,6 +13,7 @@ import '../../app/Model/app_session.dart';
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../home/Model/hike_session_models.dart';
+import 'group_chat_detail_page.dart';
 
 class CirclePage extends StatefulWidget {
   const CirclePage({
@@ -39,11 +40,37 @@ class _CirclePageState extends State<CirclePage> {
   late List<_CommunityPost> _posts = const [];
   late final List<_TeamPlan> _teams = _seedTeams();
   bool _isLoadingPosts = false;
+  List<GroupChat> _groupChats = const [];
+  bool _isLoadingChats = false;
+  StreamSubscription<List<GroupChat>>? _chatsSubscription;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadCommunityPosts());
+    _listenToGroupChats();
+  }
+
+  @override
+  void dispose() {
+    _chatsSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _listenToGroupChats() {
+    final phone = widget.session.phoneNumber;
+    _chatsSubscription = widget.hikerCircleRepository
+        .userGroupChatsStream(phone)
+        .listen((chats) {
+      if (!mounted) return;
+      setState(() {
+        _groupChats = chats;
+        _isLoadingChats = false;
+      });
+    });
+    setState(() {
+      _isLoadingChats = true;
+    });
   }
 
   Future<void> _loadCommunityPosts() async {
@@ -195,6 +222,18 @@ class _CirclePageState extends State<CirclePage> {
       );
   }
 
+  void _openGroupChat(GroupChat chat) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => GroupChatDetailPage(
+          chat: chat,
+          session: widget.session,
+          repository: widget.hikerCircleRepository,
+        ),
+      ),
+    );
+  }
+
   void _openSettings() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -233,6 +272,10 @@ class _CirclePageState extends State<CirclePage> {
                         padding: EdgeInsets.symmetric(vertical: 8),
                         child: Text('Teams'),
                       ),
+                      2: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('Chats'),
+                      ),
                     },
                     onValueChanged: (value) {
                       if (value != null) {
@@ -259,11 +302,18 @@ class _CirclePageState extends State<CirclePage> {
                               onShareHike: _shareActiveHikeUpdate,
                               onOpenPost: _openPostDetail,
                             )
-                          : _TeamsSection(
-                              buddies: buddies,
-                              teams: _teams,
-                              onCreateTeam: _createTeam,
-                            ),
+                          : _selectedSection == 1
+                              ? _TeamsSection(
+                                  buddies: buddies,
+                                  teams: _teams,
+                                  onCreateTeam: _createTeam,
+                                )
+                              : _ChatsSection(
+                                  chats: _groupChats,
+                                  isLoading: _isLoadingChats,
+                                  phoneNumber: widget.session.phoneNumber,
+                                  onOpenChat: _openGroupChat,
+                                ),
                     ),
                   ),
                 ],
@@ -2135,8 +2185,8 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
       mapbox.GesturesSettings(
         scrollEnabled: true,
         pinchToZoomEnabled: true,
-        rotateEnabled: false,
-        pitchEnabled: false,
+        rotateEnabled: true,
+        pitchEnabled: true,
       ),
     );
     _polylineManager =
@@ -2148,6 +2198,8 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   }
 
   Future<void> _onStyleLoaded() async {
+    await enableTerrain3D(_mapboxMap!);
+    schedulePitch(_mapboxMap!);
     _styleLoaded = true;
     _routeRendered = false;
     await _renderRoute();
@@ -2262,6 +2314,7 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
           child: mapbox.MapWidget(
             key: ValueKey('${widget.post.postId}:${widget.post.routePointCount}'),
             styleUri: mapStyleUrls[0],
+            gestureRecognizers: mapGestureRecognizers,
             onMapCreated: _onMapCreated,
             onStyleLoadedListener: (_) => _onStyleLoaded(),
             onCameraChangeListener: _onCameraChange,
@@ -2514,6 +2567,148 @@ String _stringFrom(Object? value) {
     return value;
   }
   return '';
+}
+
+class _ChatsSection extends StatelessWidget {
+  const _ChatsSection({
+    required this.chats,
+    required this.isLoading,
+    required this.phoneNumber,
+    required this.onOpenChat,
+  });
+
+  final List<GroupChat> chats;
+  final bool isLoading;
+  final String phoneNumber;
+  final ValueChanged<GroupChat> onOpenChat;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 48),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (chats.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 48),
+        child: Center(
+          child: Text(
+            'No group chats yet.\nStart a team hike to create one!',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _CircleColors.secondaryTextFor(context),
+              fontSize: 15,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(
+            'Group Chats',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: _CircleColors.secondaryTextFor(context),
+            ),
+          ),
+        ),
+        ...chats.map((chat) => _GroupChatTile(
+              chat: chat,
+              phoneNumber: phoneNumber,
+              onTap: () => onOpenChat(chat),
+            )),
+      ],
+    );
+  }
+}
+
+class _GroupChatTile extends StatelessWidget {
+  const _GroupChatTile({
+    required this.chat,
+    required this.phoneNumber,
+    required this.onTap,
+  });
+
+  final GroupChat chat;
+  final String phoneNumber;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final otherCount = chat.participantPhones.length - 1;
+    final subtitle = otherCount > 0
+        ? '$otherCount ${otherCount == 1 ? 'other' : 'others'}'
+        : 'Just you';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: _CircleColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: _CircleColors.greenSoftFor(context),
+                  radius: 24,
+                  child: const Icon(
+                    Icons.chat_rounded,
+                    color: _CircleColors.green,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        chat.trailName,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: _CircleColors.textFor(context),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        chat.lastMessage ?? subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: _CircleColors.secondaryTextFor(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: _CircleColors.secondaryTextFor(context),
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 int _intFrom(Object? value) {
