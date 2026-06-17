@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
@@ -2086,16 +2086,21 @@ class _CommunityRouteThumbnail extends StatefulWidget {
 }
 
 class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
-  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
-  maplibre.MapLibreMapController? _controller;
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.PolylineAnnotationManager? _polylineManager;
+  mapbox.CircleAnnotationManager? _circleManager;
   var _styleLoaded = false;
   var _routeRendered = false;
   late double _currentZoom = 13.5;
   late double _scaleLatitude;
 
-  List<maplibre.LatLng> get _routePoints {
+  List<mapbox.Point> get _routePoints {
     return widget.post.routePreviewPoints
-        .map((point) => maplibre.LatLng(point.latitude, point.longitude))
+        .map(
+          (point) => mapbox.Point(
+            coordinates: mapbox.Position(point.longitude, point.latitude),
+          ),
+        )
         .toList();
   }
 
@@ -2104,7 +2109,7 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
     super.initState();
     final pts = _routePoints;
     if (pts.isNotEmpty) {
-      _scaleLatitude = pts.first.latitude;
+      _scaleLatitude = pts.first.coordinates[1]!.toDouble();
     }
   }
 
@@ -2118,8 +2123,26 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
     }
   }
 
-  Future<void> _onMapCreated(maplibre.MapLibreMapController controller) async {
-    _controller = controller;
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    await mapboxMap.compass.updateSettings(
+      mapbox.CompassSettings(enabled: false),
+    );
+    await mapboxMap.logo.updateSettings(
+      mapbox.LogoSettings(enabled: false),
+    );
+    await mapboxMap.gestures.updateSettings(
+      mapbox.GesturesSettings(
+        scrollEnabled: true,
+        pinchToZoomEnabled: true,
+        rotateEnabled: false,
+        pitchEnabled: false,
+      ),
+    );
+    _polylineManager =
+        await mapboxMap.annotations.createPolylineAnnotationManager();
+    _circleManager =
+        await mapboxMap.annotations.createCircleAnnotationManager();
     await _renderRoute();
     await _syncScaleFromCamera();
   }
@@ -2131,87 +2154,86 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   }
 
   Future<void> _renderRoute() async {
-    final controller = _controller;
     final points = _routePoints;
-    if (controller == null ||
-        !_styleLoaded ||
-        _routeRendered ||
-        points.length < 2) {
+    if (_mapboxMap == null || !_styleLoaded || _routeRendered || points.length < 2) {
       return;
     }
 
-    _routeRendered = true;
-    await controller.clearLines();
-    await controller.clearCircles();
-    await controller.addLine(
-      maplibre.LineOptions(
-        geometry: points,
-        lineColor: '#34A853',
+    await _polylineManager?.deleteAll();
+    await _circleManager?.deleteAll();
+
+    await _polylineManager?.create(
+      mapbox.PolylineAnnotationOptions(
+        geometry: mapbox.LineString(coordinates: [
+          for (final pt in points)
+            mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+        ]),
+        lineColor: const Color(0xFF34A853).toARGB32(),
         lineOpacity: 0.94,
         lineWidth: 4.0,
-        lineJoin: 'round',
+        lineJoin: mapbox.LineJoin.ROUND,
       ),
     );
-    await controller.addCircles([
-      maplibre.CircleOptions(
+    await _circleManager?.createMulti([
+      mapbox.CircleAnnotationOptions(
         geometry: points.first,
-        circleColor: '#7BC90E',
+        circleColor: const Color(0xFF7BC90E).toARGB32(),
         circleRadius: 6,
-        circleStrokeColor: '#FFFFFF',
+        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
         circleStrokeWidth: 2,
       ),
-      maplibre.CircleOptions(
+      mapbox.CircleAnnotationOptions(
         geometry: points.last,
-        circleColor: '#0A84FF',
+        circleColor: const Color(0xFF0A84FF).toARGB32(),
         circleRadius: 7,
-        circleStrokeColor: '#FFFFFF',
+        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
         circleStrokeWidth: 2,
       ),
     ]);
+
+    _routeRendered = true;
     await _fitRoute();
   }
 
   Future<void> _fitRoute() async {
-    final controller = _controller;
+    final map = _mapboxMap;
     final points = _routePoints;
-    if (controller == null || points.length < 2) {
+    if (map == null || points.length < 2) {
       return;
     }
-    await controller.animateCamera(
-      maplibre.CameraUpdate.newLatLngBounds(
-        boundsFor(points),
-        left: 28,
-        top: 28,
-        right: 28,
-        bottom: 28,
-      ),
+    await map.flyTo(
+      mapbox.CameraOptions(center: centerFor(points), zoom: _currentZoom),
+      mapbox.MapAnimationOptions(duration: 300),
     );
     await _syncScaleFromCamera();
   }
 
   Future<void> _zoomBy(double amount) async {
-    await _controller?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
+    await _mapboxMap?.flyTo(
+      mapbox.CameraOptions(zoom: _currentZoom + amount),
+      mapbox.MapAnimationOptions(duration: 300),
+    );
     await _syncScaleFromCamera();
   }
 
-  void _onCameraMove(maplibre.CameraPosition position) {
-    _updateScale(position);
+  void _onCameraChange(mapbox.CameraChangedEventData data) {
+    _updateScale(data);
   }
 
   Future<void> _syncScaleFromCamera() async {
-    final controller = _controller;
-    if (controller == null) return;
-
-    final position =
-        controller.cameraPosition ?? await controller.queryCameraPosition();
-    if (position != null) {
-      _updateScale(position);
-    }
+    final map = _mapboxMap;
+    if (map == null) return;
+    final state = await map.getCameraState();
+    if (!mounted) return;
+    setState(() {
+      _currentZoom = state.zoom;
+      _scaleLatitude = state.center.coordinates[1]!.toDouble();
+    });
   }
 
-  void _updateScale(maplibre.CameraPosition position) {
-    final nextZoom = position.zoom;
-    final nextLatitude = position.target.latitude;
+  void _updateScale(mapbox.CameraChangedEventData data) {
+    final nextZoom = data.cameraState.zoom;
+    final nextLatitude = data.cameraState.center.coordinates[1]!.toDouble();
     if (!mounted ||
         ((nextZoom - _currentZoom).abs() < 0.005 &&
             (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
@@ -2236,29 +2258,15 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        maplibre.MapLibreMap(
-          key: ValueKey('${widget.post.postId}:${widget.post.routePointCount}'),
-          styleString: _styleUrl,
-          initialCameraPosition: maplibre.CameraPosition(
-            target: centerFor(points),
-            zoom: _currentZoom,
+        DeferredMap(
+          child: mapbox.MapWidget(
+            key: ValueKey('${widget.post.postId}:${widget.post.routePointCount}'),
+            styleUri: mapStyleUrls[0],
+            onMapCreated: _onMapCreated,
+            onStyleLoadedListener: (_) => _onStyleLoaded(),
+            onCameraChangeListener: _onCameraChange,
+            onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
           ),
-          compassEnabled: false,
-          logoEnabled: false,
-          rotateGesturesEnabled: false,
-          tiltGesturesEnabled: false,
-          scrollGesturesEnabled: true,
-          zoomGesturesEnabled: true,
-          trackCameraPosition: true,
-          gestureRecognizers: {
-            Factory<OneSequenceGestureRecognizer>(
-              () => EagerGestureRecognizer(),
-            ),
-          },
-          onMapCreated: _onMapCreated,
-          onStyleLoadedCallback: _onStyleLoaded,
-          onCameraMove: _onCameraMove,
-          onCameraIdle: () => unawaited(_syncScaleFromCamera()),
         ),
         const DecoratedBox(
           decoration: BoxDecoration(

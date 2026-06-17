@@ -1,3 +1,4 @@
+import '../../app/Data/local_session_database.dart';
 import '../../trail/Model/trail_models.dart';
 import 'geoapify_service.dart';
 import 'google_routes_service.dart';
@@ -56,17 +57,20 @@ class HikingRouteService {
     GeoapifyService? geoapifyService,
     GoogleRoutesService? googleRoutesService,
     OpenTopoDataService? openTopoDataService,
+    LocalSessionDatabase? localDatabase,
   })  : _openRouteService = openRouteService ?? OpenRouteService(),
         _geoapifyService = geoapifyService ?? GeoapifyService(),
         _googleRoutesService =
             googleRoutesService ?? GoogleRoutesService(),
         _openTopoDataService =
-            openTopoDataService ?? OpenTopoDataService();
+            openTopoDataService ?? OpenTopoDataService(),
+        _localDatabase = localDatabase;
 
   final OpenRouteService _openRouteService;
   final GeoapifyService _geoapifyService;
   final GoogleRoutesService _googleRoutesService;
   final OpenTopoDataService _openTopoDataService;
+  final LocalSessionDatabase? _localDatabase;
 
   Future<HikingRouteResult> findHikingRouteForTrail(Trail trail) async {
     if (trail.checkpoints.length < 2) {
@@ -109,8 +113,8 @@ class HikingRouteService {
         elevationGainMeters: elevation,
       );
 
-      final points = coords.map((c) => _LatLng(c[1], c[0])).toList();
-      final polyline = _PolylineEncoder.encode(points);
+      final points = coords.map((c) => LatLng(c[1], c[0])).toList();
+      final polyline = PolylineCodec.encode(points);
 
       return HikingRouteResult(
         distanceMeters: ors.distanceMeters,
@@ -148,8 +152,8 @@ class HikingRouteService {
         elevationGainMeters: elevation,
       );
 
-      final points = coords.map((c) => _LatLng(c[1], c[0])).toList();
-      final polyline = _PolylineEncoder.encode(points);
+      final points = coords.map((c) => LatLng(c[1], c[0])).toList();
+      final polyline = PolylineCodec.encode(points);
 
       return HikingRouteResult(
         distanceMeters: geoapify.distanceMeters,
@@ -190,6 +194,65 @@ class HikingRouteService {
     }
   }
 
+  static String checkpointsHash(List<TrailCheckpoint> checkpoints) {
+    final sorted = [...checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    final buffer = StringBuffer();
+    for (final cp in sorted) {
+      buffer.write('${cp.name}|${cp.latitude}|${cp.longitude}|${cp.order};');
+    }
+    return buffer.toString().hashCode.toRadixString(16);
+  }
+
+  Future<HikingRouteResult> findHikingRouteForTrailWithCache(
+    Trail trail,
+  ) async {
+    final db = _localDatabase;
+    if (db != null) {
+      final hash = checkpointsHash(trail.checkpoints);
+      try {
+        final cached = await db.loadRouteCache(
+          trailId: trail.trailId,
+          checkpointsHash: hash,
+        );
+        if (cached != null) {
+          return HikingRouteResult(
+            distanceMeters: cached['distance_meters'] as int,
+            duration:
+                Duration(seconds: cached['duration_seconds'] as int),
+            encodedPolyline: cached['encoded_polyline'] as String,
+            elevationGainMeters:
+                (cached['elevation_gain_meters'] as num?)?.toDouble(),
+            sourceLabel:
+                '${cached['source_label']} (cached)',
+          );
+        }
+      } catch (_) {
+        // Cache lookup failure is non-fatal; proceed to fetch route.
+      }
+    }
+
+    final result = await findHikingRouteForTrail(trail);
+
+    if (db != null) {
+      try {
+        await db.saveRouteCache(
+          trailId: trail.trailId,
+          checkpointsHash: checkpointsHash(trail.checkpoints),
+          encodedPolyline: result.encodedPolyline,
+          distanceMeters: result.distanceMeters,
+          durationSeconds: result.duration.inSeconds,
+          elevationGainMeters: result.elevationGainMeters,
+          sourceLabel: result.sourceLabel,
+        );
+      } catch (_) {
+        // Cache save failure is non-fatal.
+      }
+    }
+
+    return result;
+  }
+
   bool _routeDistanceLooksUsable(Trail trail, int distanceMeters) {
     final expectedDistanceMeters = trail.distanceKm * 1000;
     if (expectedDistanceMeters <= 0) {
@@ -200,15 +263,15 @@ class HikingRouteService {
   }
 }
 
-class _LatLng {
-  const _LatLng(this.latitude, this.longitude);
+class LatLng {
+  const LatLng(this.latitude, this.longitude);
 
   final double latitude;
   final double longitude;
 }
 
-abstract final class _PolylineEncoder {
-  static String encode(List<_LatLng> points) {
+abstract final class PolylineCodec {
+  static String encode(List<LatLng> points) {
     var previousLatitude = 0;
     var previousLongitude = 0;
     final buffer = StringBuffer();
@@ -224,6 +287,45 @@ abstract final class _PolylineEncoder {
     }
 
     return buffer.toString();
+  }
+
+  static List<LatLng> decode(String encoded) {
+    final points = <LatLng>[];
+    var index = 0;
+    var previousLatitude = 0;
+    var previousLongitude = 0;
+
+    while (index < encoded.length) {
+      var shift = 0;
+      var result = 0;
+      int byte;
+      do {
+        byte = encoded.codeUnitAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+
+      final deltaLatitude = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      previousLatitude += deltaLatitude;
+
+      shift = 0;
+      result = 0;
+      do {
+        byte = encoded.codeUnitAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+
+      final deltaLongitude = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
+      previousLongitude += deltaLongitude;
+
+      points.add(LatLng(
+        previousLatitude / 100000.0,
+        previousLongitude / 100000.0,
+      ));
+    }
+
+    return points;
   }
 
   static String _encodeValue(int value) {

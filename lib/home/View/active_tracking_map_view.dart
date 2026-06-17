@@ -1,9 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
@@ -28,7 +26,9 @@ class ActiveTrackingMapView extends StatefulWidget {
 }
 
 class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
-  maplibre.MapLibreMapController? _mapController;
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.PolylineAnnotationManager? _polylineManager;
+  mapbox.CircleAnnotationManager? _circleManager;
   var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
@@ -39,40 +39,47 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   void initState() {
     super.initState();
     final pts = _visiblePoints;
-    final center = pts.isEmpty ? maplibre.LatLng(0, 0) : centerFor(pts);
+    final center = pts.isEmpty
+        ? mapbox.Point(coordinates: mapbox.Position(0, 0))
+        : centerFor(pts);
     _currentZoom = pts.length == 1 ? 15 : 13.5;
-    _scaleLatitude = center.latitude;
+    _scaleLatitude = center.coordinates[1]!.toDouble();
   }
 
-  List<maplibre.LatLng> get _recordedRoutePoints {
+  List<mapbox.Point> get _recordedRoutePoints {
     return widget.activeHike.routePoints
-        .map((point) => maplibre.LatLng(point.latitude, point.longitude))
+        .map((point) => mapbox.Point(
+              coordinates: mapbox.Position(point.longitude, point.latitude),
+            ))
         .toList();
   }
 
-  List<maplibre.LatLng> get _checkpointPoints {
+  List<mapbox.Point> get _checkpointPoints {
     final checkpoints = [...widget.activeHike.trail.checkpoints]
       ..sort((a, b) => a.order.compareTo(b.order));
     return checkpoints
         .map(
-          (checkpoint) =>
-              maplibre.LatLng(checkpoint.latitude, checkpoint.longitude),
-        )
-        .toList();
-  }
-
-  List<maplibre.LatLng> get _manualPinPoints {
-    return widget.activeHike.manualPinLocations
-        .map(
-          (pin) => maplibre.LatLng(
-            pin.coordinate.latitude,
-            pin.coordinate.longitude,
+          (checkpoint) => mapbox.Point(
+            coordinates: mapbox.Position(checkpoint.longitude, checkpoint.latitude),
           ),
         )
         .toList();
   }
 
-  List<maplibre.LatLng> get _teamMatePoints {
+  List<mapbox.Point> get _manualPinPoints {
+    return widget.activeHike.manualPinLocations
+        .map(
+          (pin) => mapbox.Point(
+            coordinates: mapbox.Position(
+              pin.coordinate.longitude,
+              pin.coordinate.latitude,
+            ),
+          ),
+        )
+        .toList();
+  }
+
+  List<mapbox.Point> get _teamMatePoints {
     final teamSession =
         widget.teamHikeSession ?? widget.activeHike.teamHikeSession;
     if (teamSession == null) {
@@ -81,23 +88,25 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     return teamSession.participants
         .where((participant) => participant.latestLocation != null)
         .map(
-          (participant) => maplibre.LatLng(
-            participant.latestLocation!.latitude,
-            participant.latestLocation!.longitude,
+          (participant) => mapbox.Point(
+            coordinates: mapbox.Position(
+              participant.latestLocation!.longitude,
+              participant.latestLocation!.latitude,
+            ),
           ),
         )
         .toList();
   }
 
-  maplibre.LatLng? get _latestPoint {
+  mapbox.Point? get _latestPoint {
     final latest = widget.activeHike.latestLocation;
     if (latest == null) {
       return null;
     }
-    return maplibre.LatLng(latest.latitude, latest.longitude);
+    return mapbox.Point(coordinates: mapbox.Position(latest.longitude, latest.latitude));
   }
 
-  List<maplibre.LatLng> get _visiblePoints {
+  List<mapbox.Point> get _visiblePoints {
     return [
       ..._recordedRoutePoints,
       ..._manualPinPoints,
@@ -116,8 +125,29 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     }
   }
 
-  Future<void> _onMapCreated(maplibre.MapLibreMapController controller) async {
-    _mapController = controller;
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    await mapboxMap.compass.updateSettings(
+      mapbox.CompassSettings(enabled: false),
+    );
+    await mapboxMap.logo.updateSettings(
+      mapbox.LogoSettings(enabled: false),
+    );
+    await mapboxMap.gestures.updateSettings(
+      mapbox.GesturesSettings(
+        scrollEnabled: widget.interactive,
+        pinchToZoomEnabled: widget.interactive,
+        rotateEnabled: false,
+        pitchEnabled: false,
+      ),
+    );
+    await mapboxMap.setBounds(
+      mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
+    );
+    _polylineManager =
+        await mapboxMap.annotations.createPolylineAnnotationManager();
+    _circleManager =
+        await mapboxMap.annotations.createCircleAnnotationManager();
     await _renderRouteIfReady();
     await _syncScaleFromCamera();
   }
@@ -129,106 +159,122 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   }
 
   Future<void> _renderRouteIfReady() async {
-    final controller = _mapController;
-    if (controller == null ||
-        !_styleLoaded ||
-        _routeRendered ||
-        _visiblePoints.isEmpty) {
+    final map = _mapboxMap;
+    if (map == null || !_styleLoaded || _routeRendered || _visiblePoints.isEmpty) {
       return;
     }
 
-    _routeRendered = true;
-    await controller.clearLines();
-    await controller.clearCircles();
+    await _polylineManager?.deleteAll();
+    await _circleManager?.deleteAll();
+
+    var created = false;
 
     final recordedRoute = _recordedRoutePoints;
     if (recordedRoute.length >= 2) {
-      await controller.addLine(
-        maplibre.LineOptions(
-          geometry: recordedRoute,
-          lineColor: '#34A853',
+      await _polylineManager?.create(
+        mapbox.PolylineAnnotationOptions(
+          geometry: mapbox.LineString(coordinates: [
+            for (final pt in recordedRoute)
+              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+          ]),
+          lineColor: const Color(0xFF34A853).toARGB32(),
           lineOpacity: 0.92,
           lineWidth: 4.2,
-          lineJoin: 'round',
+          lineJoin: mapbox.LineJoin.ROUND,
         ),
       );
+      created = true;
     } else if (_checkpointPoints.length >= 2) {
-      await controller.addLine(
-        maplibre.LineOptions(
-          geometry: _checkpointPoints,
-          lineColor: '#6E6E73',
+      await _polylineManager?.create(
+        mapbox.PolylineAnnotationOptions(
+          geometry: mapbox.LineString(coordinates: [
+            for (final pt in _checkpointPoints)
+              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+          ]),
+          lineColor: const Color(0xFF6E6E73).toARGB32(),
           lineOpacity: 0.5,
           lineWidth: 2.4,
         ),
       );
+      created = true;
     }
 
-    await controller.addCircles([
+    final circleAnnotations = <mapbox.CircleAnnotationOptions>[
       for (final participant
           in (widget.teamHikeSession ?? widget.activeHike.teamHikeSession)
                   ?.participants ??
               const <TeamHikeParticipant>[])
         if (participant.latestLocation != null)
-          maplibre.CircleOptions(
-            geometry: maplibre.LatLng(
-              participant.latestLocation!.latitude,
-              participant.latestLocation!.longitude,
+          mapbox.CircleAnnotationOptions(
+            geometry: mapbox.Point(
+              coordinates: mapbox.Position(
+                participant.latestLocation!.longitude,
+                participant.latestLocation!.latitude,
+              ),
             ),
-            circleColor: participant.isLeader ? '#F59E0B' : '#7C3AED',
-            circleRadius: participant.isLeader ? 8 : 6,
-            circleStrokeColor: '#FFFFFF',
+            circleColor: participant.isLeader
+                ? const Color(0xFFF59E0B).toARGB32()
+                : const Color(0xFF7C3AED).toARGB32(),
+            circleRadius: participant.isLeader ? 8.0 : 6.0,
+            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
             circleStrokeWidth: 2,
           ),
       for (final point in _manualPinPoints)
-        maplibre.CircleOptions(
+        mapbox.CircleAnnotationOptions(
           geometry: point,
-          circleColor: '#E11D48',
+          circleColor: const Color(0xFFE11D48).toARGB32(),
           circleRadius: 6,
-          circleStrokeColor: '#FFFFFF',
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
           circleStrokeWidth: 2,
         ),
       if (_latestPoint != null)
-        maplibre.CircleOptions(
+        mapbox.CircleAnnotationOptions(
           geometry: _latestPoint!,
-          circleColor: '#0A84FF',
+          circleColor: const Color(0xFF0A84FF).toARGB32(),
           circleRadius: 7,
-          circleStrokeColor: '#FFFFFF',
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
           circleStrokeWidth: 2,
         ),
       if (recordedRoute.isNotEmpty)
-        maplibre.CircleOptions(
+        mapbox.CircleAnnotationOptions(
           geometry: recordedRoute.first,
-          circleColor: '#7BC90E',
+          circleColor: const Color(0xFF7BC90E).toARGB32(),
           circleRadius: 6,
-          circleStrokeColor: '#FFFFFF',
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
           circleStrokeWidth: 2,
         ),
-    ]);
+    ];
+
+    if (circleAnnotations.isNotEmpty) {
+      await _circleManager?.createMulti(circleAnnotations);
+      created = true;
+    }
+
+    if (created) {
+      _routeRendered = true;
+    }
 
     await _fitRoute();
   }
 
   Future<void> _fitRoute() async {
-    final controller = _mapController;
+    final map = _mapboxMap;
     final points = _visiblePoints;
-    if (controller == null || points.isEmpty) {
+    if (map == null || points.isEmpty) {
       return;
     }
     if (points.length == 1) {
-      await controller.animateCamera(
-        maplibre.CameraUpdate.newLatLngZoom(points.first, 15),
+      await map.flyTo(
+        mapbox.CameraOptions(center: points.first, zoom: 15),
+        mapbox.MapAnimationOptions(duration: 300),
       );
       await _syncScaleFromCamera();
       return;
     }
-    await controller.animateCamera(
-      maplibre.CameraUpdate.newLatLngBounds(
-        boundsFor(points),
-        left: 34,
-        top: 34,
-        right: 34,
-        bottom: 34,
-      ),
+    final center = centerFor(points);
+    await map.flyTo(
+      mapbox.CameraOptions(center: center, zoom: _currentZoom),
+      mapbox.MapAnimationOptions(duration: 300),
     );
     await _syncScaleFromCamera();
   }
@@ -242,30 +288,33 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   }
 
   Future<void> _zoomBy(double amount) async {
-    await _mapController?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
+    await _mapboxMap?.flyTo(
+      mapbox.CameraOptions(zoom: _currentZoom + amount),
+      mapbox.MapAnimationOptions(duration: 300),
+    );
     await _syncScaleFromCamera();
   }
 
-  void _onCameraMove(maplibre.CameraPosition position) {
-    _updateScale(position);
+  void _onCameraChange(mapbox.CameraChangedEventData data) {
+    _updateScale(data);
   }
 
   Future<void> _syncScaleFromCamera() async {
-    final controller = _mapController;
-    if (controller == null) {
-      return;
-    }
-
-    final position =
-        controller.cameraPosition ?? await controller.queryCameraPosition();
-    if (position != null) {
-      _updateScale(position);
-    }
+    final map = _mapboxMap;
+    if (map == null) return;
+    final state = await map.getCameraState();
+    final nextZoom = state.zoom;
+    final nextLatitude = state.center.coordinates[1]!.toDouble();
+    if (!mounted) return;
+    setState(() {
+      _currentZoom = nextZoom;
+      _scaleLatitude = nextLatitude;
+    });
   }
 
-  void _updateScale(maplibre.CameraPosition position) {
-    final nextZoom = position.zoom;
-    final nextLatitude = position.target.latitude;
+  void _updateScale(mapbox.CameraChangedEventData data) {
+    final nextZoom = data.cameraState.zoom;
+    final nextLatitude = data.cameraState.center.coordinates[1]!.toDouble();
     if (!mounted ||
         ((nextZoom - _currentZoom).abs() < 0.005 &&
             (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
@@ -290,35 +339,15 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        maplibre.MapLibreMap(
-          key: ValueKey(mapStyleUrls[_styleIndex]),
-          styleString: mapStyleUrls[_styleIndex],
-          initialCameraPosition: maplibre.CameraPosition(
-            target: centerFor(visiblePoints),
-            zoom: _currentZoom,
+        DeferredMap(
+          child: mapbox.MapWidget(
+            key: ValueKey(mapStyleUrls[_styleIndex]),
+            styleUri: mapStyleUrls[_styleIndex],
+            onMapCreated: _onMapCreated,
+            onStyleLoadedListener: (_) => _onStyleLoaded(),
+            onCameraChangeListener: _onCameraChange,
+            onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
           ),
-          minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
-            kMapMinZoom,
-            kMapMaxZoom,
-          ),
-          compassEnabled: false,
-          logoEnabled: false,
-          rotateGesturesEnabled: false,
-          tiltGesturesEnabled: false,
-          zoomGesturesEnabled: widget.interactive,
-          scrollGesturesEnabled: widget.interactive,
-          trackCameraPosition: true,
-          gestureRecognizers: widget.interactive
-              ? {
-                  Factory<OneSequenceGestureRecognizer>(
-                    () => EagerGestureRecognizer(),
-                  ),
-                }
-              : const <Factory<OneSequenceGestureRecognizer>>{},
-          onMapCreated: _onMapCreated,
-          onStyleLoadedCallback: _onStyleLoaded,
-          onCameraMove: _onCameraMove,
-          onCameraIdle: () => unawaited(_syncScaleFromCamera()),
         ),
         Positioned(
           left: 10,
@@ -327,10 +356,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
             label:
                 (widget.teamHikeSession ?? widget.activeHike.teamHikeSession) !=
                     null
-                ? 'Live team map'
-                : widget.activeHike.routePoints.length >= 2
-                ? 'Live MapLibre trail'
-                : 'Checkpoint route',
+                    ? 'Live team map'
+                    : widget.activeHike.routePoints.length >= 2
+                        ? 'Live trail'
+                        : 'Checkpoint route',
             color: widget.activeHike.routePoints.length >= 2
                 ? const Color(0xFF34A853)
                 : const Color(0xFF6E6E73),

@@ -8,9 +8,10 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/config/google_api_config.dart';
 import '../../core/services/geoapify_service.dart';
@@ -18,6 +19,7 @@ import '../../core/services/hiking_route_service.dart';
 import '../../core/services/trail_cover_image_service.dart';
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../core/widgets/route_preview_map.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/trail_models.dart';
@@ -583,7 +585,10 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
     });
 
     try {
-      final result = await HikingRouteService().findHikingRouteForTrail(
+      final service = HikingRouteService(
+        localDatabase: widget.hikerCircleRepository.localDatabase,
+      );
+      final result = await service.findHikingRouteForTrailWithCache(
         _trail,
       );
       if (!mounted) {
@@ -684,6 +689,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                         setState(() => _highlightedCheckpointIndex = null);
                       }
                     },
+                    localDatabase: widget.hikerCircleRepository.localDatabase,
                   ),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Checkpoint Flow'),
@@ -708,18 +714,13 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     trail: trail,
                     isOfflineDownloaded: _isOfflineDownloaded,
                   ),
-                  const SizedBox(height: 22),
-                  _SectionTitle(label: 'Hazards Reported by Community'),
-                  const SizedBox(height: 8),
-                  if (trail.hazards.isEmpty)
-                    const _EmptyState(
-                      message: 'No community hazard reports for this trail.',
-                    )
-                  else
+                  if (trail.hazards.isNotEmpty) ...[
+                    const SizedBox(height: 16),
                     for (final hazard in trail.hazards) ...[
                       _HazardCard(hazard: hazard),
                       const SizedBox(height: 10),
                     ],
+                  ],
                   FilledButton.icon(
                     onPressed: _reportHazard,
                     icon: const Icon(Icons.report_rounded),
@@ -1130,7 +1131,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       'offline/maps/admin_added_trail.mbtiles';
 
   var _step = _AddTrailStep.pickCheckpoints;
-  final _trailPins = <maplibre.LatLng>[];
+  final _trailPins = <mapbox.Point>[];
 
   final _nameController = TextEditingController();
   final _areaController = TextEditingController();
@@ -1144,6 +1145,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   String _difficulty = 'Moderate';
   String? _errorMessage;
   bool _hasFetchedRoute = false;
+  HikingRouteResult? _routeResult;
   HikingRouteResult? _pendingRouteResult;
 
   @override
@@ -1162,16 +1164,16 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     super.dispose();
   }
 
-  void _onPinsConfirmed(List<maplibre.LatLng> pins) {
+  void _onPinsConfirmed(List<mapbox.Point> pins) {
     _trailPins
       ..clear()
       ..addAll(pins);
 
-    var finalPins = List<maplibre.LatLng>.of(_trailPins);
+    var finalPins = List<mapbox.Point>.of(_trailPins);
     if (finalPins.length == 1) {
       final endLatLng = _offsetLatLng(
-        finalPins.first.latitude,
-        finalPins.first.longitude,
+        finalPins.first.coordinates[1]!.toDouble(),
+        finalPins.first.coordinates[0]!.toDouble(),
         3000,
         math.pi / 4,
       );
@@ -1187,9 +1189,9 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
               : 'Waypoint $i';
       final draft = _CheckpointDraft(order: i + 1, name: name);
       draft.latitudeController.text =
-          finalPins[i].latitude.toStringAsFixed(6);
+          finalPins[i].coordinates[1]!.toDouble().toStringAsFixed(6);
       draft.longitudeController.text =
-          finalPins[i].longitude.toStringAsFixed(6);
+          finalPins[i].coordinates[0]!.toDouble().toStringAsFixed(6);
       _checkpoints.add(draft);
     }
 
@@ -1221,7 +1223,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       initialLat = double.tryParse(prev.latitudeController.text.trim());
       initialLng = double.tryParse(prev.longitudeController.text.trim());
     }
-    final coordinate = await showModalBottomSheet<maplibre.LatLng>(
+    final coordinate = await showModalBottomSheet<mapbox.Point>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -1239,8 +1241,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     );
     if (coordinate == null || !mounted) return;
     setState(() {
-      draft.latitudeController.text = coordinate.latitude.toStringAsFixed(6);
-      draft.longitudeController.text = coordinate.longitude.toStringAsFixed(6);
+      draft.latitudeController.text = coordinate.coordinates[1]!.toDouble().toStringAsFixed(6);
+      draft.longitudeController.text = coordinate.coordinates[0]!.toDouble().toStringAsFixed(6);
     });
   }
 
@@ -1251,7 +1253,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     });
   }
 
-  static maplibre.LatLng _offsetLatLng(
+  static mapbox.Point _offsetLatLng(
     double lat,
     double lng,
     double distanceMeters,
@@ -1271,14 +1273,19 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       math.cos(d) - math.sin(lat1) * math.sin(lat2),
     );
 
-    return maplibre.LatLng(lat2 * 180 / math.pi, lng2 * 180 / math.pi);
+    return mapbox.Point(
+      coordinates: mapbox.Position(
+        lng2 * 180 / math.pi,
+        lat2 * 180 / math.pi,
+      ),
+    );
   }
 
-  Future<void> _resolveTrailName(maplibre.LatLng location) async {
+  Future<void> _resolveTrailName(mapbox.Point location) async {
     try {
       final response = await http.get(
         Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
-          'latlng': '${location.latitude},${location.longitude}',
+          'latlng': '${location.coordinates[1]},${location.coordinates[0]}',
           'key': GoogleApiConfig.geocodingApiKey,
           'language': 'en',
         }),
@@ -1342,6 +1349,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       if (!mounted) return;
 
       if (result is HikingRouteResult) {
+        _routeResult = result;
         _applyRouteData(result, checkpoints);
         if (mounted) {
           setState(() => _step = _AddTrailStep.form);
@@ -1613,6 +1621,10 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     required double rating,
     required List<TrailCheckpoint> checkpoints,
   }) {
+    final polyline = _routeResult?.encodedPolyline;
+    final hash = _routeResult != null
+        ? HikingRouteService.checkpointsHash(checkpoints)
+        : null;
     Navigator.of(context).pop(
       Trail(
         trailId: '',
@@ -1640,6 +1652,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           cachedAt: DateTime.now().toUtc(),
         ),
         hazards: const [],
+        routeEncodedPolyline: polyline,
+        routeCheckpointsHash: hash,
       ),
     );
   }
@@ -1890,7 +1904,9 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                   ..clear()
                   ..addAll(
                     _checkpointModels().map(
-                      (c) => maplibre.LatLng(c.latitude, c.longitude),
+                      (c) => mapbox.Point(
+                        coordinates: mapbox.Position(c.longitude, c.latitude),
+                      ),
                     ),
                   );
                 setState(() {
@@ -1960,9 +1976,9 @@ class _MapBasedCheckpointPicker extends StatefulWidget {
     required this.onConfirm,
   });
 
-  final List<maplibre.LatLng> pins;
-  final ValueChanged<List<maplibre.LatLng>> onPinsChanged;
-  final ValueChanged<List<maplibre.LatLng>> onConfirm;
+  final List<mapbox.Point> pins;
+  final ValueChanged<List<mapbox.Point>> onPinsChanged;
+  final ValueChanged<List<mapbox.Point>> onConfirm;
 
   @override
   State<_MapBasedCheckpointPicker> createState() =>
@@ -1971,46 +1987,68 @@ class _MapBasedCheckpointPicker extends StatefulWidget {
 
 class _MapBasedCheckpointPickerState
     extends State<_MapBasedCheckpointPicker> {
-  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
-
-  maplibre.MapLibreMapController? _controller;
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.CircleAnnotationManager? _circleManager;
+  mapbox.PointAnnotationManager? _pointManager;
   bool _styleLoaded = false;
-  late List<maplibre.LatLng> _pins;
+  late List<mapbox.Point> _pins;
 
   @override
   void initState() {
     super.initState();
-    _pins = List<maplibre.LatLng>.of(widget.pins);
+    _pins = List<mapbox.Point>.of(widget.pins);
   }
 
   @override
   void didUpdateWidget(_MapBasedCheckpointPicker oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!listEquals(widget.pins, _pins)) {
-      _pins = List<maplibre.LatLng>.of(widget.pins);
+      _pins = List<mapbox.Point>.of(widget.pins);
       unawaited(_syncPins());
     }
   }
 
-  static bool listEquals(List<maplibre.LatLng>? a, List<maplibre.LatLng>? b) {
+  static bool listEquals(List<mapbox.Point>? a, List<mapbox.Point>? b) {
     if (a == null) return b == null;
     if (b == null || a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
-      if (a[i].latitude != b[i].latitude ||
-          a[i].longitude != b[i].longitude) {
+      if (a[i].coordinates[1] != b[i].coordinates[1] ||
+          a[i].coordinates[0] != b[i].coordinates[0]) {
         return false;
       }
     }
     return true;
   }
 
-  maplibre.LatLng _initialCenter() =>
-      _pins.isNotEmpty ? _pins.first : const maplibre.LatLng(3.1390, 101.6869);
+  mapbox.Point _initialCenter() =>
+      _pins.isNotEmpty
+          ? _pins.first
+          : mapbox.Point(coordinates: mapbox.Position(101.6869, 3.1390));
 
-  Future<void> _onMapCreated(
-    maplibre.MapLibreMapController controller,
-  ) async {
-    _controller = controller;
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    await mapboxMap.compass.updateSettings(
+      mapbox.CompassSettings(enabled: false),
+    );
+    await mapboxMap.logo.updateSettings(
+      mapbox.LogoSettings(enabled: false),
+    );
+    await mapboxMap.gestures.updateSettings(
+      mapbox.GesturesSettings(
+        scrollEnabled: true,
+        pinchToZoomEnabled: true,
+        rotateEnabled: false,
+        pitchEnabled: false,
+      ),
+    );
+    await mapboxMap.setBounds(
+      mapbox.CameraBoundsOptions(minZoom: 4, maxZoom: 21),
+    );
+    _circleManager =
+        await mapboxMap.annotations.createCircleAnnotationManager();
+    _pointManager =
+        await mapboxMap.annotations.createPointAnnotationManager();
+    await _syncPins();
   }
 
   Future<void> _onStyleLoaded() async {
@@ -2019,47 +2057,45 @@ class _MapBasedCheckpointPickerState
   }
 
   Future<void> _syncPins() async {
-    final controller = _controller;
-    if (!_styleLoaded || controller == null) return;
-
-    await controller.clearCircles();
-    await controller.clearSymbols();
+    if (!_styleLoaded) return;
+    await _circleManager?.deleteAll();
+    await _pointManager?.deleteAll();
 
     for (var i = 0; i < _pins.length; i++) {
       final point = _pins[i];
-      await controller.addCircle(
-        maplibre.CircleOptions(
+      await _circleManager?.create(
+        mapbox.CircleAnnotationOptions(
           geometry: point,
           circleRadius: 10,
-          circleColor: '#34A853',
-          circleStrokeColor: '#FFFFFF',
+          circleColor: const Color(0xFF34A853).toARGB32(),
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
           circleStrokeWidth: 2.5,
         ),
       );
-      await controller.addSymbol(
-        maplibre.SymbolOptions(
+      await _pointManager?.create(
+        mapbox.PointAnnotationOptions(
           geometry: point,
           textField: '${i + 1}',
           textSize: 11,
-          textColor: '#FFFFFF',
-          textHaloColor: '#111111',
+          textColor: 0xFFFFFFFF,
+          textHaloColor: 0xFF111111,
           textHaloWidth: 0.7,
-          textAnchor: 'center',
+          textAnchor: mapbox.TextAnchor.CENTER,
         ),
       );
     }
   }
 
-  int? _tappedPinIndex(maplibre.LatLng tapped) {
+  int? _tappedPinIndex(mapbox.Point tapped) {
     for (var i = 0; i < _pins.length; i++) {
-      final dist = (tapped.latitude - _pins[i].latitude).abs() +
-          (tapped.longitude - _pins[i].longitude).abs();
-      if (dist < 0.001) return i;
+      final dlat = (tapped.coordinates[1] ?? 0) - (_pins[i].coordinates[1] ?? 0);
+      final dlng = (tapped.coordinates[0] ?? 0) - (_pins[i].coordinates[0] ?? 0);
+      if (dlat.abs() + dlng.abs() < 0.001) return i;
     }
     return null;
   }
 
-  void _onMapTap(maplibre.LatLng coordinate) {
+  void _onMapTap(mapbox.Point coordinate) {
     final tappedIndex = _tappedPinIndex(coordinate);
     if (tappedIndex != null) {
       setState(() => _pins.removeAt(tappedIndex));
@@ -2068,6 +2104,31 @@ class _MapBasedCheckpointPickerState
     }
     widget.onPinsChanged(List.of(_pins));
     unawaited(_syncPins());
+  }
+
+  Future<void> _zoomBy(double amount) async {
+    final map = _mapboxMap;
+    if (map == null) return;
+    final state = await map.getCameraState();
+    await map.flyTo(
+      mapbox.CameraOptions(zoom: state.zoom + amount),
+      mapbox.MapAnimationOptions(duration: 300),
+    );
+  }
+
+  Future<void> _fitPins() async {
+    if (_pins.isEmpty) return;
+    if (_pins.length == 1) {
+      await _mapboxMap?.flyTo(
+        mapbox.CameraOptions(center: _pins.first, zoom: 15),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } else {
+      await _mapboxMap?.flyTo(
+        mapbox.CameraOptions(center: centerFor(_pins), zoom: 13),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    }
   }
 
   @override
@@ -2079,69 +2140,24 @@ class _MapBasedCheckpointPickerState
             child: Stack(
               fit: StackFit.expand,
               children: [
-                maplibre.MapLibreMap(
-                  styleString: _styleUrl,
-                  initialCameraPosition: maplibre.CameraPosition(
-                    target: _initialCenter(),
-                    zoom: 13,
+                DeferredMap(
+                  child: mapbox.MapWidget(
+                    key: const ValueKey('checkpoint-picker'),
+                    styleUri: mapStyleUrls[0],
+                    onMapCreated: _onMapCreated,
+                    onStyleLoadedListener: (_) => _onStyleLoaded(),
+                    onTapListener: (context) =>
+                        _onMapTap(context.point),
                   ),
-                  minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
-                    4,
-                    21,
-                  ),
-                  compassEnabled: false,
-                  logoEnabled: false,
-                  rotateGesturesEnabled: false,
-                  tiltGesturesEnabled: false,
-                  trackCameraPosition: true,
-                  featureTapsTriggersMapClick: true,
-                  annotationConsumeTapEvents: const [
-                    maplibre.AnnotationType.fill,
-                  ],
-                  annotationOrder: const [
-                    maplibre.AnnotationType.circle,
-                    maplibre.AnnotationType.symbol,
-                    maplibre.AnnotationType.line,
-                    maplibre.AnnotationType.fill,
-                  ],
-                  gestureRecognizers: {
-                    Factory<OneSequenceGestureRecognizer>(
-                      () => EagerGestureRecognizer(),
-                    ),
-                  },
-                  onMapCreated: _onMapCreated,
-                  onStyleLoadedCallback: _onStyleLoaded,
-                  onMapClick: (_, coordinate) => _onMapTap(coordinate),
                 ),
                 Align(
                   alignment: Alignment.topRight,
                   child: Padding(
                     padding: const EdgeInsets.all(10),
                     child: MapZoomControls(
-                      onZoomIn: () =>
-                          _controller?.animateCamera(
-                            maplibre.CameraUpdate.zoomBy(1),
-                          ),
-                      onZoomOut: () =>
-                          _controller?.animateCamera(
-                            maplibre.CameraUpdate.zoomBy(-1),
-                          ),
-                      onReset: () async {
-                        if (_pins.length >= 2) {
-                          await _controller?.animateCamera(
-                            maplibre.CameraUpdate.newLatLngBounds(
-                              boundsFor(_pins),
-                              left: 44, top: 44, right: 44, bottom: 44,
-                            ),
-                          );
-                        } else if (_pins.length == 1) {
-                          await _controller?.animateCamera(
-                            maplibre.CameraUpdate.newLatLngZoom(
-                              _pins.first, 15,
-                            ),
-                          );
-                        }
-                      },
+                      onZoomIn: () => _zoomBy(1),
+                      onZoomOut: () => _zoomBy(-1),
+                      onReset: _fitPins,
                     ),
                   ),
                 ),
@@ -2152,7 +2168,7 @@ class _MapBasedCheckpointPickerState
                       padding: const EdgeInsets.all(10),
                       child: MapScaleBar(
                         zoom: 13,
-                        latitude: _pins.first.latitude,
+                        latitude: (_pins.first.coordinates[1] ?? 0).toDouble(),
                       ),
                     ),
                   ),
@@ -2221,50 +2237,88 @@ class _SinglePinPickerSheet extends StatefulWidget {
 }
 
 class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
-  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
-
-  late maplibre.LatLng _selected = maplibre.LatLng(
-    widget.initialLatitude ?? 3.1390,
-    widget.initialLongitude ?? 101.6869,
+  late mapbox.Point _selected = mapbox.Point(
+    coordinates: mapbox.Position(
+      widget.initialLongitude ?? 101.6869,
+      widget.initialLatitude ?? 3.1390,
+    ),
   );
-  maplibre.MapLibreMapController? _mapController;
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.CircleAnnotationManager? _circleManager;
+  mapbox.PointAnnotationManager? _pointManager;
   bool _styleLoaded = false;
 
-  void _selectCoordinate(maplibre.LatLng coordinate) {
+  void _selectCoordinate(mapbox.Point coordinate) {
     setState(() => _selected = coordinate);
     unawaited(_syncSelectedPin());
     unawaited(
-      _mapController?.animateCamera(
-        maplibre.CameraUpdate.newLatLng(coordinate),
+      _mapboxMap?.flyTo(
+        mapbox.CameraOptions(center: coordinate),
+        mapbox.MapAnimationOptions(duration: 300),
       ),
     );
   }
 
   Future<void> _syncSelectedPin() async {
-    final controller = _mapController;
-    if (!_styleLoaded || controller == null) return;
-    await controller.clearCircles();
-    await controller.clearSymbols();
-    await controller.addCircle(
-      maplibre.CircleOptions(
+    if (!_styleLoaded) return;
+    await _circleManager?.deleteAll();
+    await _pointManager?.deleteAll();
+    await _circleManager?.create(
+      mapbox.CircleAnnotationOptions(
         geometry: _selected,
         circleRadius: 10,
-        circleColor: '#E11D48',
-        circleStrokeColor: '#FFFFFF',
+        circleColor: const Color(0xFFE11D48).toARGB32(),
+        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
         circleStrokeWidth: 3,
       ),
     );
-    await controller.addSymbol(
-      maplibre.SymbolOptions(
+    await _pointManager?.create(
+      mapbox.PointAnnotationOptions(
         geometry: _selected,
         textField: 'Pin',
         textSize: 12,
-        textColor: '#FFFFFF',
-        textHaloColor: '#111111',
+        textColor: 0xFFFFFFFF,
+        textHaloColor: 0xFF111111,
         textHaloWidth: 0.8,
-        textOffset: const Offset(0, 1.35),
-        textAnchor: 'top',
+        textOffset: const [0.0, 1.35],
+        textAnchor: mapbox.TextAnchor.TOP,
       ),
+    );
+  }
+
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    await mapboxMap.compass.updateSettings(
+      mapbox.CompassSettings(enabled: false),
+    );
+    await mapboxMap.logo.updateSettings(
+      mapbox.LogoSettings(enabled: false),
+    );
+    await mapboxMap.gestures.updateSettings(
+      mapbox.GesturesSettings(
+        scrollEnabled: true,
+        pinchToZoomEnabled: true,
+        rotateEnabled: false,
+        pitchEnabled: false,
+      ),
+    );
+    await mapboxMap.setBounds(
+      mapbox.CameraBoundsOptions(minZoom: 4, maxZoom: 21),
+    );
+    _circleManager =
+        await mapboxMap.annotations.createCircleAnnotationManager();
+    _pointManager =
+        await mapboxMap.annotations.createPointAnnotationManager();
+    await _syncSelectedPin();
+  }
+
+  Future<void> _zoomBy(double amount) async {
+    final map = _mapboxMap;
+    if (map == null) return;
+    final state = await map.getCameraState();
+    await map.flyTo(
+      mapbox.CameraOptions(zoom: state.zoom + amount),
+      mapbox.MapAnimationOptions(duration: 300),
     );
   }
 
@@ -2303,65 +2357,31 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    maplibre.MapLibreMap(
-                      styleString: _styleUrl,
-                      initialCameraPosition: maplibre.CameraPosition(
-                        target: _selected,
-                        zoom: 13,
+                    DeferredMap(
+                      child: mapbox.MapWidget(
+                        key: const ValueKey('single-pin-picker'),
+                        styleUri: mapStyleUrls[0],
+                        onMapCreated: _onMapCreated,
+                        onStyleLoadedListener: (_) {
+                          _styleLoaded = true;
+                          unawaited(_syncSelectedPin());
+                        },
+                        onTapListener: (context) {
+                          _selectCoordinate(context.point);
+                        },
                       ),
-                      minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
-                        4, 21,
-                      ),
-                      compassEnabled: false,
-                      logoEnabled: false,
-                      rotateGesturesEnabled: false,
-                      tiltGesturesEnabled: false,
-                      trackCameraPosition: true,
-                      featureTapsTriggersMapClick: true,
-                      annotationConsumeTapEvents: const [
-                        maplibre.AnnotationType.fill,
-                      ],
-                      annotationOrder: const [
-                        maplibre.AnnotationType.circle,
-                        maplibre.AnnotationType.symbol,
-                        maplibre.AnnotationType.line,
-                        maplibre.AnnotationType.fill,
-                      ],
-                      gestureRecognizers: {
-                        Factory<OneSequenceGestureRecognizer>(
-                          () => EagerGestureRecognizer(),
-                        ),
-                      },
-                      onMapCreated: (controller) {
-                        _mapController = controller;
-                      },
-                      onStyleLoadedCallback: () {
-                        _styleLoaded = true;
-                        unawaited(_syncSelectedPin());
-                      },
-                      onMapClick: (_, coordinate) {
-                        _selectCoordinate(coordinate);
-                      },
                     ),
                     Align(
                       alignment: Alignment.topRight,
                       child: Padding(
                         padding: const EdgeInsets.all(10),
                         child: MapZoomControls(
-                          onZoomIn: () =>
-                              _mapController?.animateCamera(
-                                maplibre.CameraUpdate.zoomBy(1),
-                              ),
-                          onZoomOut: () =>
-                              _mapController?.animateCamera(
-                                maplibre.CameraUpdate.zoomBy(-1),
-                              ),
-                          onReset: () =>
-                              _mapController?.animateCamera(
-                                maplibre.CameraUpdate.newLatLngZoom(
-                                  _selected, 15,
-                                ),
-                              ),
+                          onZoomIn: () => _zoomBy(1),
+                          onZoomOut: () => _zoomBy(-1),
+                          onReset: () => _mapboxMap?.flyTo(
+                            mapbox.CameraOptions(center: _selected, zoom: 15),
+                            mapbox.MapAnimationOptions(duration: 300),
+                          ),
                         ),
                       ),
                     ),
@@ -3330,7 +3350,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       initialLat = double.tryParse(prev.latitudeController.text.trim());
       initialLng = double.tryParse(prev.longitudeController.text.trim());
     }
-    final coordinate = await showModalBottomSheet<maplibre.LatLng>(
+    final coordinate = await showModalBottomSheet<mapbox.Point>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -3348,8 +3368,8 @@ class _EditTrailPageState extends State<_EditTrailPage> {
     );
     if (coordinate == null || !mounted) return;
     setState(() {
-      draft.latitudeController.text = coordinate.latitude.toStringAsFixed(6);
-      draft.longitudeController.text = coordinate.longitude.toStringAsFixed(6);
+      draft.latitudeController.text = coordinate.coordinates[1]!.toDouble().toStringAsFixed(6);
+      draft.longitudeController.text = coordinate.coordinates[0]!.toDouble().toStringAsFixed(6);
     });
   }
 
@@ -4005,11 +4025,13 @@ class _RoutePreview extends StatefulWidget {
     required this.trail,
     this.highlightedCheckpointIndex,
     this.onHighlightCleared,
+    this.localDatabase,
   });
 
   final Trail trail;
   final int? highlightedCheckpointIndex;
   final VoidCallback? onHighlightCleared;
+  final LocalSessionDatabase? localDatabase;
 
   @override
   State<_RoutePreview> createState() => _RoutePreviewState();
@@ -4033,7 +4055,10 @@ class _RoutePreviewState extends State<_RoutePreview> {
   }
 
   Future<HikingRouteResult> _loadHikingRoute() {
-    return HikingRouteService().findHikingRouteForTrail(widget.trail);
+    final service = HikingRouteService(
+      localDatabase: widget.localDatabase,
+    );
+    return service.findHikingRouteForTrailWithCache(widget.trail);
   }
 
   @override
@@ -4051,7 +4076,7 @@ class _RoutePreviewState extends State<_RoutePreview> {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              return _OpenFreeMapRouteMap(
+              return RoutePreviewMap(
                 key: ValueKey(
                   '${widget.trail.trailId}:${route?.encodedPolyline ?? 'checkpoints'}',
                 ),
@@ -4061,374 +4086,6 @@ class _RoutePreviewState extends State<_RoutePreview> {
                     widget.highlightedCheckpointIndex,
               );
             },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _OpenFreeMapRouteMap extends StatefulWidget {
-  const _OpenFreeMapRouteMap({
-    super.key,
-    required this.trail,
-    this.route,
-    this.highlightedCheckpointIndex,
-  });
-
-  final Trail trail;
-  final HikingRouteResult? route;
-  final int? highlightedCheckpointIndex;
-
-  @override
-  State<_OpenFreeMapRouteMap> createState() => _OpenFreeMapRouteMapState();
-}
-
-class _OpenFreeMapRouteMapState extends State<_OpenFreeMapRouteMap> {
-  static const _routeLineWidth = 2.65;
-
-  late final List<maplibre.LatLng> _routePoints;
-  late final List<maplibre.LatLng> _checkpointPoints;
-  late final maplibre.LatLng _startPoint;
-  late final maplibre.LatLng _endPoint;
-  late double _currentZoom;
-  late double _scaleLatitude;
-  maplibre.MapLibreMapController? _mapController;
-  var _styleIndex = 0;
-  var _styleLoaded = false;
-  var _routeRendered = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final checkpoints = [...widget.trail.checkpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    _startPoint = maplibre.LatLng(
-      checkpoints.first.latitude,
-      checkpoints.first.longitude,
-    );
-    _endPoint = maplibre.LatLng(
-      checkpoints.last.latitude,
-      checkpoints.last.longitude,
-    );
-    _checkpointPoints = checkpoints
-        .map(
-          (checkpoint) =>
-              maplibre.LatLng(checkpoint.latitude, checkpoint.longitude),
-        )
-        .toList();
-    final route = widget.route;
-    _routePoints = route == null
-        ? const []
-        : _orientRoutePoints(_decodePolyline(route.encodedPolyline));
-    final center = centerFor(_visibleMapPoints);
-    _currentZoom = 13.5;
-    _scaleLatitude = center.latitude;
-  }
-
-  @override
-  void didUpdateWidget(covariant _OpenFreeMapRouteMap oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.highlightedCheckpointIndex !=
-        widget.highlightedCheckpointIndex) {
-      final index = widget.highlightedCheckpointIndex;
-      if (index != null && index >= 0 && index < _checkpointPoints.length) {
-        _focusOnCheckpoint(_checkpointPoints[index]);
-      }
-    }
-  }
-
-  Future<void> _focusOnCheckpoint(maplibre.LatLng point) async {
-    final controller = _mapController;
-    if (controller == null) return;
-    await controller.animateCamera(
-      maplibre.CameraUpdate.newLatLngZoom(point, 16),
-    );
-  }
-
-  Future<void> _onMapCreated(maplibre.MapLibreMapController controller) async {
-    _mapController = controller;
-    await _renderRouteIfReady();
-    await _syncScaleFromCamera();
-  }
-
-  Future<void> _onStyleLoaded() async {
-    _styleLoaded = true;
-    _routeRendered = false;
-    await _renderRouteIfReady();
-  }
-
-  Future<void> _renderRouteIfReady() async {
-    final controller = _mapController;
-    if (controller == null ||
-        !_styleLoaded ||
-        _routeRendered ||
-        _visibleMapPoints.length < 2) {
-      return;
-    }
-
-    _routeRendered = true;
-    await controller.clearLines();
-    await controller.clearCircles();
-    if (_routePoints.length >= 2) {
-      await controller.addLine(
-        maplibre.LineOptions(
-          geometry: _routePoints,
-          lineColor: '#2F8E50',
-          lineOpacity: 0.86,
-          lineWidth: _routeLineWidth,
-          lineJoin: 'round',
-        ),
-      );
-    }
-    await controller.addCircles([
-      for (final checkpoint
-          in _checkpointPoints
-              .skip(1)
-              .take(math.max(0, _checkpointPoints.length - 2)))
-        maplibre.CircleOptions(
-          geometry: checkpoint,
-          circleColor: '#2F8E50',
-          circleOpacity: 0.55,
-          circleRadius: 4.2,
-          circleStrokeColor: '#FFFFFF',
-          circleStrokeWidth: 1.2,
-        ),
-      maplibre.CircleOptions(
-        geometry: _startPoint,
-        circleColor: '#7BC90E',
-        circleRadius: 6.5,
-        circleStrokeColor: '#FFFFFF',
-        circleStrokeWidth: 2,
-      ),
-      maplibre.CircleOptions(
-        geometry: _endPoint,
-        circleColor: '#E94B42',
-        circleRadius: 6.5,
-        circleStrokeColor: '#FFFFFF',
-        circleStrokeWidth: 2,
-      ),
-    ]);
-    await _fitRoute();
-  }
-
-  Future<void> _fitRoute() async {
-    final controller = _mapController;
-    if (controller == null || _visibleMapPoints.length < 2) {
-      return;
-    }
-    await controller.animateCamera(
-      maplibre.CameraUpdate.newLatLngBounds(
-        boundsFor(_visibleMapPoints),
-        left: 30,
-        top: 42,
-        right: 30,
-        bottom: 38,
-      ),
-    );
-    await _syncScaleFromCamera();
-  }
-
-  Future<void> _zoomBy(double amount) async {
-    await _mapController?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
-    await _syncScaleFromCamera();
-  }
-
-  void _cycleStyle() {
-    setState(() {
-      _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
-      _styleLoaded = false;
-      _routeRendered = false;
-    });
-  }
-
-  void _onCameraMove(maplibre.CameraPosition position) {
-    _updateScale(position);
-  }
-
-  Future<void> _syncScaleFromCamera() async {
-    final controller = _mapController;
-    if (controller == null) {
-      return;
-    }
-
-    final position =
-        controller.cameraPosition ?? await controller.queryCameraPosition();
-    if (position != null) {
-      _updateScale(position);
-    }
-  }
-
-  void _updateScale(maplibre.CameraPosition position) {
-    final nextZoom = position.zoom;
-    final nextLatitude = position.target.latitude;
-    if (!mounted ||
-        ((nextZoom - _currentZoom).abs() < 0.005 &&
-            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
-      return;
-    }
-    setState(() {
-      _currentZoom = nextZoom;
-      _scaleLatitude = nextLatitude;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final center = centerFor(_visibleMapPoints);
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        maplibre.MapLibreMap(
-          key: ValueKey(mapStyleUrls[_styleIndex]),
-          styleString: mapStyleUrls[_styleIndex],
-          initialCameraPosition: maplibre.CameraPosition(
-            target: center,
-            zoom: _currentZoom,
-          ),
-          minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
-            kMapMinZoom,
-            kMapMaxZoom,
-          ),
-          compassEnabled: false,
-          logoEnabled: false,
-          rotateGesturesEnabled: false,
-          tiltGesturesEnabled: false,
-          zoomGesturesEnabled: true,
-          scrollGesturesEnabled: true,
-          trackCameraPosition: true,
-          gestureRecognizers: {
-            Factory<OneSequenceGestureRecognizer>(
-              () => EagerGestureRecognizer(),
-            ),
-          },
-          onMapCreated: _onMapCreated,
-          onStyleLoadedCallback: _onStyleLoaded,
-          onCameraMove: _onCameraMove,
-          onCameraIdle: () => unawaited(_syncScaleFromCamera()),
-        ),
-        Align(
-          alignment: Alignment.topLeft,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: _StatusPill(
-              label: widget.route?.sourceLabel ?? 'Checkpoint map',
-              color: widget.route == null
-                  ? _TrailColors.orange
-                  : _TrailColors.blue,
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.topRight,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: MapZoomControls(
-              onZoomIn: () => _zoomBy(1),
-              onZoomOut: () => _zoomBy(-1),
-              onReset: _fitRoute,
-              onLayer: _cycleStyle,
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.bottomLeft,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
-          ),
-        ),
-        const Align(
-          alignment: Alignment.bottomRight,
-          child: Padding(
-            padding: EdgeInsets.all(8),
-            child: _OpenFreeMapAttribution(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  List<maplibre.LatLng> get _visibleMapPoints {
-    if (_routePoints.length >= 2) {
-      return [..._routePoints, _startPoint, _endPoint];
-    }
-    return _checkpointPoints.length >= 2
-        ? _checkpointPoints
-        : [_startPoint, _endPoint];
-  }
-
-  List<maplibre.LatLng> _decodePolyline(String encoded) {
-    final points = <maplibre.LatLng>[];
-    var index = 0;
-    var latitude = 0;
-    var longitude = 0;
-
-    while (index < encoded.length) {
-      var shift = 0;
-      var result = 0;
-      int byte;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      latitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-
-      shift = 0;
-      result = 0;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      longitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-
-      points.add(maplibre.LatLng(latitude / 100000, longitude / 100000));
-    }
-
-    return points;
-  }
-
-  List<maplibre.LatLng> _orientRoutePoints(List<maplibre.LatLng> points) {
-    if (points.length < 2) {
-      return points;
-    }
-
-    final forwardScore =
-        distanceMeters(points.first, _startPoint) +
-        distanceMeters(points.last, _endPoint);
-    final reverseScore =
-        distanceMeters(points.first, _endPoint) +
-        distanceMeters(points.last, _startPoint);
-
-    if (reverseScore < forwardScore) {
-      return points.reversed.toList();
-    }
-    return points;
-  }
-
-}
-
-class _OpenFreeMapAttribution extends StatelessWidget {
-  const _OpenFreeMapAttribution();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _TrailColors.elevatedSurfaceFor(context).withValues(alpha: 0.78),
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
-        child: Text(
-          'OpenFreeMap | OpenMapTiles | OSM',
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: _TrailColors.secondaryTextFor(context),
-            fontSize: 9,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
           ),
         ),
       ),
@@ -4832,16 +4489,6 @@ class _SafetyInfoCard extends StatelessWidget {
     return _InsetGroup(
       child: Column(
         children: [
-          _StatusRow(
-            label: 'Offline map',
-            value: isOfflineDownloaded ? 'Downloaded' : 'Available',
-          ),
-          const _HorizontalSeparator(),
-          const _StatusRow(
-            label: 'Emergency coverage reports',
-            value: 'Community observed',
-          ),
-          const _HorizontalSeparator(),
           _StatusRow(
             label: 'Recent hazards',
             value: '${trail.hazards.length} reports',

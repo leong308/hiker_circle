@@ -199,3 +199,47 @@ class MapScaleBar extends StatelessWidget {
     return '${meters.round()} m';
   }
 }
+
+class DeferredMap extends StatefulWidget {
+  const DeferredMap({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<DeferredMap> createState() => _DeferredMapState();
+}
+
+class _DeferredMapState extends State<DeferredMap> {
+  static var _activeCount = 0;
+  var _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleWhenReady();
+  }
+
+  void _scheduleWhenReady() {
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      if (_activeCount > 0) {
+        _scheduleWhenReady();
+        return;
+      }
+      _activeCount++;
+      if (mounted) setState(() => _ready = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    if (_ready) _activeCount--;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) return const SizedBox();
+    return widget.child;
+  }
+}

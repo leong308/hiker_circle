@@ -19,6 +19,20 @@ class TrailCheckpoint {
       'order': order,
     };
   }
+
+  TrailCheckpoint copyWith({
+    String? name,
+    double? latitude,
+    double? longitude,
+    int? order,
+  }) {
+    return TrailCheckpoint(
+      name: name ?? this.name,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      order: order ?? this.order,
+    );
+  }
 }
 
 class HourlyForecast {
@@ -171,6 +185,8 @@ class Trail {
     required this.checkpoints,
     required this.weather,
     required this.hazards,
+    this.routeEncodedPolyline,
+    this.routeCheckpointsHash,
   });
 
   final String trailId;
@@ -193,6 +209,8 @@ class Trail {
   final List<TrailCheckpoint> checkpoints;
   final TrailWeather weather;
   final List<TrailHazard> hazards;
+  final String? routeEncodedPolyline;
+  final String? routeCheckpointsHash;
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -218,6 +236,10 @@ class Trail {
           .toList(),
       'weather': weather.toFirestore(),
       'hazards': hazards.map((hazard) => hazard.toFirestore()).toList(),
+      if (routeEncodedPolyline != null)
+        'routeEncodedPolyline': routeEncodedPolyline,
+      if (routeCheckpointsHash != null)
+        'routeCheckpointsHash': routeCheckpointsHash,
       'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
     };
   }
@@ -259,6 +281,8 @@ class Trail {
     List<TrailCheckpoint>? checkpoints,
     TrailWeather? weather,
     List<TrailHazard>? hazards,
+    String? routeEncodedPolyline,
+    String? routeCheckpointsHash,
   }) {
     return Trail(
       trailId: trailId ?? this.trailId,
@@ -282,6 +306,10 @@ class Trail {
       checkpoints: checkpoints ?? this.checkpoints,
       weather: weather ?? this.weather,
       hazards: hazards ?? this.hazards,
+      routeEncodedPolyline:
+          routeEncodedPolyline ?? this.routeEncodedPolyline,
+      routeCheckpointsHash:
+          routeCheckpointsHash ?? this.routeCheckpointsHash,
     );
   }
 }

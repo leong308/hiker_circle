@@ -3,12 +3,10 @@ import 'dart:math' as math;
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
 
-import '../../core/widgets/map_controls.dart';
+import '../../core/services/hiking_route_service.dart';
+import '../../core/widgets/route_preview_map.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 
@@ -72,7 +70,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   late HikeSessionDraft _draft;
   int _stepIndex = _soloFirstStep;
 
-  int get _lastStep => _draft.hikeType == HikeType.team ? 5 : 4;
+  int get _lastStep => _draft.hikeType == HikeType.team ? 6 : 4;
   int get _firstStep => _draft.hikeType == HikeType.team ? 0 : _soloFirstStep;
   int get _stepCount => _lastStep - _firstStep + 1;
   int get _visibleStepIndex => _stepIndex - _firstStep;
@@ -166,10 +164,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                     totalSteps: _stepCount,
                   ),
                   const SizedBox(height: 18),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: KeyedSubtree(key: ValueKey(_stepIndex), child: step),
-                  ),
+                  KeyedSubtree(key: ValueKey(_stepIndex), child: step),
                   const SizedBox(height: 18),
                   Row(
                     children: [
@@ -224,8 +219,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
             onChanged: _updateDraft,
           );
         case 3:
-          return _TimingStep(draft: _draft, onChanged: _updateDraft);
+          return _CheckpointStep(draft: _draft, onChanged: _updateDraft);
         case 4:
+          return _TimingStep(draft: _draft, onChanged: _updateDraft);
+        case 5:
           return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);
         default:
           return _PreparationStep(
@@ -246,8 +243,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           onChanged: _updateDraft,
         );
       case 2:
-        return _TimingStep(draft: _draft, onChanged: _updateDraft);
+        return _CheckpointStep(draft: _draft, onChanged: _updateDraft);
       case 3:
+        return _TimingStep(draft: _draft, onChanged: _updateDraft);
+      case 4:
         return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);
       default:
         return _PreparationStep(
@@ -550,7 +549,7 @@ class _TeamBuddyTile extends StatelessWidget {
   }
 }
 
-class _TrailSelectionStep extends StatelessWidget {
+class _TrailSelectionStep extends StatefulWidget {
   const _TrailSelectionStep({
     required this.draft,
     required this.trails,
@@ -562,103 +561,142 @@ class _TrailSelectionStep extends StatelessWidget {
   final ValueChanged<HikeSessionDraft> onChanged;
 
   @override
+  State<_TrailSelectionStep> createState() => _TrailSelectionStepState();
+}
+
+class _TrailSelectionStepState extends State<_TrailSelectionStep> {
+  bool _showMap = true;
+  bool _editMode = false;
+  int? _highlightedCheckpointIndex;
+  late final Future<HikingRouteResult> _routeFuture;
+
+  List<TrailCheckpoint> get _checkpoints => widget.draft.effectiveCheckpoints;
+
+  @override
+  void initState() {
+    super.initState();
+    _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
+      widget.draft.trail,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _TrailSelectionStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.draft.trail.trailId != widget.draft.trail.trailId) {
+      _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
+        widget.draft.trail,
+      );
+      _highlightedCheckpointIndex = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final checkpointNames = draft.trail.checkpoints
-        .map((checkpoint) => checkpoint.name)
-        .toList();
+    final cpsSorted = [..._checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
 
     return _StepCard(
       title: 'Select Trail',
       subtitle: 'Pick a verified trail and pin any extra checkpoints.',
       children: [
         DropdownButtonFormField<String>(
-          initialValue: draft.trail.trailId,
+          initialValue: widget.draft.trail.trailId,
           decoration: const InputDecoration(labelText: 'Selected Trail'),
           items: [
-            for (final trail in trails)
+            for (final trail in widget.trails)
               DropdownMenuItem<String>(
                 value: trail.trailId,
                 child: Text(trail.name, overflow: TextOverflow.ellipsis),
               ),
           ],
           onChanged: (trailId) {
-            if (trailId == null) {
-              return;
-            }
-            final nextTrail = trails.firstWhere(
+            if (trailId == null) return;
+            final nextTrail = widget.trails.firstWhere(
               (trail) => trail.trailId == trailId,
             );
-            onChanged(
+            widget.onChanged(
               HikeSessionDraft.fromTrail(nextTrail).copyWith(
-                hikeType: draft.hikeType,
-                teamBuddies: draft.teamBuddies,
+                hikeType: widget.draft.hikeType,
+                teamBuddies: widget.draft.teamBuddies,
               ),
             );
           },
         ),
         const SizedBox(height: 12),
-        _TrailSummary(trail: draft.trail),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: checkpointNames.contains(draft.startPointName)
-              ? draft.startPointName
-              : checkpointNames.first,
-          decoration: const InputDecoration(labelText: 'Start Point'),
-          items: [
-            for (final checkpoint in checkpointNames)
-              DropdownMenuItem<String>(
-                value: checkpoint,
-                child: Text(checkpoint),
+        _TrailSummary(trail: widget.draft.trail),
+        const SizedBox(height: 16),
+        if (_showMap)
+          SizedBox(
+            height: 220,
+            child: FutureBuilder<HikingRouteResult>(
+              future: _routeFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                return RoutePreviewMap(
+                  trail: widget.draft.trail,
+                  route: snapshot.data,
+                  customCheckpoints: widget.draft.customCheckpoints,
+                  highlightedCheckpointIndex: _highlightedCheckpointIndex,
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '${cpsSorted.length} checkpoints',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: _WizardColors.textFor(context),
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0,
+                    ),
               ),
+            ),
+            CupertinoButton(
+              padding: EdgeInsets.zero,
+              onPressed: () => setState(() => _showMap = !_showMap),
+              child: Text(_showMap ? 'Hide map' : 'Show map'),
+            ),
           ],
-          onChanged: (value) {
-            if (value != null) {
-              onChanged(draft.copyWith(startPointName: value));
-            }
-          },
         ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: checkpointNames.contains(draft.destinationName)
-              ? draft.destinationName
-              : checkpointNames.last,
-          decoration: const InputDecoration(labelText: 'Destination'),
-          items: [
-            for (final checkpoint in checkpointNames)
-              DropdownMenuItem<String>(
-                value: checkpoint,
-                child: Text(checkpoint),
-              ),
-          ],
-          onChanged: (value) {
-            if (value != null) {
-              onChanged(draft.copyWith(destinationName: value));
-            }
+        const SizedBox(height: 8),
+        _WizardCheckpointTimeline(
+          checkpoints: cpsSorted,
+          editMode: _editMode,
+          onShowOnMap: (index) {
+            setState(() {
+              _highlightedCheckpointIndex = _highlightedCheckpointIndex == index
+                  ? null
+                  : index;
+            });
           },
-        ),
-        const SizedBox(height: 14),
-        _CheckpointList(
-          checkpoints: draft.trail.checkpoints,
-          onPreview: (checkpoint) =>
-              _showCheckpointPreview(context, draft.trail, checkpoint),
+          onEdit: _showEditCheckpointDialog,
+          onRemove: _removeCheckpoint,
+          onReorder: _reorderCheckpoint,
         ),
         const SizedBox(height: 10),
         Row(
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => _addCheckpoint(context),
+                onPressed: _addCheckpoint,
                 icon: const Icon(Icons.add_location_alt_rounded),
                 label: const Text('Add Checkpoint'),
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => _viewRoute(context),
-                icon: const Icon(Icons.route_rounded),
-                label: const Text('View Route'),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: () => setState(() => _editMode = !_editMode),
+              icon: Icon(
+                _editMode ? Icons.edit_rounded : Icons.edit_note_rounded,
               ),
+              isSelected: _editMode,
+              tooltip: _editMode ? 'Done editing' : 'Edit checkpoints',
             ),
           ],
         ),
@@ -666,7 +704,7 @@ class _TrailSelectionStep extends StatelessWidget {
     );
   }
 
-  Future<void> _addCheckpoint(BuildContext context) async {
+  Future<void> _addCheckpoint() async {
     final checkpoint = await showModalBottomSheet<TrailCheckpoint>(
       context: context,
       showDragHandle: true,
@@ -684,64 +722,102 @@ class _TrailSelectionStep extends StatelessWidget {
               18,
               18 + MediaQuery.of(context).viewInsets.bottom,
             ),
-            child: _CheckpointPickerSheet(trail: draft.trail),
+            child: _CheckpointPickerSheet(trail: widget.draft.trail),
           ),
         );
       },
     );
-    if (checkpoint == null) {
-      return;
-    }
-    if (!context.mounted) {
-      return;
-    }
+    if (checkpoint == null || !mounted) return;
+    widget.onChanged(widget.draft.addCheckpoint(checkpoint));
+  }
 
-    final deviationMeters = _distanceFromRouteMeters(
-      draft.trail.checkpoints,
-      checkpoint.latitude,
-      checkpoint.longitude,
-    );
-    if (deviationMeters > 120) {
-      final shouldAdd = await showCupertinoDialog<bool>(
-        context: context,
-        builder: (context) {
-          return CupertinoAlertDialog(
-            title: const Text('Checkpoint Away From Route'),
-            content: Text(
-              'This pinned checkpoint is about ${deviationMeters.round()} m away from the obtained trail route. Add it anyway?',
-            ),
-            actions: [
-              CupertinoDialogAction(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
-              ),
-              CupertinoDialogAction(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Add Checkpoint'),
-              ),
-            ],
-          );
-        },
-      );
-      if (shouldAdd != true) {
-        return;
-      }
-    }
+  void _removeCheckpoint(int index) {
+    widget.onChanged(widget.draft.removeCheckpointAt(index));
+  }
 
-    final checkpoints = [...draft.trail.checkpoints, checkpoint]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    onChanged(
-      draft.copyWith(
-        trail: draft.trail.copyWith(checkpoints: checkpoints),
-        destinationName: checkpoint.name,
+  void _reorderCheckpoint(int oldIndex, int newIndex) {
+    widget.onChanged(widget.draft.reorderCheckpoint(oldIndex, newIndex));
+  }
+
+  Future<void> _showEditCheckpointDialog(int index) async {
+    final cp = _checkpoints.toList()..sort((a, b) => a.order.compareTo(b.order));
+    final checkpoint = cp[index];
+    final controller = TextEditingController(text: checkpoint.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Checkpoint'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Name'),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
       ),
+    );
+    if (newName != null && newName.isNotEmpty && mounted) {
+      final sorted = [..._checkpoints]..sort((a, b) => a.order.compareTo(b.order));
+      final updated = sorted.map((c) =>
+        c.name == checkpoint.name && c.latitude == checkpoint.latitude
+            ? c.copyWith(name: newName)
+            : c,
+      ).toList();
+      widget.onChanged(widget.draft.copyWith(customCheckpoints: updated));
+    }
+  }
+}
+
+
+class _CheckpointStep extends StatefulWidget {
+  const _CheckpointStep({required this.draft, required this.onChanged});
+
+  final HikeSessionDraft draft;
+  final ValueChanged<HikeSessionDraft> onChanged;
+
+  @override
+  State<_CheckpointStep> createState() => _CheckpointStepState();
+}
+
+class _CheckpointStepState extends State<_CheckpointStep> {
+  bool _showMap = true;
+  bool _editMode = false;
+  int? _highlightedCheckpointIndex;
+  late final Future<HikingRouteResult> _routeFuture;
+
+  List<TrailCheckpoint> get _checkpoints => widget.draft.effectiveCheckpoints;
+
+  @override
+  void initState() {
+    super.initState();
+    _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
+      widget.draft.trail,
     );
   }
 
-  void _viewRoute(BuildContext context) {
-    showModalBottomSheet<void>(
+  @override
+  void didUpdateWidget(covariant _CheckpointStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.draft.trail.trailId != widget.draft.trail.trailId) {
+      _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
+        widget.draft.trail,
+      );
+    }
+  }
+
+  void _addCheckpoint() {
+    showModalBottomSheet<TrailCheckpoint>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       backgroundColor: _WizardColors.surfaceFor(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
@@ -749,41 +825,146 @@ class _TrailSelectionStep extends StatelessWidget {
       builder: (context) {
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 6, 18, 22),
-            child: _RoutePreviewSheet(trail: draft.trail),
+            padding: EdgeInsets.fromLTRB(
+              18, 6, 18, 18 + MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: _CheckpointPickerSheet(trail: widget.draft.trail),
           ),
         );
       },
-    );
+    ).then((checkpoint) {
+      if (checkpoint == null || !mounted) return;
+      widget.onChanged(widget.draft.addCheckpoint(checkpoint));
+    });
   }
 
-  void _showCheckpointPreview(
-    BuildContext context,
-    Trail trail,
-    TrailCheckpoint checkpoint,
-  ) {
-    showDialog<void>(
+  void _removeCheckpoint(int index) {
+    widget.onChanged(widget.draft.removeCheckpointAt(index));
+  }
+
+  void _reorderCheckpoint(int oldIndex, int newIndex) {
+    widget.onChanged(widget.draft.reorderCheckpoint(oldIndex, newIndex));
+  }
+
+  Future<void> _showEditCheckpointDialog(int index) async {
+    final sorted = [..._checkpoints]..sort((a, b) => a.order.compareTo(b.order));
+    final checkpoint = sorted[index];
+    final controller = TextEditingController(text: checkpoint.name);
+    final newName = await showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(checkpoint.name),
-          content: SizedBox(
-            width: 320,
-            height: 240,
-            child: _CheckpointRouteMap(
-              trail: trail,
-              highlightedCheckpoint: checkpoint,
-              mode: _CheckpointRouteMapMode.checkpointPreview,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Checkpoint'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Name'),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (newName != null && newName.isNotEmpty && mounted) {
+      final updated = sorted.map((c) =>
+        c.name == checkpoint.name && c.latitude == checkpoint.latitude
+            ? c.copyWith(name: newName)
+            : c,
+      ).toList();
+      widget.onChanged(widget.draft.copyWith(customCheckpoints: updated));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cps = _checkpoints;
+    final cpsSorted = [...cps]..sort((a, b) => a.order.compareTo(b.order));
+
+    return _StepCard(
+      title: 'Checkpoints',
+      subtitle: 'Customise your hike checkpoints. Trailhead and trail end are fixed.',
+      children: [
+        if (_showMap)
+          SizedBox(
+            height: 220,
+            child: FutureBuilder<HikingRouteResult>(
+              future: _routeFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                return RoutePreviewMap(
+                  trail: widget.draft.trail,
+                  route: snapshot.data,
+                  customCheckpoints: widget.draft.customCheckpoints,
+                  highlightedCheckpointIndex: _highlightedCheckpointIndex,
+                );
+              },
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '${cpsSorted.length} checkpoints',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: _WizardColors.textFor(context),
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0,
+                    ),
+              ),
+            ),
+            CupertinoButton(
+              padding: EdgeInsets.zero,
+              onPressed: () => setState(() => _showMap = !_showMap),
+              child: Text(_showMap ? 'Hide map' : 'Show map'),
             ),
           ],
-        );
-      },
+        ),
+        const SizedBox(height: 8),
+        _WizardCheckpointTimeline(
+          checkpoints: cpsSorted,
+          editMode: _editMode,
+          onShowOnMap: (index) {
+            setState(() {
+              _highlightedCheckpointIndex = _highlightedCheckpointIndex == index
+                  ? null
+                  : index;
+            });
+          },
+          onEdit: _showEditCheckpointDialog,
+          onRemove: _removeCheckpoint,
+          onReorder: _reorderCheckpoint,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _addCheckpoint,
+                icon: const Icon(Icons.add_location_alt_rounded),
+                label: const Text('Add Checkpoint'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: () => setState(() => _editMode = !_editMode),
+              icon: Icon(
+                _editMode ? Icons.edit_rounded : Icons.edit_note_rounded,
+              ),
+              isSelected: _editMode,
+              tooltip: _editMode ? 'Done editing' : 'Edit checkpoints',
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -1431,15 +1612,8 @@ class _CheckpointPickerSheetState extends State<_CheckpointPickerSheet> {
         const SizedBox(height: 12),
         SizedBox(
           height: 280,
-          child: _TappableCheckpointRouteMap(
+          child: RoutePreviewMap(
             trail: widget.trail,
-            selectedCheckpoint: selected,
-            onSelected: (latitude, longitude) {
-              setState(() {
-                _latitude = latitude;
-                _longitude = longitude;
-              });
-            },
           ),
         ),
         const SizedBox(height: 10),
@@ -1477,659 +1651,6 @@ class _CheckpointPickerSheetState extends State<_CheckpointPickerSheet> {
     latitude: middleCheckpoint.latitude,
     longitude: middleCheckpoint.longitude,
   );
-}
-
-class _RoutePreviewSheet extends StatelessWidget {
-  const _RoutePreviewSheet({required this.trail});
-
-  final Trail trail;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Route Preview',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-            color: _WizardColors.textFor(context),
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '${trail.name} - ${trail.checkpoints.length} checkpoints',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _WizardColors.secondaryTextFor(context),
-            letterSpacing: 0,
-          ),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 320,
-          child: _CheckpointRouteMap(
-            trail: trail,
-            mode: _CheckpointRouteMapMode.routePreview,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-enum _CheckpointRouteMapMode { routePreview, addCheckpoint, checkpointPreview }
-
-class _TappableCheckpointRouteMap extends StatelessWidget {
-  const _TappableCheckpointRouteMap({
-    required this.trail,
-    required this.selectedCheckpoint,
-    required this.onSelected,
-  });
-
-  final Trail trail;
-  final TrailCheckpoint selectedCheckpoint;
-  final void Function(double latitude, double longitude) onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return _CheckpointRouteMap(
-      trail: trail,
-      highlightedCheckpoint: selectedCheckpoint,
-      mode: _CheckpointRouteMapMode.addCheckpoint,
-      onMapTap: onSelected,
-    );
-  }
-}
-
-class _CheckpointRouteMap extends StatefulWidget {
-  const _CheckpointRouteMap({
-    required this.trail,
-    required this.mode,
-    this.highlightedCheckpoint,
-    this.onMapTap,
-  });
-
-  final Trail trail;
-  final _CheckpointRouteMapMode mode;
-  final TrailCheckpoint? highlightedCheckpoint;
-  final void Function(double latitude, double longitude)? onMapTap;
-
-  @override
-  State<_CheckpointRouteMap> createState() => _CheckpointRouteMapState();
-}
-
-class _CheckpointRouteMapState extends State<_CheckpointRouteMap> {
-  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
-
-  maplibre.MapLibreMapController? _controller;
-  bool _styleLoaded = false;
-  late double _currentZoom = 15;
-  late double _scaleLatitude;
-
-  @override
-  void initState() {
-    super.initState();
-    _scaleLatitude = _initialCenter().latitude;
-  }
-
-  @override
-  void didUpdateWidget(covariant _CheckpointRouteMap oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.trail != widget.trail) {
-      unawaited(_syncAnnotations(fitBounds: true));
-      return;
-    }
-    if (oldWidget.mode != widget.mode ||
-        oldWidget.highlightedCheckpoint != widget.highlightedCheckpoint) {
-      unawaited(_syncAnnotations());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final center = _initialCenter();
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          maplibre.MapLibreMap(
-            styleString: _styleUrl,
-            initialCameraPosition: maplibre.CameraPosition(
-              target: center,
-              zoom: _currentZoom,
-            ),
-            minMaxZoomPreference: const maplibre.MinMaxZoomPreference(10, 18),
-            rotateGesturesEnabled: false,
-            tiltGesturesEnabled: false,
-            scrollGesturesEnabled: true,
-            zoomGesturesEnabled: true,
-            dragEnabled: true,
-            compassEnabled: false,
-            logoEnabled: false,
-            trackCameraPosition: true,
-            featureTapsTriggersMapClick: true,
-            annotationConsumeTapEvents: const [maplibre.AnnotationType.fill],
-            annotationOrder: const [
-              maplibre.AnnotationType.line,
-              maplibre.AnnotationType.circle,
-              maplibre.AnnotationType.symbol,
-              maplibre.AnnotationType.fill,
-            ],
-            attributionButtonPosition:
-                maplibre.AttributionButtonPosition.bottomLeft,
-            gestureRecognizers: {
-              Factory<OneSequenceGestureRecognizer>(
-                () => EagerGestureRecognizer(),
-              ),
-            },
-            onMapCreated: (controller) {
-              _controller = controller;
-            },
-            onStyleLoadedCallback: () {
-              _styleLoaded = true;
-              unawaited(_syncAnnotations(fitBounds: true));
-            },
-            onCameraMove: _onCameraMove,
-            onCameraIdle: () => unawaited(_syncScaleFromCamera()),
-            onMapClick: widget.onMapTap == null
-                ? null
-                : (_, coordinate) {
-                    widget.onMapTap!(coordinate.latitude, coordinate.longitude);
-                  },
-          ),
-          Align(
-            alignment: Alignment.topRight,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: MapZoomControls(
-                onZoomIn: () => _zoomBy(1),
-                onZoomOut: () => _zoomBy(-1),
-                onReset: () => _fitMapToRoute(),
-              ),
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomLeft,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: MapScaleBar(
-                zoom: _currentZoom,
-                latitude: _scaleLatitude,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _syncAnnotations({bool fitBounds = false}) async {
-    final controller = _controller;
-    if (!_styleLoaded || controller == null) {
-      return;
-    }
-
-    await controller.clearLines();
-    await controller.clearCircles();
-    await controller.clearSymbols();
-
-    final route = _routeCoordinates(widget.trail);
-    if (route.length >= 2) {
-      await controller.addLine(
-        maplibre.LineOptions(
-          geometry: route,
-          lineColor: '#34A853',
-          lineWidth: 5,
-          lineOpacity: 0.94,
-        ),
-      );
-    }
-
-    final checkpoints = [...widget.trail.checkpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    final highlighted = widget.highlightedCheckpoint;
-    final highlightedIndex = highlighted == null
-        ? -1
-        : checkpoints.indexWhere(
-            (checkpoint) => _isSameCheckpoint(checkpoint, highlighted),
-          );
-    final previousIndex =
-        widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
-            highlightedIndex > 0
-        ? highlightedIndex - 1
-        : -1;
-
-    for (var index = 0; index < checkpoints.length; index++) {
-      final checkpoint = checkpoints[index];
-      final style = _styleForCheckpoint(
-        index: index,
-        total: checkpoints.length,
-        isHighlighted:
-            widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
-            index == highlightedIndex,
-        isPrevious:
-            widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
-            index == previousIndex,
-      );
-      await controller.addCircle(
-        maplibre.CircleOptions(
-          geometry: _latLngFor(checkpoint),
-          circleRadius: style.radius,
-          circleColor: style.color,
-          circleStrokeColor: '#FFFFFF',
-          circleStrokeWidth: 2.5,
-        ),
-      );
-      await controller.addSymbol(
-        maplibre.SymbolOptions(
-          geometry: _latLngFor(checkpoint),
-          textField: '${index + 1}',
-          textSize: 11,
-          textColor: '#FFFFFF',
-          textHaloColor: '#111111',
-          textHaloWidth: 0.7,
-          textAnchor: 'center',
-        ),
-      );
-    }
-
-    if (highlighted != null &&
-        (widget.mode == _CheckpointRouteMapMode.addCheckpoint ||
-            highlightedIndex < 0)) {
-      await controller.addCircle(
-        maplibre.CircleOptions(
-          geometry: _latLngFor(highlighted),
-          circleRadius: 11,
-          circleColor: '#E11D48',
-          circleStrokeColor: '#FFFFFF',
-          circleStrokeWidth: 3,
-        ),
-      );
-      await controller.addSymbol(
-        maplibre.SymbolOptions(
-          geometry: _latLngFor(highlighted),
-          textField: widget.mode == _CheckpointRouteMapMode.addCheckpoint
-              ? 'New'
-              : '',
-          textSize: 12,
-          textColor: '#FFFFFF',
-          textHaloColor: '#111111',
-          textHaloWidth: 0.8,
-          textOffset: const Offset(0, 1.35),
-          textAnchor: 'top',
-        ),
-      );
-    }
-
-    if (fitBounds) {
-      await _fitMapToRoute();
-    }
-  }
-
-  Future<void> _fitMapToRoute() async {
-    final controller = _controller;
-    final bounds =
-        widget.mode == _CheckpointRouteMapMode.checkpointPreview &&
-            widget.highlightedCheckpoint != null
-        ? _checkpointPreviewBounds(widget.trail, widget.highlightedCheckpoint!)
-        : _routeBounds(widget.trail, widget.highlightedCheckpoint);
-    if (controller == null || bounds == null) {
-      return;
-    }
-
-    final singlePoint =
-        bounds.southwest.latitude == bounds.northeast.latitude &&
-        bounds.southwest.longitude == bounds.northeast.longitude;
-    if (singlePoint) {
-      await controller.animateCamera(
-        maplibre.CameraUpdate.newLatLngZoom(bounds.southwest, 15),
-      );
-      return;
-    }
-
-    await controller.animateCamera(
-      maplibre.CameraUpdate.newLatLngBounds(
-        bounds,
-        left: 44,
-        top: 44,
-        right: 44,
-        bottom: 44,
-      ),
-    );
-    await _syncScaleFromCamera();
-  }
-
-  Future<void> _zoomBy(double amount) async {
-    await _controller?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
-    await _syncScaleFromCamera();
-  }
-
-  void _onCameraMove(maplibre.CameraPosition position) {
-    _updateScale(position);
-  }
-
-  Future<void> _syncScaleFromCamera() async {
-    final controller = _controller;
-    if (controller == null) return;
-
-    final position =
-        controller.cameraPosition ?? await controller.queryCameraPosition();
-    if (position != null) {
-      _updateScale(position);
-    }
-  }
-
-  void _updateScale(maplibre.CameraPosition position) {
-    final nextZoom = position.zoom;
-    final nextLatitude = position.target.latitude;
-    if (!mounted ||
-        ((nextZoom - _currentZoom).abs() < 0.005 &&
-            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
-      return;
-    }
-    setState(() {
-      _currentZoom = nextZoom;
-      _scaleLatitude = nextLatitude;
-    });
-  }
-
-  maplibre.LatLng _initialCenter() {
-    final highlighted = widget.highlightedCheckpoint;
-    if (highlighted != null &&
-        (widget.mode == _CheckpointRouteMapMode.addCheckpoint ||
-            widget.mode == _CheckpointRouteMapMode.checkpointPreview)) {
-      return _latLngFor(highlighted);
-    }
-    return _routeCenter(widget.trail, highlighted);
-  }
-
-  static List<maplibre.LatLng> _routeCoordinates(Trail trail) {
-    final checkpoints = [...trail.checkpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    if (checkpoints.isEmpty) {
-      return [maplibre.LatLng(trail.latitude, trail.longitude)];
-    }
-    return checkpoints.map(_latLngFor).toList();
-  }
-
-  static maplibre.LatLng _routeCenter(
-    Trail trail,
-    TrailCheckpoint? highlightedCheckpoint,
-  ) {
-    final coordinates = [
-      ..._routeCoordinates(trail),
-      if (highlightedCheckpoint != null) _latLngFor(highlightedCheckpoint),
-    ];
-    final latitude =
-        coordinates
-            .map((coordinate) => coordinate.latitude)
-            .reduce((a, b) => a + b) /
-        coordinates.length;
-    final longitude =
-        coordinates
-            .map((coordinate) => coordinate.longitude)
-            .reduce((a, b) => a + b) /
-        coordinates.length;
-    return maplibre.LatLng(latitude, longitude);
-  }
-
-  static maplibre.LatLngBounds? _routeBounds(
-    Trail trail,
-    TrailCheckpoint? highlightedCheckpoint,
-  ) {
-    final coordinates = [
-      ..._routeCoordinates(trail),
-      if (highlightedCheckpoint != null) _latLngFor(highlightedCheckpoint),
-    ];
-    return _boundsFromCoordinates(coordinates);
-  }
-
-  static maplibre.LatLngBounds? _checkpointPreviewBounds(
-    Trail trail,
-    TrailCheckpoint highlightedCheckpoint,
-  ) {
-    final checkpoints = [...trail.checkpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    final highlightedIndex = checkpoints.indexWhere(
-      (checkpoint) => _isSameCheckpoint(checkpoint, highlightedCheckpoint),
-    );
-    final coordinates = [
-      _latLngFor(highlightedCheckpoint),
-      if (highlightedIndex > 0) _latLngFor(checkpoints[highlightedIndex - 1]),
-    ];
-    return _boundsFromCoordinates(coordinates);
-  }
-
-  static maplibre.LatLngBounds? _boundsFromCoordinates(
-    List<maplibre.LatLng> coordinates,
-  ) {
-    if (coordinates.isEmpty) {
-      return null;
-    }
-
-    var minLatitude = coordinates.first.latitude;
-    var maxLatitude = coordinates.first.latitude;
-    var minLongitude = coordinates.first.longitude;
-    var maxLongitude = coordinates.first.longitude;
-    for (final coordinate in coordinates.skip(1)) {
-      minLatitude = math.min(minLatitude, coordinate.latitude);
-      maxLatitude = math.max(maxLatitude, coordinate.latitude);
-      minLongitude = math.min(minLongitude, coordinate.longitude);
-      maxLongitude = math.max(maxLongitude, coordinate.longitude);
-    }
-
-    if ((maxLatitude - minLatitude).abs() < 0.0008) {
-      minLatitude -= 0.0004;
-      maxLatitude += 0.0004;
-    }
-    if ((maxLongitude - minLongitude).abs() < 0.0008) {
-      minLongitude -= 0.0004;
-      maxLongitude += 0.0004;
-    }
-
-    return maplibre.LatLngBounds(
-      southwest: maplibre.LatLng(minLatitude, minLongitude),
-      northeast: maplibre.LatLng(maxLatitude, maxLongitude),
-    );
-  }
-
-  static maplibre.LatLng _latLngFor(TrailCheckpoint checkpoint) {
-    return maplibre.LatLng(checkpoint.latitude, checkpoint.longitude);
-  }
-
-  static bool _isSameCheckpoint(
-    TrailCheckpoint checkpoint,
-    TrailCheckpoint other,
-  ) {
-    return checkpoint.order == other.order &&
-        checkpoint.name == other.name &&
-        checkpoint.latitude == other.latitude &&
-        checkpoint.longitude == other.longitude;
-  }
-
-  static ({String color, double radius}) _styleForCheckpoint({
-    required int index,
-    required int total,
-    required bool isHighlighted,
-    required bool isPrevious,
-  }) {
-    if (isHighlighted) {
-      return (color: '#E11D48', radius: 10);
-    }
-    if (isPrevious) {
-      return (color: '#FF9500', radius: 9);
-    }
-    if (total > 0) {
-      return (color: '#9CA3AF', radius: 6.5);
-    }
-    return (color: '#9CA3AF', radius: 6.5);
-  }
-}
-
-double _distanceFromRouteMeters(
-  List<TrailCheckpoint> checkpoints,
-  double latitude,
-  double longitude,
-) {
-  if (checkpoints.isEmpty) {
-    return 0;
-  }
-  if (checkpoints.length == 1) {
-    return _haversineMeters(
-      latitude,
-      longitude,
-      checkpoints.first.latitude,
-      checkpoints.first.longitude,
-    );
-  }
-
-  final originLatitude = checkpoints.first.latitude;
-  final target = _projectMeters(latitude, longitude, originLatitude);
-  var closest = double.infinity;
-  for (var index = 1; index < checkpoints.length; index++) {
-    final start = _projectMeters(
-      checkpoints[index - 1].latitude,
-      checkpoints[index - 1].longitude,
-      originLatitude,
-    );
-    final end = _projectMeters(
-      checkpoints[index].latitude,
-      checkpoints[index].longitude,
-      originLatitude,
-    );
-    closest = math.min(closest, _pointSegmentDistance(target, start, end));
-  }
-  return closest;
-}
-
-({double x, double y}) _projectMeters(
-  double latitude,
-  double longitude,
-  double originLatitude,
-) {
-  const metersPerDegreeLatitude = 111320.0;
-  final metersPerDegreeLongitude =
-      metersPerDegreeLatitude * math.cos(originLatitude * math.pi / 180);
-  return (
-    x: longitude * metersPerDegreeLongitude,
-    y: latitude * metersPerDegreeLatitude,
-  );
-}
-
-double _pointSegmentDistance(
-  ({double x, double y}) point,
-  ({double x, double y}) start,
-  ({double x, double y}) end,
-) {
-  final dx = end.x - start.x;
-  final dy = end.y - start.y;
-  if (dx == 0 && dy == 0) {
-    return math.sqrt(
-      math.pow(point.x - start.x, 2) + math.pow(point.y - start.y, 2),
-    );
-  }
-  final t =
-      (((point.x - start.x) * dx + (point.y - start.y) * dy) /
-              (dx * dx + dy * dy))
-          .clamp(0.0, 1.0)
-          .toDouble();
-  final projectedX = start.x + t * dx;
-  final projectedY = start.y + t * dy;
-  return math.sqrt(
-    math.pow(point.x - projectedX, 2) + math.pow(point.y - projectedY, 2),
-  );
-}
-
-double _haversineMeters(
-  double startLatitude,
-  double startLongitude,
-  double endLatitude,
-  double endLongitude,
-) {
-  const earthRadiusMeters = 6371000.0;
-  final deltaLatitude = (endLatitude - startLatitude) * math.pi / 180;
-  final deltaLongitude = (endLongitude - startLongitude) * math.pi / 180;
-  final startRadians = startLatitude * math.pi / 180;
-  final endRadians = endLatitude * math.pi / 180;
-  final haversine =
-      math.sin(deltaLatitude / 2) * math.sin(deltaLatitude / 2) +
-      math.cos(startRadians) *
-          math.cos(endRadians) *
-          math.sin(deltaLongitude / 2) *
-          math.sin(deltaLongitude / 2);
-  final centralAngle =
-      2 * math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine));
-  return earthRadiusMeters * centralAngle;
-}
-
-class _CheckpointList extends StatelessWidget {
-  const _CheckpointList({required this.checkpoints, required this.onPreview});
-
-  final List<TrailCheckpoint> checkpoints;
-  final ValueChanged<TrailCheckpoint> onPreview;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separatorFor(context)),
-      ),
-      child: Column(
-        children: [
-          for (var index = 0; index < checkpoints.length; index++) ...[
-            _CheckpointStatusRow(
-              checkpoint: checkpoints[index],
-              onPreview: () => onPreview(checkpoints[index]),
-            ),
-            if (index != checkpoints.length - 1) const _HorizontalSeparator(),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _CheckpointStatusRow extends StatelessWidget {
-  const _CheckpointStatusRow({
-    required this.checkpoint,
-    required this.onPreview,
-  });
-
-  final TrailCheckpoint checkpoint;
-  final VoidCallback onPreview;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '${checkpoint.order}. ${checkpoint.name}',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _WizardColors.textFor(context),
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
-          Tooltip(
-            message: 'Preview pinned location',
-            child: IconButton(
-              onPressed: onPreview,
-              icon: const Icon(Icons.map_rounded),
-              color: _WizardColors.green,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _ReadOnlyField extends StatelessWidget {
@@ -2683,6 +2204,206 @@ class _HorizontalSeparator extends StatelessWidget {
       height: 1,
       thickness: 0.7,
       color: _WizardColors.separatorFor(context),
+    );
+  }
+}
+
+class _WizardCheckpointTimeline extends StatelessWidget {
+  const _WizardCheckpointTimeline({
+    required this.checkpoints,
+    required this.editMode,
+    required this.onShowOnMap,
+    required this.onEdit,
+    required this.onRemove,
+    required this.onReorder,
+  });
+
+  final List<TrailCheckpoint> checkpoints;
+  final bool editMode;
+  final void Function(int index) onShowOnMap;
+  final void Function(int index) onEdit;
+  final void Function(int index) onRemove;
+  final void Function(int oldIndex, int newIndex) onReorder;
+
+  @override
+  Widget build(BuildContext context) {
+    if (editMode) {
+      return ReorderableListView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: checkpoints.length,
+        onReorderItem: (int oldIndex, int newIndex) {
+          onReorder(oldIndex, newIndex);
+        },
+        proxyDecorator: (child, index, animation) => Material(
+          elevation: 2,
+          borderRadius: BorderRadius.circular(8),
+          child: child,
+        ),
+        itemBuilder: (context, index) => _buildEditRow(context, index),
+      );
+    }
+    return Column(
+      children: [
+        for (var index = 0; index < checkpoints.length; index++)
+          _buildNormalRow(context, index),
+      ],
+    );
+  }
+
+  Widget _buildNormalRow(BuildContext context, int index) {
+    final cp = checkpoints[index];
+    final isLast = index == checkpoints.length - 1;
+    return IntrinsicHeight(
+      key: ValueKey('cp_$index'),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                margin: const EdgeInsets.only(top: 10),
+                decoration: BoxDecoration(
+                  color: _WizardColors.greenSoftFor(context),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${index + 1}',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: _WizardColors.green,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              if (!isLast)
+                Expanded(
+                  child: VerticalDivider(
+                    width: 1,
+                    thickness: 1,
+                    color: _WizardColors.separatorFor(context),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 10, bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    cp.name,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _WizardColors.textFor(context),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${cp.latitude.toStringAsFixed(5)}, ${cp.longitude.toStringAsFixed(5)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _WizardColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: IconButton(
+              onPressed: () => onShowOnMap(index),
+              icon: Icon(
+                Icons.near_me_rounded,
+                size: 20,
+                color: _WizardColors.secondaryTextFor(context),
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              tooltip: 'Show on map',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEditRow(BuildContext context, int index) {
+    final cp = checkpoints[index];
+    final canRemove = checkpoints.length > 2 &&
+        index > 0 &&
+        index < checkpoints.length - 1;
+    return Padding(
+      key: ValueKey('edit_cp_$index'),
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: _WizardColors.greenSoftFor(context),
+        borderRadius: BorderRadius.circular(8),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              ReorderableDragStartListener(
+                index: index,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Icon(
+                    Icons.drag_indicator_rounded,
+                    color: _WizardColors.secondaryTextFor(context),
+                    size: 24,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        cp.name,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: _WizardColors.textFor(context),
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${cp.latitude.toStringAsFixed(5)}, ${cp.longitude.toStringAsFixed(5)}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _WizardColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => onEdit(index),
+                icon: const Icon(Icons.edit_outlined, size: 20),
+                color: _WizardColors.green,
+                tooltip: 'Edit name',
+              ),
+              if (canRemove)
+                IconButton(
+                  onPressed: () => onRemove(index),
+                  icon: const Icon(Icons.remove_circle_outline, size: 20),
+                  color: _WizardColors.red,
+                  tooltip: 'Remove',
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -3,9 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:maplibre_gl/maplibre_gl.dart' as maplibre;
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/widgets/map_controls.dart';
+import '../../core/widgets/map_utils.dart';
 import '../Data/google_city_geocoding_service.dart';
 
 class ResidentialCityPickerPage extends StatefulWidget {
@@ -28,30 +29,38 @@ class ResidentialCityPickerPage extends StatefulWidget {
 }
 
 class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
-  static const _styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
   static const _defaultLatitude = 3.1390;
   static const _defaultLongitude = 101.6869;
 
-  late maplibre.LatLng _selected = maplibre.LatLng(
-    widget.initialLatitude ?? _defaultLatitude,
-    widget.initialLongitude ?? _defaultLongitude,
+  late mapbox.Point _selected = mapbox.Point(
+    coordinates: mapbox.Position(
+      widget.initialLongitude ?? _defaultLongitude,
+      widget.initialLatitude ?? _defaultLatitude,
+    ),
   );
   late double _currentZoom = 10.5;
-  late double _scaleLatitude = _selected.latitude;
+  late double _scaleLatitude =
+      widget.initialLatitude ?? _defaultLatitude;
   late final GoogleCityGeocodingService _geocodingService =
       widget.geocodingService ?? GoogleCityGeocodingService();
-  maplibre.MapLibreMapController? _mapController;
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.CircleAnnotationManager? _circleManager;
   bool _isResolving = false;
   String? _errorMessage;
 
-  void _movePin(maplibre.LatLng coordinate) {
+  double get _selectedLat => _selected.coordinates[1]!.toDouble();
+  double get _selectedLng => _selected.coordinates[0]!.toDouble();
+
+  void _movePin(mapbox.Point coordinate) {
     setState(() {
       _selected = coordinate;
       _errorMessage = null;
     });
+    unawaited(_syncPin());
     unawaited(
-      _mapController?.animateCamera(
-        maplibre.CameraUpdate.newLatLng(coordinate),
+      _mapboxMap?.flyTo(
+        mapbox.CameraOptions(center: coordinate),
+        mapbox.MapAnimationOptions(duration: 300),
       ),
     );
   }
@@ -66,8 +75,8 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
     });
     try {
       final selection = await _geocodingService.resolveCity(
-        latitude: _selected.latitude,
-        longitude: _selected.longitude,
+        latitude: _selectedLat,
+        longitude: _selectedLng,
       );
       if (mounted) {
         Navigator.of(context).pop(selection);
@@ -88,38 +97,42 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
   }
 
   Future<void> _fitToPin() async {
-    final controller = _mapController;
-    if (controller == null) return;
-    await controller.animateCamera(
-      maplibre.CameraUpdate.newLatLngZoom(_selected, 14),
+    await _mapboxMap?.flyTo(
+      mapbox.CameraOptions(center: _selected, zoom: 14),
+      mapbox.MapAnimationOptions(duration: 300),
     );
     await _syncScaleFromCamera();
   }
 
   Future<void> _zoomBy(double amount) async {
-    await _mapController?.animateCamera(maplibre.CameraUpdate.zoomBy(amount));
+    await _mapboxMap?.flyTo(
+      mapbox.CameraOptions(zoom: _currentZoom + amount),
+      mapbox.MapAnimationOptions(duration: 300),
+    );
     await _syncScaleFromCamera();
   }
 
-  void _onCameraMove(maplibre.CameraPosition position) {
-    _selected = position.target;
-    _updateScale(position);
+  void _onCameraChange(mapbox.CameraChangedEventData data) {
+    _selected = data.cameraState.center;
+    _updateScale(data);
   }
 
   Future<void> _syncScaleFromCamera() async {
-    final controller = _mapController;
-    if (controller == null) return;
-
-    final position =
-        controller.cameraPosition ?? await controller.queryCameraPosition();
-    if (position != null) {
-      _updateScale(position);
-    }
+    final map = _mapboxMap;
+    if (map == null) return;
+    final state = await map.getCameraState();
+    if (!mounted) return;
+    final nextZoom = state.zoom;
+    final nextLatitude = state.center.coordinates[1]!.toDouble();
+    setState(() {
+      _currentZoom = nextZoom;
+      _scaleLatitude = nextLatitude;
+    });
   }
 
-  void _updateScale(maplibre.CameraPosition position) {
-    final nextZoom = position.zoom;
-    final nextLatitude = position.target.latitude;
+  void _updateScale(mapbox.CameraChangedEventData data) {
+    final nextZoom = data.cameraState.zoom;
+    final nextLatitude = data.cameraState.center.coordinates[1]!.toDouble();
     if (!mounted ||
         ((nextZoom - _currentZoom).abs() < 0.005 &&
             (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
@@ -129,6 +142,44 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
       _currentZoom = nextZoom;
       _scaleLatitude = nextLatitude;
     });
+  }
+
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    await mapboxMap.compass.updateSettings(
+      mapbox.CompassSettings(enabled: true),
+    );
+    await mapboxMap.logo.updateSettings(
+      mapbox.LogoSettings(enabled: false),
+    );
+    await mapboxMap.gestures.updateSettings(
+      mapbox.GesturesSettings(
+        scrollEnabled: true,
+        pinchToZoomEnabled: true,
+        rotateEnabled: false,
+        pitchEnabled: false,
+      ),
+    );
+    await mapboxMap.setBounds(
+      mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 18),
+    );
+    _circleManager =
+        await mapboxMap.annotations.createCircleAnnotationManager();
+    await _syncPin();
+    await _syncScaleFromCamera();
+  }
+
+  Future<void> _syncPin() async {
+    await _circleManager?.deleteAll();
+    await _circleManager?.create(
+      mapbox.CircleAnnotationOptions(
+        geometry: _selected,
+        circleColor: const Color(0xFFE11D48).toARGB32(),
+        circleRadius: 8,
+        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+        circleStrokeWidth: 3,
+      ),
+    );
   }
 
   @override
@@ -146,32 +197,15 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  maplibre.MapLibreMap(
-                    styleString: _styleUrl,
-                    initialCameraPosition: maplibre.CameraPosition(
-                      target: _selected,
-                      zoom: _currentZoom,
+                  DeferredMap(
+                    child: mapbox.MapWidget(
+                      key: const ValueKey('city-picker'),
+                      styleUri: mapStyleUrls[0],
+                      onMapCreated: _onMapCreated,
+                      onCameraChangeListener: _onCameraChange,
+                      onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
+                      onTapListener: (context) => _movePin(context.point),
                     ),
-                    minMaxZoomPreference: const maplibre.MinMaxZoomPreference(
-                      3,
-                      18,
-                    ),
-                    compassEnabled: true,
-                    logoEnabled: false,
-                    rotateGesturesEnabled: false,
-                    tiltGesturesEnabled: false,
-                    trackCameraPosition: true,
-                    gestureRecognizers: {
-                      Factory<OneSequenceGestureRecognizer>(
-                        EagerGestureRecognizer.new,
-                      ),
-                    },
-                    onMapCreated: (controller) {
-                      _mapController = controller;
-                    },
-                    onMapClick: (_, coordinate) => _movePin(coordinate),
-                    onCameraMove: _onCameraMove,
-                    onCameraIdle: () => unawaited(_syncScaleFromCamera()),
                   ),
                   const Center(
                     child: IgnorePointer(

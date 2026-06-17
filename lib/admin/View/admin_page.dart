@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -10,6 +11,7 @@ import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
 
 enum _AdminSection { overview, trails, hazards, community }
+enum _DebugSection { firestore, local }
 
 class AdminPage extends StatefulWidget {
   const AdminPage({
@@ -41,6 +43,14 @@ class _AdminPageState extends State<AdminPage> {
   bool _isSaving = false;
   String? _errorMessage;
   _AdminSection _selectedSection = _AdminSection.overview;
+
+  int _debugTapCount = 0;
+  bool _debugMode = false;
+  _DebugSection? _selectedDebugSection;
+  Map<String, List<Map<String, dynamic>>> _localDbData = const {};
+  List<_FirestoreCollection> _firestoreData = const [];
+  bool _isDebugLoading = false;
+  String? _debugError;
 
   @override
   void initState() {
@@ -288,6 +298,126 @@ class _AdminPageState extends State<AdminPage> {
       );
   }
 
+  void _onDebugTitleTap() {
+    _debugTapCount++;
+    if (_debugTapCount >= 5) {
+      _debugTapCount = 0;
+      setState(() {
+        _debugMode = true;
+        _selectedDebugSection = null;
+        _localDbData = const {};
+        _firestoreData = const [];
+        _debugError = null;
+      });
+    }
+  }
+
+  Future<void> _loadFirestoreDebugData() async {
+    setState(() {
+      _isDebugLoading = true;
+      _debugError = null;
+    });
+
+    try {
+      final firestore = _repository.firestore;
+      final collections = [
+        'trails',
+        'users',
+        'hazardReports',
+        'communityPosts',
+        'sosAlerts',
+        'hikeSessions',
+        'localLocationPoints',
+        'checkIns',
+        'teams',
+        'teamHikeSessions',
+        'fcmOutbox',
+        'whatsAppMessageLogs',
+        'achievements',
+        'userAchievements',
+        'networkObservations',
+        'downloadedMaps',
+        'hikeRouteCaptures',
+      ];
+
+      final results = <_FirestoreCollection>[];
+      for (final name in collections) {
+        try {
+          final snapshot = await firestore.collection(name).limit(50).get();
+          results.add(_FirestoreCollection(
+            name: name,
+            documents: snapshot.docs.map((d) {
+              return <String, dynamic>{
+                'id': d.id,
+                ...d.data(),
+              };
+            }).toList(),
+          ));
+        } catch (e) {
+          results.add(_FirestoreCollection(
+            name: name,
+            documents: const [],
+            error: e.toString(),
+          ));
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _firestoreData = results;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _debugError = 'Failed to load Firestore data: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDebugLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadLocalDbDebugData() async {
+    setState(() {
+      _isDebugLoading = true;
+      _debugError = null;
+    });
+
+    try {
+      final data = await _repository.localDatabase.dumpAllTables();
+      if (!mounted) return;
+      setState(() {
+        _localDbData = data;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _debugError = 'Failed to load local database data: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDebugLoading = false;
+        });
+      }
+    }
+  }
+
+  void _exitDebugMode() {
+    setState(() {
+      _debugMode = false;
+      _selectedDebugSection = null;
+      _localDbData = const {};
+      _firestoreData = const [];
+      _debugError = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!widget.session.isAdmin) {
@@ -371,7 +501,15 @@ class _AdminPageState extends State<AdminPage> {
       color: _AdminColors.backgroundFor(context),
       child: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _loadAdminData,
+          onRefresh: _debugMode
+              ? () async {
+                  if (_selectedDebugSection == _DebugSection.firestore) {
+                    await _loadFirestoreDebugData();
+                  } else if (_selectedDebugSection == _DebugSection.local) {
+                    await _loadLocalDbDebugData();
+                  }
+                }
+              : _loadAdminData,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 100),
@@ -381,25 +519,78 @@ class _AdminPageState extends State<AdminPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _AdminHeader(
-                      title: title,
-                      subtitle: subtitle,
-                      isLoading: _isLoading,
-                      onRefresh: () => unawaited(_loadAdminData()),
-                      onBack: _selectedSection == _AdminSection.overview
-                          ? null
-                          : () {
-                              setState(() {
-                                _selectedSection = _AdminSection.overview;
-                              });
-                            },
-                    ),
-                    if (_errorMessage != null) ...[
+                    if (_debugMode)
+                      _AdminHeader(
+                        title: 'Debug Mode',
+                        subtitle: _selectedDebugSection == null
+                            ? 'Select a data source to inspect'
+                            : _selectedDebugSection == _DebugSection.firestore
+                                ? 'Firestore - ${_firestoreData.where((c) => c.documents.isNotEmpty).length}/${_firestoreData.length} collections populated'
+                                : 'Local Database - ${_localDbData.entries.where((e) => e.value.isNotEmpty).length}/${_localDbData.length} tables populated',
+                        isLoading: _isDebugLoading,
+                        onRefresh: () {
+                          if (_selectedDebugSection == _DebugSection.firestore) {
+                            unawaited(_loadFirestoreDebugData());
+                          } else if (_selectedDebugSection ==
+                              _DebugSection.local) {
+                            unawaited(_loadLocalDbDebugData());
+                          }
+                        },
+                        onBack: _selectedDebugSection == null
+                            ? _exitDebugMode
+                            : () {
+                                setState(() {
+                                  _selectedDebugSection = null;
+                                  _localDbData = const {};
+                                  _firestoreData = const [];
+                                  _debugError = null;
+                                });
+                              },
+                      )
+                    else
+                      _AdminHeader(
+                        title: title,
+                        subtitle: subtitle,
+                        isLoading: _isLoading,
+                        onRefresh: () => unawaited(_loadAdminData()),
+                        onBack: _selectedSection == _AdminSection.overview
+                            ? null
+                            : () {
+                                setState(() {
+                                  _selectedSection = _AdminSection.overview;
+                                });
+                              },
+                        onTitleTap: _onDebugTitleTap,
+                      ),
+                    if (_debugError != null) ...[
+                      const SizedBox(height: 12),
+                      _AdminNotice(message: _debugError!),
+                    ] else if (_errorMessage != null && !_debugMode) ...[
                       const SizedBox(height: 12),
                       _AdminNotice(message: _errorMessage!),
                     ],
                     const SizedBox(height: 16),
-                    content,
+                    if (_debugMode)
+                      _DebugContent(
+                        selectedSection: _selectedDebugSection,
+                        firestoreData: _firestoreData,
+                        localDbData: _localDbData,
+                        isLoading: _isDebugLoading,
+                        onSelectFirestore: () {
+                          setState(() {
+                            _selectedDebugSection = _DebugSection.firestore;
+                          });
+                          unawaited(_loadFirestoreDebugData());
+                        },
+                        onSelectLocal: () {
+                          setState(() {
+                            _selectedDebugSection = _DebugSection.local;
+                          });
+                          unawaited(_loadLocalDbDebugData());
+                        },
+                      )
+                    else
+                      content,
                   ],
                 ),
               ),
@@ -435,6 +626,7 @@ class _AdminHeader extends StatelessWidget {
     required this.isLoading,
     required this.onRefresh,
     this.onBack,
+    this.onTitleTap,
   });
 
   final String title;
@@ -442,6 +634,7 @@ class _AdminHeader extends StatelessWidget {
   final bool isLoading;
   final VoidCallback onRefresh;
   final VoidCallback? onBack;
+  final VoidCallback? onTitleTap;
 
   @override
   Widget build(BuildContext context) {
@@ -460,13 +653,16 @@ class _AdminHeader extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _AdminColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
+              GestureDetector(
+                onTap: onTitleTap,
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: _AdminColors.textFor(context),
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
                 ),
               ),
               Text(
@@ -1415,6 +1611,540 @@ class _HorizontalSeparator extends StatelessWidget {
       height: 1,
       thickness: 0.7,
       color: _AdminColors.separatorFor(context),
+    );
+  }
+}
+
+class _FirestoreCollection {
+  const _FirestoreCollection({
+    required this.name,
+    required this.documents,
+    this.error,
+  });
+
+  final String name;
+  final List<Map<String, dynamic>> documents;
+  final String? error;
+}
+
+class _DebugContent extends StatelessWidget {
+  const _DebugContent({
+    required this.selectedSection,
+    required this.firestoreData,
+    required this.localDbData,
+    required this.isLoading,
+    required this.onSelectFirestore,
+    required this.onSelectLocal,
+  });
+
+  final _DebugSection? selectedSection;
+  final List<_FirestoreCollection> firestoreData;
+  final Map<String, List<Map<String, dynamic>>> localDbData;
+  final bool isLoading;
+  final VoidCallback onSelectFirestore;
+  final VoidCallback onSelectLocal;
+
+  @override
+  Widget build(BuildContext context) {
+    if (selectedSection == null) {
+      return _DebugSectionPicker(
+        onSelectFirestore: onSelectFirestore,
+        onSelectLocal: onSelectLocal,
+      );
+    }
+
+    if (isLoading) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 40),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (selectedSection == _DebugSection.firestore) {
+      return _FirestoreDebugView(data: firestoreData);
+    }
+
+    return _LocalDbDebugView(data: localDbData);
+  }
+}
+
+class _DebugSectionPicker extends StatelessWidget {
+  const _DebugSectionPicker({
+    required this.onSelectFirestore,
+    required this.onSelectLocal,
+  });
+
+  final VoidCallback onSelectFirestore;
+  final VoidCallback onSelectLocal;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const SizedBox(height: 8),
+        _SectionTitle(label: 'Choose Data Source'),
+        const SizedBox(height: 12),
+        _AdminDashboardCard(
+          title: 'Firestore',
+          subtitle: 'Browse all Firestore collections and documents.',
+          metric: 'Cloud',
+          detail: 'Read-only view of Firebase Firestore data',
+          icon: Icons.cloud_rounded,
+          onTap: onSelectFirestore,
+        ),
+        const SizedBox(height: 12),
+        _AdminDashboardCard(
+          title: 'Local Database',
+          subtitle: 'Inspect local SQLite tables and rows.',
+          metric: 'Device',
+          detail: 'Read-only view of on-device database',
+          icon: Icons.storage_rounded,
+          onTap: onSelectLocal,
+        ),
+      ],
+    );
+  }
+}
+
+class _FirestoreDebugView extends StatelessWidget {
+  const _FirestoreDebugView({required this.data});
+
+  final List<_FirestoreCollection> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final populated = data.where((c) => c.documents.isNotEmpty).length;
+    final totalDocuments =
+        data.fold<int>(0, (total, c) => total + c.documents.length);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionTitle(
+          label:
+              '$populated/${data.length} collections • $totalDocuments documents',
+        ),
+        const SizedBox(height: 8),
+        if (data.isEmpty)
+          const _EmptyState(message: 'No collections found.')
+        else
+          _InsetGroup(
+            child: Column(
+              children: [
+                for (var i = 0; i < data.length; i++) ...[
+                  _CollectionCard(collection: data[i]),
+                  if (i != data.length - 1) const _HorizontalSeparator(),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CollectionCard extends StatefulWidget {
+  const _CollectionCard({required this.collection});
+
+  final _FirestoreCollection collection;
+
+  @override
+  State<_CollectionCard> createState() => _CollectionCardState();
+}
+
+class _CollectionCardState extends State<_CollectionCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final collection = widget.collection;
+    final color = collection.error != null
+        ? _AdminColors.redFor(context)
+        : collection.documents.isEmpty
+            ? _AdminColors.secondaryTextFor(context)
+            : _AdminColors.green;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: collection.documents.isEmpty
+            ? null
+            : () => setState(() => _expanded = !_expanded),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    collection.error != null
+                        ? Icons.error_outline_rounded
+                        : collection.documents.isEmpty
+                            ? Icons.inbox_rounded
+                            : Icons.folder_rounded,
+                    size: 20,
+                    color: color,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      collection.name,
+                      style:
+                          Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                color: _AdminColors.textFor(context),
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0,
+                              ),
+                    ),
+                  ),
+                  _AdminStatusPill(
+                    label: collection.error != null
+                        ? 'Error'
+                        : '${collection.documents.length}',
+                    color: color,
+                  ),
+                ],
+              ),
+              if (collection.error != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  collection.error!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _AdminColors.redFor(context),
+                        letterSpacing: 0,
+                      ),
+                ),
+              ],
+              if (_expanded && collection.documents.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                for (var docIndex = 0;
+                    docIndex < collection.documents.length;
+                    docIndex++) ...[
+                  _DocCard(
+                    index: docIndex,
+                    data: collection.documents[docIndex],
+                  ),
+                  if (docIndex != collection.documents.length - 1)
+                    const SizedBox(height: 6),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DocCard extends StatelessWidget {
+  const _DocCard({required this.index, required this.data});
+
+  final int index;
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = data['id']?.toString() ?? 'unknown';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _AdminColors.greenSoftFor(context),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            '[$index] $id',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: _AdminColors.green,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+          ),
+          const SizedBox(height: 6),
+          for (final entry in data.entries)
+            if (entry.key != 'id')
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: _KeyValueRow(key_: entry.key, value: entry.value),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KeyValueRow extends StatelessWidget {
+  const _KeyValueRow({required String key_, required Object? value})
+      : _key = key_,
+        _value = value;
+
+  final String _key;
+  final Object? _value;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_value is List) {
+      final list = _value;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              _key,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _AdminColors.secondaryTextFor(context),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0,
+                  ),
+            ),
+          ),
+          if (list.isEmpty)
+            Text(
+              '[]',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _AdminColors.textFor(context),
+                    letterSpacing: 0,
+                  ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.only(left: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < list.length; i++)
+                    _listItemWidget(context, list[i], i),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
+
+    final displayValue = _formatValue(_value);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 130,
+          child: Text(
+            _key,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _AdminColors.secondaryTextFor(context),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            displayValue,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _AdminColors.textFor(context),
+                  letterSpacing: 0,
+                ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _listItemWidget(BuildContext context, Object? item, int index) {
+    if (item is Map) {
+      if (item.isEmpty) return const Text('{}');
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _AdminColors.greenSoftFor(context).withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '[$index]',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _AdminColors.green,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+              ),
+              const SizedBox(height: 3),
+              for (final entry in item.entries)
+                _KeyValueRow(key_: entry.key, value: entry.value),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (item is List) {
+      final inner = item;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Text(
+          '[$index] ${_formatValue(inner)}',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _AdminColors.textFor(context),
+                letterSpacing: 0,
+              ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Text(
+        '[$index] ${_formatValue(item)}',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _AdminColors.textFor(context),
+              letterSpacing: 0,
+            ),
+      ),
+    );
+  }
+
+  String _formatValue(Object? value) {
+    if (value == null) return 'null';
+    if (value is double) return value.toStringAsFixed(6);
+    if (value is List) {
+      if (value.isEmpty) return '[]';
+      return '[${value.length} items]';
+    }
+    if (value is Map) {
+      if (value.isEmpty) return '{}';
+      return '{${value.length} keys}';
+    }
+    if (value is Timestamp) {
+      return value.toDate().toIso8601String();
+    }
+    return value.toString();
+  }
+}
+
+class _LocalDbDebugView extends StatelessWidget {
+  const _LocalDbDebugView({required this.data});
+
+  final Map<String, List<Map<String, dynamic>>> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final populated =
+        data.entries.where((e) => e.value.isNotEmpty).length;
+    final totalRows = data.entries
+        .fold<int>(0, (total, e) => total + e.value.length);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionTitle(
+          label:
+              '$populated/${data.length} tables • $totalRows rows',
+        ),
+        const SizedBox(height: 8),
+        if (data.isEmpty)
+          const _EmptyState(message: 'No tables found.')
+        else
+          _InsetGroup(
+            child: Column(
+              children: [
+                for (var i = 0; i < data.entries.length; i++) ...[
+                  _LocalTableCard(
+                    name: data.entries.elementAt(i).key,
+                    rows: data.entries.elementAt(i).value,
+                  ),
+                  if (i != data.entries.length - 1)
+                    const _HorizontalSeparator(),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _LocalTableCard extends StatefulWidget {
+  const _LocalTableCard({required this.name, required this.rows});
+
+  final String name;
+  final List<Map<String, dynamic>> rows;
+
+  @override
+  State<_LocalTableCard> createState() => _LocalTableCardState();
+}
+
+class _LocalTableCardState extends State<_LocalTableCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.rows.isEmpty
+        ? _AdminColors.secondaryTextFor(context)
+        : _AdminColors.green;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap:
+            widget.rows.isEmpty ? null : () => setState(() => _expanded = !_expanded),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    widget.rows.isEmpty
+                        ? Icons.table_chart_outlined
+                        : Icons.table_chart_rounded,
+                    size: 20,
+                    color: color,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.name,
+                      style:
+                          Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                color: _AdminColors.textFor(context),
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0,
+                              ),
+                    ),
+                  ),
+                  _AdminStatusPill(
+                    label: '${widget.rows.length}',
+                    color: color,
+                  ),
+                ],
+              ),
+              if (_expanded && widget.rows.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                for (var rowIndex = 0;
+                    rowIndex < widget.rows.length;
+                    rowIndex++) ...[
+                  _DocCard(
+                    index: rowIndex,
+                    data: widget.rows[rowIndex],
+                  ),
+                  if (rowIndex != widget.rows.length - 1)
+                    const SizedBox(height: 6),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

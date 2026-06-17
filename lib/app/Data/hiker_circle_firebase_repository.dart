@@ -37,8 +37,12 @@ class HikerCircleFirebaseRepository {
   final FirebaseBootstrapResult _firebaseBootstrapResult;
   final OpenMeteoService _openMeteoService;
 
+  LocalSessionDatabase get localDatabase => _localDatabase;
+
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
+
+  FirebaseFirestore get firestore => _resolvedFirestore;
 
   CollectionReference<Map<String, dynamic>> get _trails =>
       _resolvedFirestore.collection('trails');
@@ -309,6 +313,11 @@ class HikerCircleFirebaseRepository {
     try {
       final document = _hikeSessions.doc();
       final now = DateTime.now().toUtc();
+      final effectiveCheckpoints = draft.effectiveCheckpoints;
+      final checkpointData = effectiveCheckpoints
+          .map((c) => c.toFirestore())
+          .toList();
+
       await document.set({
         'sessionId': document.id,
         if (teamHikeSessionId.isNotEmpty)
@@ -323,6 +332,7 @@ class HikerCircleFirebaseRepository {
         'trailId': draft.trail.trailId,
         'trailName': draft.trail.name,
         'trail': draft.trail.toFirestore(),
+        'checkpoints': checkpointData,
         'startPointName': draft.startPointName,
         'destinationName': draft.destinationName,
         'plannedStartTimeLocal': draft.departureTime.toUtc().toIso8601String(),
@@ -1901,6 +1911,8 @@ class HikerCircleFirebaseRepository {
       hazards: _listOfMaps(
         data['hazards'],
       ).map(_hazardFromFirestore).whereType<TrailHazard>().toList(),
+      routeEncodedPolyline: _nullableStringFrom(data['routeEncodedPolyline']),
+      routeCheckpointsHash: _nullableStringFrom(data['routeCheckpointsHash']),
     );
   }
 
@@ -1998,6 +2010,10 @@ class HikerCircleFirebaseRepository {
 
   String _stringFrom(Object? value) {
     return value is String ? value : '';
+  }
+
+  String? _nullableStringFrom(Object? value) {
+    return value is String ? value : null;
   }
 
   double _doubleFrom(Object? value) {

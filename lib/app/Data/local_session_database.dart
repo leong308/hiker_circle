@@ -149,7 +149,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 5,
+      version: 6,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -166,6 +166,7 @@ class LocalSessionDatabase {
         await _createSafetyTables(database);
         await _createDeviceBindingTables(database);
         await _createEmergencyContactsTable(database);
+        await _createRouteCacheTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -206,6 +207,9 @@ class LocalSessionDatabase {
             columnName: 'onboarding_profile_complete',
             definition: 'INTEGER NOT NULL DEFAULT 0',
           );
+        }
+        if (oldVersion < 6) {
+          await _createRouteCacheTable(database);
         }
       },
     );
@@ -395,6 +399,98 @@ class LocalSessionDatabase {
         UNIQUE(owner_phone_number, contact_phone_number)
       )
     ''');
+  }
+
+  Future<void> _createRouteCacheTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS route_cache (
+        trail_id TEXT NOT NULL,
+        checkpoints_hash TEXT NOT NULL,
+        encoded_polyline TEXT NOT NULL,
+        distance_meters INTEGER NOT NULL,
+        duration_seconds INTEGER NOT NULL,
+        elevation_gain_meters REAL,
+        source_label TEXT NOT NULL,
+        cached_at TEXT NOT NULL,
+        PRIMARY KEY (trail_id, checkpoints_hash)
+      )
+    ''');
+  }
+
+  Future<void> saveRouteCache({
+    required String trailId,
+    required String checkpointsHash,
+    required String encodedPolyline,
+    required int distanceMeters,
+    required int durationSeconds,
+    double? elevationGainMeters,
+    required String sourceLabel,
+  }) async {
+    final database = await _openDatabase();
+    await database.insert(
+      'route_cache',
+      {
+        'trail_id': trailId,
+        'checkpoints_hash': checkpointsHash,
+        'encoded_polyline': encodedPolyline,
+        'distance_meters': distanceMeters,
+        'duration_seconds': durationSeconds,
+        'elevation_gain_meters': elevationGainMeters,
+        'source_label': sourceLabel,
+        'cached_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Map<String, dynamic>?> loadRouteCache({
+    required String trailId,
+    required String checkpointsHash,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'route_cache',
+      where: 'trail_id = ? AND checkpoints_hash = ?',
+      whereArgs: [trailId, checkpointsHash],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return rows.first;
+  }
+
+  Future<void> deleteRouteCacheForTrail(String trailId) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'route_cache',
+      where: 'trail_id = ?',
+      whereArgs: [trailId],
+    );
+  }
+
+  Future<void> clearAllRouteCache() async {
+    final database = await _openDatabase();
+    await database.delete('route_cache');
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> dumpAllTables() async {
+    final database = await _openDatabase();
+    final tableNames = [
+      'users',
+      'local_location_points',
+      'queued_alerts',
+      'downloaded_maps',
+      'network_observations',
+      'app_device',
+      'emergency_contacts',
+      'route_cache',
+    ];
+    final result = <String, List<Map<String, dynamic>>>{};
+    for (final table in tableNames) {
+      result[table] = await database.query(table);
+    }
+    return result;
   }
 
   Future<void> _addColumnIfMissing(

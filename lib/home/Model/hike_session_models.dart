@@ -549,6 +549,7 @@ class HikeSessionDraft {
     required this.duressEnabled,
     required this.completedChecklistItems,
     this.teamBuddies = const [],
+    this.customCheckpoints,
   });
 
   factory HikeSessionDraft.fromTrail(Trail trail) {
@@ -610,6 +611,62 @@ class HikeSessionDraft {
   final bool duressEnabled;
   final Set<String> completedChecklistItems;
   final List<TeamHikeBuddy> teamBuddies;
+  final List<TrailCheckpoint>? customCheckpoints;
+
+  List<TrailCheckpoint> get effectiveCheckpoints =>
+      customCheckpoints ?? trail.checkpoints;
+
+  List<TrailCheckpoint> _sortedCheckpoints(List<TrailCheckpoint>? cps) {
+    final list = [...(cps ?? trail.checkpoints)]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    return list;
+  }
+
+  List<TrailCheckpoint> get sortedCheckpoints => _sortedCheckpoints(customCheckpoints);
+
+  HikeSessionDraft addCheckpoint(TrailCheckpoint cp) {
+    final cps = [...(customCheckpoints ?? trail.checkpoints)];
+    final maxOrder = cps.fold<int>(0, (m, c) => c.order > m ? c.order : m);
+    final added = cp.copyWith(order: maxOrder + 1);
+    cps.add(added);
+    return copyWith(
+      customCheckpoints: cps,
+      startPointName: cps.first.name,
+      destinationName: cps.last.name,
+    );
+  }
+
+  HikeSessionDraft removeCheckpointAt(int index) {
+    final cps = [...(customCheckpoints ?? trail.checkpoints)]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    if (cps.length <= 2) return this;
+    if (index == 0 || index == cps.length - 1) return this;
+    cps.removeAt(index);
+    final reindexed = cps.asMap().entries.map((e) => e.value.copyWith(order: e.key + 1)).toList();
+    return copyWith(
+      customCheckpoints: reindexed,
+      startPointName: reindexed.first.name,
+      destinationName: reindexed.last.name,
+    );
+  }
+
+  HikeSessionDraft reorderCheckpoint(int oldIndex, int newIndex) {
+    final cps = [...(customCheckpoints ?? trail.checkpoints)]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    if (oldIndex < 0 || oldIndex >= cps.length) return this;
+    if (newIndex < 0 || newIndex >= cps.length) return this;
+    if (oldIndex < newIndex) newIndex--;
+    final item = cps.removeAt(oldIndex);
+    cps.insert(newIndex, item);
+    final reindexed = cps.asMap().entries.map((e) => e.value.copyWith(order: e.key + 1)).toList();
+    return copyWith(
+      customCheckpoints: reindexed,
+      startPointName: reindexed.first.name,
+      destinationName: reindexed.last.name,
+    );
+  }
+
+  bool get hasCustomCheckpoints => customCheckpoints != null;
 
   HikeSessionDraft copyWith({
     HikeType? hikeType,
@@ -630,6 +687,7 @@ class HikeSessionDraft {
     bool? duressEnabled,
     Set<String>? completedChecklistItems,
     List<TeamHikeBuddy>? teamBuddies,
+    List<TrailCheckpoint>? customCheckpoints,
   }) {
     return HikeSessionDraft(
       hikeType: hikeType ?? this.hikeType,
@@ -656,6 +714,7 @@ class HikeSessionDraft {
       completedChecklistItems:
           completedChecklistItems ?? this.completedChecklistItems,
       teamBuddies: teamBuddies ?? this.teamBuddies,
+      customCheckpoints: customCheckpoints ?? this.customCheckpoints,
     );
   }
 }
