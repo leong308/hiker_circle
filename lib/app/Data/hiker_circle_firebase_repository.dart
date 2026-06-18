@@ -738,10 +738,12 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
     required HikeSessionDraft draft,
     String teamHikeSessionId = '',
+    TeamHikeSession? teamHikeSession,
   }) async {
     final localSession = ActiveHikeSession.fromDraft(
       draft,
       teamHikeSessionId: teamHikeSessionId,
+      teamHikeSession: teamHikeSession,
     );
     if (!_firebaseBootstrapResult.isAvailable) {
       return localSession;

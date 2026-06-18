@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
@@ -6,6 +7,27 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
 import '../Model/hike_session_models.dart';
+
+final _teamColors = <Color>[
+  const Color(0xFF7C3AED),
+  const Color(0xFF0EA5E9),
+  const Color(0xFFEC4899),
+  const Color(0xFF14B8A6),
+  const Color(0xFFF97316),
+  const Color(0xFF8B5CF6),
+  const Color(0xFF06B6D4),
+  const Color(0xFFD946EF),
+  const Color(0xFF84CC16),
+  const Color(0xFFF43F5E),
+];
+
+Color _colorForParticipant(int index) =>
+    _teamColors[index % _teamColors.length];
+
+const _dummyNames = [
+  'Alice', 'Bob', 'Charlie', 'Diana', 'Eve',
+  'Frank', 'Grace', 'Henry', 'Ivy', 'Jack',
+];
 
 class ActiveTrackingMapView extends StatefulWidget {
   const ActiveTrackingMapView({
@@ -35,15 +57,41 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   late double _currentZoom;
   late double _scaleLatitude;
 
+  List<mapbox.Point> _routePoints = const [];
+  late mapbox.Point _startPoint;
+  late mapbox.Point _endPoint;
+
   @override
   void initState() {
     super.initState();
+    _buildPoints();
     final pts = _visiblePoints;
     final center = pts.isEmpty
         ? mapbox.Point(coordinates: mapbox.Position(0, 0))
         : centerFor(pts);
     _currentZoom = pts.length == 1 ? 15 : 13.5;
     _scaleLatitude = center.coordinates[1]!.toDouble();
+  }
+
+  void _buildPoints() {
+    final checkpoints = [...widget.activeHike.trail.checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
+    _startPoint = mapbox.Point(
+      coordinates: mapbox.Position(
+        checkpoints.first.longitude,
+        checkpoints.first.latitude,
+      ),
+    );
+    _endPoint = mapbox.Point(
+      coordinates: mapbox.Position(
+        checkpoints.last.longitude,
+        checkpoints.last.latitude,
+      ),
+    );
+    final encoded = widget.activeHike.trail.routeEncodedPolyline;
+    _routePoints = encoded == null || encoded.isEmpty
+        ? const []
+        : _orientRoutePoints(_decodePolyline(encoded));
   }
 
   List<mapbox.Point> get _recordedRoutePoints {
@@ -79,19 +127,60 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
         .toList();
   }
 
-  List<mapbox.Point> get _teamMatePoints {
-    final teamSession =
-        widget.teamHikeSession ?? widget.activeHike.teamHikeSession;
-    if (teamSession == null) {
+  List<TeamHikeParticipant> get _effectiveParticipants {
+    if (widget.activeHike.draft.hikeType != HikeType.team) {
       return const [];
     }
-    return teamSession.participants
-        .where((participant) => participant.latestLocation != null)
+
+    final realParticipants =
+        (widget.teamHikeSession ?? widget.activeHike.teamHikeSession)
+            ?.participants ??
+        const <TeamHikeParticipant>[];
+    if (realParticipants.isNotEmpty) return realParticipants;
+
+    final cp = _checkpointPoints;
+    if (cp.isEmpty) return const [];
+
+    final startLat = cp.first.coordinates[1]!.toDouble();
+    final startLon = cp.first.coordinates[0]!.toDouble();
+    final endLat = cp.last.coordinates[1]!.toDouble();
+    final endLon = cp.last.coordinates[0]!.toDouble();
+
+    return List.generate(_dummyNames.length, (i) {
+      final t = (i + 1) / (_dummyNames.length + 1);
+      final baseLat = startLat + (endLat - startLat) * t;
+      final baseLon = startLon + (endLon - startLon) * t;
+      final lat = baseLat + (math.Random(i).nextDouble() - 0.5) * 0.004;
+      final lng = baseLon + (math.Random(i + 100).nextDouble() - 0.5) * 0.004;
+      final now = DateTime.now();
+      return TeamHikeParticipant(
+        buddy: TeamHikeBuddy(
+          name: _dummyNames[i],
+          handle: '@hiker${i + 1}',
+          phoneNumber: '+0000000${i + 1}',
+        ),
+        status: TeamHikeParticipantStatus.active,
+        isLeader: i == 0,
+        isHost: i == 0,
+        progressMeters: (500 + i * 200).toDouble(),
+        latestLocation: HikeCoordinate(
+          latitude: lat,
+          longitude: lng,
+          capturedAt: now.subtract(Duration(minutes: math.Random(i + 200).nextInt(10))),
+          accuracyMeters: (5 + math.Random(i + 300).nextInt(10)).toDouble(),
+        ),
+      );
+    });
+  }
+
+  List<mapbox.Point> get _teamMatePoints {
+    return _effectiveParticipants
+        .where((p) => p.latestLocation != null)
         .map(
-          (participant) => mapbox.Point(
+          (p) => mapbox.Point(
             coordinates: mapbox.Position(
-              participant.latestLocation!.longitude,
-              participant.latestLocation!.latitude,
+              p.latestLocation!.longitude,
+              p.latestLocation!.latitude,
             ),
           ),
         )
@@ -107,19 +196,75 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   }
 
   List<mapbox.Point> get _visiblePoints {
-    return [
+    final points = <mapbox.Point>[
       ..._recordedRoutePoints,
       ..._manualPinPoints,
       ..._teamMatePoints,
       if (_latestPoint != null) _latestPoint!,
-      if (_recordedRoutePoints.isEmpty) ..._checkpointPoints,
+      ..._checkpointPoints,
     ];
+    if (_routePoints.length >= 2) {
+      points.addAll(_routePoints);
+    }
+    return points;
+  }
+
+  List<mapbox.Point> _decodePolyline(String encoded) {
+    final points = <mapbox.Point>[];
+    var index = 0;
+    var latitude = 0;
+    var longitude = 0;
+
+    while (index < encoded.length) {
+      var shift = 0;
+      var result = 0;
+      int byte;
+      do {
+        byte = encoded.codeUnitAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20 && index < encoded.length);
+      latitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+
+      shift = 0;
+      result = 0;
+      do {
+        byte = encoded.codeUnitAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20 && index < encoded.length);
+      longitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+
+      points.add(
+        mapbox.Point(
+          coordinates: mapbox.Position(longitude / 100000, latitude / 100000),
+        ),
+      );
+    }
+    return points;
+  }
+
+  List<mapbox.Point> _orientRoutePoints(List<mapbox.Point> points) {
+    if (points.length < 2) {
+      return points;
+    }
+    final forwardScore =
+        distanceMeters(points.first, _startPoint) +
+        distanceMeters(points.last, _endPoint);
+    final reverseScore =
+        distanceMeters(points.first, _endPoint) +
+        distanceMeters(points.last, _startPoint);
+    if (reverseScore < forwardScore) {
+      return points.reversed.toList();
+    }
+    return points;
   }
 
   @override
   void didUpdateWidget(covariant ActiveTrackingMapView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.activeHike != widget.activeHike) {
+      _buildPoints();
       _routeRendered = false;
       unawaited(_renderRouteIfReady());
     }
@@ -172,6 +317,28 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     var created = false;
 
     final recordedRoute = _recordedRoutePoints;
+    final hasTrailRoute = _routePoints.length >= 2;
+    final hasCheckpoints = _checkpointPoints.length >= 2;
+
+    // Draw the planned trail route (decoded polyline) as background reference,
+    // matching the style used by RoutePreviewMap on the trail page.
+    if (hasTrailRoute) {
+      await _polylineManager?.create(
+        mapbox.PolylineAnnotationOptions(
+          geometry: mapbox.LineString(coordinates: [
+            for (final pt in _routePoints)
+              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+          ]),
+          lineColor: const Color(0xFF2F8E50).toARGB32(),
+          lineOpacity: 0.86,
+          lineWidth: 3,
+          lineJoin: mapbox.LineJoin.ROUND,
+        ),
+      );
+      created = true;
+    }
+
+    // Draw the recorded GPS route (thicker, brighter) on top when available.
     if (recordedRoute.length >= 2) {
       await _polylineManager?.create(
         mapbox.PolylineAnnotationOptions(
@@ -186,7 +353,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
         ),
       );
       created = true;
-    } else if (_checkpointPoints.length >= 2) {
+    }
+
+    // Fallback: connect checkpoints with a subtle gray line when no route data.
+    if (!hasTrailRoute && recordedRoute.length < 2 && hasCheckpoints) {
       await _polylineManager?.create(
         mapbox.PolylineAnnotationOptions(
           geometry: mapbox.LineString(coordinates: [
@@ -201,23 +371,20 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
       created = true;
     }
 
+    final teamParticipants = _effectiveParticipants;
+
     final circleAnnotations = <mapbox.CircleAnnotationOptions>[
-      for (final participant
-          in (widget.teamHikeSession ?? widget.activeHike.teamHikeSession)
-                  ?.participants ??
-              const <TeamHikeParticipant>[])
-        if (participant.latestLocation != null)
+      for (var i = 0; i < teamParticipants.length; i++)
+        if (teamParticipants[i].latestLocation != null)
           mapbox.CircleAnnotationOptions(
             geometry: mapbox.Point(
               coordinates: mapbox.Position(
-                participant.latestLocation!.longitude,
-                participant.latestLocation!.latitude,
+                teamParticipants[i].latestLocation!.longitude,
+                teamParticipants[i].latestLocation!.latitude,
               ),
             ),
-            circleColor: participant.isLeader
-                ? const Color(0xFFF59E0B).toARGB32()
-                : const Color(0xFF7C3AED).toARGB32(),
-            circleRadius: participant.isLeader ? 8.0 : 6.0,
+            circleColor: _colorForParticipant(i).toARGB32(),
+            circleRadius: teamParticipants[i].isLeader ? 8.0 : 6.0,
             circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
             circleStrokeWidth: 2,
           ),
@@ -245,6 +412,34 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
           circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
           circleStrokeWidth: 2,
         ),
+      if (hasCheckpoints)
+        for (final cp in _checkpointPoints
+            .skip(1)
+            .take(math.max(0, _checkpointPoints.length - 2)))
+          mapbox.CircleAnnotationOptions(
+            geometry: cp,
+            circleColor: const Color(0xFF2F8E50).toARGB32(),
+            circleOpacity: 0.55,
+            circleRadius: 4.2,
+            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+            circleStrokeWidth: 1.2,
+          ),
+      if (hasCheckpoints)
+        mapbox.CircleAnnotationOptions(
+          geometry: _checkpointPoints.first,
+          circleColor: const Color(0xFF7BC90E).toARGB32(),
+          circleRadius: 6.5,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 2,
+        ),
+      if (hasCheckpoints)
+        mapbox.CircleAnnotationOptions(
+          geometry: _checkpointPoints.last,
+          circleColor: const Color(0xFFE94B42).toARGB32(),
+          circleRadius: 6.5,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 2,
+        ),
     ];
 
     if (circleAnnotations.isNotEmpty) {
@@ -266,18 +461,68 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
       return;
     }
     if (points.length == 1) {
-      await map.flyTo(
-        mapbox.CameraOptions(center: points.first, zoom: 15),
-        mapbox.MapAnimationOptions(duration: 300),
-      );
+      try {
+        await map.flyTo(
+          mapbox.CameraOptions(center: points.first, zoom: 15),
+          mapbox.MapAnimationOptions(duration: 300),
+        );
+      } catch (_) {
+        return;
+      }
       await _syncScaleFromCamera();
       return;
     }
-    final center = centerFor(points);
-    await map.flyTo(
-      mapbox.CameraOptions(center: center, zoom: _currentZoom),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+
+    try {
+      try {
+        final b = boundsFor(points);
+        if (b.minLon > b.maxLon || b.minLat > b.maxLat) {
+          final center = centerFor(points);
+          await map.flyTo(
+            mapbox.CameraOptions(center: center, zoom: _currentZoom),
+            mapbox.MapAnimationOptions(duration: 300),
+          );
+          await _syncScaleFromCamera();
+          return;
+        }
+
+        final camera = await map.cameraForCoordinateBounds(
+          mapbox.CoordinateBounds(
+            southwest: mapbox.Point(
+              coordinates: mapbox.Position(b.minLon, b.minLat),
+            ),
+            northeast: mapbox.Point(
+              coordinates: mapbox.Position(b.maxLon, b.maxLat),
+            ),
+            infiniteBounds: false,
+          ),
+          mapbox.MbxEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
+          null,
+          null,
+          null,
+          null,
+        );
+        if (camera != null &&
+            camera.zoom != null &&
+            camera.zoom!.isFinite &&
+            camera.center != null &&
+            camera.center!.coordinates[0] != null) {
+          await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 300));
+        } else {
+          throw Exception('Invalid camera from cameraForCoordinateBounds');
+        }
+      } catch (_) {
+        final center = centerFor(points);
+        await map.flyTo(
+          mapbox.CameraOptions(center: center, zoom: _currentZoom),
+          mapbox.MapAnimationOptions(duration: 300),
+        );
+      }
+    } catch (_) {
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) unawaited(_fitRoute());
+      });
+    }
     await _syncScaleFromCamera();
   }
 
@@ -341,16 +586,14 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        DeferredMap(
-          child: mapbox.MapWidget(
-            key: ValueKey(mapStyleUrls[_styleIndex]),
-            styleUri: mapStyleUrls[_styleIndex],
-            gestureRecognizers: mapGestureRecognizers,
-            onMapCreated: _onMapCreated,
-            onStyleLoadedListener: (_) => _onStyleLoaded(),
-            onCameraChangeListener: _onCameraChange,
-            onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
-          ),
+        mapbox.MapWidget(
+          key: ValueKey(mapStyleUrls[_styleIndex]),
+          styleUri: mapStyleUrls[_styleIndex],
+          gestureRecognizers: mapGestureRecognizers,
+          onMapCreated: _onMapCreated,
+          onStyleLoadedListener: (_) => _onStyleLoaded(),
+          onCameraChangeListener: _onCameraChange,
+          onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
         ),
         Positioned(
           left: 10,
@@ -394,6 +637,14 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
             right: 10,
             bottom: 10,
             child: _ActiveTrackingLegend(activeHike: widget.activeHike),
+          ),
+        if (widget.interactive && _effectiveParticipants.isNotEmpty)
+          Positioned(
+            right: 10,
+            top: 56,
+            child: _TeamParticipantPanel(
+              participants: _effectiveParticipants,
+            ),
           ),
       ],
     );
@@ -483,6 +734,109 @@ class _MapPill extends StatelessWidget {
             letterSpacing: 0,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _TeamParticipantPanel extends StatelessWidget {
+  const _TeamParticipantPanel({required this.participants});
+
+  final List<TeamHikeParticipant> participants;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: SizedBox(
+        width: 152,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                child: Text(
+                  'Team',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: const Color(0xFF6E6E73),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              const Divider(height: 1, thickness: 1),
+              for (var i = 0; i < participants.length; i++)
+                _ParticipantRow(
+                  color: _colorForParticipant(i),
+                  name: participants[i].buddy.shortName,
+                  isLeader: participants[i].isLeader,
+                  hasLocation: participants[i].latestLocation != null,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ParticipantRow extends StatelessWidget {
+  const _ParticipantRow({
+    required this.color,
+    required this.name,
+    required this.isLeader,
+    required this.hasLocation,
+  });
+
+  final Color color;
+  final String name;
+  final bool isLeader;
+  final bool hasLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            name,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0,
+            ),
+          ),
+          if (isLeader) ...[
+            const SizedBox(width: 4),
+            Icon(Icons.star_rounded, size: 14, color: color),
+          ],
+          if (!hasLocation) ...[
+            const SizedBox(width: 4),
+            Text(
+              'away',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: const Color(0xFF6E6E73),
+                letterSpacing: 0,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

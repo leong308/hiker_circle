@@ -537,7 +537,10 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _DetailHeader(onBack: () => Navigator.of(context).pop()),
+                  _DetailHeader(
+                    onBack: () => Navigator.of(context).pop(),
+                    subtitle: trail.name,
+                  ),
                   const SizedBox(height: 16),
                   _TrailDetailHero(trail: trail),
                   const SizedBox(height: 14),
@@ -642,7 +645,11 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _DetailHeader(onBack: () => Navigator.of(context).pop(false)),
+                  _DetailHeader(
+                    onBack: () => Navigator.of(context).pop(false),
+                    title: 'Offline Map',
+                    subtitle: widget.trail.name,
+                  ),
                   const SizedBox(height: 16),
                   _InsetGroup(
                     child: Padding(
@@ -829,7 +836,11 @@ class _HazardReportPageState extends State<HazardReportPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _DetailHeader(onBack: () => Navigator.of(context).pop()),
+                  _DetailHeader(
+                    onBack: () => Navigator.of(context).pop(),
+                    title: 'Report Hazard',
+                    subtitle: widget.trail.name,
+                  ),
                   const SizedBox(height: 16),
                   _InsetGroup(
                     child: Padding(
@@ -2540,36 +2551,73 @@ class _InsightTile extends StatelessWidget {
 }
 
 class _DetailHeader extends StatelessWidget {
-  const _DetailHeader({required this.onBack});
+  const _DetailHeader({
+    required this.onBack,
+    this.title = 'Trail',
+    this.subtitle,
+  });
 
   final VoidCallback onBack;
+  final String title;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            'Trail',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: _TrailColors.textFor(context),
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Tooltip(
+            message: 'Back',
+            child: CupertinoButton(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size.square(36),
+              onPressed: onBack,
+              child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Expanded(
+            child: subtitle == null
+                ? Text(
+                    title,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: _TrailColors.textFor(context),
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(
+                          color: _TrailColors.textFor(context),
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      Text(
+                        subtitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _TrailColors.secondaryTextFor(context),
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -3828,11 +3876,23 @@ class _RoutePreviewState extends State<_RoutePreview> {
           child: FutureBuilder<HikingRouteResult>(
             future: _routeFuture,
             builder: (context, snapshot) {
-              final route = snapshot.data;
               if (snapshot.connectionState != ConnectionState.done) {
                 return const Center(child: CircularProgressIndicator());
               }
 
+              if (snapshot.hasError) {
+                return RoutePreviewMap(
+                  key: ValueKey(
+                    '${widget.trail.trailId}:checkpoints',
+                  ),
+                  trail: widget.trail,
+                  route: null,
+                  highlightedCheckpointIndex:
+                      widget.highlightedCheckpointIndex,
+                );
+              }
+
+              final route = snapshot.data;
               return RoutePreviewMap(
                 key: ValueKey(
                   '${widget.trail.trailId}:${route?.encodedPolyline ?? 'checkpoints'}',
