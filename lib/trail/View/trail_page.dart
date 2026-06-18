@@ -1020,6 +1020,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   String _difficulty = 'Moderate';
   String? _errorMessage;
   bool _hasFetchedRoute = false;
+  bool _locationFailed = false;
   HikingRouteResult? _routeResult;
 
   @override
@@ -1180,6 +1181,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           }
         });
       }
+      return;
     } catch (_) {
       try {
         final geoapify = GeoapifyService();
@@ -1197,7 +1199,13 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
             }
           });
         }
+        return;
       } catch (_) {}
+    }
+    if (mounted) {
+      setState(() {
+        _locationFailed = true;
+      });
     }
   }
 
@@ -1534,20 +1542,56 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                 Expanded(
                   child: TextField(
                     controller: _areaController,
-                    readOnly: true,
-                    decoration: const InputDecoration(labelText: 'Area'),
+                    readOnly: !_locationFailed,
+                    decoration: InputDecoration(
+                      labelText: 'Area',
+                      hintText: _locationFailed ? 'Enter area manually' : null,
+                      prefixIcon: _locationFailed
+                          ? const Icon(Icons.edit_rounded, size: 18)
+                          : null,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: _stateController,
-                    readOnly: true,
-                    decoration: const InputDecoration(labelText: 'State'),
+                    readOnly: !_locationFailed,
+                    decoration: InputDecoration(
+                      labelText: 'State',
+                      hintText: _locationFailed ? 'Enter state manually' : null,
+                      prefixIcon: _locationFailed
+                          ? const Icon(Icons.edit_rounded, size: 18)
+                          : null,
+                    ),
                   ),
                 ),
               ],
             ),
+            if (_locationFailed)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline_rounded,
+                      size: 14,
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFFA8B8AE)
+                          : const Color(0xFF6E6E73),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Auto location unavailable — you can type area and state',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).brightness == Brightness.dark
+                            ? const Color(0xFFA8B8AE)
+                            : const Color(0xFF6E6E73),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
               initialValue: _difficulty,

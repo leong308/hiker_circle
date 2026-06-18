@@ -1,9 +1,7 @@
 import 'dart:async';
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
@@ -67,6 +65,11 @@ class _CirclePageState extends State<CirclePage> {
         _groupChats = chats;
         _isLoadingChats = false;
       });
+    }, onError: (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingChats = false;
+      });
     });
     setState(() {
       _isLoadingChats = true;
@@ -77,14 +80,19 @@ class _CirclePageState extends State<CirclePage> {
     setState(() {
       _isLoadingPosts = true;
     });
-    final posts = await widget.hikerCircleRepository.loadCommunityPosts();
-    if (!mounted) {
-      return;
+    try {
+      final posts = await widget.hikerCircleRepository.loadCommunityPosts();
+      if (!mounted) return;
+      setState(() {
+        _posts = posts.map(_communityPostFromFirestore).toList();
+        _isLoadingPosts = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingPosts = false;
+      });
     }
-    setState(() {
-      _posts = posts.map(_communityPostFromFirestore).toList();
-      _isLoadingPosts = false;
-    });
   }
 
   void _addBuddy(_CommunityPerson person) {
@@ -242,6 +250,53 @@ class _CirclePageState extends State<CirclePage> {
     );
   }
 
+  Widget _buildSegment(int value, String label, IconData icon) {
+    final isSelected = _selectedSection == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            _selectedSection = value;
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? _CircleColors.green
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isSelected
+                    ? Colors.white
+                    : _CircleColors.secondaryTextFor(context),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                  color: isSelected
+                      ? Colors.white
+                      : _CircleColors.secondaryTextFor(context),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final buddies = _people
@@ -261,29 +316,23 @@ class _CirclePageState extends State<CirclePage> {
                 children: [
                   _Header(onOpenSettings: _openSettings),
                   const SizedBox(height: 16),
-                  CupertinoSlidingSegmentedControl<int>(
-                    groupValue: _selectedSection,
-                    children: const {
-                      0: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Community'),
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: _CircleColors.surfaceFor(context),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _CircleColors.separatorFor(context)
+                            .withValues(alpha: 0.5),
                       ),
-                      1: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Teams'),
-                      ),
-                      2: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Chats'),
-                      ),
-                    },
-                    onValueChanged: (value) {
-                      if (value != null) {
-                        setState(() {
-                          _selectedSection = value;
-                        });
-                      }
-                    },
+                    ),
+                    child: Row(
+                      children: [
+                        _buildSegment(0, 'Community', Icons.people_rounded),
+                        _buildSegment(1, 'Teams', Icons.groups_2_rounded),
+                        _buildSegment(2, 'Chats', Icons.chat_rounded),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 18),
                   AnimatedSwitcher(
@@ -425,12 +474,12 @@ class _Header extends StatelessWidget {
                   'Circle',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     color: _CircleColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(
                   'Community posts, buddies, and hiking teams',
                   maxLines: 1,
@@ -438,6 +487,7 @@ class _Header extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: _CircleColors.secondaryTextFor(context),
                     letterSpacing: 0,
+                    fontSize: 13,
                   ),
                 ),
               ],
@@ -507,7 +557,7 @@ class _CommunitySection extends StatelessWidget {
           )
         else
           SizedBox(
-            height: 156,
+            height: 210,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: suggestions.length,
@@ -578,9 +628,24 @@ class _ComposerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    final isDark = _CircleColors.isDark(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: _CircleColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _CircleColors.green.withValues(alpha: 0.15),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _CircleColors.green.withValues(alpha: isDark ? 0.08 : 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -589,36 +654,74 @@ class _ComposerCard extends StatelessWidget {
                 const _Avatar(label: 'Y', color: _CircleColors.green),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    activeHike == null
-                        ? 'Share a trail note, photo, or question...'
-                        : 'Share live progress from ${activeHike!.trail.name}...',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: _CircleColors.secondaryTextFor(context),
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => unawaited(_openComposer(context)),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? const Color(0xFF1B261F)
+                            : const Color(0xFFF5F7F5),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _CircleColors.separatorFor(context)
+                              .withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Text(
+                        activeHike == null
+                            ? 'Share a trail note, photo, or question...'
+                            : 'Share live progress from ${activeHike!.trail.name}...',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: _CircleColors.secondaryTextFor(context),
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0,
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _CircleColors.green,
+                      side: BorderSide(
+                        color: _CircleColors.green.withValues(alpha: 0.3),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
                     onPressed: () => unawaited(_openComposer(context)),
-                    icon: const Icon(Icons.edit_rounded),
+                    icon: const Icon(Icons.edit_rounded, size: 18),
                     label: const Text('Post'),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _CircleColors.green,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
                     onPressed: activeHike == null
                         ? null
                         : () => unawaited(onShareHike()),
-                    icon: const Icon(Icons.hiking_rounded),
+                    icon: const Icon(Icons.hiking_rounded, size: 18),
                     label: const Text('Share Hike'),
                   ),
                 ),
@@ -638,39 +741,74 @@ class _ComposerCard extends StatelessWidget {
       showDragHandle: true,
       backgroundColor: _CircleColors.surfaceFor(context),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
         final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
         return Padding(
-          padding: EdgeInsets.fromLTRB(18, 4, 18, 18 + bottomInset),
+          padding: EdgeInsets.fromLTRB(20, 8, 20, 20 + bottomInset),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'New community post',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: _CircleColors.textFor(context),
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
+              Row(
+                children: [
+                  const _Avatar(label: 'Y', color: _CircleColors.green, size: 36),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Create a post',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: _CircleColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               TextField(
                 controller: controller,
-                minLines: 3,
-                maxLines: 5,
+                minLines: 4,
+                maxLines: 6,
                 maxLength: 280,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: 'Share a trail note, question, or safety update.',
+                  hintStyle: TextStyle(
+                    color: _CircleColors.secondaryTextFor(context),
+                  ),
+                  filled: true,
+                  fillColor: _CircleColors.isDark(context)
+                      ? const Color(0xFF1B261F)
+                      : const Color(0xFFF5F7F5),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: _CircleColors.green.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  counterStyle: TextStyle(
+                    color: _CircleColors.secondaryTextFor(context),
+                    fontSize: 11,
+                  ),
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 14),
               FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _CircleColors.green,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
                 onPressed: () =>
                     Navigator.of(context).pop(controller.text.trim()),
-                icon: const Icon(Icons.send_rounded),
+                icon: const Icon(Icons.send_rounded, size: 18),
                 label: const Text('Post'),
               ),
             ],
@@ -701,10 +839,24 @@ class _BuddySuggestionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 210,
-      child: _InsetGroup(
+      width: 220,
+      child: Container(
+        decoration: BoxDecoration(
+          color: _CircleColors.surfaceFor(context),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: _CircleColors.shadowFor(context),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -747,6 +899,25 @@ class _BuddySuggestionCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: person.color.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  person.trailAffinity,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: person.color,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
               Text(
                 person.subtitle,
                 maxLines: 2,
@@ -754,6 +925,8 @@ class _BuddySuggestionCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _CircleColors.secondaryTextFor(context),
                   letterSpacing: 0,
+                  fontSize: 12,
+                  height: 1.35,
                 ),
               ),
               const Spacer(),
@@ -765,9 +938,20 @@ class _BuddySuggestionCard extends StatelessWidget {
                         color: _CircleColors.green,
                       )
                     : FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _CircleColors.green,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
                         onPressed: onAddBuddy,
-                        icon: const Icon(Icons.person_add_alt_1_rounded),
-                        label: const Text('Add Buddy'),
+                        icon: const Icon(
+                          Icons.person_add_alt_1_rounded,
+                          size: 16,
+                        ),
+                        label: const Text('Add Buddy', style: TextStyle(fontSize: 13)),
                       ),
               ),
             ],
@@ -793,13 +977,28 @@ class _CommunityPostCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    return Container(
+      decoration: BoxDecoration(
+        color: _CircleColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _CircleColors.shadowFor(context),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
+          borderRadius: BorderRadius.circular(14),
           onTap: onOpenPost,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -869,8 +1068,23 @@ class _CommunityPostCard extends StatelessWidget {
                             color: _CircleColors.green,
                           )
                         : OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _CircleColors.green,
+                              side: BorderSide(
+                                color: _CircleColors.green.withValues(alpha: 0.3),
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              minimumSize: Size.zero,
+                            ),
                             onPressed: onAddBuddy,
-                            child: const Text('Add'),
+                            child: const Text('Add',
+                                style: TextStyle(fontSize: 12)),
                           ),
                   ],
                 ),
@@ -881,39 +1095,53 @@ class _CommunityPostCard extends StatelessWidget {
                     color: _CircleColors.textFor(context),
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0,
+                    height: 1.45,
                   ),
                 ),
                 const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: SizedBox(
-                    height: 152,
-                    width: double.infinity,
-                    child: _CommunityRouteThumbnail(post: post),
+                if (post.hasRouteMap) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      height: 160,
+                      width: double.infinity,
+                      child: _CommunityRouteThumbnail(post: post),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    _PostAction(
-                      icon: CupertinoIcons.heart,
-                      label: '${post.likes}',
-                      onTap: () => _showDummySnack(context, 'Liked post.'),
+                  const SizedBox(height: 12),
+                ],
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(
+                        color: _CircleColors.separatorFor(context)
+                            .withValues(alpha: 0.4),
+                      ),
                     ),
-                    const SizedBox(width: 18),
-                    _PostAction(
-                      icon: CupertinoIcons.chat_bubble,
-                      label: '${post.replies}',
-                      onTap: onOpenPost,
-                    ),
-                    const SizedBox(width: 18),
-                    _PostAction(
-                      icon: CupertinoIcons.arrowshape_turn_up_right,
-                      label: 'Share',
-                      onTap: () =>
-                          _showDummySnack(context, 'Share sheet opened.'),
-                    ),
-                  ],
+                  ),
+                  child: Row(
+                    children: [
+                      _PostAction(
+                        icon: CupertinoIcons.heart,
+                        label: '${post.likes}',
+                        onTap: () => _showDummySnack(context, 'Liked post.'),
+                      ),
+                      const SizedBox(width: 18),
+                      _PostAction(
+                        icon: CupertinoIcons.chat_bubble,
+                        label: '${post.replies}',
+                        onTap: onOpenPost,
+                      ),
+                      const Spacer(),
+                      _PostAction(
+                        icon: CupertinoIcons.arrowshape_turn_up_right,
+                        label: 'Share',
+                        onTap: () =>
+                            _showDummySnack(context, 'Share sheet opened.'),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1054,52 +1282,120 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                   ),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Comments'),
-                  const SizedBox(height: 8),
-                  _InsetGroup(
+                  const SizedBox(height: 10),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _CircleColors.surfaceFor(context),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _CircleColors.separatorFor(context)
+                            .withValues(alpha: 0.5),
+                      ),
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(12),
                       child: Row(
                         children: [
+                          const _Avatar(
+                            label: 'Y',
+                            color: _CircleColors.green,
+                            size: 36,
+                          ),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: TextField(
                               controller: _commentController,
                               minLines: 1,
                               maxLines: 3,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 hintText: 'Write a comment...',
+                                hintStyle: TextStyle(
+                                  color: _CircleColors.secondaryTextFor(context),
+                                ),
+                                filled: true,
+                                fillColor: _CircleColors.isDark(context)
+                                    ? const Color(0xFF1B261F)
+                                    : const Color(0xFFF5F7F5),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          IconButton.filled(
-                            onPressed: _isPostingComment
-                                ? null
-                                : () => unawaited(_postComment()),
-                            icon: _isPostingComment
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: _CircleColors.green,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: IconButton(
+                              padding: EdgeInsets.zero,
+                              onPressed: _isPostingComment
+                                  ? null
+                                  : () => unawaited(_postComment()),
+                              icon: _isPostingComment
+                                  ? const SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.send_rounded,
+                                      color: Colors.white,
+                                      size: 18,
                                     ),
-                                  )
-                                : const Icon(Icons.send_rounded),
+                            ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   if (_isLoadingComments)
-                    const LinearProgressIndicator(minHeight: 2)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 20),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
                   else if (_comments.isEmpty)
-                    const _InsetGroup(
-                      child: Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text('No comments yet.'),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: _CircleColors.surfaceFor(context),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _CircleColors.separatorFor(context)
+                              .withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: Text(
+                            'No comments yet.\nBe the first to share your thoughts!',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
                       ),
                     )
                   else
-                    _InsetGroup(
+                    Container(
+                      decoration: BoxDecoration(
+                        color: _CircleColors.surfaceFor(context),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _CircleColors.separatorFor(context)
+                              .withValues(alpha: 0.5),
+                        ),
+                      ),
                       child: Column(
                         children: [
                           for (
@@ -1250,16 +1546,43 @@ class _TeamBuilderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    final isDark = _CircleColors.isDark(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: _CircleColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _CircleColors.green.withValues(alpha: 0.15),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _CircleColors.green.withValues(alpha: isDark ? 0.08 : 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                const _Glyph(icon: Icons.groups_2_rounded),
-                const SizedBox(width: 12),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: _CircleColors.greenSoftFor(context),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.groups_2_rounded,
+                    color: _CircleColors.green,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1270,7 +1593,7 @@ class _TeamBuilderCard extends StatelessWidget {
                             ?.copyWith(
                               color: _CircleColors.textFor(context),
                               fontWeight: FontWeight.w800,
-                              letterSpacing: 0,
+                              letterSpacing: -0.3,
                             ),
                       ),
                       Text(
@@ -1278,6 +1601,7 @@ class _TeamBuilderCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: _CircleColors.secondaryTextFor(context),
                           letterSpacing: 0,
+                          fontSize: 13,
                         ),
                       ),
                     ],
@@ -1285,7 +1609,7 @@ class _TeamBuilderCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1300,22 +1624,40 @@ class _TeamBuilderCard extends StatelessWidget {
                     _StatusPill(label: buddy.name, color: _CircleColors.green),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _CircleColors.green,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                    ),
                     onPressed: onCreateTeam,
-                    icon: const Icon(Icons.add_rounded),
+                    icon: const Icon(Icons.add_rounded, size: 18),
                     label: const Text('Create Team'),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _CircleColors.green,
+                      side: BorderSide(
+                        color: _CircleColors.green.withValues(alpha: 0.3),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                    ),
                     onPressed: () =>
                         _showDummySnack(context, 'Join code scanner opened.'),
-                    icon: const Icon(Icons.qr_code_scanner_rounded),
+                    icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
                     label: const Text('Join Code'),
                   ),
                 ),
@@ -1335,24 +1677,52 @@ class _TeamPlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    return Container(
+      decoration: BoxDecoration(
+        color: _CircleColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _CircleColors.shadowFor(context),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
+          borderRadius: BorderRadius.circular(14),
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (context) => _TeamDetailPage(team: team),
             ),
           ),
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const _Glyph(icon: Icons.flag_rounded),
-                    const SizedBox(width: 12),
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: _CircleColors.greenSoftFor(context),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.flag_rounded,
+                        color: _CircleColors.green,
+                        size: 22,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1365,9 +1735,10 @@ class _TeamPlanCard extends StatelessWidget {
                                 ?.copyWith(
                                   color: _CircleColors.textFor(context),
                                   fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
+                                  letterSpacing: -0.3,
                                 ),
                           ),
+                          const SizedBox(height: 2),
                           Text(
                             team.trail,
                             maxLines: 1,
@@ -1378,39 +1749,86 @@ class _TeamPlanCard extends StatelessWidget {
                                     context,
                                   ),
                                   letterSpacing: 0,
+                                  fontSize: 13,
                                 ),
                           ),
                         ],
                       ),
                     ),
+                    const SizedBox(width: 8),
                     _StatusPill(label: team.status, color: _CircleColors.green),
                   ],
                 ),
-                const SizedBox(height: 12),
-                _InfoLine(label: 'Start', value: team.dateLabel),
-                _InfoLine(
-                  label: 'Members',
-                  value: '${team.members.length} invited',
-                ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: team.readiness / 100,
-                    minHeight: 6,
-                    color: _CircleColors.green,
-                    backgroundColor: _CircleColors.green.withValues(
-                      alpha: 0.14,
-                    ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _CircleColors.isDark(context)
+                        ? const Color(0xFF1B261F)
+                        : const Color(0xFFF5F7F5),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _InfoLine(label: 'Start', value: team.dateLabel),
+                      ),
+                      SizedBox(
+                        height: 24,
+                        child: VerticalDivider(
+                          width: 1,
+                          color: _CircleColors.separatorFor(context)
+                              .withValues(alpha: 0.5),
+                        ),
+                      ),
+                      Expanded(
+                        child: _InfoLine(
+                          label: 'Members',
+                          value: '${team.members.length} invited',
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: team.readiness / 100,
+                          minHeight: 8,
+                          color: team.readiness >= 80
+                              ? _CircleColors.green
+                              : team.readiness >= 50
+                                  ? _CircleColors.orange
+                                  : _CircleColors.red,
+                          backgroundColor: _CircleColors.green.withValues(
+                            alpha: 0.1,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '${team.readiness}%',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: _CircleColors.textFor(context),
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
                 Text(
-                  '${team.readiness}% team readiness - tap to manage roles, invites, and check-ins',
+                  'Tap to manage roles, invites, and check-ins',
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: _CircleColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                     letterSpacing: 0,
+                    fontSize: 11,
                   ),
                 ),
               ],
@@ -1446,52 +1864,159 @@ class _TeamDetailPage extends StatelessWidget {
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _InfoLine(label: 'Start', value: team.dateLabel),
-                          _InfoLine(label: 'Status', value: team.status),
-                          _InfoLine(
-                            label: 'Team readiness',
-                            value: '${team.readiness}%',
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: FilledButton.icon(
-                                  onPressed: () => _showDummySnack(
-                                    context,
-                                    'Team check-in schedule opened.',
-                                  ),
-                                  icon: const Icon(Icons.check_circle_rounded),
-                                  label: const Text('Check-ins'),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () => _showDummySnack(
-                                    context,
-                                    'Invite manager opened.',
-                                  ),
-                                  icon: const Icon(Icons.group_add_rounded),
-                                  label: const Text('Invite'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _CircleColors.surfaceFor(context),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: _CircleColors.separatorFor(context)
+                            .withValues(alpha: 0.5),
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _CircleColors.shadowFor(context),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _InfoLine(
+                                  label: 'Start', value: team.dateLabel),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: team.readiness >= 80
+                                    ? _CircleColors.green.withValues(alpha: 0.1)
+                                    : _CircleColors.orange
+                                        .withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                team.status,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      color: team.readiness >= 80
+                                          ? _CircleColors.green
+                                          : _CircleColors.orange,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0,
+                                    ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LinearProgressIndicator(
+                            value: team.readiness / 100,
+                            minHeight: 8,
+                            color: team.readiness >= 80
+                                ? _CircleColors.green
+                                : team.readiness >= 50
+                                    ? _CircleColors.orange
+                                    : _CircleColors.red,
+                            backgroundColor: _CircleColors.green.withValues(
+                              alpha: 0.1,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${team.readiness}% team readiness',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(
+                                color: _CircleColors.secondaryTextFor(context),
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0,
+                              ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton.icon(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: _CircleColors.green,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 13),
+                                ),
+                                onPressed: () => _showDummySnack(
+                                  context,
+                                  'Team check-in schedule opened.',
+                                ),
+                                icon: const Icon(
+                                    Icons.check_circle_rounded, size: 18),
+                                label: const Text('Check-ins'),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: _CircleColors.green,
+                                  side: BorderSide(
+                                    color: _CircleColors.green
+                                        .withValues(alpha: 0.3),
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 13),
+                                ),
+                                onPressed: () => _showDummySnack(
+                                  context,
+                                  'Invite manager opened.',
+                                ),
+                                icon: const Icon(
+                                    Icons.group_add_rounded, size: 18),
+                                label: const Text('Invite'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Roster'),
                   const SizedBox(height: 8),
-                  _InsetGroup(
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _CircleColors.surfaceFor(context),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _CircleColors.separatorFor(context)
+                            .withValues(alpha: 0.5),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _CircleColors.shadowFor(context),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
                     child: Column(
                       children: [
                         for (
@@ -1516,8 +2041,23 @@ class _TeamDetailPage extends StatelessWidget {
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Team Safety Logic'),
                   const SizedBox(height: 8),
-                  const _InsetGroup(
-                    child: Column(
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _CircleColors.surfaceFor(context),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _CircleColors.separatorFor(context)
+                            .withValues(alpha: 0.5),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _CircleColors.shadowFor(context),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: const Column(
                       children: [
                         _TeamFlowRow(
                           icon: Icons.social_distance_rounded,
@@ -1631,8 +2171,23 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Moderation'),
                   const SizedBox(height: 8),
-                  const _InsetGroup(
-                    child: Column(
+                  Container(
+                    decoration: BoxDecoration(
+                      color: _CircleColors.surfaceFor(context),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _CircleColors.separatorFor(context)
+                            .withValues(alpha: 0.5),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _CircleColors.shadowFor(context),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: const Column(
                       children: [
                         _TeamFlowRow(
                           icon: Icons.visibility_off_rounded,
@@ -1673,11 +2228,25 @@ class _SettingsSwitchTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    return Container(
+      decoration: BoxDecoration(
+        color: _CircleColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _CircleColors.shadowFor(context),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Expanded(
               child: Column(
@@ -1768,23 +2337,86 @@ class _RosterRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLeader = role == 'Leader';
+    final isSweep = role == 'Sweep';
     return Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
         children: [
-          _Avatar(label: name.substring(0, 1), color: _CircleColors.green),
+          _Avatar(
+            label: name.substring(0, 1),
+            color: isLeader ? _CircleColors.green : _CircleColors.blue,
+            size: 38,
+          ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              name,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: _CircleColors.textFor(context),
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: _CircleColors.textFor(context),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+                if (isLeader)
+                  Text(
+                    'Team leader',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: _CircleColors.green,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
             ),
           ),
-          _StatusPill(label: role, color: _CircleColors.green),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: isLeader
+                  ? _CircleColors.green.withValues(alpha: 0.1)
+                  : isSweep
+                      ? _CircleColors.orange.withValues(alpha: 0.1)
+                      : _CircleColors.blue.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isLeader
+                      ? Icons.star_rounded
+                      : isSweep
+                          ? Icons.gps_fixed_rounded
+                          : Icons.person_rounded,
+                  size: 13,
+                  color: isLeader
+                      ? _CircleColors.green
+                      : isSweep
+                          ? _CircleColors.orange
+                          : _CircleColors.blue,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  role,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: isLeader
+                        ? _CircleColors.green
+                        : isSweep
+                            ? _CircleColors.orange
+                            : _CircleColors.blue,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1805,12 +2437,20 @@ class _TeamFlowRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _Glyph(icon: icon),
-          const SizedBox(width: 12),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: _CircleColors.greenSoftFor(context),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: _CircleColors.green, size: 20),
+          ),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1829,10 +2469,17 @@ class _TeamFlowRow extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: _CircleColors.secondaryTextFor(context),
                     letterSpacing: 0,
+                    fontSize: 12,
+                    height: 1.35,
                   ),
                 ),
               ],
             ),
+          ),
+          Icon(
+            Icons.chevron_right_rounded,
+            color: _CircleColors.secondaryTextFor(context).withValues(alpha: 0.5),
+            size: 18,
           ),
         ],
       ),
@@ -1855,15 +2502,15 @@ class _PostAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               icon,
-              size: 18,
+              size: 17,
               color: _CircleColors.secondaryTextFor(context),
             ),
             const SizedBox(width: 5),
@@ -1871,8 +2518,9 @@ class _PostAction extends StatelessWidget {
               label,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
                 color: _CircleColors.secondaryTextFor(context),
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w600,
                 letterSpacing: 0,
+                fontSize: 12,
               ),
             ),
           ],
@@ -1890,34 +2538,29 @@ class _InfoLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _CircleColors.secondaryTextFor(context),
-                fontWeight: FontWeight.w500,
-                letterSpacing: 0,
-              ),
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: _CircleColors.secondaryTextFor(context),
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0,
+            fontSize: 11,
           ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _CircleColors.textFor(context),
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
-              ),
-            ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: _CircleColors.textFor(context),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0,
+            fontSize: 14,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -1930,15 +2573,28 @@ class _SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: 14),
-      child: Text(
-        label.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _CircleColors.secondaryTextFor(context),
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          letterSpacing: 0,
-        ),
+      padding: const EdgeInsets.only(left: 2),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 18,
+            decoration: BoxDecoration(
+              color: _CircleColors.green,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            label.toUpperCase(),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: _CircleColors.secondaryTextFor(context),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1959,16 +2615,27 @@ class _DetailHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Tooltip(
-          message: 'Back',
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: _CircleColors.surfaceFor(context),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+            ),
+          ),
           child: CupertinoButton(
             padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
             onPressed: onBack,
-            child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
+            child: Icon(
+              CupertinoIcons.chevron_back,
+              color: _CircleColors.green,
+              size: 20,
+            ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1981,7 +2648,7 @@ class _DetailHeader extends StatelessWidget {
                   color: _CircleColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
+                  letterSpacing: -0.3,
                 ),
               ),
               Text(
@@ -1991,6 +2658,7 @@ class _DetailHeader extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _CircleColors.secondaryTextFor(context),
                   letterSpacing: 0,
+                  fontSize: 13,
                 ),
               ),
             ],
@@ -2002,24 +2670,36 @@ class _DetailHeader extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.label, required this.color});
+  const _Avatar({required this.label, required this.color, this.size = 42});
 
   final String label;
   final Color color;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 42,
-      height: 42,
+      width: size,
+      height: size,
       alignment: Alignment.center,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.3),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Text(
         label.toUpperCase(),
         style: Theme.of(context).textTheme.titleMedium?.copyWith(
           color: Colors.white,
           fontWeight: FontWeight.w800,
           letterSpacing: 0,
+          fontSize: size * 0.42,
         ),
       ),
     );
@@ -2073,25 +2753,6 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
-class _Glyph extends StatelessWidget {
-  const _Glyph({required this.icon});
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        color: _CircleColors.green,
-        borderRadius: BorderRadius.circular(7),
-      ),
-      child: Icon(icon, color: Colors.white, size: 18),
-    );
-  }
-}
-
 class _InsetGroup extends StatelessWidget {
   const _InsetGroup({required this.child});
 
@@ -2099,13 +2760,23 @@ class _InsetGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: _CircleColors.surfaceFor(context),
-          borderRadius: BorderRadius.circular(12),
+    return Container(
+      decoration: BoxDecoration(
+        color: _CircleColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: _CircleColors.shadowFor(context),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
         child: child,
       ),
     );
@@ -2117,10 +2788,13 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Divider(
-      height: 1,
-      thickness: 0.7,
-      color: _CircleColors.separatorFor(context),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Divider(
+        height: 1,
+        thickness: 0.5,
+        color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+      ),
     );
   }
 }
@@ -2586,22 +3260,49 @@ class _ChatsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isLoading) {
       return const Padding(
-        padding: EdgeInsets.only(top: 48),
+        padding: EdgeInsets.only(top: 60),
         child: Center(child: CircularProgressIndicator()),
       );
     }
 
     if (chats.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.only(top: 48),
+        padding: const EdgeInsets.only(top: 60),
         child: Center(
-          child: Text(
-            'No group chats yet.\nStart a team hike to create one!',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _CircleColors.secondaryTextFor(context),
-              fontSize: 15,
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: _CircleColors.greenSoftFor(context),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.chat_rounded,
+                  color: _CircleColors.green,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No group chats yet',
+                style: TextStyle(
+                  color: _CircleColors.textFor(context),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Start a team hike to create one!',
+                style: TextStyle(
+                  color: _CircleColors.secondaryTextFor(context),
+                  fontSize: 14,
+                ),
+              ),
+            ],
           ),
         ),
       );
@@ -2610,21 +3311,15 @@ class _ChatsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 8),
-          child: Text(
-            'Group Chats',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: _CircleColors.secondaryTextFor(context),
-            ),
-          ),
-        ),
-        ...chats.map((chat) => _GroupChatTile(
-              chat: chat,
-              phoneNumber: phoneNumber,
-              onTap: () => onOpenChat(chat),
+        _SectionTitle(label: 'Group Chats'),
+        const SizedBox(height: 10),
+        ...chats.map((chat) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _GroupChatTile(
+                chat: chat,
+                phoneNumber: phoneNumber,
+                onTap: () => onOpenChat(chat),
+              ),
             )),
       ],
     );
@@ -2649,11 +3344,23 @@ class _GroupChatTile extends StatelessWidget {
         ? '$otherCount ${otherCount == 1 ? 'other' : 'others'}'
         : 'Just you';
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
+    return Container(
+      decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
         borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _CircleColors.shadowFor(context),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: onTap,
@@ -2663,27 +3370,30 @@ class _GroupChatTile extends StatelessWidget {
               children: [
                 CircleAvatar(
                   backgroundColor: _CircleColors.greenSoftFor(context),
-                  radius: 24,
+                  radius: 26,
                   child: const Icon(
                     Icons.chat_rounded,
                     color: _CircleColors.green,
                     size: 24,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         chat.trailName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                           color: _CircleColors.textFor(context),
+                          letterSpacing: -0.2,
                         ),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(
                         chat.lastMessage ?? subtitle,
                         maxLines: 1,
@@ -2697,10 +3407,18 @@ class _GroupChatTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: _CircleColors.secondaryTextFor(context),
-                  size: 20,
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: _CircleColors.greenSoftFor(context),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    color: _CircleColors.green,
+                    size: 18,
+                  ),
                 ),
               ],
             ),
@@ -2761,6 +3479,7 @@ abstract final class _CircleColors {
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
+  static const Color shadow = Color(0x1A000000);
 
   static bool isDark(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark;
@@ -2785,4 +3504,7 @@ abstract final class _CircleColors {
 
   static Color redFor(BuildContext context) =>
       isDark(context) ? const Color(0xFFFF6B88) : red;
+
+  static Color shadowFor(BuildContext context) =>
+      isDark(context) ? const Color(0x4D000000) : shadow;
 }
