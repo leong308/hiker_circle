@@ -305,6 +305,29 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  Future<List<UpcomingHike>> loadMyUpcomingHikes(String phoneNumber) async {
+    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    try {
+      final createdQuery = await _upcomingHikes
+          .where('creatorPhone', isEqualTo: phoneNumber)
+          .get();
+      final joinedQuery = await _upcomingHikes
+          .where('participantPhones', arrayContains: phoneNumber)
+          .get();
+      final seen = <String>{};
+      final results = <UpcomingHike>[];
+      for (final doc in [...createdQuery.docs, ...joinedQuery.docs]) {
+        if (seen.add(doc.id)) {
+          results.add(UpcomingHike.fromFirestore(doc.id, doc.data()));
+        }
+      }
+      results.sort((a, b) => b.departureTime.compareTo(a.departureTime));
+      return results;
+    } catch (_) {
+      return const [];
+    }
+  }
+
   Future<bool> joinUpcomingHike({
     required String hikeId,
     required String sessionId,

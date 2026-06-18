@@ -28,6 +28,7 @@ import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
 import '../Data/active_hike_live_status_service.dart';
 import '../Model/hike_session_models.dart';
+import 'active_tracking_map_view.dart';
 import '../ModelView/fall_stillness_monitor.dart';
 import 'active_hike_map_page.dart';
 import 'home_dashboard_page.dart';
@@ -70,6 +71,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   final ActiveHikeLiveStatusService _activeHikeLiveStatusService =
       const ActiveHikeLiveStatusService();
   PlannedHike? plannedHike;
+  List<UpcomingHike> myUpcomingHikes = const [];
   bool isLoadingLiveData = false;
   bool isSendingFallStillnessSos = false;
   bool isRecordingActiveHikeLocation = false;
@@ -382,6 +384,15 @@ class _HikerHomePageState extends State<HikerHomePage>
           ..clear()
           ..addAll(liveTrails);
       });
+      final upcomingHikes = await hikerCircleRepository.loadMyUpcomingHikes(
+        widget.session.phoneNumber,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        myUpcomingHikes = upcomingHikes;
+      });
       await hikerCircleRepository.ensureAchievementSeeds();
     } finally {
       if (mounted) {
@@ -642,6 +653,18 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   void onTabTap(int index) {
     _recordFallStillnessCancelTap();
+    if (activeHike != null) {
+      final visible = _visibleTabs();
+      if (index < 0 || index >= visible.length) return;
+      final label = visible[index].label;
+      final actualIndex = tabs.indexWhere((t) => t.label == label);
+      if (actualIndex < 0) return;
+      setState(() {
+        selectedTabIndex = actualIndex;
+      });
+      tabController.animateTo(actualIndex);
+      return;
+    }
     setState(() {
       selectedTabIndex = index;
     });
@@ -672,10 +695,16 @@ class _HikerHomePageState extends State<HikerHomePage>
       ),
     );
 
-    if (startedHike == null || !mounted) {
-      return;
-    }
+    if (!mounted) return;
+    final upcomingHikes = await hikerCircleRepository.loadMyUpcomingHikes(
+      widget.session.phoneNumber,
+    );
+    if (!mounted) return;
+    setState(() {
+      myUpcomingHikes = upcomingHikes;
+    });
 
+    if (startedHike == null) return;
     var hikeToStart = startedHike;
     if (hikeToStart.draft.hikeType == HikeType.team) {
       final teamSession = await _coordinateTeamHikeStart(hikeToStart.draft);
@@ -1141,8 +1170,83 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
   }
 
-  void _openFindHike() {
-    Navigator.of(context).push(
+  Future<void> _showUpcomingHikeDetails(UpcomingHike hike) async {
+    Trail? trail;
+    for (final t in trails) {
+      if (t.trailId == hike.trailId) {
+        trail = t;
+        break;
+      }
+    }
+    if (!mounted) return;
+    final result = await showModalBottomSheet<String?>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _UpcomingHikeDetailSheet(
+        hike: hike,
+        trail: trail,
+        phoneNumber: widget.session.phoneNumber,
+      ),
+    );
+    if (!mounted) return;
+    if (result == 'viewTrail' && trail != null) {
+      openTrailDetail(trail);
+    } else if (result == 'start' && trail != null) {
+      final hikeType = hike.hikeType == 'team' ? HikeType.team : HikeType.solo;
+      final draft = HikeSessionDraft.fromTrail(trail).copyWith(
+        hikeType: hikeType,
+        departureTime: hike.departureTime,
+        expectedReturnTime: hike.expectedReturnTime,
+      );
+      await _startUpcomingHikeNow(draft);
+    }
+  }
+
+  Future<void> _startUpcomingHikeNow(HikeSessionDraft draft) async {
+    var hikeToStart = ActiveHikeSession.fromDraft(draft);
+    if (draft.hikeType == HikeType.team) {
+      final teamSession = await _coordinateTeamHikeStart(draft);
+      if (teamSession == null || !mounted) return;
+      hikeToStart = hikeToStart.copyWith(
+        teamHikeSessionId: teamSession.id,
+        teamHikeSession: teamSession,
+      );
+    }
+    if (draft.fallDetectionEnabled || draft.offlinePhysicalAlertEnabled) {
+      final volumeReady = await ensureIosSosOutputVolumeReady(
+        context: context,
+        deviceAlertService: _sosDeviceAlertService,
+        title: 'Turn Up iPhone Volume',
+        message:
+            'Fall SOS and offline audio SOS use iPhone media volume for the local alarm. Turn it up before starting your hike.',
+        proceedLabel: 'Start Hike',
+      );
+      if (!volumeReady || !mounted) return;
+    }
+    ActiveHikeSession liveHike = hikeToStart;
+    try {
+      liveHike = await hikerCircleRepository.createActiveHikeSession(
+        session: widget.session,
+        draft: draft,
+        teamHikeSessionId: hikeToStart.teamHikeSessionId,
+      );
+      final batteryLevel = await _readBatteryLevel(fallback: 100);
+      liveHike = liveHike.copyWith(batteryLevel: batteryLevel, batteryStartedLevel: batteryLevel);
+    } on HikerCircleFirebaseRepositoryException catch (_) {
+      // Proceed in offline mode
+    }
+    if (!mounted) return;
+    setState(() {
+      activeHike = liveHike;
+      selectedTabIndex = 0;
+    });
+    _syncActiveHikeServices(liveHike, forceLiveStatus: true);
+    tabController.animateTo(0);
+    unawaited(_recordInitialActiveHikeLocation(liveHike));
+  }
+
+  Future<void> _openFindHike() async {
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => FindHikePage(
           session: widget.session,
@@ -1150,6 +1254,14 @@ class _HikerHomePageState extends State<HikerHomePage>
         ),
       ),
     );
+    if (!mounted) return;
+    final upcomingHikes = await hikerCircleRepository.loadMyUpcomingHikes(
+      widget.session.phoneNumber,
+    );
+    if (!mounted) return;
+    setState(() {
+      myUpcomingHikes = upcomingHikes;
+    });
   }
 
   void openJoinTeamHike() {
@@ -1454,8 +1566,20 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Widget pageFor(HikerBottomNavDestination tab) {
+    final isActive = activeHike != null;
     switch (tab.label) {
       case 'Home':
+        if (isActive) {
+          return ActiveHikeHomePage(
+            activeHike: activeHike!,
+            onEndHike: () => unawaited(_endActiveHikeSession()),
+            onCheckIn: () => unawaited(checkInActiveHike(activeHike!)),
+            onPinLocation: () => unawaited(pinCurrentLocation(activeHike!)),
+            fallStillnessSnapshot: fallStillnessMonitor.snapshot,
+            onCancelFallStillnessSos: () =>
+                _cancelFallStillnessSos('Phone tap response received'),
+          );
+        }
         final now = DateTime.now();
         final activePlannedHike = (plannedHike != null &&
                 !now.isAfter(
@@ -1464,6 +1588,7 @@ class _HikerHomePageState extends State<HikerHomePage>
             : null;
         return HomeDashboardPage(
           phoneNumber: widget.session.phoneNumber,
+          myUpcomingHikes: myUpcomingHikes,
           plannedHike: activePlannedHike,
           trails: trails,
           isLoadingTrails: isLoadingLiveData,
@@ -1471,6 +1596,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           isVisible: selectedTabIndex == 0,
           onStartHike: (trail) => openStartHikeWizard(trail),
           onFindHike: () => _openFindHike(),
+          onTapUpcomingHike: _showUpcomingHikeDetails,
           onOpenTrailDetail: openTrailDetail,
           onAddTrailByAdmin: widget.session.isAdmin
               ? () => unawaited(addTrailByAdminFromHome())
@@ -2048,6 +2174,13 @@ class _HikerHomePageState extends State<HikerHomePage>
     super.dispose();
   }
 
+  List<HikerBottomNavDestination> _visibleTabs() {
+    if (activeHike != null) {
+      return tabs.where((t) => t.label == 'Home' || t.label == 'SOS' || t.label == 'Profile').toList();
+    }
+    return tabs;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2064,7 +2197,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       bottomNavigationBar: HikerBottomNavBar(
         currentIndex: selectedTabIndex,
         onDestinationSelected: onTabTap,
-        destinations: tabs,
+        destinations: _visibleTabs(),
       ),
     );
   }
@@ -3314,8 +3447,451 @@ String _profileHandleForPhone(String phoneNumber) {
   return 'hiker${digits.substring(digits.length - 4)}';
 }
 
+class ActiveHikeHomePage extends StatelessWidget {
+  const ActiveHikeHomePage({
+    super.key,
+    required this.activeHike,
+    required this.onEndHike,
+    required this.onCheckIn,
+    required this.onPinLocation,
+    required this.fallStillnessSnapshot,
+    required this.onCancelFallStillnessSos,
+  });
+
+  final ActiveHikeSession activeHike;
+  final VoidCallback onEndHike;
+  final VoidCallback onCheckIn;
+  final VoidCallback onPinLocation;
+  final FallStillnessMonitorSnapshot fallStillnessSnapshot;
+  final VoidCallback onCancelFallStillnessSos;
+
+  @override
+  Widget build(BuildContext context) {
+    final expectedReturn = activeHike.draft.expectedReturnTime;
+    final elapsed = DateTime.now().difference(activeHike.startedAt);
+    final elapsedLabel = '${elapsed.inHours}h ${elapsed.inMinutes.remainder(60)}m';
+    final returnLabel =
+        '${expectedReturn.hour.toString().padLeft(2, '0')}:${expectedReturn.minute.toString().padLeft(2, '0')}';
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return Column(
+      children: [
+        _ActiveHikeTopBar(
+          trailName: activeHike.draft.trail.name,
+          elapsedLabel: elapsedLabel,
+          returnLabel: returnLabel,
+          batteryLevel: activeHike.batteryLevel,
+          gpsPointCount: activeHike.routePointCount,
+        ),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            child: ActiveTrackingMapView(
+              activeHike: activeHike,
+              showLegend: false,
+            ),
+          ),
+        ),
+        _ActiveHikeBottomBar(
+          onEndHike: onEndHike,
+          onCheckIn: onCheckIn,
+          onPinLocation: onPinLocation,
+          bottomInset: bottomInset,
+        ),
+      ],
+    );
+  }
+}
+
+class _ActiveHikeTopBar extends StatelessWidget {
+  const _ActiveHikeTopBar({
+    required this.trailName,
+    required this.elapsedLabel,
+    required this.returnLabel,
+    required this.batteryLevel,
+    required this.gpsPointCount,
+  });
+
+  final String trailName;
+  final String elapsedLabel;
+  final String returnLabel;
+  final int batteryLevel;
+  final int gpsPointCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    trailName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _MetricChip(
+                  icon: Icons.timer_outlined,
+                  label: elapsedLabel,
+                ),
+                const SizedBox(width: 8),
+                _MetricChip(
+                  icon: Icons.schedule_rounded,
+                  label: 'Expected $returnLabel',
+                ),
+                const SizedBox(width: 8),
+                _MetricChip(
+                  icon: Icons.battery_std_rounded,
+                  label: '$batteryLevel%',
+                ),
+                const SizedBox(width: 8),
+                _MetricChip(
+                  icon: Icons.gps_fixed_rounded,
+                  label: '$gpsPointCount pts',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: Colors.white),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActiveHikeBottomBar extends StatelessWidget {
+  const _ActiveHikeBottomBar({
+    required this.onEndHike,
+    required this.onCheckIn,
+    required this.onPinLocation,
+    this.bottomInset = 0,
+  });
+
+  final VoidCallback onEndHike;
+  final VoidCallback onCheckIn;
+  final VoidCallback onPinLocation;
+  final double bottomInset;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(18, 12, 18, bottomInset + 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: onCheckIn,
+                    icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                    label: const Text('Check In'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onPinLocation,
+                    icon: const Icon(Icons.push_pin_rounded, size: 18),
+                    label: const Text('Pin Location'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFE11D48),
+                side: const BorderSide(color: Color(0xFFE11D48)),
+              ),
+              onPressed: onEndHike,
+              icon: const Icon(Icons.stop_circle_rounded, size: 18),
+              label: const Text('End Hike Session'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 bool _sameTeamPhone(String first, String second) {
   final firstKey = first.replaceAll(RegExp(r'[^0-9]'), '');
   final secondKey = second.replaceAll(RegExp(r'[^0-9]'), '');
   return firstKey.isNotEmpty && firstKey == secondKey;
+}
+
+class _UpcomingHikeDetailSheet extends StatelessWidget {
+  const _UpcomingHikeDetailSheet({
+    required this.hike,
+    required this.trail,
+    required this.phoneNumber,
+  });
+
+  final UpcomingHike hike;
+  final Trail? trail;
+  final String phoneNumber;
+
+  @override
+  Widget build(BuildContext context) {
+    final isCreator = hike.creatorPhone == phoneNumber;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: isCreator
+                        ? const Color(0xFF34A853).withValues(alpha: 0.12)
+                        : Colors.grey.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.hiking_rounded,
+                    color: isCreator
+                        ? const Color(0xFF34A853)
+                        : Colors.grey.shade600,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        hike.trailName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        isCreator ? 'Created by you' : 'Joined by you',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: isCreator
+                                  ? const Color(0xFF34A853)
+                                  : Colors.grey.shade600,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            _DetailRow(
+              icon: Icons.location_on_rounded,
+              label: 'Start Point',
+              value: hike.startPointName,
+            ),
+            _DetailRow(
+              icon: Icons.flag_rounded,
+              label: 'Destination',
+              value: hike.destinationName,
+            ),
+            _DetailRow(
+              icon: Icons.schedule_rounded,
+              label: 'Departure',
+              value:
+                  '${_formatDate(hike.departureTime)} at ${_formatTime(hike.departureTime)}',
+            ),
+            _DetailRow(
+              icon: Icons.timer_outlined,
+              label: 'Expected Return',
+              value: _formatTime(hike.expectedReturnTime),
+            ),
+            const Divider(height: 24),
+            _DetailRow(
+              icon: Icons.straighten_rounded,
+              label: 'Distance',
+              value: '${hike.distanceKm.toStringAsFixed(1)} km',
+            ),
+            _DetailRow(
+              icon: Icons.terrain_rounded,
+              label: 'Difficulty',
+              value: hike.difficulty,
+            ),
+            _DetailRow(
+              icon: Icons.place_rounded,
+              label: 'Location',
+              value: '${hike.area}, ${hike.state}',
+            ),
+            _DetailRow(
+              icon: Icons.group_rounded,
+              label: 'Participants',
+              value: '${hike.participantCount}',
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: trail != null
+                        ? () => Navigator.of(context).pop('viewTrail')
+                        : null,
+                    icon: const Icon(Icons.map_rounded, size: 18),
+                    label: const Text('View Trail'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pop('start'),
+                    icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                    label: Text(
+                      hike.hikeType == 'team'
+                          ? 'Start Now (Team)'
+                          : 'Start Now (Solo)',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(DateTime dt) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
+  }
+
+  String _formatTime(DateTime dt) {
+    final hour = dt.hour;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final ampm = hour < 12 ? 'AM' : 'PM';
+    final h = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    return '$h:$minute $ampm';
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.grey.shade500),
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 3,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+            ),
+          ),
+          Expanded(
+            flex: 4,
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

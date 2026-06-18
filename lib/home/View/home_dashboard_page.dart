@@ -13,6 +13,7 @@ class HomeDashboardPage extends StatelessWidget {
   const HomeDashboardPage({
     super.key,
     required this.phoneNumber,
+    this.myUpcomingHikes = const [],
     required this.plannedHike,
     required this.trails,
     required this.isLoadingTrails,
@@ -21,6 +22,7 @@ class HomeDashboardPage extends StatelessWidget {
     required this.onStartHike,
     required this.onFindHike,
     required this.onOpenTrailDetail,
+    this.onTapUpcomingHike,
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
@@ -34,6 +36,7 @@ class HomeDashboardPage extends StatelessWidget {
   });
 
   final String phoneNumber;
+  final List<UpcomingHike> myUpcomingHikes;
   final PlannedHike? plannedHike;
   final List<Trail> trails;
   final bool isLoadingTrails;
@@ -42,6 +45,7 @@ class HomeDashboardPage extends StatelessWidget {
   final Future<void> Function(Trail? trail) onStartHike;
   final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
+  final void Function(UpcomingHike)? onTapUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
@@ -71,17 +75,22 @@ class HomeDashboardPage extends StatelessWidget {
               child: active == null
                   ? planned == null
                         ? _TrailDiscoveryDashboard(
+                            myUpcomingHikes: myUpcomingHikes,
+                            phoneNumber: phoneNumber,
                             trails: trails,
                             isLoadingTrails: isLoadingTrails,
                             onStartHike: () =>
                                 unawaited(_startHikeFromDashboard(context)),
                             onFindHike: onFindHike,
                             onOpenTrailDetail: onOpenTrailDetail,
+                            onTapUpcomingHike: onTapUpcomingHike,
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
                             onDeleteTrailByAdmin: onDeleteTrailByAdmin,
                           )
                         : _PreparationDashboard(
+                            myUpcomingHikes: myUpcomingHikes,
+                            phoneNumber: phoneNumber,
                             plannedHike: planned,
                             trails: trails,
                             isLoadingTrails: isLoadingTrails,
@@ -90,6 +99,7 @@ class HomeDashboardPage extends StatelessWidget {
                             ),
                             onFindHike: onFindHike,
                             onOpenTrailDetail: onOpenTrailDetail,
+                            onTapUpcomingHike: onTapUpcomingHike,
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
                             onDeleteTrailByAdmin: onDeleteTrailByAdmin,
@@ -244,23 +254,29 @@ class HomeDashboardPage extends StatelessWidget {
 
 class _PreparationDashboard extends StatelessWidget {
   const _PreparationDashboard({
+    this.myUpcomingHikes = const [],
+    required this.phoneNumber,
     required this.plannedHike,
     required this.trails,
     required this.isLoadingTrails,
     required this.onStartHike,
     required this.onFindHike,
     required this.onOpenTrailDetail,
+    this.onTapUpcomingHike,
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
   });
 
+  final List<UpcomingHike> myUpcomingHikes;
+  final String phoneNumber;
   final PlannedHike plannedHike;
   final List<Trail> trails;
   final bool isLoadingTrails;
   final VoidCallback onStartHike;
   final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
+  final void Function(UpcomingHike)? onTapUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
@@ -291,6 +307,14 @@ class _PreparationDashboard extends StatelessWidget {
           ),
           onOpenTrail: () => onOpenTrailDetail(plannedHike.trail),
         ),
+        if (myUpcomingHikes.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _MyUpcomingHikesSection(
+            hikes: myUpcomingHikes,
+            phoneNumber: phoneNumber,
+            onTapHike: onTapUpcomingHike,
+          ),
+        ],
         const SizedBox(height: 22),
         _BestMatchesSection(
           trails: trails,
@@ -341,21 +365,27 @@ class _PreparationDashboard extends StatelessWidget {
 
 class _TrailDiscoveryDashboard extends StatelessWidget {
   const _TrailDiscoveryDashboard({
+    this.myUpcomingHikes = const [],
+    required this.phoneNumber,
     required this.trails,
     required this.isLoadingTrails,
     required this.onStartHike,
     required this.onFindHike,
     required this.onOpenTrailDetail,
+    this.onTapUpcomingHike,
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
   });
 
+  final List<UpcomingHike> myUpcomingHikes;
+  final String phoneNumber;
   final List<Trail> trails;
   final bool isLoadingTrails;
   final VoidCallback onStartHike;
   final VoidCallback onFindHike;
   final ValueChanged<Trail> onOpenTrailDetail;
+  final void Function(UpcomingHike)? onTapUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
@@ -374,6 +404,14 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
           onStartHike: onStartHike,
           onFindHike: onFindHike,
         ),
+        if (myUpcomingHikes.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _MyUpcomingHikesSection(
+            hikes: myUpcomingHikes,
+            phoneNumber: phoneNumber,
+            onTapHike: onTapUpcomingHike,
+          ),
+        ],
         const SizedBox(height: 22),
         _BestMatchesSection(
           trails: trails,
@@ -2338,6 +2376,125 @@ class _StatusRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MyUpcomingHikesSection extends StatelessWidget {
+  const _MyUpcomingHikesSection({
+    required this.hikes,
+    required this.phoneNumber,
+    this.onTapHike,
+  });
+
+  final List<UpcomingHike> hikes;
+  final String phoneNumber;
+  final void Function(UpcomingHike)? onTapHike;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionTitle(label: 'My Upcoming Hike${hikes.length == 1 ? '' : 's'}'),
+        const SizedBox(height: 8),
+        for (final hike in hikes) ...[
+          GestureDetector(
+            onTap: onTapHike != null ? () => onTapHike!(hike) : null,
+            child: _InsetGroup(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const _Glyph(icon: Icons.event_available_rounded),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                hike.trailName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      color: _HomeColors.textFor(context),
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0,
+                                    ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                hike.startPointName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelSmall
+                                    ?.copyWith(
+                                      color:
+                                          _HomeColors.secondaryTextFor(context),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: (hike.creatorPhone == phoneNumber)
+                                ? _HomeColors.green.withValues(alpha: 0.12)
+                                : _HomeColors.secondaryTextFor(context)
+                                    .withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            hike.creatorPhone == phoneNumber
+                                ? 'Creator'
+                                : 'Joined',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _InfoLine(
+                      label: 'Departure',
+                      value:
+                          '${_formatDate(hike.departureTime)} | ${_formatTime(hike.departureTime)}',
+                    ),
+                    _InfoLine(
+                      label: 'Expected Return',
+                      value: _formatTime(hike.expectedReturnTime),
+                    ),
+                    _InfoLine(
+                      label: 'Trail',
+                      value:
+                          '${hike.distanceKm.toStringAsFixed(1)} km · ${hike.difficulty} · ${hike.area}, ${hike.state}',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+      ],
     );
   }
 }
