@@ -13,5 +13,6 @@ Future<void> main() async {
     MapboxOptions.setAccessToken(token);
   }
   final firebaseBootstrapResult = await FirebaseBootstrap.initialize();
+
   runApp(HikerCircleApp(firebaseBootstrapResult: firebaseBootstrapResult));
 }

@@ -1719,12 +1719,16 @@ class _MapBasedCheckpointPicker extends StatefulWidget {
     required this.onPinsChanged,
     required this.onConfirm,
     this.singlePinMode = false,
+    this.editableIndex,
+    this.routeCoordinates,
   });
 
   final List<mapbox.Point> pins;
   final ValueChanged<List<mapbox.Point>> onPinsChanged;
   final ValueChanged<List<mapbox.Point>> onConfirm;
   final bool singlePinMode;
+  final int? editableIndex;
+  final List<mapbox.Position>? routeCoordinates;
 
   @override
   State<_MapBasedCheckpointPicker> createState() =>
@@ -1736,6 +1740,7 @@ class _MapBasedCheckpointPickerState
   mapbox.MapboxMap? _mapboxMap;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PointAnnotationManager? _pointManager;
+  mapbox.PolylineAnnotationManager? _polylineManager;
   bool _styleLoaded = false;
   late List<mapbox.Point> _pins;
 
@@ -1790,6 +1795,8 @@ class _MapBasedCheckpointPickerState
     await mapboxMap.setBounds(
       mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 21),
     );
+    _polylineManager = await mapboxMap.annotations
+        .createPolylineAnnotationManager();
     _circleManager =
         await mapboxMap.annotations.createCircleAnnotationManager();
     _pointManager =
@@ -1801,6 +1808,7 @@ class _MapBasedCheckpointPickerState
       ),
       mapbox.MapAnimationOptions(duration: 0),
     );
+    await _syncRoute();
     await _syncPins();
   }
 
@@ -1808,7 +1816,25 @@ class _MapBasedCheckpointPickerState
     await enableTerrain3D(_mapboxMap!);
     schedulePitch(_mapboxMap!);
     _styleLoaded = true;
+    await _syncRoute();
     await _syncPins();
+  }
+
+  Future<void> _syncRoute() async {
+    if (!_styleLoaded) return;
+    await _polylineManager?.deleteAll();
+    final coords = widget.routeCoordinates;
+    if (coords != null && coords.length >= 2) {
+      await _polylineManager?.create(
+        mapbox.PolylineAnnotationOptions(
+          geometry: mapbox.LineString(coordinates: coords),
+          lineColor: const Color(0xFF4ADE80).toARGB32(),
+          lineOpacity: 0.4,
+          lineWidth: 4,
+          lineJoin: mapbox.LineJoin.ROUND,
+        ),
+      );
+    }
   }
 
   Future<void> _syncPins() async {
@@ -1818,15 +1844,38 @@ class _MapBasedCheckpointPickerState
 
     for (var i = 0; i < _pins.length; i++) {
       final point = _pins[i];
-      await _circleManager?.create(
-        mapbox.CircleAnnotationOptions(
-          geometry: point,
-          circleRadius: 10,
-          circleColor: const Color(0xFF34A853).toARGB32(),
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2.5,
-        ),
-      );
+      final isEditable = widget.editableIndex != null && i == widget.editableIndex;
+      if (isEditable) {
+        await _circleManager?.create(
+          mapbox.CircleAnnotationOptions(
+            geometry: point,
+            circleRadius: 14,
+            circleColor: const Color(0xFFF59E0B).toARGB32(),
+            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+            circleStrokeWidth: 3.5,
+          ),
+        );
+        await _circleManager?.create(
+          mapbox.CircleAnnotationOptions(
+            geometry: point,
+            circleRadius: 22,
+            circleColor: const Color(0xFFF59E0B).toARGB32(),
+            circleStrokeColor: const Color(0xFFF59E0B).toARGB32(),
+            circleStrokeWidth: 0,
+            circleOpacity: 0.3,
+          ),
+        );
+      } else {
+        await _circleManager?.create(
+          mapbox.CircleAnnotationOptions(
+            geometry: point,
+            circleRadius: 10,
+            circleColor: const Color(0xFF34A853).toARGB32(),
+            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+            circleStrokeWidth: 2.5,
+          ),
+        );
+      }
       await _pointManager?.create(
         mapbox.PointAnnotationOptions(
           geometry: point,
@@ -1851,6 +1900,15 @@ class _MapBasedCheckpointPickerState
   }
 
   void _onMapTap(mapbox.Point coordinate) {
+    final editable = widget.editableIndex;
+    if (editable != null) {
+      setState(() {
+        _pins[editable] = coordinate;
+      });
+      widget.onPinsChanged(List.of(_pins));
+      unawaited(_syncPins());
+      return;
+    }
     final tappedIndex = _tappedPinIndex(coordinate);
     if (tappedIndex != null) {
       setState(() => _pins.removeAt(tappedIndex));
@@ -1893,6 +1951,7 @@ class _MapBasedCheckpointPickerState
 
   @override
   Widget build(BuildContext context) {
+    final editable = widget.editableIndex;
     return SafeArea(
       child: Column(
         children: [
@@ -1944,9 +2003,11 @@ class _MapBasedCheckpointPickerState
                           horizontal: 12, vertical: 6,
                         ),
                         child: Text(
-                          widget.singlePinMode
-                              ? 'Tap the map to select a trail location'
-                              : 'Tap to add pins · tap pin to remove',
+                          editable != null
+                              ? 'Tap the map to set a new location for checkpoint ${editable + 1}'
+                              : widget.singlePinMode
+                                  ? 'Tap the map to select a trail location'
+                                  : 'Tap to add pins \u00b7 tap pin to remove',
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
@@ -1970,9 +2031,11 @@ class _MapBasedCheckpointPickerState
                           : () => widget.onConfirm(List.of(_pins)),
                       icon: const Icon(Icons.check_rounded),
                       label: Text(
-                        widget.singlePinMode
-                            ? 'Use this location'
-                            : 'Confirm ${_pins.length} pin${_pins.length == 1 ? '' : 's'}',
+                        editable != null
+                            ? 'Save Location'
+                            : widget.singlePinMode
+                                ? 'Use this location'
+                                : 'Confirm ${_pins.length} pin${_pins.length == 1 ? '' : 's'}',
                       ),
                     ),
                   ),
@@ -2213,12 +2276,14 @@ class _CheckpointDraftFields extends StatelessWidget {
     required this.index,
     required this.canRemove,
     this.onRemove,
+    this.onEdit,
   });
 
   final _CheckpointDraft draft;
   final int index;
   final bool canRemove;
   final VoidCallback? onRemove;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -2253,6 +2318,14 @@ class _CheckpointDraftFields extends StatelessWidget {
                 decoration: const InputDecoration(labelText: 'Name'),
               ),
             ),
+            if (onEdit != null) ...[
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Edit location on map',
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_location_alt_rounded),
+              ),
+            ],
             if (canRemove && onRemove != null) ...[
               const SizedBox(width: 6),
               IconButton(
@@ -2926,6 +2999,38 @@ class _EditTrailPageState extends State<_EditTrailPage> {
     super.dispose();
   }
 
+  List<mapbox.Point> _decodePolyline(String encoded) {
+    final points = <mapbox.Point>[];
+    var index = 0;
+    var latitude = 0;
+    var longitude = 0;
+    while (index < encoded.length) {
+      var shift = 0;
+      var result = 0;
+      int byte;
+      do {
+        byte = encoded.codeUnitAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20 && index < encoded.length);
+      latitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+      shift = 0;
+      result = 0;
+      do {
+        byte = encoded.codeUnitAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20 && index < encoded.length);
+      longitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+      points.add(
+        mapbox.Point(
+          coordinates: mapbox.Position(longitude / 100000, latitude / 100000),
+        ),
+      );
+    }
+    return points;
+  }
+
   Future<void> _addCheckpointsOnMap() async {
     final models = _buildCheckpointModels();
     final existingPins = models.map(
@@ -2978,6 +3083,56 @@ class _EditTrailPageState extends State<_EditTrailPage> {
     setState(() {
       _checkpoints.removeAt(index).dispose();
     });
+  }
+
+  Future<void> _editCheckpointOnMap(int index) async {
+    final models = _buildCheckpointModels();
+    if (index < 0 || index >= models.length) return;
+
+    final existingPins = models.map(
+      (c) => mapbox.Point(
+        coordinates: mapbox.Position(c.longitude, c.latitude),
+      ),
+    ).toList();
+
+    List<mapbox.Position>? routeCoords;
+    if (_refreshedRoute != null && _refreshedRoute!.encodedPolyline.isNotEmpty) {
+      final decoded = _decodePolyline(_refreshedRoute!.encodedPolyline);
+      routeCoords = decoded
+          .map((p) => mapbox.Position(p.coordinates[0]!, p.coordinates[1]!))
+          .toList();
+    }
+
+    final confirmed = await Navigator.of(context).push<List<mapbox.Point>>(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: _TrailColors.backgroundFor(context),
+          appBar: AppBar(
+            leading: IconButton(
+              icon: const Icon(Icons.close_rounded),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          body: _MapBasedCheckpointPicker(
+            singlePinMode: false,
+            pins: existingPins,
+            editableIndex: index,
+            routeCoordinates: routeCoords,
+            onPinsChanged: (_) {},
+            onConfirm: (pins) => Navigator.of(context).pop(pins),
+          ),
+        ),
+      ),
+    );
+    if (confirmed == null || !mounted || index >= confirmed.length) return;
+    final updated = confirmed[index];
+    setState(() {
+      _checkpoints[index].latitudeController.text =
+          updated.coordinates[1]!.toDouble().toStringAsFixed(6);
+      _checkpoints[index].longitudeController.text =
+          updated.coordinates[0]!.toDouble().toStringAsFixed(6);
+    });
+    unawaited(_refreshMetrics());
   }
 
   Future<void> _refreshMetrics() async {
@@ -3237,6 +3392,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                     index: index,
                     canRemove: _checkpoints.length > 2,
                     onRemove: () => _removeCheckpoint(index),
+                    onEdit: () => unawaited(_editCheckpointOnMap(index)),
                   ),
                 );
               },

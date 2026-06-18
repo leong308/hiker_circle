@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../home/Model/hike_session_models.dart';
 import '../../sos/Model/sos_models.dart';
@@ -309,6 +311,7 @@ class HikerCircleFirebaseRepository {
     required String trailName,
     required String creatorPhone,
     required String phoneNumber,
+    String userName = '',
   }) async {
     if (!_firebaseBootstrapResult.isAvailable) return false;
     try {
@@ -334,6 +337,15 @@ class HikerCircleFirebaseRepository {
         'creatorPhone': creatorPhone,
         'createdAtLocal': DateTime.now().toUtc().toIso8601String(),
       }, SetOptions(merge: true));
+
+      final displayName = userName.isNotEmpty ? userName : phoneNumber;
+      await sendSystemMessage(
+        chatId: sessionId,
+        text: '$displayName joined the hike',
+        senderPhone: phoneNumber,
+        senderName: displayName,
+        participantPhones: allPhones,
+      );
       return true;
     } catch (_) {
       return false;
@@ -393,6 +405,55 @@ class HikerCircleFirebaseRepository {
     required String senderPhone,
     required String senderName,
     required String text,
+    required String localId,
+    required DateTime sentAt,
+  }) async {
+    await _localDatabase.insertPendingMessage(
+      localId: localId,
+      chatId: chatId,
+      senderPhone: senderPhone,
+      senderName: senderName,
+      text: text,
+    );
+
+    try {
+      final msgDoc = _groupChatMessagesFor(chatId).doc();
+      final msg = ChatMessage(
+        id: msgDoc.id,
+        chatId: chatId,
+        senderPhone: senderPhone,
+        senderName: senderName,
+        text: text,
+        sentAt: sentAt,
+        seenBy: [senderPhone],
+      );
+
+      await msgDoc.set(msg.toFirestore());
+      await _groupChats.doc(chatId).update({
+        'lastMessage': text,
+        'lastMessageAtLocal': sentAt.toUtc().toIso8601String(),
+      });
+
+      try {
+        await msgDoc.get(const GetOptions(source: Source.server));
+      } catch (_) {
+        return;
+      }
+
+      await _localDatabase.updateLocalMessageStatus(
+        localId,
+        'sent',
+        firestoreDocId: msgDoc.id,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> sendSystemMessage({
+    required String chatId,
+    required String text,
+    required String senderPhone,
+    required String senderName,
+    required List<String> participantPhones,
   }) async {
     if (!_firebaseBootstrapResult.isAvailable) return;
     try {
@@ -404,13 +465,160 @@ class HikerCircleFirebaseRepository {
         senderName: senderName,
         text: text,
         sentAt: DateTime.now(),
+        isSystemMessage: true,
+        seenBy: participantPhones,
       );
       await msgDoc.set(msg.toFirestore());
-      await _groupChats.doc(chatId).update({
-        'lastMessage': text,
-        'lastMessageAtLocal': DateTime.now().toUtc().toIso8601String(),
+    } catch (_) {}
+  }
+
+  Future<void> markMessageAsSeen({
+    required String chatId,
+    required String messageId,
+    required String phoneNumber,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    try {
+      await _groupChatMessagesFor(chatId).doc(messageId).update({
+        'seenBy': FieldValue.arrayUnion([phoneNumber]),
       });
     } catch (_) {}
+  }
+
+  Future<List<ChatMessage>> loadPendingMessagesForChat(String chatId) async {
+    final rows = await _localDatabase.loadPendingMessagesForChat(chatId);
+    return rows
+        .map(
+          (row) => ChatMessage.fromPending(
+            localId: row['local_id'] as String,
+            chatId: row['chat_id'] as String,
+            senderPhone: row['sender_phone'] as String,
+            senderName: row['sender_name'] as String? ?? '',
+            text: row['text'] as String,
+            createdAt:
+                DateTime.tryParse(row['created_at'] as String? ?? '') ??
+                DateTime.now(),
+          ),
+        )
+        .toList();
+  }
+
+  Future<List<ChatMessage>> loadAllLocalMessagesForChat(String chatId) async {
+    final rows = await _localDatabase.loadAllLocalMessagesForChat(chatId);
+    return rows.map((row) {
+      final statusStr = row['send_status'] as String? ?? 'pending';
+      final status = switch (statusStr) {
+        'sent' => SendStatus.sent,
+        _ => SendStatus.sending,
+      };
+      return ChatMessage.fromPending(
+        localId: row['local_id'] as String,
+        chatId: row['chat_id'] as String,
+        senderPhone: row['sender_phone'] as String,
+        senderName: row['sender_name'] as String? ?? '',
+        text: row['text'] as String,
+        createdAt:
+            DateTime.tryParse(row['created_at'] as String? ?? '') ??
+            DateTime.now(),
+        sendStatus: status,
+      );
+    }).toList();
+  }
+
+  Future<void> cacheChatMessages(
+    List<ChatMessage> messages,
+    String chatId,
+  ) async {
+    final rows = messages
+        .map(
+          (m) => {
+            'local_id': m.id,
+            'chat_id': chatId,
+            'sender_phone': m.senderPhone,
+            'sender_name': m.senderName,
+            'text': m.text,
+            'created_at': m.sentAt.toUtc().toIso8601String(),
+            'send_status': m.sendStatus == SendStatus.sent ? 'sent' : 'pending',
+            'retry_count': 0,
+            'firestore_doc_id': '',
+          },
+        )
+        .toList();
+    await _localDatabase.upsertChatMessages(rows);
+  }
+
+  Future<void> flushPendingMessages() async {
+    final rows = await _localDatabase.loadPendingMessages();
+    for (final row in rows) {
+      final localId = row['local_id'] as String;
+      final chatId = row['chat_id'] as String;
+      final senderPhone = row['sender_phone'] as String;
+      final senderName = row['sender_name'] as String? ?? '';
+      final text = row['text'] as String;
+      final retryCount = row['retry_count'] as int? ?? 0;
+      final firestoreDocId = row['firestore_doc_id'] as String? ?? '';
+
+      if (retryCount > 5) {
+        await _localDatabase.deletePendingMessage(localId);
+        continue;
+      }
+
+      try {
+        if (firestoreDocId.isNotEmpty) {
+          final existing = await _groupChatMessagesFor(
+            chatId,
+          ).doc(firestoreDocId).get(const GetOptions(source: Source.server));
+          if (existing.exists) {
+            await _localDatabase.markPendingMessageSent(localId);
+            continue;
+          }
+        }
+
+        final msgDoc = firestoreDocId.isNotEmpty
+            ? _groupChatMessagesFor(chatId).doc(firestoreDocId)
+            : _groupChatMessagesFor(chatId).doc();
+        final msg = ChatMessage(
+          id: msgDoc.id,
+          chatId: chatId,
+          senderPhone: senderPhone,
+          senderName: senderName,
+          text: text,
+          sentAt: DateTime.now(),
+          seenBy: [senderPhone],
+        );
+        await msgDoc.set(msg.toFirestore());
+        await _groupChats.doc(chatId).update({
+          'lastMessage': text,
+          'lastMessageAtLocal': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        try {
+          await msgDoc.get(const GetOptions(source: Source.server));
+        } catch (_) {
+          await _localDatabase.incrementPendingMessageRetry(localId);
+          continue;
+        }
+
+        await _localDatabase.updateLocalMessageStatus(
+          localId,
+          'sent',
+          firestoreDocId: msgDoc.id,
+        );
+      } catch (_) {
+        await _localDatabase.incrementPendingMessageRetry(localId);
+      }
+    }
+  }
+
+  Future<UpcomingHike?> loadUpcomingHikeForChat(String hikeSessionId) async {
+    if (!_firebaseBootstrapResult.isAvailable) return null;
+    try {
+      final doc = await _upcomingHikes.doc(hikeSessionId).get();
+      if (!doc.exists) return null;
+      return UpcomingHike.fromFirestore(doc.id, doc.data()!);
+    } catch (_) {
+      return null;
+    }
   }
 
   Stream<List<ChatMessage>> groupChatMessagesStream(String chatId) {
@@ -419,7 +627,7 @@ class HikerCircleFirebaseRepository {
         .snapshots()
         .map(
           (snapshot) => snapshot.docs
-              .map((doc) => ChatMessage.fromFirestore(doc.data()))
+              .map((doc) => ChatMessage.fromFirestore(doc.id, doc.data()))
               .toList(),
         );
   }

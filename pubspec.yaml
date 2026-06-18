@@ -48,6 +48,8 @@ dependencies:
   animated_toggle_switch: ^0.8.7
   fl_chart: ^1.2.0
   flutter_dotenv: ^5.2.1
+  connectivity_plus: ^6.1.2
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

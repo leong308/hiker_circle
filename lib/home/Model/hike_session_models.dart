@@ -1275,6 +1275,9 @@ class ChatMessage {
     required this.senderName,
     required this.text,
     required this.sentAt,
+    this.isSystemMessage = false,
+    this.seenBy = const [],
+    this.sendStatus = SendStatus.sent,
   });
 
   final String id;
@@ -1283,6 +1286,9 @@ class ChatMessage {
   final String senderName;
   final String text;
   final DateTime sentAt;
+  final bool isSystemMessage;
+  final List<String> seenBy;
+  final SendStatus sendStatus;
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -1291,17 +1297,47 @@ class ChatMessage {
       'senderName': senderName,
       'text': text,
       'sentAtLocal': sentAt.toUtc().toIso8601String(),
+      'isSystemMessage': isSystemMessage,
+      'seenBy': seenBy,
     };
   }
 
-  factory ChatMessage.fromFirestore(Map<String, dynamic> data) {
+  factory ChatMessage.fromFirestore(String id, Map<String, dynamic> data) {
+    final rawSeenBy = data['seenBy'];
+    final seenBy = rawSeenBy is List
+        ? rawSeenBy.whereType<String>().toList()
+        : <String>[];
     return ChatMessage(
-      id: _modelStringFrom(data['id']),
+      id: id,
       chatId: _modelStringFrom(data['chatId']),
       senderPhone: _modelStringFrom(data['senderPhone']),
       senderName: _modelStringFrom(data['senderName']),
       text: _modelStringFrom(data['text']),
       sentAt: _modelDateFromValue(data['sentAtLocal']) ?? DateTime.now(),
+      isSystemMessage: data['isSystemMessage'] == true,
+      seenBy: seenBy,
+    );
+  }
+
+  factory ChatMessage.fromPending({
+    required String localId,
+    required String chatId,
+    required String senderPhone,
+    required String senderName,
+    required String text,
+    required DateTime createdAt,
+    SendStatus sendStatus = SendStatus.sending,
+  }) {
+    return ChatMessage(
+      id: localId,
+      chatId: chatId,
+      senderPhone: senderPhone,
+      senderName: senderName,
+      text: text,
+      sentAt: createdAt,
+      sendStatus: sendStatus,
     );
   }
 }
+
+enum SendStatus { sending, sent, failed }

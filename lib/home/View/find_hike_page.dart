@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
@@ -46,13 +47,18 @@ class _FindHikePageState extends State<FindHikePage> {
       if (!mounted) return;
       final userLat = location?.latitude;
       final userLng = location?.longitude;
+
+      final now = DateTime.now();
+      final active = hikes.where((h) =>
+          !now.isAfter(h.departureTime.add(const Duration(minutes: 10)))).toList();
+
       List<UpcomingHike> sorted;
       if (userLat != null && userLng != null) {
-        sorted = List.of(hikes)
+        sorted = List.of(active)
           ..sort((a, b) => a.distanceFrom(userLat, userLng)
               .compareTo(b.distanceFrom(userLat, userLng)));
       } else {
-        sorted = hikes;
+        sorted = active;
       }
       setState(() {
         _hikes = sorted;
@@ -168,6 +174,7 @@ class _FindHikePageState extends State<FindHikePage> {
           userLat: _userLat,
           userLng: _userLng,
           phoneNumber: widget.session.phoneNumber,
+          userName: widget.session.username,
           repository: widget.repository,
           onJoin: () => unawaited(_load()),
         ),
@@ -182,6 +189,7 @@ class _HikeCard extends StatefulWidget {
     this.userLat,
     this.userLng,
     required this.phoneNumber,
+    this.userName = '',
     required this.repository,
     required this.onJoin,
   });
@@ -190,6 +198,7 @@ class _HikeCard extends StatefulWidget {
   final double? userLat;
   final double? userLng;
   final String phoneNumber;
+  final String userName;
   final HikerCircleFirebaseRepository repository;
   final VoidCallback onJoin;
 
@@ -206,6 +215,19 @@ class _HikeCardState extends State<_HikeCard> {
         widget.hike.participantPhones.contains(phone);
   }
 
+  Future<void> _openDirections() async {
+    final lat = widget.hike.latitude;
+    final lng = widget.hike.longitude;
+    final googleUrl = 'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng';
+    final wazeUrl = 'https://waze.com/ul?ll=$lat,$lng&navigate=yes';
+    final uri = Uri.parse(googleUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      await launchUrl(Uri.parse(wazeUrl), mode: LaunchMode.externalApplication);
+    }
+  }
+
   Future<void> _join() async {
     if (_joining) return;
     setState(() => _joining = true);
@@ -215,6 +237,7 @@ class _HikeCardState extends State<_HikeCard> {
       trailName: widget.hike.trailName,
       creatorPhone: widget.hike.creatorPhone,
       phoneNumber: widget.phoneNumber,
+      userName: widget.userName,
     );
     if (!mounted) return;
     setState(() => _joining = false);
@@ -302,6 +325,23 @@ class _HikeCardState extends State<_HikeCard> {
                 _chip(context, Icons.schedule_rounded, '$dateText $timeText'),
                 const SizedBox(width: 8),
                 _chip(context, Icons.straighten_rounded, distText),
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'Open in Maps',
+                  child: SizedBox(
+                    width: 30,
+                    height: 30,
+                    child: CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: _openDirections,
+                      child: Icon(
+                        Icons.navigation_rounded,
+                        size: 16,
+                        color: _AppColors.green,
+                      ),
+                    ),
+                  ),
+                ),
                 const SizedBox(width: 8),
                 _chip(context, Icons.people_rounded, '${widget.hike.participantCount}'),
               ],

@@ -1456,9 +1456,15 @@ class _HikerHomePageState extends State<HikerHomePage>
   Widget pageFor(HikerBottomNavDestination tab) {
     switch (tab.label) {
       case 'Home':
+        final now = DateTime.now();
+        final activePlannedHike = (plannedHike != null &&
+                !now.isAfter(
+                    plannedHike!.plannedStartTime.add(const Duration(minutes: 10))))
+            ? plannedHike
+            : null;
         return HomeDashboardPage(
           phoneNumber: widget.session.phoneNumber,
-          plannedHike: plannedHike,
+          plannedHike: activePlannedHike,
           trails: trails,
           isLoadingTrails: isLoadingLiveData,
           activeHike: activeHike,

@@ -149,7 +149,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 6,
+      version: 8,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -167,6 +167,7 @@ class LocalSessionDatabase {
         await _createDeviceBindingTables(database);
         await _createEmergencyContactsTable(database);
         await _createRouteCacheTable(database);
+        await _createPendingMessagesTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -210,6 +211,17 @@ class LocalSessionDatabase {
         }
         if (oldVersion < 6) {
           await _createRouteCacheTable(database);
+        }
+        if (oldVersion < 7) {
+          await _createPendingMessagesTable(database);
+        }
+        if (oldVersion < 8) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'pending_messages',
+            columnName: 'firestore_doc_id',
+            definition: "TEXT DEFAULT ''",
+          );
         }
       },
     );
@@ -399,6 +411,147 @@ class LocalSessionDatabase {
         UNIQUE(owner_phone_number, contact_phone_number)
       )
     ''');
+  }
+
+  Future<void> _createPendingMessagesTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS pending_messages (
+        local_id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        sender_phone TEXT NOT NULL,
+        sender_name TEXT NOT NULL DEFAULT '',
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        send_status TEXT NOT NULL DEFAULT 'pending',
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        firestore_doc_id TEXT DEFAULT ''
+      )
+    ''');
+  }
+
+  Future<void> insertPendingMessage({
+    required String localId,
+    required String chatId,
+    required String senderPhone,
+    required String senderName,
+    required String text,
+    String firestoreDocId = '',
+    String sendStatus = 'pending',
+  }) async {
+    final database = await _openDatabase();
+    await database.insert('pending_messages', {
+      'local_id': localId,
+      'chat_id': chatId,
+      'sender_phone': senderPhone,
+      'sender_name': senderName,
+      'text': text,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'send_status': sendStatus,
+      'retry_count': 0,
+      'firestore_doc_id': firestoreDocId,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> upsertChatMessages(List<Map<String, dynamic>> rows) async {
+    final database = await _openDatabase();
+    final batch = database.batch();
+    for (final row in rows) {
+      batch.insert('pending_messages', row, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<void> updatePendingFirestoreDocId({
+    required String localId,
+    required String firestoreDocId,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'pending_messages',
+      {'firestore_doc_id': firestoreDocId},
+      where: 'local_id = ?',
+      whereArgs: [localId],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> loadPendingMessages() async {
+    final database = await _openDatabase();
+    return database.query(
+      'pending_messages',
+      where: 'send_status IN (?, ?)',
+      whereArgs: ['pending', 'unsent'],
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> loadAllLocalMessagesForChat(String chatId) async {
+    final database = await _openDatabase();
+    return database.query(
+      'pending_messages',
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  Future<void> updateLocalMessageStatus(String localId, String status, {String? firestoreDocId}) async {
+    final database = await _openDatabase();
+    final values = <String, dynamic>{'send_status': status};
+    if (firestoreDocId != null) {
+      values['firestore_doc_id'] = firestoreDocId;
+    }
+    await database.update(
+      'pending_messages',
+      values,
+      where: 'local_id = ?',
+      whereArgs: [localId],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> loadPendingMessagesForChat(String chatId) async {
+    final database = await _openDatabase();
+    return database.query(
+      'pending_messages',
+      where: 'chat_id = ? AND send_status = ?',
+      whereArgs: [chatId, 'pending'],
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  Future<void> markPendingMessageSent(String localId) async {
+    final database = await _openDatabase();
+    await database.update(
+      'pending_messages',
+      {'send_status': 'sent'},
+      where: 'local_id = ?',
+      whereArgs: [localId],
+    );
+  }
+
+  Future<void> incrementPendingMessageRetry(String localId) async {
+    final database = await _openDatabase();
+    await database.rawUpdate(
+      'UPDATE pending_messages SET retry_count = retry_count + 1 WHERE local_id = ?',
+      [localId],
+    );
+  }
+
+  Future<void> deletePendingMessage(String localId) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'pending_messages',
+      where: 'local_id = ?',
+      whereArgs: [localId],
+    );
+  }
+
+  Future<int> countPendingMessages() async {
+    final database = await _openDatabase();
+    final result = await database.rawQuery(
+      'SELECT COUNT(*) AS total FROM pending_messages WHERE send_status = ?',
+      ['pending'],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
   }
 
   Future<void> _createRouteCacheTable(Database database) async {
