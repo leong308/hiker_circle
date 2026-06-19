@@ -645,9 +645,20 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   void updateTabIndex() {
     if (tabController.index != selectedTabIndex) {
-      setState(() {
-        selectedTabIndex = tabController.index;
-      });
+      if (activeHike != null) {
+        final visible = _visibleTabs();
+        final currentLabel = tabs[tabController.index].label;
+        final visibleIndex = visible.indexWhere((t) => t.label == currentLabel);
+        if (visibleIndex >= 0) {
+          setState(() {
+            selectedTabIndex = visibleIndex;
+          });
+        }
+      } else {
+        setState(() {
+          selectedTabIndex = tabController.index;
+        });
+      }
     }
   }
 
@@ -660,7 +671,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       final actualIndex = tabs.indexWhere((t) => t.label == label);
       if (actualIndex < 0) return;
       setState(() {
-        selectedTabIndex = actualIndex;
+        selectedTabIndex = index;
       });
       tabController.animateTo(actualIndex);
       return;
@@ -786,6 +797,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         session: widget.session,
         draft: hikeToStart.draft,
         teamHikeSessionId: hikeToStart.teamHikeSessionId,
+        teamHikeSession: hikeToStart.teamHikeSession,
       );
       liveHike = liveHike.copyWith(
         teamHikeSession: hikeToStart.teamHikeSession,
@@ -1192,7 +1204,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (result == 'viewTrail' && trail != null) {
       openTrailDetail(trail);
     } else if (result == 'start' && trail != null) {
-      final hikeType = hike.hikeType == 'team' ? HikeType.team : HikeType.solo;
+      final hikeType = hike.participantCount > 1 ? HikeType.team : HikeType.solo;
       final draft = HikeSessionDraft.fromTrail(trail).copyWith(
         hikeType: hikeType,
         departureTime: hike.departureTime,
@@ -1204,7 +1216,7 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   Future<void> _startUpcomingHikeNow(HikeSessionDraft draft) async {
     var hikeToStart = ActiveHikeSession.fromDraft(draft);
-    if (draft.hikeType == HikeType.team) {
+    if (draft.hikeType == HikeType.team && draft.teamBuddies.isNotEmpty) {
       final teamSession = await _coordinateTeamHikeStart(draft);
       if (teamSession == null || !mounted) return;
       hikeToStart = hikeToStart.copyWith(
@@ -1229,6 +1241,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         session: widget.session,
         draft: draft,
         teamHikeSessionId: hikeToStart.teamHikeSessionId,
+        teamHikeSession: hikeToStart.teamHikeSession,
       );
       final batteryLevel = await _readBatteryLevel(fallback: 100);
       liveHike = liveHike.copyWith(batteryLevel: batteryLevel, batteryStartedLevel: batteryLevel);
@@ -1345,6 +1358,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         session: widget.session,
         draft: preparedHike.draft,
         teamHikeSessionId: launchedSession.id,
+        teamHikeSession: launchedSession,
       );
       final batteryLevel = await _readBatteryLevel(
         fallback: liveHike.batteryLevel,
@@ -2191,6 +2205,9 @@ class _HikerHomePageState extends State<HikerHomePage>
         onPointerDown: (_) => _recordFallStillnessCancelTap(),
         child: TabBarView(
           controller: tabController,
+          physics: activeHike != null
+              ? const NeverScrollableScrollPhysics()
+              : null,
           children: tabs.map(pageFor).toList(),
         ),
       ),
@@ -3475,18 +3492,23 @@ class ActiveHikeHomePage extends StatelessWidget {
     final bottomInset = MediaQuery.of(context).padding.bottom;
     return Column(
       children: [
-        _ActiveHikeTopBar(
-          trailName: activeHike.draft.trail.name,
-          elapsedLabel: elapsedLabel,
-          returnLabel: returnLabel,
-          batteryLevel: activeHike.batteryLevel,
-          gpsPointCount: activeHike.routePointCount,
+        SafeArea(
+          top: true,
+          bottom: false,
+          child: _ActiveHikeTopBar(
+            trailName: activeHike.draft.trail.name,
+            elapsedLabel: elapsedLabel,
+            returnLabel: returnLabel,
+            batteryLevel: activeHike.batteryLevel,
+            gpsPointCount: activeHike.routePointCount,
+          ),
         ),
         Expanded(
           child: ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
             child: ActiveTrackingMapView(
               activeHike: activeHike,
+              teamHikeSession: activeHike.teamHikeSession,
               showLegend: false,
             ),
           ),
@@ -3530,6 +3552,15 @@ class _ActiveHikeTopBar extends StatelessWidget {
           children: [
             Row(
               children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF34A853),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     trailName,
@@ -3821,7 +3852,7 @@ class _UpcomingHikeDetailSheet extends StatelessWidget {
                     onPressed: () => Navigator.of(context).pop('start'),
                     icon: const Icon(Icons.play_arrow_rounded, size: 18),
                     label: Text(
-                      hike.hikeType == 'team'
+                      hike.participantCount > 1
                           ? 'Start Now (Team)'
                           : 'Start Now (Solo)',
                     ),

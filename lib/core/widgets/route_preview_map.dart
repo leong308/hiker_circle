@@ -310,19 +310,21 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     await enableTerrain3D(_mapboxMap!);
     schedulePitch(_mapboxMap!);
     _styleLoaded = true;
-    unawaited(_fitRoute());
+    _routeRendered = false;
+    await _renderRouteIfReady();
   }
 
   Future<void> _onMapLoaded() async {
     if (!_styleLoaded) {
       _styleLoaded = true;
-      unawaited(_fitRoute());
+      _routeRendered = false;
+      await _renderRouteIfReady();
     }
   }
 
   Future<void> _renderRouteIfReady() async {
     final map = _mapboxMap;
-    if (map == null || _routeRendered || _visibleMapPoints.length < 2) {
+    if (map == null || _routeRendered || !_styleLoaded || _visibleMapPoints.length < 2) {
       return;
     }
 
@@ -436,37 +438,45 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     if (b.minLon > b.maxLon || b.minLat > b.maxLat) return;
 
     try {
-      final camera = await map.cameraForCoordinateBounds(
-        mapbox.CoordinateBounds(
-          southwest: mapbox.Point(
-            coordinates: mapbox.Position(b.minLon, b.minLat),
+      try {
+        final camera = await map.cameraForCoordinateBounds(
+          mapbox.CoordinateBounds(
+            southwest: mapbox.Point(
+              coordinates: mapbox.Position(b.minLon, b.minLat),
+            ),
+            northeast: mapbox.Point(
+              coordinates: mapbox.Position(b.maxLon, b.maxLat),
+            ),
+            infiniteBounds: false,
           ),
-          northeast: mapbox.Point(
-            coordinates: mapbox.Position(b.maxLon, b.maxLat),
-          ),
-          infiniteBounds: false,
-        ),
-        mapbox.MbxEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
-        null,
-        null,
-        null,
-        null,
-      );
-      if (camera != null &&
-          camera.zoom != null &&
-          camera.zoom!.isFinite &&
-          camera.center != null &&
-          camera.center!.coordinates[0] != null) {
-        await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 300));
-      } else {
-        throw Exception('Invalid camera from cameraForCoordinateBounds');
+          mapbox.MbxEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
+          null,
+          null,
+          null,
+          null,
+        );
+        if (camera != null &&
+            camera.zoom != null &&
+            camera.zoom!.isFinite &&
+            camera.center != null &&
+            camera.center!.coordinates[0] != null) {
+          await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 300));
+        } else {
+          throw Exception('Invalid camera from cameraForCoordinateBounds');
+        }
+      } catch (_) {
+        final center = centerFor(_visibleMapPoints);
+        await map.flyTo(
+          mapbox.CameraOptions(center: center, zoom: 13.5),
+          mapbox.MapAnimationOptions(duration: 300),
+        );
       }
     } catch (_) {
-      final center = centerFor(_visibleMapPoints);
-      await map.flyTo(
-        mapbox.CameraOptions(center: center, zoom: 13.5),
-        mapbox.MapAnimationOptions(duration: 300),
-      );
+      // Map channel may not be ready yet (e.g. 64x64 invalid-size fallback).
+      // Retry once the viewport stabilises.
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) unawaited(_fitRoute());
+      });
     }
     await _syncScaleFromCamera();
   }
