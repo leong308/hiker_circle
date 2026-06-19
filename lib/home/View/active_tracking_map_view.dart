@@ -535,10 +535,13 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   }
 
   Future<void> _zoomBy(double amount) async {
-    await _mapboxMap?.flyTo(
-      mapbox.CameraOptions(zoom: _currentZoom + amount),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+    if (_mapboxMap == null) return;
+    try {
+      await _mapboxMap!.flyTo(
+        mapbox.CameraOptions(zoom: _currentZoom + amount),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {}
     await _syncScaleFromCamera();
   }
 

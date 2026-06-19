@@ -35,7 +35,7 @@ void schedulePitch(MapboxMap map, {double pitch = 50}) {
     map.flyTo(
       CameraOptions(pitch: pitch),
       MapAnimationOptions(duration: 800),
-    );
+    ).catchError((_) {});
   });
 }
 

@@ -1,11 +1,10 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:fl_chart/fl_chart.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../admin/View/admin_page.dart';
 import '../../app/Data/firebase_bootstrap.dart';
@@ -15,6 +14,8 @@ import '../../circle/View/circle_page.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
+import '../../core/services/hiking_route_service.dart';
+import '../../core/widgets/route_preview_map.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import 'find_hike_page.dart';
@@ -61,7 +62,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   static const Duration _activeHikeLiveStatusThrottle = Duration(seconds: 20);
 
   late final TabController tabController;
-  late final List<Trail> trails;
+  List<Trail> trails = [];
   late final HikerCircleFirebaseRepository hikerCircleRepository;
   late final EmergencyContactsRepository emergencyContactsRepository;
   late final SosAlertRepository sosAlertRepository;
@@ -70,6 +71,8 @@ class _HikerHomePageState extends State<HikerHomePage>
       const SosDeviceAlertService();
   final ActiveHikeLiveStatusService _activeHikeLiveStatusService =
       const ActiveHikeLiveStatusService();
+  StreamSubscription<List<UpcomingHike>>? _myUpcomingHikesSubscription;
+  StreamSubscription<List<Trail>>? _trailsSubscription;
   PlannedHike? plannedHike;
   List<UpcomingHike> myUpcomingHikes = const [];
   bool isLoadingLiveData = false;
@@ -112,7 +115,6 @@ class _HikerHomePageState extends State<HikerHomePage>
           icon: Icons.admin_panel_settings_rounded,
         ),
     ];
-    trails = <Trail>[];
     hikerCircleRepository = HikerCircleFirebaseRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
@@ -375,29 +377,33 @@ class _HikerHomePageState extends State<HikerHomePage>
           // Cleanup should not block normal trail loading.
         }
       }
-      final liveTrails = await hikerCircleRepository.loadTrails();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        trails
-          ..clear()
-          ..addAll(liveTrails);
-      });
-      final upcomingHikes = await hikerCircleRepository.loadMyUpcomingHikes(
-        widget.session.phoneNumber,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        myUpcomingHikes = upcomingHikes;
+      _trailsSubscription?.cancel();
+      _trailsSubscription = hikerCircleRepository
+          .watchTrails()
+          .listen(
+            (liveTrails) {
+              if (!mounted) return;
+              setState(() {
+                trails = liveTrails;
+                isLoadingLiveData = false;
+              });
+            },
+            onError: (_) {
+              if (mounted) setState(() => isLoadingLiveData = false);
+            },
+          );
+      _myUpcomingHikesSubscription?.cancel();
+      _myUpcomingHikesSubscription = hikerCircleRepository
+          .watchMyUpcomingHikes(widget.session.phoneNumber)
+          .listen((hikes) {
+        if (!mounted) return;
+        setState(() => myUpcomingHikes = hikes);
       });
       await hikerCircleRepository.ensureAchievementSeeds();
     } finally {
       if (mounted) {
-        setState(() {
-          isLoadingLiveData = false;
+        Future.delayed(const Duration(seconds: 15), () {
+          if (mounted) setState(() => isLoadingLiveData = false);
         });
       }
     }
@@ -705,15 +711,6 @@ class _HikerHomePageState extends State<HikerHomePage>
         ),
       ),
     );
-
-    if (!mounted) return;
-    final upcomingHikes = await hikerCircleRepository.loadMyUpcomingHikes(
-      widget.session.phoneNumber,
-    );
-    if (!mounted) return;
-    setState(() {
-      myUpcomingHikes = upcomingHikes;
-    });
 
     if (startedHike == null) return;
     var hikeToStart = startedHike;
@@ -1267,14 +1264,6 @@ class _HikerHomePageState extends State<HikerHomePage>
         ),
       ),
     );
-    if (!mounted) return;
-    final upcomingHikes = await hikerCircleRepository.loadMyUpcomingHikes(
-      widget.session.phoneNumber,
-    );
-    if (!mounted) return;
-    setState(() {
-      myUpcomingHikes = upcomingHikes;
-    });
   }
 
   void openJoinTeamHike() {
@@ -1561,6 +1550,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         builder: (context) {
           return _HikeSummaryReportPage(
             report: report,
+            activeHike: hikeToEnd,
             onShareReportText: () => _sosDeviceAlertService.shareText(
               subject: 'Hike summary: ${report.trailName}',
               text: report.shareText,
@@ -2173,6 +2163,8 @@ class _HikerHomePageState extends State<HikerHomePage>
     WidgetsBinding.instance.removeObserver(this);
     fallStillnessMonitor.removeListener(_handleFallStillnessMonitorChanged);
     fallStillnessMonitor.dispose();
+    _myUpcomingHikesSubscription?.cancel();
+    _trailsSubscription?.cancel();
     _stopActiveHikeLocationRecording();
     teamHikeSessionSubscription?.cancel();
     teamHikeWatchSessionId = null;
@@ -2847,11 +2839,13 @@ class _PulsingHikeIconState extends State<_PulsingHikeIcon>
 class _HikeSummaryReportPage extends StatefulWidget {
   const _HikeSummaryReportPage({
     required this.report,
+    required this.activeHike,
     required this.onShareToCommunity,
     required this.onShareReportText,
   });
 
   final HikeSummaryReport report;
+  final ActiveHikeSession activeHike;
   final Future<void> Function() onShareToCommunity;
   final Future<void> Function() onShareReportText;
 
@@ -2861,6 +2855,45 @@ class _HikeSummaryReportPage extends StatefulWidget {
 
 class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
   bool _isSharingCommunity = false;
+
+  List<mapbox.Point> get _dummyPins {
+    final cp = widget.activeHike.trail.checkpoints;
+    if (cp.isEmpty) {
+      return [
+        mapbox.Point(coordinates: mapbox.Position(103.842, 1.281)),
+        mapbox.Point(coordinates: mapbox.Position(103.849, 1.277)),
+      ];
+    }
+    final base = cp.first;
+    return [
+      mapbox.Point(coordinates: mapbox.Position(base.longitude + 0.004, base.latitude + 0.002)),
+      mapbox.Point(coordinates: mapbox.Position(base.longitude + 0.001, base.latitude - 0.003)),
+      mapbox.Point(coordinates: mapbox.Position(base.longitude - 0.003, base.latitude + 0.001)),
+    ];
+  }
+
+  List<mapbox.Point> get _dummyCheckIns {
+    final cp = widget.activeHike.trail.checkpoints;
+    if (cp.length < 2) return [];
+    final sorted = [...cp]..sort((a, b) => a.order.compareTo(b.order));
+    // Generate check-in points at 25%, 50%, 75% along the trail
+    final first = sorted.first;
+    final last = sorted.last;
+    return [
+      mapbox.Point(coordinates: mapbox.Position(
+        first.longitude + (last.longitude - first.longitude) * 0.25 + 0.002,
+        first.latitude + (last.latitude - first.latitude) * 0.25 + 0.001,
+      )),
+      mapbox.Point(coordinates: mapbox.Position(
+        first.longitude + (last.longitude - first.longitude) * 0.5 - 0.001,
+        first.latitude + (last.latitude - first.latitude) * 0.5 - 0.002,
+      )),
+      mapbox.Point(coordinates: mapbox.Position(
+        first.longitude + (last.longitude - first.longitude) * 0.75 + 0.003,
+        first.latitude + (last.latitude - first.latitude) * 0.75 - 0.001,
+      )),
+    ];
+  }
 
   Future<void> _shareToCommunity() async {
     if (_isSharingCommunity) {
@@ -2934,9 +2967,31 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
     }
   }
 
+  HikingRouteResult? get _summaryRouteResult {
+    final encoded = widget.activeHike.trail.routeEncodedPolyline;
+    if (encoded == null || encoded.isEmpty) return null;
+    return HikingRouteResult(
+      distanceMeters: (widget.report.distanceKm * 1000).round(),
+      duration: widget.report.duration,
+      encodedPolyline: encoded,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final report = widget.report;
+    final started = report.startedAt;
+    final quarterTime = started.add(report.duration ~/ 4);
+    final halfTime = started.add(report.duration ~/ 2);
+    final threeQuarterTime = started.add(report.duration * 3 ~/ 4);
+
+    String formatTime(DateTime dt) {
+      final now = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      return '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    }
 
     return Scaffold(
       backgroundColor: _SummaryColors.backgroundFor(context),
@@ -3003,6 +3058,20 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 14),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      height: 220,
+                      child: RoutePreviewMap(
+                        trail: widget.activeHike.trail,
+                        route: _summaryRouteResult,
+                        pinnedPoints: _dummyPins,
+                        checkInPoints: _dummyCheckIns,
+                        animateRoute: false,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   _SummaryCard(
@@ -3073,7 +3142,92 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  _SummaryChartCard(report: report),
+                  Text(
+                    'CHECK-INS',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: _SummaryColors.secondaryTextFor(context),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _SummaryCard(
+                    child: Column(
+                      children: [
+                        _DummyCheckInRow(
+                          icon: Icons.location_on_rounded,
+                          label: 'Trailhead',
+                          subtitle: 'Started the hike',
+                          time: formatTime(started),
+                        ),
+                        Divider(
+                          height: 1,
+                          color: _SummaryColors.separatorFor(context),
+                        ),
+                        _DummyCheckInRow(
+                          icon: Icons.location_on_rounded,
+                          label: 'Midpoint Lookout',
+                          subtitle: 'Took a break, great views!',
+                          time: formatTime(quarterTime),
+                        ),
+                        Divider(
+                          height: 1,
+                          color: _SummaryColors.separatorFor(context),
+                        ),
+                        _DummyCheckInRow(
+                          icon: Icons.location_on_rounded,
+                          label: 'Summit Ridge',
+                          subtitle: 'Halfway checkpoint',
+                          time: formatTime(halfTime),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'PINS',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: _SummaryColors.secondaryTextFor(context),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _SummaryCard(
+                    child: Column(
+                      children: [
+                        _DummyCheckInRow(
+                          icon: Icons.push_pin_rounded,
+                          label: 'Water Stream',
+                          subtitle: 'Good water source',
+                          time: formatTime(quarterTime),
+                          iconColor: const Color(0xFFE11D48),
+                        ),
+                        Divider(
+                          height: 1,
+                          color: _SummaryColors.separatorFor(context),
+                        ),
+                        _DummyCheckInRow(
+                          icon: Icons.push_pin_rounded,
+                          label: 'Rocky Viewpoint',
+                          subtitle: 'Nice photo spot',
+                          time: formatTime(halfTime),
+                          iconColor: const Color(0xFFE11D48),
+                        ),
+                        Divider(
+                          height: 1,
+                          color: _SummaryColors.separatorFor(context),
+                        ),
+                        _DummyCheckInRow(
+                          icon: Icons.push_pin_rounded,
+                          label: 'Campsite Area',
+                          subtitle: 'Flat ground, sheltered',
+                          time: formatTime(threeQuarterTime),
+                          iconColor: const Color(0xFFE11D48),
+                        ),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 18),
                   Text(
                     'INSIGHTS',
@@ -3155,123 +3309,66 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-class _SummaryChartCard extends StatelessWidget {
-  const _SummaryChartCard({required this.report});
+class _DummyCheckInRow extends StatelessWidget {
+  const _DummyCheckInRow({
+    required this.icon,
+    required this.label,
+    required this.time,
+    this.subtitle,
+    this.iconColor,
+  });
 
-  final HikeSummaryReport report;
+  final IconData icon;
+  final String label;
+  final String time;
+  final String? subtitle;
+  final Color? iconColor;
 
   @override
   Widget build(BuildContext context) {
-    final batteryUsed = math.max(
-      0,
-      report.batteryStartPercent - report.batteryEndPercent,
-    );
-    final chartValues = [
-      _ChartValue('KM', report.distanceKm),
-      _ChartValue('HRS', math.max(report.duration.inMinutes / 60, 0.1)),
-      _ChartValue('GPS', math.max(report.routePointCount / 10, 0.1)),
-      _ChartValue('BAT', math.max(batteryUsed.toDouble(), 0.1)),
-    ];
-    final maxY =
-        chartValues.map((value) => value.amount).reduce(math.max) * 1.25;
-
-    return _SummaryCard(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Hike Stats Chart',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _SummaryColors.textFor(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 180,
-              child: BarChart(
-                BarChartData(
-                  maxY: maxY,
-                  minY: 0,
-                  barTouchData: BarTouchData(enabled: false),
-                  gridData: const FlGridData(show: false),
-                  borderData: FlBorderData(show: false),
-                  titlesData: FlTitlesData(
-                    leftTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) {
-                          final index = value.toInt();
-                          if (index < 0 || index >= chartValues.length) {
-                            return const SizedBox.shrink();
-                          }
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              chartValues[index].label,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: _SummaryColors.secondaryTextFor(
-                                      context,
-                                    ),
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0,
-                                  ),
-                            ),
-                          );
-                        },
-                      ),
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Icon(icon, color: iconColor ?? const Color(0xFF0A84FF), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _SummaryColors.textFor(context),
+                    letterSpacing: 0,
+                  ),
+                ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _SummaryColors.secondaryTextFor(context),
+                      fontSize: 11,
+                      letterSpacing: 0,
                     ),
                   ),
-                  barGroups: [
-                    for (var index = 0; index < chartValues.length; index++)
-                      BarChartGroupData(
-                        x: index,
-                        barRods: [
-                          BarChartRodData(
-                            toY: chartValues[index].amount,
-                            width: 18,
-                            borderRadius: BorderRadius.circular(4),
-                            color: _SummaryColors.green,
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
-              ),
+                ],
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              'GPS is scaled as points / 10. Battery is percentage used.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _SummaryColors.secondaryTextFor(context),
-                letterSpacing: 0,
-              ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            time,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _SummaryColors.secondaryTextFor(context),
+              letterSpacing: 0,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
-}
-
-class _ChartValue {
-  const _ChartValue(this.label, this.amount);
-
-  final String label;
-  final double amount;
 }
 
 abstract final class _SummaryColors {
@@ -3464,7 +3561,7 @@ String _profileHandleForPhone(String phoneNumber) {
   return 'hiker${digits.substring(digits.length - 4)}';
 }
 
-class ActiveHikeHomePage extends StatelessWidget {
+class ActiveHikeHomePage extends StatefulWidget {
   const ActiveHikeHomePage({
     super.key,
     required this.activeHike,
@@ -3483,9 +3580,31 @@ class ActiveHikeHomePage extends StatelessWidget {
   final VoidCallback onCancelFallStillnessSos;
 
   @override
+  State<ActiveHikeHomePage> createState() => _ActiveHikeHomePageState();
+}
+
+class _ActiveHikeHomePageState extends State<ActiveHikeHomePage> {
+  DateTime _now = DateTime.now();
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final expectedReturn = activeHike.draft.expectedReturnTime;
-    final elapsed = DateTime.now().difference(activeHike.startedAt);
+    final expectedReturn = widget.activeHike.draft.expectedReturnTime;
+    final elapsed = _now.difference(widget.activeHike.startedAt);
     final elapsedLabel = '${elapsed.inHours}h ${elapsed.inMinutes.remainder(60)}m';
     final returnLabel =
         '${expectedReturn.hour.toString().padLeft(2, '0')}:${expectedReturn.minute.toString().padLeft(2, '0')}';
@@ -3496,27 +3615,27 @@ class ActiveHikeHomePage extends StatelessWidget {
           top: true,
           bottom: false,
           child: _ActiveHikeTopBar(
-            trailName: activeHike.draft.trail.name,
+            trailName: widget.activeHike.draft.trail.name,
             elapsedLabel: elapsedLabel,
             returnLabel: returnLabel,
-            batteryLevel: activeHike.batteryLevel,
-            gpsPointCount: activeHike.routePointCount,
+            batteryLevel: widget.activeHike.batteryLevel,
+            gpsPointCount: widget.activeHike.routePointCount,
           ),
         ),
         Expanded(
           child: ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
             child: ActiveTrackingMapView(
-              activeHike: activeHike,
-              teamHikeSession: activeHike.teamHikeSession,
+              activeHike: widget.activeHike,
+              teamHikeSession: widget.activeHike.teamHikeSession,
               showLegend: false,
             ),
           ),
         ),
         _ActiveHikeBottomBar(
-          onEndHike: onEndHike,
-          onCheckIn: onCheckIn,
-          onPinLocation: onPinLocation,
+          onEndHike: widget.onEndHike,
+          onCheckIn: widget.onCheckIn,
+          onPinLocation: widget.onPinLocation,
           bottomInset: bottomInset,
         ),
       ],

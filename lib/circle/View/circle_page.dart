@@ -33,6 +33,8 @@ class CirclePage extends StatefulWidget {
 
 class _CirclePageState extends State<CirclePage> {
   int _selectedSection = 0;
+
+  bool get _isAdmin => widget.session.isAdmin;
   final Set<String> _buddyHandles = {'@ainatrails', '@jasonridge'};
   late final List<_CommunityPerson> _people = _seedPeople();
   late List<_CommunityPost> _posts = const [];
@@ -245,7 +247,9 @@ class _CirclePageState extends State<CirclePage> {
   void _openSettings() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => const _CircleSettingsPage(),
+        builder: (context) => _CircleSettingsPage(
+          session: widget.session,
+        ),
       ),
     );
   }
@@ -329,8 +333,13 @@ class _CirclePageState extends State<CirclePage> {
                     child: Row(
                       children: [
                         _buildSegment(0, 'Community', Icons.people_rounded),
-                        _buildSegment(1, 'Teams', Icons.groups_2_rounded),
-                        _buildSegment(2, 'Chats', Icons.chat_rounded),
+                        if (_isAdmin)
+                          _buildSegment(1, 'Teams', Icons.groups_2_rounded),
+                        _buildSegment(
+                          _isAdmin ? 2 : 1,
+                          'Chats',
+                          Icons.chat_rounded,
+                        ),
                       ],
                     ),
                   ),
@@ -351,7 +360,7 @@ class _CirclePageState extends State<CirclePage> {
                               onShareHike: _shareActiveHikeUpdate,
                               onOpenPost: _openPostDetail,
                             )
-                          : _selectedSection == 1
+                          : _isAdmin && _selectedSection == 1
                               ? _TeamsSection(
                                   buddies: buddies,
                                   teams: _teams,
@@ -2093,7 +2102,9 @@ class _TeamDetailPage extends StatelessWidget {
 }
 
 class _CircleSettingsPage extends StatefulWidget {
-  const _CircleSettingsPage();
+  const _CircleSettingsPage({required this.session});
+
+  final AppSession session;
 
   @override
   State<_CircleSettingsPage> createState() => _CircleSettingsPageState();
@@ -2168,41 +2179,43 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                       });
                     },
                   ),
-                  const SizedBox(height: 22),
-                  _SectionTitle(label: 'Moderation'),
-                  const SizedBox(height: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: _CircleColors.surfaceFor(context),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: _CircleColors.separatorFor(context)
-                            .withValues(alpha: 0.5),
+                  if (widget.session.isAdmin) ...[
+                    const SizedBox(height: 22),
+                    _SectionTitle(label: 'Moderation'),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: _CircleColors.surfaceFor(context),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _CircleColors.separatorFor(context)
+                              .withValues(alpha: 0.5),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _CircleColors.shadowFor(context),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: _CircleColors.shadowFor(context),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      child: const Column(
+                        children: [
+                          _TeamFlowRow(
+                            icon: Icons.visibility_off_rounded,
+                            title: 'Muted topics',
+                            subtitle: 'Hide route spam, gear sales, or events.',
+                          ),
+                          _HorizontalSeparator(),
+                          _TeamFlowRow(
+                            icon: Icons.block_rounded,
+                            title: 'Blocked hikers',
+                            subtitle: 'Manage people who cannot message you.',
+                          ),
+                        ],
+                      ),
                     ),
-                    child: const Column(
-                      children: [
-                        _TeamFlowRow(
-                          icon: Icons.visibility_off_rounded,
-                          title: 'Muted topics',
-                          subtitle: 'Hide route spam, gear sales, or events.',
-                        ),
-                        _HorizontalSeparator(),
-                        _TeamFlowRow(
-                          icon: Icons.block_rounded,
-                          title: 'Blocked hikers',
-                          subtitle: 'Manage people who cannot message you.',
-                        ),
-                      ],
-                    ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -2927,10 +2940,12 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
     if (map == null || points.length < 2) {
       return;
     }
-    await map.flyTo(
-      mapbox.CameraOptions(center: centerFor(points), zoom: _currentZoom),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+    try {
+      await map.flyTo(
+        mapbox.CameraOptions(center: centerFor(points), zoom: _currentZoom),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {}
     await _syncScaleFromCamera();
   }
 

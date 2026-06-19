@@ -19,6 +19,7 @@ import '../Model/me_models.dart';
 import '../ModelView/me_view_model.dart';
 import 'location_sharing_page.dart';
 import 'profile_details_page.dart';
+import 'qr_scanner_page.dart';
 
 class MePage extends StatefulWidget {
   const MePage({
@@ -169,19 +170,6 @@ class _MePageState extends State<MePage> {
             ),
           ),
         );
-      case 'Safety preferences':
-        null;
-      // _openSettingsDetail(
-      //   title: 'Safety Preferences',
-      //   subtitle: 'Trail safety defaults',
-      //   icon: Icons.rule_rounded,
-      //   rows: const [
-      //     ('Check-in reminder', 'Every 30 minutes during active hikes'),
-      //     ('Overdue escalation', 'Warn buddies after 15 minutes'),
-      //     ('Trail visibility', 'Buddies only while hiking'),
-      //     ('Fallback alert', 'Use local SOS if network is unavailable'),
-      //   ],
-      // );
       case 'Notifications':
         null;
       // _openSettingsDetail(
@@ -363,11 +351,23 @@ class _MePageState extends State<MePage> {
   }
 
   void _openQrScanner() {
+    final ownHandle = _ownHandleForPhone(widget.phoneNumber);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => const _QrScannerPlaceholderPage(),
+        builder: (context) => QrScannerPage(
+          ownPhoneNumber: widget.phoneNumber,
+          ownHandle: ownHandle,
+        ),
       ),
     );
+  }
+
+  String _ownHandleForPhone(String phoneNumber) {
+    final digits = phoneNumber.replaceAll(RegExp('[^0-9]'), '');
+    if (digits.length <= 4) {
+      return 'hiker$digits';
+    }
+    return 'hiker${digits.substring(digits.length - 4)}';
   }
 }
 
@@ -687,85 +687,6 @@ class _ProfileQrPage extends StatelessWidget {
       }
       _copyProfileLink(context, link);
     }
-  }
-}
-
-class _QrScannerPlaceholderPage extends StatelessWidget {
-  const _QrScannerPlaceholderPage();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _MeColors.backgroundFor(context),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    title: 'Scan QR',
-                    subtitle: 'Profile scanner placeholder',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
-                    child: _InsetGroup(
-                      child: Padding(
-                        padding: const EdgeInsets.all(18),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 220,
-                              height: 220,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: _MeColors.green,
-                                  width: 2,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.qr_code_scanner_rounded,
-                                color: _MeColors.green,
-                                size: 72,
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            Text(
-                              'Camera scanner UI',
-                              style: Theme.of(context).textTheme.titleLarge
-                                  ?.copyWith(
-                                    color: _MeColors.textFor(context),
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'UI-only for now. A camera plugin can read HikerCircle profile links and route them into the app later.',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: _MeColors.secondaryTextFor(context),
-                                    letterSpacing: 0,
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }
 
