@@ -60,11 +60,6 @@ class MeRepository {
             title: 'Location sharing',
             subtitle: 'Choose who can see your live trail status',
           ),
-          MeActionItem(
-            icon: Icons.rule_rounded,
-            title: 'Safety preferences',
-            subtitle: 'Check-in defaults, fallback alerts, and trail privacy',
-          ),
         ],
       ),
       MeSection(

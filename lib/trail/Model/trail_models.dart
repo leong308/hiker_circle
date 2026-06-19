@@ -181,7 +181,7 @@ class Trail {
     required this.isVerifiedTrail,
     required this.routeFilePath,
     required this.coverColorValue,
-    this.coverImageUrl = '',
+    this.coverImageUrls = const <String>[],
     required this.checkpoints,
     required this.weather,
     required this.hazards,
@@ -205,7 +205,9 @@ class Trail {
   final bool isVerifiedTrail;
   final String routeFilePath;
   final int coverColorValue;
-  final String coverImageUrl;
+  final List<String> coverImageUrls;
+
+  String get coverImageUrl => coverImageUrls.isNotEmpty ? coverImageUrls.first : '';
   final List<TrailCheckpoint> checkpoints;
   final TrailWeather weather;
   final List<TrailHazard> hazards;
@@ -230,7 +232,7 @@ class Trail {
       'isVerifiedTrail': isVerifiedTrail,
       'routeFilePath': routeFilePath,
       'coverColorValue': coverColorValue,
-      'coverImageUrl': coverImageUrl.trim(),
+      'coverImageUrl': coverImageUrls,
       'checkpoints': checkpoints
           .map((checkpoint) => checkpoint.toFirestore())
           .toList(),
@@ -277,7 +279,7 @@ class Trail {
     bool? isVerifiedTrail,
     String? routeFilePath,
     int? coverColorValue,
-    String? coverImageUrl,
+    List<String>? coverImageUrls,
     List<TrailCheckpoint>? checkpoints,
     TrailWeather? weather,
     List<TrailHazard>? hazards,
@@ -302,7 +304,7 @@ class Trail {
       isVerifiedTrail: isVerifiedTrail ?? this.isVerifiedTrail,
       routeFilePath: routeFilePath ?? this.routeFilePath,
       coverColorValue: coverColorValue ?? this.coverColorValue,
-      coverImageUrl: coverImageUrl ?? this.coverImageUrl,
+      coverImageUrls: coverImageUrls ?? this.coverImageUrls,
       checkpoints: checkpoints ?? this.checkpoints,
       weather: weather ?? this.weather,
       hazards: hazards ?? this.hazards,

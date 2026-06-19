@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -189,6 +190,25 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  Stream<List<Trail>> watchTrails() {
+    if (!_firebaseBootstrapResult.isAvailable) return Stream.value(const []);
+    return _trails
+        .orderBy('isVerifiedTrail', descending: true)
+        .orderBy('ratingAverage', descending: true)
+        .snapshots()
+        .asyncMap((snapshot) async {
+      var trails = snapshot.docs
+          .map((doc) => _trailFromFirestore({
+                'trailId': doc.id,
+                ...doc.data(),
+              }))
+          .whereType<Trail>()
+          .toList();
+      await _enrichWithLiveWeather(trails, snapshot.docs);
+      return trails;
+    });
+  }
+
   Future<void> _enrichWithLiveWeather(
     List<Trail> liveTrails,
     List<DocumentSnapshot<Map<String, dynamic>>> docs,
@@ -326,6 +346,58 @@ class HikerCircleFirebaseRepository {
     } catch (_) {
       return const [];
     }
+  }
+
+  Stream<List<UpcomingHike>> watchMyUpcomingHikes(String phoneNumber) {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return Stream.value(const []);
+    }
+    return Stream<List<UpcomingHike>>.multi((controller) {
+      List<UpcomingHike>? created;
+      List<UpcomingHike>? joined;
+
+      void emit() {
+        if (created == null || joined == null) return;
+        final seen = <String>{};
+        final results = <UpcomingHike>[];
+        for (final hike in [...created!, ...joined!]) {
+          if (seen.add(hike.id)) results.add(hike);
+        }
+        results.sort((a, b) => b.departureTime.compareTo(a.departureTime));
+        controller.add(results);
+      }
+
+      final sub1 = _upcomingHikes
+          .where('creatorPhone', isEqualTo: phoneNumber)
+          .snapshots()
+          .listen(
+            (s) {
+              created = s.docs
+                  .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
+                  .toList();
+              emit();
+            },
+            onError: controller.addError,
+          );
+
+      final sub2 = _upcomingHikes
+          .where('participantPhones', arrayContains: phoneNumber)
+          .snapshots()
+          .listen(
+            (s) {
+              joined = s.docs
+                  .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
+                  .toList();
+              emit();
+            },
+            onError: controller.addError,
+          );
+
+      controller.onCancel = () {
+        sub1.cancel();
+        sub2.cancel();
+      };
+    });
   }
 
   Future<bool> joinUpcomingHike({
@@ -2394,7 +2466,7 @@ class HikerCircleFirebaseRepository {
       isVerifiedTrail: data['isVerifiedTrail'] == true,
       routeFilePath: _stringFrom(data['routeFilePath']),
       coverColorValue: _intFrom(data['coverColorValue']),
-      coverImageUrl: _stringFrom(data['coverImageUrl']),
+      coverImageUrls: _coverImageUrlsFrom(data),
       checkpoints: checkpoints,
       weather: weatherFromFirestore(data['weather']),
       hazards: _listOfMaps(
@@ -2499,6 +2571,15 @@ class HikerCircleFirebaseRepository {
 
   String _stringFrom(Object? value) {
     return value is String ? value : '';
+  }
+
+  List<String> _coverImageUrlsFrom(Map<String, dynamic> data) {
+    final raw = data['coverImageUrl'];
+    if (raw is List) {
+      return raw.whereType<String>().where((s) => s.trim().isNotEmpty).toList();
+    }
+    final legacy = _stringFrom(raw);
+    return legacy.isNotEmpty ? [legacy] : const [];
   }
 
   String? _nullableStringFrom(Object? value) {

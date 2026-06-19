@@ -596,9 +596,10 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     const SizedBox(height: 16),
                     for (final hazard in trail.hazards) ...[
                       _HazardCard(hazard: hazard),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                     ],
-                  ],
+                  ] else
+                    const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: _reportHazard,
                     icon: const Icon(Icons.report_rounded),
@@ -1390,7 +1391,10 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         isVerifiedTrail: true,
         routeFilePath: _defaultRouteFilePath,
         coverColorValue: 0xFF34A853,
-        coverImageUrl: _coverImageController.text.trim(),
+        coverImageUrls: [
+          if (_coverImageController.text.trim().isNotEmpty)
+            _coverImageController.text.trim(),
+        ],
         checkpoints: checkpoints,
         weather: TrailWeather(
           summary: 'Weather unavailable',
@@ -1812,13 +1816,15 @@ class _MapBasedCheckpointPickerState
         await mapboxMap.annotations.createCircleAnnotationManager();
     _pointManager =
         await mapboxMap.annotations.createPointAnnotationManager();
-    await _mapboxMap?.flyTo(
-      mapbox.CameraOptions(
-        center: _initialCenter(),
-        zoom: _pins.isNotEmpty ? 15 : 6,
-      ),
-      mapbox.MapAnimationOptions(duration: 0),
-    );
+    try {
+      await _mapboxMap?.flyTo(
+        mapbox.CameraOptions(
+          center: _initialCenter(),
+          zoom: _pins.isNotEmpty ? 15 : 6,
+        ),
+        mapbox.MapAnimationOptions(duration: 0),
+      );
+    } catch (_) {}
     await _syncRoute();
     await _syncPins();
   }
@@ -2148,10 +2154,12 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
         await mapboxMap.annotations.createCircleAnnotationManager();
     _pointManager =
         await mapboxMap.annotations.createPointAnnotationManager();
-    await mapboxMap.flyTo(
-      mapbox.CameraOptions(center: _selected, zoom: 15),
-      mapbox.MapAnimationOptions(duration: 0),
-    );
+    try {
+      await mapboxMap.flyTo(
+        mapbox.CameraOptions(center: _selected, zoom: 15),
+        mapbox.MapAnimationOptions(duration: 0),
+      );
+    } catch (_) {}
     await _syncSelectedPin();
   }
 
@@ -3207,7 +3215,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
         isVerifiedTrail: widget.trail.isVerifiedTrail,
         routeFilePath: widget.trail.routeFilePath,
         coverColorValue: widget.trail.coverColorValue,
-        coverImageUrl: widget.trail.coverImageUrl,
+        coverImageUrls: widget.trail.coverImageUrls,
         checkpoints: models,
         weather: widget.trail.weather,
         hazards: widget.trail.hazards,
@@ -3674,29 +3682,7 @@ class _TrailCover extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            FutureBuilder<String>(
-              future: TrailCoverImageService.instance.imageUrlForTrail(trail),
-              builder: (context, snapshot) {
-                final imageUrl = snapshot.data ?? '';
-                if (imageUrl.isEmpty) {
-                  return _TrailCoverFallback(trail: trail);
-                }
-
-                return Image.network(
-                  imageUrl,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) {
-                      return child;
-                    }
-                    return _TrailCoverFallback(trail: trail);
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    return _TrailCoverFallback(trail: trail);
-                  },
-                );
-              },
-            ),
+            _TrailCoverImages(trail: trail),
             const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -3735,6 +3721,110 @@ class _TrailCover extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TrailCoverImages extends StatefulWidget {
+  const _TrailCoverImages({required this.trail});
+
+  final Trail trail;
+
+  @override
+  State<_TrailCoverImages> createState() => _TrailCoverImagesState();
+}
+
+class _TrailCoverImagesState extends State<_TrailCoverImages> {
+  final _pageController = PageController();
+  String? _autoImageUrl;
+  bool _loadingAuto = false;
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController.addListener(() {
+      final page = _pageController.page?.round() ?? 0;
+      if (page != _currentPage) setState(() => _currentPage = page);
+    });
+    _fetchAutoImageIfNeeded();
+  }
+
+  @override
+  void didUpdateWidget(_TrailCoverImages old) {
+    super.didUpdateWidget(old);
+    if (old.trail != widget.trail) _fetchAutoImageIfNeeded();
+  }
+
+  void _fetchAutoImageIfNeeded() {
+    if (widget.trail.coverImageUrls.isNotEmpty) return;
+    if (_loadingAuto || _autoImageUrl != null) return;
+    _loadingAuto = true;
+    TrailCoverImageService.instance.imageUrlForTrail(widget.trail).then((url) {
+      if (!mounted) return;
+      setState(() {
+        _autoImageUrl = url;
+        _loadingAuto = false;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  List<String> get _allUrls {
+    final urls = widget.trail.coverImageUrls;
+    if (urls.isNotEmpty) return urls;
+    if (_autoImageUrl != null && _autoImageUrl!.isNotEmpty) return [_autoImageUrl!];
+    return const [];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final urls = _allUrls;
+    if (urls.isEmpty) {
+      return _TrailCoverFallback(trail: widget.trail);
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        PageView(
+          controller: _pageController,
+          children: urls
+              .map((url) => Image.network(
+                    url,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        _TrailCoverFallback(trail: widget.trail),
+                  ))
+              .toList(),
+        ),
+        if (urls.length > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 32,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                urls.length,
+                (i) => Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  width: _currentPage == i ? 8 : 6,
+                  height: _currentPage == i ? 8 : 6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _currentPage == i ? Colors.white : Colors.white38,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -4257,13 +4347,16 @@ class _SafetyInfoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: Column(
-        children: [
-          _StatusRow(
-            label: 'Recent hazards',
-            value: '${trail.hazards.length} reports',
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          children: [
+            _StatusRow(
+              label: 'Recent hazards',
+              value: '${trail.hazards.length} reports',
+            ),
+          ],
+        ),
       ),
     );
   }

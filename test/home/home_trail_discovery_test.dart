@@ -25,7 +25,6 @@ void main() {
       isVerifiedTrail: true,
       routeFilePath: '',
       coverColorValue: 0xFF3F8F5E,
-      coverImageUrl: '',
       checkpoints: const [],
       weather: TrailWeather(
         summary: 'Clear',

@@ -21,6 +21,8 @@ class RoutePreviewMap extends StatefulWidget {
     this.showLayerToggle = false,
     this.animateRoute = true,
     this.animationDuration = const Duration(seconds: 5),
+    this.pinnedPoints = const [],
+    this.checkInPoints = const [],
   });
 
   final Trail trail;
@@ -30,6 +32,8 @@ class RoutePreviewMap extends StatefulWidget {
   final bool showLayerToggle;
   final bool animateRoute;
   final Duration animationDuration;
+  final List<mapbox.Point> pinnedPoints;
+  final List<mapbox.Point> checkInPoints;
 
   List<TrailCheckpoint> get effectiveCheckpoints =>
       customCheckpoints ?? trail.checkpoints;
@@ -274,10 +278,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   Future<void> _focusOnCheckpoint(mapbox.Point point) async {
     final map = _mapboxMap;
     if (map == null) return;
-    await map.flyTo(
-      mapbox.CameraOptions(center: point, zoom: 16),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+    try {
+      await map.flyTo(
+        mapbox.CameraOptions(center: point, zoom: 16),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {}
   }
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
@@ -418,6 +424,32 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       created = true;
     }
 
+    if (widget.pinnedPoints.isNotEmpty) {
+      await _pointManager?.createMulti(
+        widget.pinnedPoints.map(
+          (pin) => mapbox.PointAnnotationOptions(
+            geometry: pin,
+            iconSize: 0.7,
+            iconImage: 'marker',
+            iconAnchor: mapbox.IconAnchor.BOTTOM,
+          ),
+        ).toList(),
+      );
+    }
+
+    if (widget.checkInPoints.isNotEmpty) {
+      await _pointManager?.createMulti(
+        widget.checkInPoints.map(
+          (ci) => mapbox.PointAnnotationOptions(
+            geometry: ci,
+            iconSize: 0.5,
+            iconImage: 'circle',
+            iconColor: 0xFF0A84FF,
+          ),
+        ).toList(),
+      );
+    }
+
     if (created) {
       _routeRendered = true;
       await Future.delayed(const Duration(milliseconds: 50));
@@ -482,10 +514,13 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   Future<void> _zoomBy(double amount) async {
-    await _mapboxMap?.flyTo(
-      mapbox.CameraOptions(zoom: _currentZoom + amount),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+    if (_mapboxMap == null) return;
+    try {
+      await _mapboxMap!.flyTo(
+        mapbox.CameraOptions(zoom: _currentZoom + amount),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {}
     await _syncScaleFromCamera();
   }
 

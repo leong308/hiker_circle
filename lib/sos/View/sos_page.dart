@@ -11,6 +11,7 @@ import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../home/View/first_aid_guide_page.dart';
+import '../../home/View/gear_checklist_page.dart';
 import '../../me/View/location_sharing_page.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Data/location_snapshot_service.dart';
@@ -267,6 +268,14 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
+  void _openGearChecklist() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => const GearChecklistPage(),
+      ),
+    );
+  }
+
   void _openSafetyToolDetail({
     required IconData icon,
     required String title,
@@ -456,56 +465,7 @@ class _SosPageState extends State<SosPage> {
                   const SizedBox(height: 8),
                   _SosSafetyToolsGrid(
                     onOpenFirstAid: () => unawaited(_openFirstAidGuide()),
-                    onOpenGearChecklist: () => _openSafetyToolDetail(
-                      icon: Icons.checklist_rounded,
-                      title: 'Gear Checklist',
-                      subtitle:
-                          'Review core items before you start any hike or respond to an emergency.',
-                      rows: const [
-                        ('Water', 'Carry enough water for the route and heat.'),
-                        ('Phone power', 'Charge phone and bring a power bank.'),
-                        ('Light', 'Pack torch or headlamp before sunset.'),
-                        ('First-aid', 'Bring basic wound and sprain supplies.'),
-                        ('Weather', 'Carry rain protection and warm layer.'),
-                        ('Contacts', 'Confirm at least one SOS contact.'),
-                      ],
-                    ),
-                    onOpenWeatherReadiness: () => _openSafetyToolDetail(
-                      icon: Icons.thunderstorm_rounded,
-                      title: 'Weather Readiness',
-                      subtitle:
-                          'Use this checklist before starting, delaying, or turning back.',
-                      rows: const [
-                        ('Forecast', 'Check rain, lightning, and heat risk.'),
-                        (
-                          'Start time',
-                          'Start earlier when heat or storms rise.',
-                        ),
-                        (
-                          'Shelter',
-                          'Identify exits and covered waiting points.',
-                        ),
-                        ('Turn-back', 'Set a fixed time to stop and return.'),
-                      ],
-                    ),
-                    onOpenSignalBeacon: () => _openSafetyToolDetail(
-                      icon: Icons.cell_tower_rounded,
-                      title: 'Signal Beacon',
-                      subtitle:
-                          'Prepare for weak-network areas before backend automation is connected.',
-                      rows: const [
-                        (
-                          'Last signal',
-                          'Note car park, ridge, or rest-point coverage.',
-                        ),
-                        ('Fallback', 'Pin location or check in at intervals.'),
-                        (
-                          'Buddy plan',
-                          'Tell your team when to expect updates.',
-                        ),
-                        ('Offline gear', 'Keep whistle and torch reachable.'),
-                      ],
-                    ),
+                    onOpenGearChecklist: () => _openGearChecklist(),
                   ),
                   const SizedBox(height: 22),
                   if (widget.session.isAdmin)
@@ -537,17 +497,16 @@ class _SosPageState extends State<SosPage> {
                         );
                       },
                     ),
-                  const SizedBox(height: 18),
-                  const _SosReadinessPanel(),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ),
     );
   }
 }
+
 
 class _Header extends StatelessWidget {
   const _Header({
@@ -1530,17 +1489,13 @@ class _EmergencySosControlCard extends StatelessWidget {
                 letterSpacing: 0,
               ),
             ),
-            const SizedBox(height: 14),
-            _HiddenDuressIndicator(
-              isSending: isSending,
-              onLongPress: onDuressLongPress,
-            ),
           ],
         ),
       ),
     );
   }
 }
+
 
 class _HiddenDuressIndicator extends StatelessWidget {
   const _HiddenDuressIndicator({
@@ -1641,14 +1596,10 @@ class _SosSafetyToolsGrid extends StatelessWidget {
   const _SosSafetyToolsGrid({
     required this.onOpenFirstAid,
     required this.onOpenGearChecklist,
-    required this.onOpenWeatherReadiness,
-    required this.onOpenSignalBeacon,
   });
 
   final VoidCallback onOpenFirstAid;
   final VoidCallback onOpenGearChecklist;
-  final VoidCallback onOpenWeatherReadiness;
-  final VoidCallback onOpenSignalBeacon;
 
   @override
   Widget build(BuildContext context) {
@@ -1671,18 +1622,6 @@ class _SosSafetyToolsGrid extends StatelessWidget {
           title: 'Gear Checklist',
           subtitle: 'Pre-hike essentials',
           onTap: onOpenGearChecklist,
-        ),
-        _SosSafetyToolTile(
-          icon: Icons.thunderstorm_rounded,
-          title: 'Weather Readiness',
-          subtitle: 'Decision checks',
-          onTap: onOpenWeatherReadiness,
-        ),
-        _SosSafetyToolTile(
-          icon: Icons.cell_tower_rounded,
-          title: 'Signal Beacon',
-          subtitle: 'Offline signal',
-          onTap: onOpenSignalBeacon,
         ),
       ],
     );
@@ -2444,93 +2383,6 @@ class _AlertDeliveryDetailPage extends StatelessWidget {
   }
 }
 
-class _SosReadinessPanel extends StatelessWidget {
-  const _SosReadinessPanel();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
-        _SectionTitle(label: 'Useful Before You Need It'),
-        SizedBox(height: 8),
-        _InsetGroup(
-          child: Column(
-            children: [
-              _ReadinessRow(
-                icon: Icons.volume_up_rounded,
-                title: 'Check phone volume',
-                subtitle: 'Manual SOS uses alarm sound and flashlight pattern.',
-              ),
-              _HorizontalSeparator(),
-              _ReadinessRow(
-                icon: Icons.location_searching_rounded,
-                title: 'Keep location permission ready',
-                subtitle: 'The map link is only useful when GPS can refresh.',
-              ),
-              _HorizontalSeparator(),
-              _ReadinessRow(
-                icon: Icons.battery_charging_full_rounded,
-                title: 'Protect battery',
-                subtitle: 'Low power mode is better than a dead phone.',
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ReadinessRow extends StatelessWidget {
-  const _ReadinessRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _Glyph(icon: icon, color: _SosColors.green),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _SosColors.textFor(context),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _SosColors.secondaryTextFor(context),
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _SosTestSettingsPage extends StatefulWidget {
   const _SosTestSettingsPage({required this.onSendWhatsAppTest});
 
@@ -2647,6 +2499,10 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                               : 'Short-short-short, long-long-long, short-short-short.',
                           onTap: () => unawaited(_toggleFlashlightTest()),
                         ),
+                        if (_isFlashlightActive) ...[
+                          const SizedBox(height: 4),
+                          _FlashPatternPreview(active: true),
+                        ],
                         const _HorizontalSeparator(),
                         _SosTestRow(
                           icon: Icons.sos_rounded,
@@ -2677,8 +2533,6 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          _FlashPatternPreview(active: _isFlashlightActive),
-                          const SizedBox(height: 14),
                           _SensorTestCard(
                             icon: Icons.sensors_rounded,
                             title: 'Accelerometer free-fall mimic',

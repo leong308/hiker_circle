@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0D75896B41010B8D4D127449 /* libPods-Runner.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 6BEE4FAC551E71BB721FE14D /* libPods-Runner.a */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
+		21C76767CEC433283C923E64 /* QrScannerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC812756D1F7DD1967E3477 /* QrScannerPlugin.swift */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
@@ -66,6 +67,7 @@
 /* Begin PBXFileReference section */
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
+		2BC812756D1F7DD1967E3477 /* QrScannerPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = QrScannerPlugin.swift; sourceTree = "<group>"; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
@@ -96,7 +98,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		ED8B339F2FDCFA8A00ACA3A1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		ED8B339F2FDCFA8A00ACA3A1 /* Exceptions for "ManualSOS" folder in "ManualSOSExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -106,7 +108,18 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		ED8B338A2FDCFA8800ACA3A1 /* ManualSOS */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (ED8B339F2FDCFA8A00ACA3A1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = ManualSOS; sourceTree = "<group>"; };
+		ED8B338A2FDCFA8800ACA3A1 /* ManualSOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				ED8B339F2FDCFA8A00ACA3A1 /* Exceptions for "ManualSOS" folder in "ManualSOSExtension" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ManualSOS;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -195,6 +208,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
+				2BC812756D1F7DD1967E3477 /* QrScannerPlugin.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -257,6 +271,7 @@
 				9705A1C41CF9048500538489 /* Embed Frameworks */,
 				ED8B339B2FDCFA8A00ACA3A1 /* Embed Foundation Extensions */,
 				3B06AD1E1E4923F5004D2608 /* Thin Binary */,
+				2F2025BA162F7482A4CA9A5B /* Stub SPM Package */,
 			);
 			buildRules = (
 			);
@@ -287,8 +302,6 @@
 				ED8B338A2FDCFA8800ACA3A1 /* ManualSOS */,
 			);
 			name = ManualSOSExtension;
-			packageProductDependencies = (
-			);
 			productName = ManualSOSExtension;
 			productReference = ED8B33852FDCFA8800ACA3A1 /* ManualSOSExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -327,7 +340,7 @@
 			);
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
-				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */,
+				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
 			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
@@ -390,6 +403,24 @@
 			shellPath = /bin/sh;
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
+		};
+		2F2025BA162F7482A4CA9A5B /* Stub SPM Package */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stub SPM Package";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "SPM_PACKAGE=\"${SRCROOT}/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift\"\nif [ -f \"$SPM_PACKAGE\" ]; then\n  cat > \"$SPM_PACKAGE\" << SWIFT_EOF\nimport PackageDescription\nlet package = Package(\n  name: \"FlutterGeneratedPluginSwiftPackage\",\n  platforms: [.iOS(\"15.5\")],\n  products: [\n    .library(name: \"FlutterGeneratedPluginSwiftPackage\", type: .static, targets: [\"FlutterGeneratedPluginSwiftPackage\"])\n  ],\n  targets: [\n    .target(name: \"FlutterGeneratedPluginSwiftPackage\")\n  ]\n)\nSWIFT_EOF\nfi\n";
 		};
 		34324E36D717CE3C5B334E8D /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -461,6 +492,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
+				21C76767CEC433283C923E64 /* QrScannerPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -976,7 +1008,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */ = {
+		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};

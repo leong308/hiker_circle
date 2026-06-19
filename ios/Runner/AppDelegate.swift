@@ -61,6 +61,10 @@ import ActivityKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
+    if let registrar = registrar(forPlugin: "QrScannerPlugin") {
+      let factory = QrScannerPlatformViewFactory(messenger: registrar.messenger())
+      registrar.register(factory, withId: "hiker_circle/qr_scanner")
+    }
     configureSosDeviceAlertChannel()
     configureDeepLinkChannel()
     configureActiveHikeLiveStatusChannel()

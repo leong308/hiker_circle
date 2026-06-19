@@ -744,16 +744,21 @@ class _BestMatchTrailCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fallbackColor = Color(trail.coverColorValue);
+    final url = trail.coverImageUrls.isNotEmpty ? trail.coverImageUrls.first : '';
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: SizedBox(
         width: 96,
         height: 96,
-        child: trail.coverImageUrl.trim().isEmpty
+        child: url.trim().isEmpty
             ? _TrailCoverFallback(color: fallbackColor)
             : Image.network(
-                trail.coverImageUrl,
+                url.trim(),
                 fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return _TrailCoverFallback(color: fallbackColor);
+                },
                 errorBuilder: (context, error, stackTrace) {
                   return _TrailCoverFallback(color: fallbackColor);
                 },

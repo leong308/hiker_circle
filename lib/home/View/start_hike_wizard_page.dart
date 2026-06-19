@@ -201,6 +201,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                   Row(
                     children: [
                       Expanded(
+                        flex: 2,
                         child: OutlinedButton(
                           onPressed: _back,
                           child: Text(
@@ -210,6 +211,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                       ),
                       const SizedBox(width: 10),
                       Expanded(
+                        flex: 3,
                         child: FilledButton.icon(
                           onPressed: _next,
                           icon: Icon(
@@ -1216,12 +1218,12 @@ class _SafetySettingsStep extends StatelessWidget {
         ),
         _SwitchRow(
           label: 'Fall and Stillness Detection',
-          value: draft.fallDetectionEnabled,
-          onChanged: (value) =>
-              onChanged(draft.copyWith(fallDetectionEnabled: value)),
+          value: true,
+          onChanged: (_) {},
         ),
+        const SizedBox(height: 16),
         _SensorSensitivitySlider(
-          enabled: draft.fallDetectionEnabled,
+          enabled: true,
           value: fallDetectionSettings.sensorSensitivity,
           label: fallDetectionSettings.sensitivityLabel,
           showFalseAlarmWarning: fallDetectionSettings.isHighSensitivity,

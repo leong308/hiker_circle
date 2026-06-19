@@ -4,18 +4,19 @@ import 'package:flutter/material.dart';
 import '../Model/hike_session_models.dart';
 
 class GearChecklistPage extends StatefulWidget {
-  const GearChecklistPage({super.key, required this.plannedHike});
+  const GearChecklistPage({super.key, this.plannedHike});
 
-  final PlannedHike plannedHike;
+  final PlannedHike? plannedHike;
 
   @override
   State<GearChecklistPage> createState() => _GearChecklistPageState();
 }
 
 class _GearChecklistPageState extends State<GearChecklistPage> {
-  late final Set<String> _completedItems = {
+  late final Set<String> _completedItems = <String>{
     'Charged phone',
-    if (widget.plannedHike.offlineMapDownloaded) 'Offline map downloaded',
+    if (widget.plannedHike?.offlineMapDownloaded == true)
+      'Offline map downloaded',
     'Torch',
     'Drinking water',
     'Raincoat',
@@ -24,14 +25,39 @@ class _GearChecklistPageState extends State<GearChecklistPage> {
   static const Map<String, List<String>> _sections = {
     'Safety Essentials': [
       'Charged phone',
-      'Offline map downloaded',
       'Power bank',
+      'Offline map downloaded',
       'Torch',
       'First-aid kit',
       'Emergency whistle',
+      'Multi-tool',
     ],
-    'Water and Food': ['Drinking water', 'Energy snack'],
-    'Weather Preparation': ['Raincoat', 'Extra clothing'],
+    'Navigation & Communication': [
+      'GPS device or app',
+      'Physical map',
+      'Compass',
+      'Fully charged phone',
+      'Emergency contacts saved',
+    ],
+    'Water and Food': [
+      'Drinking water',
+      'Water filter or tablets',
+      'Energy snack',
+      'Extra food for delays',
+    ],
+    'Weather & Clothing': [
+      'Raincoat',
+      'Extra clothing layer',
+      'Sun protection (hat, sunscreen)',
+      'Warm hat and gloves',
+    ],
+    'Emergency & Recovery': [
+      'Headlamp with spare batteries',
+      'Fire starter or matches',
+      'Emergency blanket',
+      'Whistle',
+      'Signal mirror',
+    ],
   };
 
   int get _totalItems {
@@ -66,8 +92,10 @@ class _GearChecklistPageState extends State<GearChecklistPage> {
                 children: [
                   _Header(onBack: () => Navigator.of(context).pop()),
                   const SizedBox(height: 16),
-                  _TripSummary(plannedHike: widget.plannedHike),
-                  const SizedBox(height: 18),
+                  if (widget.plannedHike != null)
+                    _TripSummary(plannedHike: widget.plannedHike!),
+                  if (widget.plannedHike != null)
+                    const SizedBox(height: 18),
                   for (final entry in _sections.entries) ...[
                     _ChecklistSection(
                       title: entry.key,
