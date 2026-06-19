@@ -144,16 +144,16 @@ class _MePageState extends State<MePage> {
           icon: Icons.forum_rounded,
           items: _postHistoryItems,
         );
-      case 'Hiking circles':
+      case 'My circles':
         _openHistoryPage(
-          title: 'Hiking Circles',
+          title: 'My Circles',
           subtitle: 'Each circle represents a hiking team',
           icon: Icons.groups_2_rounded,
           items: _circleHistoryItems,
         );
-      case 'Trail buddies':
+      case 'My buddies':
         _openHistoryPage(
-          title: 'Trail Buddies',
+          title: 'My Buddies',
           subtitle: 'People from past hikes and QR adds',
           icon: Icons.person_add_alt_1_rounded,
           items: _buddyHistoryItems,
@@ -251,14 +251,14 @@ class _MePageState extends State<MePage> {
     switch (stat.label) {
       case 'Circles':
         _openHistoryPage(
-          title: 'Hiking Circles',
+          title: 'My Circles',
           subtitle: 'Teams you created, joined, or completed',
           icon: Icons.groups_2_rounded,
           items: _circleHistoryItems,
         );
       case 'Buddies':
         _openHistoryPage(
-          title: 'Trail Buddies',
+          title: 'My Buddies',
           subtitle: 'Friends from hikes, community, and QR scans',
           icon: Icons.person_add_alt_1_rounded,
           items: _buddyHistoryItems,
@@ -1231,8 +1231,8 @@ List<MeStat> get _linkedProfileStats {
 String? _countLabelForAction(String title) {
   return switch (title) {
     'My posts' => '${_postHistoryItems.length}',
-    'Hiking circles' => '${_circleHistoryItems.length}',
-    'Trail buddies' => '${_buddyHistoryItems.length}',
+    'My circles' => '${_circleHistoryItems.length}',
+    'My buddies' => '${_buddyHistoryItems.length}',
     'Export history' =>
       '${_postHistoryItems.length + _circleHistoryItems.length + _buddyHistoryItems.length + _trailHistoryItems.length}',
     _ => null,

@@ -37,12 +37,12 @@ class MeRepository {
           ),
           MeActionItem(
             icon: Icons.groups_2_rounded,
-            title: 'Hiking circles',
+            title: 'My circles',
             subtitle: 'Groups and people you hike with',
           ),
           MeActionItem(
             icon: Icons.person_add_alt_1_rounded,
-            title: 'Trail buddies',
+            title: 'My buddies',
             subtitle: 'Friends, invites, and requests',
           ),
         ],
