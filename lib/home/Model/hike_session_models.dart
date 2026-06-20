@@ -593,6 +593,68 @@ class HikeSessionDraft {
     );
   }
 
+  factory HikeSessionDraft.fromPersistence(Map<String, dynamic> data) {
+    final now = DateTime.now();
+    final customCheckpointsValue = data['customCheckpoints'];
+    return HikeSessionDraft(
+      hikeType: HikeType.values.firstWhere(
+        (type) => type.name == _modelStringFrom(data['hikeType']),
+        orElse: () => HikeType.solo,
+      ),
+      trail: Trail.fromPersistence(_modelMapFrom(data['trail'])),
+      startPointName: _modelStringFrom(data['startPointName']),
+      destinationName: _modelStringFrom(data['destinationName']),
+      departureTime: _modelDateFromValue(data['departureTime']) ?? now,
+      expectedArrivalTime:
+          _modelDateFromValue(data['expectedArrivalTime']) ?? now,
+      expectedReturnTime:
+          _modelDateFromValue(data['expectedReturnTime']) ?? now,
+      safetyCheckInInterval: Duration(
+        seconds: _modelIntFrom(
+          data['safetyCheckInIntervalSeconds'],
+          fallback: 1800,
+        ),
+      ),
+      locationRecordingInterval: Duration(
+        seconds: _modelIntFrom(
+          data['locationRecordingIntervalSeconds'],
+          fallback: 300,
+        ),
+      ),
+      emergencyContactNames: _modelStringList(data['emergencyContactNames']),
+      shareLiveLocation: data['shareLiveLocation'] == true,
+      fallDetectionEnabled: data['fallDetectionEnabled'] == true,
+      fallDetectionSettings: FallDetectionSettings(
+        sensorSensitivity: _modelDoubleFrom(
+          _modelMapFrom(data['fallDetectionSettings'])['sensorSensitivity'],
+          fallback: 5,
+        ),
+        stillnessDuration: Duration(
+          seconds: _modelIntFrom(
+            _modelMapFrom(
+              data['fallDetectionSettings'],
+            )['stillnessDurationSeconds'],
+            fallback: 30,
+          ),
+        ),
+      ),
+      pathDeviationEnabled: data['pathDeviationEnabled'] == true,
+      offlinePhysicalAlertEnabled: data['offlinePhysicalAlertEnabled'] == true,
+      duressEnabled: data['duressEnabled'] == true,
+      completedChecklistItems: _modelStringList(
+        data['completedChecklistItems'],
+      ).toSet(),
+      teamBuddies: _modelListOfMaps(
+        data['teamBuddies'],
+      ).map(TeamHikeBuddy.fromFirestore).toList(),
+      customCheckpoints: customCheckpointsValue is Iterable
+          ? _modelListOfMaps(
+              customCheckpointsValue,
+            ).map(TrailCheckpoint.fromPersistence).toList()
+          : null,
+    );
+  }
+
   final HikeType hikeType;
   final Trail trail;
   final String startPointName;
@@ -613,6 +675,37 @@ class HikeSessionDraft {
   final List<TeamHikeBuddy> teamBuddies;
   final List<TrailCheckpoint>? customCheckpoints;
 
+  Map<String, dynamic> toPersistence() {
+    return {
+      'hikeType': hikeType.name,
+      'trail': trail.toPersistence(),
+      'startPointName': startPointName,
+      'destinationName': destinationName,
+      'departureTime': departureTime.toUtc().toIso8601String(),
+      'expectedArrivalTime': expectedArrivalTime.toUtc().toIso8601String(),
+      'expectedReturnTime': expectedReturnTime.toUtc().toIso8601String(),
+      'safetyCheckInIntervalSeconds': safetyCheckInInterval.inSeconds,
+      'locationRecordingIntervalSeconds': locationRecordingInterval.inSeconds,
+      'emergencyContactNames': emergencyContactNames,
+      'shareLiveLocation': shareLiveLocation,
+      'fallDetectionEnabled': fallDetectionEnabled,
+      'fallDetectionSettings': {
+        'sensorSensitivity': fallDetectionSettings.sensorSensitivity,
+        'stillnessDurationSeconds':
+            fallDetectionSettings.stillnessDuration.inSeconds,
+      },
+      'pathDeviationEnabled': pathDeviationEnabled,
+      'offlinePhysicalAlertEnabled': offlinePhysicalAlertEnabled,
+      'duressEnabled': duressEnabled,
+      'completedChecklistItems': completedChecklistItems.toList(),
+      'teamBuddies': teamBuddies.map((buddy) => buddy.toFirestore()).toList(),
+      if (customCheckpoints != null)
+        'customCheckpoints': customCheckpoints!
+            .map((checkpoint) => checkpoint.toFirestore())
+            .toList(),
+    };
+  }
+
   List<TrailCheckpoint> get effectiveCheckpoints =>
       customCheckpoints ?? trail.checkpoints;
 
@@ -622,7 +715,8 @@ class HikeSessionDraft {
     return list;
   }
 
-  List<TrailCheckpoint> get sortedCheckpoints => _sortedCheckpoints(customCheckpoints);
+  List<TrailCheckpoint> get sortedCheckpoints =>
+      _sortedCheckpoints(customCheckpoints);
 
   HikeSessionDraft addCheckpoint(TrailCheckpoint cp) {
     final cps = [...(customCheckpoints ?? trail.checkpoints)];
@@ -642,7 +736,11 @@ class HikeSessionDraft {
     if (cps.length <= 2) return this;
     if (index == 0 || index == cps.length - 1) return this;
     cps.removeAt(index);
-    final reindexed = cps.asMap().entries.map((e) => e.value.copyWith(order: e.key + 1)).toList();
+    final reindexed = cps
+        .asMap()
+        .entries
+        .map((e) => e.value.copyWith(order: e.key + 1))
+        .toList();
     return copyWith(
       customCheckpoints: reindexed,
       startPointName: reindexed.first.name,
@@ -658,7 +756,11 @@ class HikeSessionDraft {
     if (oldIndex < newIndex) newIndex--;
     final item = cps.removeAt(oldIndex);
     cps.insert(newIndex, item);
-    final reindexed = cps.asMap().entries.map((e) => e.value.copyWith(order: e.key + 1)).toList();
+    final reindexed = cps
+        .asMap()
+        .entries
+        .map((e) => e.value.copyWith(order: e.key + 1))
+        .toList();
     return copyWith(
       customCheckpoints: reindexed,
       startPointName: reindexed.first.name,
@@ -732,6 +834,7 @@ class ActiveHikeSession {
     this.latestLocation,
     this.routePoints = const [],
     this.manualPinLocations = const [],
+    this.checkInRecords = const [],
     String? teamHikeSessionId = '',
     this.teamHikeSession,
   }) : _teamHikeSessionId = teamHikeSessionId;
@@ -755,6 +858,43 @@ class ActiveHikeSession {
     );
   }
 
+  factory ActiveHikeSession.fromPersistence(Map<String, dynamic> data) {
+    final teamSessionData = _modelMapFrom(data['teamHikeSession']);
+    return ActiveHikeSession(
+      sessionId: _modelStringFrom(data['sessionId']),
+      draft: HikeSessionDraft.fromPersistence(_modelMapFrom(data['draft'])),
+      startedAt:
+          _modelDateFromValue(data['startedAt']) ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      batteryLevel: _modelIntFrom(data['batteryLevel']),
+      batteryStartedLevel: data['batteryStartedLevel'] is num
+          ? (data['batteryStartedLevel'] as num).toInt()
+          : null,
+      queuedUpdates: _modelIntFrom(data['queuedUpdates']),
+      manualPins: _modelIntFrom(data['manualPins']),
+      checkIns: _modelIntFrom(data['checkIns']),
+      latestLocation: data['latestLocation'] is Map
+          ? HikeCoordinate.fromFirestore(_modelMapFrom(data['latestLocation']))
+          : null,
+      routePoints: _modelListOfMaps(
+        data['routePoints'],
+      ).map(HikeCoordinate.fromFirestore).toList(),
+      manualPinLocations: _modelListOfMaps(
+        data['manualPinLocations'],
+      ).map(HikeManualPin.fromPersistence).toList(),
+      checkInRecords: _modelListOfMaps(
+        data['checkInRecords'],
+      ).map(HikeCheckInRecord.fromPersistence).toList(),
+      teamHikeSessionId: _modelStringFrom(data['teamHikeSessionId']),
+      teamHikeSession: teamSessionData.isEmpty
+          ? null
+          : TeamHikeSession.fromFirestore(
+              teamSessionData,
+              id: _modelStringFrom(teamSessionData['teamHikeSessionId']),
+            ),
+    );
+  }
+
   final String sessionId;
   final HikeSessionDraft draft;
   final DateTime startedAt;
@@ -766,8 +906,37 @@ class ActiveHikeSession {
   final HikeCoordinate? latestLocation;
   final List<HikeCoordinate> routePoints;
   final List<HikeManualPin> manualPinLocations;
+  final List<HikeCheckInRecord> checkInRecords;
   final String? _teamHikeSessionId;
   final TeamHikeSession? teamHikeSession;
+
+  Map<String, dynamic> toPersistence() {
+    return {
+      'sessionId': sessionId,
+      'draft': draft.toPersistence(),
+      'startedAt': startedAt.toUtc().toIso8601String(),
+      'batteryLevel': batteryLevel,
+      if (batteryStartedLevel != null)
+        'batteryStartedLevel': batteryStartedLevel,
+      'queuedUpdates': queuedUpdates,
+      'manualPins': manualPins,
+      'checkIns': checkIns,
+      if (latestLocation != null)
+        'latestLocation': latestLocation!.toFirestore(),
+      'routePoints': routePoints
+          .map((coordinate) => coordinate.toFirestore())
+          .toList(),
+      'manualPinLocations': manualPinLocations
+          .map((pin) => pin.toFirestore())
+          .toList(),
+      'checkInRecords': checkInRecords
+          .map((record) => record.toPersistence())
+          .toList(),
+      'teamHikeSessionId': teamHikeSessionId,
+      if (teamHikeSession != null)
+        'teamHikeSession': teamHikeSession!.toFirestore(),
+    };
+  }
 
   String get teamHikeSessionId => _teamHikeSessionId ?? '';
   Trail get trail => draft.trail;
@@ -810,6 +979,7 @@ class ActiveHikeSession {
     HikeCoordinate? latestLocation,
     List<HikeCoordinate>? routePoints,
     List<HikeManualPin>? manualPinLocations,
+    List<HikeCheckInRecord>? checkInRecords,
     String? teamHikeSessionId,
     TeamHikeSession? teamHikeSession,
   }) {
@@ -825,6 +995,7 @@ class ActiveHikeSession {
       latestLocation: latestLocation ?? this.latestLocation,
       routePoints: routePoints ?? this.routePoints,
       manualPinLocations: manualPinLocations ?? this.manualPinLocations,
+      checkInRecords: checkInRecords ?? this.checkInRecords,
       teamHikeSessionId: teamHikeSessionId ?? this.teamHikeSessionId,
       teamHikeSession: teamHikeSession ?? this.teamHikeSession,
     );
@@ -912,6 +1083,18 @@ class HikeManualPin {
     required this.pinnedAt,
   });
 
+  factory HikeManualPin.fromPersistence(Map<String, dynamic> data) {
+    return HikeManualPin(
+      id: _modelStringFrom(data['pinId']),
+      coordinate: HikeCoordinate.fromFirestore(
+        _modelMapFrom(data['coordinate']),
+      ),
+      pinnedAt:
+          _modelDateFromValue(data['pinnedAtLocal']) ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
+  }
+
   final String id;
   final HikeCoordinate coordinate;
   final DateTime pinnedAt;
@@ -921,6 +1104,38 @@ class HikeManualPin {
       'pinId': id,
       'coordinate': coordinate.toFirestore(),
       'pinnedAtLocal': pinnedAt.toUtc().toIso8601String(),
+    };
+  }
+}
+
+class HikeCheckInRecord {
+  const HikeCheckInRecord({
+    required this.id,
+    required this.checkedInAt,
+    this.coordinate,
+  });
+
+  factory HikeCheckInRecord.fromPersistence(Map<String, dynamic> data) {
+    return HikeCheckInRecord(
+      id: _modelStringFrom(data['checkInId']),
+      checkedInAt:
+          _modelDateFromValue(data['checkedInAtLocal']) ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      coordinate: data['coordinate'] is Map
+          ? HikeCoordinate.fromFirestore(_modelMapFrom(data['coordinate']))
+          : null,
+    );
+  }
+
+  final String id;
+  final DateTime checkedInAt;
+  final HikeCoordinate? coordinate;
+
+  Map<String, dynamic> toPersistence() {
+    return {
+      'checkInId': id,
+      'checkedInAtLocal': checkedInAt.toUtc().toIso8601String(),
+      if (coordinate != null) 'coordinate': coordinate!.toFirestore(),
     };
   }
 }
@@ -957,14 +1172,22 @@ class HikeSummaryReport {
     final distanceKm = activeHike.recordedDistanceKm > 0
         ? activeHike.recordedDistanceKm
         : activeHike.trail.distanceKm;
-    final duration = endedAt.difference(activeHike.startedAt);
+    final measuredDuration = endedAt.difference(activeHike.startedAt);
+    final duration = measuredDuration.isNegative
+        ? Duration.zero
+        : measuredDuration;
+    final actualCheckIns = math.max(
+      activeHike.checkIns,
+      activeHike.checkInRecords.length,
+    );
+    final actualManualPins = activeHike.manualPinLocations.length;
     final batteryStart =
         activeHike.batteryStartedLevel ?? activeHike.batteryLevel;
     final batteryDrop = math.max(0, batteryStart - activeHike.batteryLevel);
-    final movingHours = math.max(duration.inMinutes / 60, 0.1);
+    final movingHours = math.max(duration.inMilliseconds / 3600000, 0.1);
     final paceMinutesPerKm = distanceKm <= 0
         ? 0
-        : duration.inMinutes / math.max(distanceKm, 0.1);
+        : duration.inSeconds / 60 / math.max(distanceKm, 0.1);
 
     return HikeSummaryReport(
       sessionId: activeHike.sessionId,
@@ -973,15 +1196,15 @@ class HikeSummaryReport {
       endedAt: endedAt,
       duration: duration,
       distanceKm: distanceKm,
-      checkIns: activeHike.checkIns,
-      manualPins: activeHike.manualPins,
+      checkIns: actualCheckIns,
+      manualPins: actualManualPins,
       routePointCount: activeHike.routePointCount,
       batteryStartPercent: batteryStart,
       batteryEndPercent: activeHike.batteryLevel,
       insights: [
         'Average pace: ${paceMinutesPerKm.round()} min/km across ${distanceKm.toStringAsFixed(2)} km.',
         'Tracking density: ${activeHike.routePointCount} GPS points saved for replay and safety review.',
-        'Safety rhythm: ${activeHike.checkIns} check-ins and ${activeHike.manualPins} pinned locations.',
+        'Safety rhythm: $actualCheckIns check-ins and $actualManualPins pinned locations.',
         'Battery used: $batteryDrop% over ${_formatDuration(duration)} (${(batteryDrop / movingHours).toStringAsFixed(1)}% per hour).',
         if (activeHike.queuedUpdates == 0)
           'Cloud sync: all hike telemetry is up to date.'
@@ -1023,6 +1246,7 @@ class HikeSummaryReport {
       'startedAtLocal': startedAt.toUtc().toIso8601String(),
       'endedAtLocal': endedAt.toUtc().toIso8601String(),
       'durationMinutes': duration.inMinutes,
+      'durationSeconds': duration.inSeconds,
       'distanceKm': distanceKm,
       'checkIns': checkIns,
       'manualPins': manualPins,
@@ -1037,10 +1261,14 @@ class HikeSummaryReport {
   static String _formatDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
-    if (hours <= 0) {
-      return '$minutes min';
+    final seconds = duration.inSeconds.remainder(60);
+    if (hours > 0) {
+      return '${hours}h ${minutes}m ${seconds}s';
     }
-    return '${hours}h ${minutes}m';
+    if (minutes > 0) {
+      return '${minutes}m ${seconds}s';
+    }
+    return '${seconds}s';
   }
 }
 
@@ -1072,8 +1300,8 @@ String _modelStringFrom(Object? value) {
   return value is String ? value : '';
 }
 
-double _modelDoubleFrom(Object? value) {
-  return value is num ? value.toDouble() : 0;
+double _modelDoubleFrom(Object? value, {double fallback = 0}) {
+  return value is num ? value.toDouble() : fallback;
 }
 
 int _modelIntFrom(Object? value, {int fallback = 0}) {
@@ -1098,6 +1326,17 @@ List<Map<String, dynamic>> _modelListOfMaps(Object? value) {
       .whereType<Map>()
       .map((item) => Map<String, dynamic>.from(item))
       .toList();
+}
+
+Map<String, dynamic> _modelMapFrom(Object? value) {
+  return value is Map ? Map<String, dynamic>.from(value) : const {};
+}
+
+List<String> _modelStringList(Object? value) {
+  if (value is! Iterable) {
+    return const [];
+  }
+  return value.whereType<String>().toList();
 }
 
 class UpcomingHike {
@@ -1170,7 +1409,10 @@ class UpcomingHike {
   factory UpcomingHike.fromFirestore(String id, Map<String, dynamic> data) {
     final phones = data['participantPhones'];
     final participantPhones = phones is List
-        ? phones.map((e) => e is String ? e : '').where((e) => e.isNotEmpty).toList()
+        ? phones
+              .map((e) => e is String ? e : '')
+              .where((e) => e.isNotEmpty)
+              .toList()
         : <String>[];
     return UpcomingHike(
       id: id,
@@ -1186,8 +1428,11 @@ class UpcomingHike {
       difficulty: _modelStringFrom(data['difficulty']),
       startPointName: _modelStringFrom(data['startPointName']),
       destinationName: _modelStringFrom(data['destinationName']),
-      departureTime: _modelDateFromValue(data['departureTimeLocal']) ?? DateTime.now(),
-      expectedReturnTime: _modelDateFromValue(data['expectedReturnTimeLocal']) ?? DateTime.now(),
+      departureTime:
+          _modelDateFromValue(data['departureTimeLocal']) ?? DateTime.now(),
+      expectedReturnTime:
+          _modelDateFromValue(data['expectedReturnTimeLocal']) ??
+          DateTime.now(),
       hikeType: _modelStringFrom(data['hikeType']),
       participantCount: _modelIntFrom(data['participantCount']),
       creatorPhone: _modelStringFrom(data['creatorPhone']),
@@ -1202,7 +1447,8 @@ class UpcomingHike {
     final dLng = _toRadians(longitude - lng);
     final sinHalfDLat = math.sin(dLat / 2);
     final sinHalfDLng = math.sin(dLng / 2);
-    final a = sinHalfDLat * sinHalfDLat +
+    final a =
+        sinHalfDLat * sinHalfDLat +
         math.cos(_toRadians(lat)) *
             math.cos(_toRadians(latitude)) *
             sinHalfDLng *
@@ -1248,7 +1494,8 @@ class GroupChat {
   }
 
   factory GroupChat.fromFirestore(String id, Map<String, dynamic> data) {
-    final phones = (data['participantPhones'] as Iterable?)
+    final phones =
+        (data['participantPhones'] as Iterable?)
             ?.map((e) => e is String ? e : '')
             .toList() ??
         const <String>[];
@@ -1259,7 +1506,9 @@ class GroupChat {
       participantPhones: phones,
       creatorPhone: _modelStringFrom(data['creatorPhone']),
       createdAt: _modelDateFromValue(data['createdAtLocal']) ?? DateTime.now(),
-      lastMessage: data['lastMessage'] is String ? data['lastMessage'] as String : null,
+      lastMessage: data['lastMessage'] is String
+          ? data['lastMessage'] as String
+          : null,
       lastMessageAt: data['lastMessageAtLocal'] != null
           ? _modelDateFromValue(data['lastMessageAtLocal'])
           : null,

@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../home/Model/hike_session_models.dart';
@@ -24,20 +25,35 @@ class HikerCircleFirebaseRepositoryException implements Exception {
   String toString() => message;
 }
 
+class AdminTrailImageUpload {
+  const AdminTrailImageUpload({
+    required this.bytes,
+    required this.fileName,
+    this.contentType,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final String? contentType;
+}
+
 class HikerCircleFirebaseRepository {
   HikerCircleFirebaseRepository({
     FirebaseFirestore? firestore,
+    FirebaseStorage? storage,
     LocalSessionDatabase? localDatabase,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
     OpenMeteoService? openMeteoService,
   }) : _firestore = firestore,
+       _storage = storage,
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
        _firebaseBootstrapResult = firebaseBootstrapResult,
        _openMeteoService = openMeteoService ?? const OpenMeteoService(),
        _functions = FirebaseFunctions.instance;
 
   final FirebaseFirestore? _firestore;
+  final FirebaseStorage? _storage;
   final FirebaseFunctions _functions;
   final LocalSessionDatabase _localDatabase;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
@@ -49,6 +65,8 @@ class HikerCircleFirebaseRepository {
       _firestore ?? FirebaseFirestore.instance;
 
   FirebaseFirestore get firestore => _resolvedFirestore;
+
+  FirebaseStorage get _resolvedStorage => _storage ?? FirebaseStorage.instance;
 
   CollectionReference<Map<String, dynamic>> get _trails =>
       _resolvedFirestore.collection('trails');
@@ -197,16 +215,16 @@ class HikerCircleFirebaseRepository {
         .orderBy('ratingAverage', descending: true)
         .snapshots()
         .asyncMap((snapshot) async {
-      var trails = snapshot.docs
-          .map((doc) => _trailFromFirestore({
-                'trailId': doc.id,
-                ...doc.data(),
-              }))
-          .whereType<Trail>()
-          .toList();
-      await _enrichWithLiveWeather(trails, snapshot.docs);
-      return trails;
-    });
+          var trails = snapshot.docs
+              .map(
+                (doc) =>
+                    _trailFromFirestore({'trailId': doc.id, ...doc.data()}),
+              )
+              .whereType<Trail>()
+              .toList();
+          await _enrichWithLiveWeather(trails, snapshot.docs);
+          return trails;
+        });
   }
 
   Future<void> _enrichWithLiveWeather(
@@ -370,28 +388,22 @@ class HikerCircleFirebaseRepository {
       final sub1 = _upcomingHikes
           .where('creatorPhone', isEqualTo: phoneNumber)
           .snapshots()
-          .listen(
-            (s) {
-              created = s.docs
-                  .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
-                  .toList();
-              emit();
-            },
-            onError: controller.addError,
-          );
+          .listen((s) {
+            created = s.docs
+                .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
+                .toList();
+            emit();
+          }, onError: controller.addError);
 
       final sub2 = _upcomingHikes
           .where('participantPhones', arrayContains: phoneNumber)
           .snapshots()
-          .listen(
-            (s) {
-              joined = s.docs
-                  .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
-                  .toList();
-              emit();
-            },
-            onError: controller.addError,
-          );
+          .listen((s) {
+            joined = s.docs
+                .map((d) => UpcomingHike.fromFirestore(d.id, d.data()))
+                .toList();
+            emit();
+          }, onError: controller.addError);
 
       controller.onCancel = () {
         sub1.cancel();
@@ -1785,6 +1797,73 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  String newTrailIdForName(String name) => _newTrailId(name);
+
+  Future<List<String>> uploadTrailCoverImagesByAdmin({
+    required AppSession session,
+    required String trailId,
+    required List<AdminTrailImageUpload> images,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    if (trailId.trim().isEmpty) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'A trail id is required before uploading images.',
+      );
+    }
+    if (images.isEmpty) {
+      return const [];
+    }
+
+    final uploadedReferences = <Reference>[];
+    final downloadUrls = <String>[];
+    try {
+      for (var index = 0; index < images.length; index++) {
+        final image = images[index];
+        if (image.bytes.isEmpty) {
+          continue;
+        }
+        final safeName = _safeStorageFileName(image.fileName, index);
+        final reference = _resolvedStorage.ref(
+          'trail_covers/$trailId/'
+          '${DateTime.now().microsecondsSinceEpoch}_$safeName',
+        );
+        final metadata = SettableMetadata(
+          contentType: image.contentType ?? _contentTypeForFileName(safeName),
+          customMetadata: {
+            'trailId': trailId,
+            'uploadedByAdminPhoneNumber': session.phoneNumber,
+          },
+        );
+        await reference.putData(image.bytes, metadata);
+        uploadedReferences.add(reference);
+        downloadUrls.add(await reference.getDownloadURL());
+      }
+      return downloadUrls;
+    } on FirebaseException catch (error) {
+      for (final reference in uploadedReferences) {
+        try {
+          await reference.delete();
+        } catch (_) {
+          // Cleanup is best effort if a later image fails.
+        }
+      }
+      throw HikerCircleFirebaseRepositoryException(
+        'Image upload failed: ${error.message ?? error.code}',
+      );
+    } catch (error) {
+      for (final reference in uploadedReferences) {
+        try {
+          await reference.delete();
+        } catch (_) {
+          // Cleanup is best effort if a later image fails.
+        }
+      }
+      throw HikerCircleFirebaseRepositoryException(
+        'Image upload failed: $error',
+      );
+    }
+  }
+
   Future<void> deleteTrailByAdmin({
     required AppSession session,
     required Trail trail,
@@ -2631,6 +2710,26 @@ class HikerCircleFirebaseRepository {
         .replaceAll(RegExp(r'^_+|_+$'), '');
     final safeSlug = slug.isEmpty ? 'trail' : slug;
     return 'trail_${safeSlug}_${DateTime.now().microsecondsSinceEpoch}';
+  }
+
+  String _safeStorageFileName(String fileName, int index) {
+    final normalized = fileName
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9._-]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    return normalized.isEmpty ? 'trail_image_$index.jpg' : normalized;
+  }
+
+  String _contentTypeForFileName(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.heic') || lower.endsWith('.heif')) {
+      return 'image/heic';
+    }
+    return 'image/jpeg';
   }
 
   void _throwIfAdminUnavailable(AppSession session) {

@@ -24,6 +24,16 @@ class LocationSnapshotService with WidgetsBindingObserver {
 
   SosTriggerLocation? get latestLocation => _latestLocation;
 
+  Map<String, Object?> get debugSnapshot => {
+    'storageType': 'In-memory location snapshot service',
+    'persistence': 'Cleared when the service stops or the process exits',
+    'isStarted': _isStarted,
+    'timerActive': _timer?.isActive == true,
+    'refreshInProgress': _refreshFuture != null,
+    'refreshIntervalSeconds': _refreshInterval.inSeconds,
+    'latestLocation': _latestLocation?.toFirestore(),
+  };
+
   Future<void> start({Duration interval = passiveSnapshotInterval}) async {
     final normalizedInterval = _normalizeInterval(interval);
     if (_isStarted) {

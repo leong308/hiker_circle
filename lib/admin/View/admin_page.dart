@@ -4,14 +4,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/Data/app_settings_controller.dart';
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/services/trail_cover_image_service.dart';
+import '../../me/Data/live_location_sharing_service.dart';
+import '../../sos/Data/location_snapshot_service.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
 
 enum _AdminSection { overview, trails, hazards, community }
-enum _DebugSection { firestore, local }
+enum _DebugSection { firestore, local, runtime }
 
 class AdminPage extends StatefulWidget {
   const AdminPage({
@@ -19,11 +23,13 @@ class AdminPage extends StatefulWidget {
     required this.session,
     this.hikerCircleRepository,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
+    this.runtimeDebugData = const {},
   });
 
   final AppSession session;
   final HikerCircleFirebaseRepository? hikerCircleRepository;
   final FirebaseBootstrapResult firebaseBootstrapResult;
+  final Map<String, Object?> runtimeDebugData;
 
   @override
   State<AdminPage> createState() => _AdminPageState();
@@ -49,6 +55,7 @@ class _AdminPageState extends State<AdminPage> {
   _DebugSection? _selectedDebugSection;
   Map<String, List<Map<String, dynamic>>> _localDbData = const {};
   List<_FirestoreCollection> _firestoreData = const [];
+  Map<String, Map<String, Object?>> _runtimeData = const {};
   bool _isDebugLoading = false;
   String? _debugError;
 
@@ -104,7 +111,11 @@ class _AdminPageState extends State<AdminPage> {
       return;
     }
 
-    final trail = await showAddTrailSheet(context);
+    final trail = await showAddTrailSheet(
+      context,
+      session: widget.session,
+      repository: _repository,
+    );
     if (trail == null || !mounted) {
       return;
     }
@@ -305,6 +316,7 @@ class _AdminPageState extends State<AdminPage> {
         _selectedDebugSection = null;
         _localDbData = const {};
         _firestoreData = const [];
+        _runtimeData = const {};
         _debugError = null;
       });
     }
@@ -327,6 +339,7 @@ class _AdminPageState extends State<AdminPage> {
         'hikeSessions',
         'localLocationPoints',
         'checkIns',
+        'upcomingHikes',
         'teams',
         'teamHikeSessions',
         'fcmOutbox',
@@ -336,6 +349,8 @@ class _AdminPageState extends State<AdminPage> {
         'networkObservations',
         'downloadedMaps',
         'hikeRouteCaptures',
+        'groupChats',
+        'live_location_shares',
       ];
 
       final results = <_FirestoreCollection>[];
@@ -357,6 +372,37 @@ class _AdminPageState extends State<AdminPage> {
             documents: const [],
             error: e.toString(),
           ));
+        }
+      }
+      for (final entry in const {
+        'communityPosts/*/comments': 'comments',
+        'groupChats/*/messages': 'messages',
+      }.entries) {
+        try {
+          final snapshot = await firestore
+              .collectionGroup(entry.value)
+              .limit(50)
+              .get();
+          results.add(
+            _FirestoreCollection(
+              name: entry.key,
+              documents: snapshot.docs.map((document) {
+                return <String, dynamic>{
+                  'id': document.id,
+                  'documentPath': document.reference.path,
+                  ...document.data(),
+                };
+              }).toList(),
+            ),
+          );
+        } catch (error) {
+          results.add(
+            _FirestoreCollection(
+              name: entry.key,
+              documents: const [],
+              error: error.toString(),
+            ),
+          );
         }
       }
 
@@ -406,12 +452,73 @@ class _AdminPageState extends State<AdminPage> {
     }
   }
 
+  void _loadRuntimeDebugData() {
+    final session = widget.session;
+    setState(() {
+      _debugError = null;
+      _runtimeData = {
+        'Current authenticated app session': {
+          'storageType': 'In-memory session with a SQLite mirror',
+          'persistence':
+              'Current process; persisted copy is shown under Local SQLite',
+          'phoneNumber': session.phoneNumber,
+          'username': session.username,
+          'signedInAt': session.signedInAt.toUtc().toIso8601String(),
+          'createdAt': session.createdAt.toUtc().toIso8601String(),
+          'appInstanceId': session.appInstanceId,
+          'isAdmin': session.isAdmin,
+          'requiresOnboarding': session.requiresOnboarding,
+          'isOnboardingProfileComplete':
+              session.isOnboardingProfileComplete,
+        },
+        'Firebase bootstrap state': {
+          'storageType': 'Process runtime configuration',
+          'persistence': 'Re-created on app launch',
+          'isAvailable': widget.firebaseBootstrapResult.isAvailable,
+          'errorMessage': widget.firebaseBootstrapResult.errorMessage,
+        },
+        'App settings singleton':
+            AppSettingsController.instance.debugSnapshot,
+        'Location snapshot singleton':
+            LocationSnapshotService.instance.debugSnapshot,
+        'Live-location sharing singleton':
+            LiveLocationSharingService.instance.debugSnapshot,
+        'Trail cover image lookup cache':
+            TrailCoverImageService.instance.debugSnapshot,
+        'Admin screen memory': {
+          'storageType': 'Widget state',
+          'persistence': 'Exists only while this AdminPage is mounted',
+          'selectedAdminSection': _selectedSection.name,
+          'debugMode': _debugMode,
+          'selectedDebugSection': _selectedDebugSection?.name,
+          'isLoading': _isLoading,
+          'isSaving': _isSaving,
+          'isDebugLoading': _isDebugLoading,
+          'loadedTrails': _trails.map((trail) => trail.toFirestore()).toList(),
+          'loadedHazardReports': _hazardReports,
+          'loadedCommunityPosts': _communityPosts,
+          'adminError': _errorMessage,
+          'debugError': _debugError,
+        },
+        for (final entry in widget.runtimeDebugData.entries)
+          entry.key: entry.value is Map
+              ? Map<String, Object?>.from(entry.value as Map)
+              : {
+                  'storageType': 'Parent runtime value',
+                  'persistence': 'Process lifetime only',
+                  'value': entry.value,
+                },
+      };
+    });
+  }
+
   void _exitDebugMode() {
     setState(() {
       _debugMode = false;
       _selectedDebugSection = null;
       _localDbData = const {};
       _firestoreData = const [];
+      _runtimeData = const {};
       _debugError = null;
     });
   }
@@ -505,6 +612,8 @@ class _AdminPageState extends State<AdminPage> {
                     await _loadFirestoreDebugData();
                   } else if (_selectedDebugSection == _DebugSection.local) {
                     await _loadLocalDbDebugData();
+                  } else if (_selectedDebugSection == _DebugSection.runtime) {
+                    _loadRuntimeDebugData();
                   }
                 }
               : _loadAdminData,
@@ -524,7 +633,9 @@ class _AdminPageState extends State<AdminPage> {
                             ? 'Select a data source to inspect'
                             : _selectedDebugSection == _DebugSection.firestore
                                 ? 'Firestore - ${_firestoreData.where((c) => c.documents.isNotEmpty).length}/${_firestoreData.length} collections populated'
-                                : 'Local Database - ${_localDbData.entries.where((e) => e.value.isNotEmpty).length}/${_localDbData.length} tables populated',
+                                : _selectedDebugSection == _DebugSection.local
+                                    ? 'Local SQLite - ${_localDbData.entries.where((e) => e.value.isNotEmpty).length}/${_localDbData.length} tables populated'
+                                    : 'Runtime & temporary state - ${_runtimeData.length} groups',
                         isLoading: _isDebugLoading,
                         onRefresh: () {
                           if (_selectedDebugSection == _DebugSection.firestore) {
@@ -532,6 +643,9 @@ class _AdminPageState extends State<AdminPage> {
                           } else if (_selectedDebugSection ==
                               _DebugSection.local) {
                             unawaited(_loadLocalDbDebugData());
+                          } else if (_selectedDebugSection ==
+                              _DebugSection.runtime) {
+                            _loadRuntimeDebugData();
                           }
                         },
                         onBack: _selectedDebugSection == null
@@ -541,6 +655,7 @@ class _AdminPageState extends State<AdminPage> {
                                   _selectedDebugSection = null;
                                   _localDbData = const {};
                                   _firestoreData = const [];
+                                  _runtimeData = const {};
                                   _debugError = null;
                                 });
                               },
@@ -573,6 +688,7 @@ class _AdminPageState extends State<AdminPage> {
                         selectedSection: _selectedDebugSection,
                         firestoreData: _firestoreData,
                         localDbData: _localDbData,
+                        runtimeData: _runtimeData,
                         isLoading: _isDebugLoading,
                         onSelectFirestore: () {
                           setState(() {
@@ -585,6 +701,12 @@ class _AdminPageState extends State<AdminPage> {
                             _selectedDebugSection = _DebugSection.local;
                           });
                           unawaited(_loadLocalDbDebugData());
+                        },
+                        onSelectRuntime: () {
+                          setState(() {
+                            _selectedDebugSection = _DebugSection.runtime;
+                          });
+                          _loadRuntimeDebugData();
                         },
                       )
                     else
@@ -1630,17 +1752,21 @@ class _DebugContent extends StatelessWidget {
     required this.selectedSection,
     required this.firestoreData,
     required this.localDbData,
+    required this.runtimeData,
     required this.isLoading,
     required this.onSelectFirestore,
     required this.onSelectLocal,
+    required this.onSelectRuntime,
   });
 
   final _DebugSection? selectedSection;
   final List<_FirestoreCollection> firestoreData;
   final Map<String, List<Map<String, dynamic>>> localDbData;
+  final Map<String, Map<String, Object?>> runtimeData;
   final bool isLoading;
   final VoidCallback onSelectFirestore;
   final VoidCallback onSelectLocal;
+  final VoidCallback onSelectRuntime;
 
   @override
   Widget build(BuildContext context) {
@@ -1648,6 +1774,7 @@ class _DebugContent extends StatelessWidget {
       return _DebugSectionPicker(
         onSelectFirestore: onSelectFirestore,
         onSelectLocal: onSelectLocal,
+        onSelectRuntime: onSelectRuntime,
       );
     }
 
@@ -1662,7 +1789,11 @@ class _DebugContent extends StatelessWidget {
       return _FirestoreDebugView(data: firestoreData);
     }
 
-    return _LocalDbDebugView(data: localDbData);
+    if (selectedSection == _DebugSection.local) {
+      return _LocalDbDebugView(data: localDbData);
+    }
+
+    return _RuntimeDebugView(data: runtimeData);
   }
 }
 
@@ -1670,36 +1801,111 @@ class _DebugSectionPicker extends StatelessWidget {
   const _DebugSectionPicker({
     required this.onSelectFirestore,
     required this.onSelectLocal,
+    required this.onSelectRuntime,
   });
 
   final VoidCallback onSelectFirestore;
   final VoidCallback onSelectLocal;
+  final VoidCallback onSelectRuntime;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         const SizedBox(height: 8),
-        _SectionTitle(label: 'Choose Data Source'),
+        _SectionTitle(label: 'All Debug Data Sources'),
+        const SizedBox(height: 8),
+        const _DebugSourceNotice(
+          title: 'Read-only full diagnostic inventory',
+          message:
+              'Cloud data, every on-device SQLite table, and app-scoped temporary runtime state are separated below. This app does not use Hive or SharedPreferences. Sensitive values are intentionally shown because this mode is admin-only.',
+          icon: Icons.visibility_rounded,
+        ),
         const SizedBox(height: 12),
         _AdminDashboardCard(
-          title: 'Firestore',
-          subtitle: 'Browse all Firestore collections and documents.',
-          metric: 'Cloud',
-          detail: 'Read-only view of Firebase Firestore data',
+          title: 'Cloud Firestore',
+          subtitle:
+              'Persistent shared cloud documents, including known nested subcollections.',
+          metric: 'Persistent cloud',
+          detail: 'Survives sign-out, app restarts, and device changes',
           icon: Icons.cloud_rounded,
           onTap: onSelectFirestore,
         ),
         const SizedBox(height: 12),
         _AdminDashboardCard(
-          title: 'Local Database',
-          subtitle: 'Inspect local SQLite tables and rows.',
-          metric: 'Device',
-          detail: 'Read-only view of on-device database',
+          title: 'Local SQLite Database',
+          subtitle:
+              'Every application table discovered from the device database schema.',
+          metric: 'Persistent device',
+          detail: 'Survives app restarts on this device',
           icon: Icons.storage_rounded,
           onTap: onSelectLocal,
         ),
+        const SizedBox(height: 12),
+        _AdminDashboardCard(
+          title: 'Runtime & Temporary State',
+          subtitle:
+              'Current session, active hike, timers, loaded lists, settings, service snapshots, and memory caches.',
+          metric: 'Temporary memory',
+          detail: 'Usually cleared when widgets close or the app process exits',
+          icon: Icons.memory_rounded,
+          onTap: onSelectRuntime,
+        ),
       ],
+    );
+  }
+}
+
+class _DebugSourceNotice extends StatelessWidget {
+  const _DebugSourceNotice({
+    required this.title,
+    required this.message,
+    required this.icon,
+  });
+
+  final String title;
+  final String message;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _AdminColors.greenSoftFor(context),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _AdminColors.green.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: _AdminColors.green),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: _AdminColors.textFor(context),
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  message,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _AdminColors.secondaryTextFor(context),
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1718,9 +1924,16 @@ class _FirestoreDebugView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const _DebugSourceNotice(
+          title: 'Persistent cloud data',
+          message:
+              'Firebase Firestore documents are shared across devices. Each collection query is capped at 50 documents for this read-only preview.',
+          icon: Icons.cloud_done_rounded,
+        ),
+        const SizedBox(height: 12),
         _SectionTitle(
           label:
-              '$populated/${data.length} collections • $totalDocuments documents',
+              '$populated/${data.length} collections / $totalDocuments documents',
         ),
         const SizedBox(height: 8),
         if (data.isEmpty)
@@ -1924,6 +2137,55 @@ class _KeyValueRow extends StatelessWidget {
       );
     }
 
+    if (_value is Map) {
+      final map = Map<Object?, Object?>.from(_value);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _key,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _AdminColors.secondaryTextFor(context),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
+          ),
+          const SizedBox(height: 4),
+          if (map.isEmpty)
+            Text(
+              '{}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _AdminColors.textFor(context),
+                    letterSpacing: 0,
+                  ),
+            )
+          else
+            Container(
+              margin: const EdgeInsets.only(left: 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _AdminColors.greenSoftFor(
+                  context,
+                ).withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(
+                children: [
+                  for (final entry in map.entries)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: _KeyValueRow(
+                        key_: entry.key.toString(),
+                        value: entry.value,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
+
     final displayValue = _formatValue(_value);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2043,9 +2305,15 @@ class _LocalDbDebugView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const _DebugSourceNotice(
+          title: 'Persistent on-device data',
+          message:
+              'Tables are discovered directly from SQLite metadata, so current and future app tables are included automatically. This data is local to this device.',
+          icon: Icons.phone_android_rounded,
+        ),
+        const SizedBox(height: 12),
         _SectionTitle(
-          label:
-              '$populated/${data.length} tables • $totalRows rows',
+          label: '$populated/${data.length} tables / $totalRows rows',
         ),
         const SizedBox(height: 8),
         if (data.isEmpty)
@@ -2066,6 +2334,107 @@ class _LocalDbDebugView extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _RuntimeDebugView extends StatelessWidget {
+  const _RuntimeDebugView({required this.data});
+
+  final Map<String, Map<String, Object?>> data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _DebugSourceNotice(
+          title: 'Temporary app-scoped state',
+          message:
+              'This is a live snapshot of centralized runtime state. It is separate from Firestore and SQLite and may disappear when a screen closes or the app process exits.',
+          icon: Icons.memory_rounded,
+        ),
+        const SizedBox(height: 12),
+        _SectionTitle(label: '${data.length} runtime state groups'),
+        const SizedBox(height: 8),
+        if (data.isEmpty)
+          const _EmptyState(message: 'No runtime state snapshot loaded.')
+        else
+          _InsetGroup(
+            child: Column(
+              children: [
+                for (var index = 0; index < data.entries.length; index++) ...[
+                  _RuntimeStateCard(
+                    name: data.entries.elementAt(index).key,
+                    data: data.entries.elementAt(index).value,
+                  ),
+                  if (index != data.entries.length - 1)
+                    const _HorizontalSeparator(),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _RuntimeStateCard extends StatefulWidget {
+  const _RuntimeStateCard({required this.name, required this.data});
+
+  final String name;
+  final Map<String, Object?> data;
+
+  @override
+  State<_RuntimeStateCard> createState() => _RuntimeStateCardState();
+}
+
+class _RuntimeStateCardState extends State<_RuntimeStateCard> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _expanded = !_expanded),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.memory_rounded,
+                    size: 20,
+                    color: _AdminColors.orangeFor(context),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.name,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: _AdminColors.textFor(context),
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0,
+                          ),
+                    ),
+                  ),
+                  _AdminStatusPill(
+                    label: '${widget.data.length}',
+                    color: _AdminColors.orangeFor(context),
+                  ),
+                ],
+              ),
+              if (_expanded) ...[
+                const SizedBox(height: 10),
+                _DocCard(index: 0, data: widget.data),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

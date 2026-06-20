@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
@@ -23,6 +21,9 @@ class RoutePreviewMap extends StatefulWidget {
     this.animationDuration = const Duration(seconds: 5),
     this.pinnedPoints = const [],
     this.checkInPoints = const [],
+    this.captureAllGestures = false,
+    this.isRouteLoading = false,
+    this.loadingMessage = 'Loading route…',
   });
 
   final Trail trail;
@@ -34,6 +35,9 @@ class RoutePreviewMap extends StatefulWidget {
   final Duration animationDuration;
   final List<mapbox.Point> pinnedPoints;
   final List<mapbox.Point> checkInPoints;
+  final bool captureAllGestures;
+  final bool isRouteLoading;
+  final String loadingMessage;
 
   List<TrailCheckpoint> get effectiveCheckpoints =>
       customCheckpoints ?? trail.checkpoints;
@@ -48,7 +52,6 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   late List<mapbox.Point> _routePoints;
   late List<mapbox.Point> _checkpointPoints;
-  late List<TrailCheckpoint> _checkpointData;
   late mapbox.Point _startPoint;
   late mapbox.Point _endPoint;
   late double _currentZoom;
@@ -57,7 +60,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PointAnnotationManager? _pointManager;
-  var _styleIndex = 0;
+  var _styleIndex = 4;
   var _styleLoaded = false;
   var _routeRendered = false;
   late final AnimationController _routeAnimController;
@@ -66,7 +69,14 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   mapbox.PolylineAnnotation? _animatedPolyline;
   List<int> _checkpointIndices = [];
   Timer? _pauseTimer;
+  Timer? _styleWatchdogTimer;
+  Timer? _renderRetryTimer;
+  Timer? _fitRetryTimer;
   bool _isPaused = false;
+  bool _isRendering = false;
+  bool _isFitting = false;
+  bool _initialFitComplete = false;
+  int _renderGeneration = 0;
 
   @override
   void initState() {
@@ -96,8 +106,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         _polylineManager == null ||
         _routePoints.length < 2 ||
         _animatedPolyline == null ||
-        _isPaused)
+        _isPaused) {
       return;
+    }
     final progress = _routeAnimProgress.value.clamp(0.0, 1.0);
     final targetIndex = (progress * (_routePoints.length - 1)).round().clamp(
       1,
@@ -192,6 +203,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   @override
   void dispose() {
     _pauseTimer?.cancel();
+    _styleWatchdogTimer?.cancel();
+    _renderRetryTimer?.cancel();
+    _fitRetryTimer?.cancel();
+    _renderGeneration++;
     _routeAnimController.removeListener(_onRouteAnimationTick);
     _routeAnimController.removeStatusListener(_onAnimationStatusChange);
     _routeAnimController.dispose();
@@ -213,7 +228,6 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         checkpoints.last.latitude,
       ),
     );
-    _checkpointData = checkpoints;
     _checkpointPoints = checkpoints
         .map(
           (cp) => mapbox.Point(
@@ -262,8 +276,13 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         oldWidget.route != widget.route) {
       _buildPoints();
       _routeRendered = false;
+      _initialFitComplete = false;
       _animatedPolyline = null;
       _lastAnimatedIndex = 0;
+      _routeAnimController.stop();
+      _renderRetryTimer?.cancel();
+      _fitRetryTimer?.cancel();
+      _renderGeneration++;
       unawaited(_renderRouteIfReady());
     }
     if (oldWidget.highlightedCheckpointIndex !=
@@ -288,173 +307,266 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
     _mapboxMap = mapboxMap;
-    await mapboxMap.compass.updateSettings(
-      mapbox.CompassSettings(enabled: false),
-    );
-    await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
-    await mapboxMap.gestures.updateSettings(
-      mapbox.GesturesSettings(
-        scrollEnabled: true,
-        pinchToZoomEnabled: true,
-        rotateEnabled: true,
-        pitchEnabled: true,
-      ),
-    );
-    await mapboxMap.setBounds(
-      mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
-    );
-    _polylineManager = await mapboxMap.annotations
-        .createPolylineAnnotationManager();
-    _circleManager = await mapboxMap.annotations
-        .createCircleAnnotationManager();
-    _pointManager = await mapboxMap.annotations.createPointAnnotationManager();
-    await _renderRouteIfReady();
-    await _syncScaleFromCamera();
+    _scheduleStyleWatchdog();
+    try {
+      await mapboxMap.compass.updateSettings(
+        mapbox.CompassSettings(enabled: false),
+      );
+      await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
+      await mapboxMap.gestures.updateSettings(
+        mapbox.GesturesSettings(
+          scrollEnabled: true,
+          pinchToZoomEnabled: true,
+          rotateEnabled: true,
+          pitchEnabled: true,
+        ),
+      );
+      await mapboxMap.setBounds(
+        mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
+      );
+    } catch (_) {
+      // The map channel can still be settling. Style/map callbacks retry setup.
+    }
+    unawaited(_renderRouteIfReady());
+    unawaited(_syncScaleFromCamera());
   }
 
   Future<void> _onStyleLoaded() async {
-    await enableTerrain3D(_mapboxMap!);
-    schedulePitch(_mapboxMap!);
+    _styleWatchdogTimer?.cancel();
     _styleLoaded = true;
     _routeRendered = false;
+    _initialFitComplete = false;
+    _polylineManager = null;
+    _circleManager = null;
+    _pointManager = null;
+    _renderGeneration++;
+    await _ensureAnnotationManagers();
     await _renderRouteIfReady();
+    final map = _mapboxMap;
+    if (map != null) {
+      unawaited(enableTerrain3D(map));
+    }
   }
 
   Future<void> _onMapLoaded() async {
+    _styleWatchdogTimer?.cancel();
     if (!_styleLoaded) {
       _styleLoaded = true;
       _routeRendered = false;
-      await _renderRouteIfReady();
+      _initialFitComplete = false;
+    }
+    await _ensureAnnotationManagers();
+    await _renderRouteIfReady();
+  }
+
+  Future<bool> _ensureAnnotationManagers() async {
+    final map = _mapboxMap;
+    if (map == null || !_styleLoaded) {
+      return false;
+    }
+    try {
+      _polylineManager ??= await map.annotations
+          .createPolylineAnnotationManager();
+      _circleManager ??= await map.annotations.createCircleAnnotationManager();
+      _pointManager ??= await map.annotations.createPointAnnotationManager();
+      return _polylineManager != null &&
+          _circleManager != null &&
+          _pointManager != null;
+    } catch (_) {
+      _scheduleRenderRetry();
+      return false;
     }
   }
 
   Future<void> _renderRouteIfReady() async {
     final map = _mapboxMap;
-    if (map == null || _routeRendered || !_styleLoaded || _visibleMapPoints.length < 2) {
+    if (map == null ||
+        _routeRendered ||
+        _isRendering ||
+        !_styleLoaded ||
+        _visibleMapPoints.length < 2) {
+      return;
+    }
+    if (!await _ensureAnnotationManagers()) {
       return;
     }
 
-    await _polylineManager?.deleteAll();
-    await _circleManager?.deleteAll();
+    final generation = ++_renderGeneration;
+    _isRendering = true;
+    try {
+      _routeAnimController.stop();
+      _animatedPolyline = null;
+      _lastAnimatedIndex = 0;
+      await _polylineManager!.deleteAll();
+      await _circleManager!.deleteAll();
+      await _pointManager!.deleteAll();
+      if (!mounted || generation != _renderGeneration) {
+        return;
+      }
 
-    var created = false;
+      final displayPoints = _routePoints.length >= 2
+          ? _routePoints
+          : _checkpointPoints;
+      final hasDetailedRoute = _routePoints.length >= 2;
 
-    if (_routePoints.length >= 2) {
-      if (widget.animateRoute && _routePoints.length > 2) {
-        // Ghost line: full route always visible while animation plays on top
-        await _polylineManager?.create(
-          mapbox.PolylineAnnotationOptions(
-            geometry: mapbox.LineString(
-              coordinates: [
-                for (final pt in _routePoints)
-                  mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-              ],
+      if (displayPoints.length >= 2) {
+        final coordinates = [
+          for (final point in displayPoints)
+            mapbox.Position(point.coordinates[0]!, point.coordinates[1]!),
+        ];
+        if (hasDetailedRoute &&
+            widget.animateRoute &&
+            displayPoints.length > 2) {
+          await _polylineManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: coordinates),
+              lineColor: const Color(0xFF4ADE80).toARGB32(),
+              lineOpacity: 0.3,
+              lineWidth: _routeLineWidth + 3,
+              lineJoin: mapbox.LineJoin.ROUND,
             ),
-            lineColor: const Color(0xFF4ADE80).toARGB32(),
-            lineOpacity: 0.25,
-            lineWidth: _routeLineWidth + 3,
-            lineJoin: mapbox.LineJoin.ROUND,
-          ),
-        );
-        // Foreground animated line
-        _animatedPolyline = await _polylineManager?.create(
-          mapbox.PolylineAnnotationOptions(
-            geometry: mapbox.LineString(coordinates: []),
-            lineColor: const Color(0xFF2F8E50).toARGB32(),
-            lineOpacity: 0.86,
-            lineWidth: _routeLineWidth,
-            lineJoin: mapbox.LineJoin.ROUND,
-          ),
-        );
-        if (_animatedPolyline != null) {
-          _lastAnimatedIndex = 0;
-          _animateRoute(_animatedPolyline!);
+          );
+          _animatedPolyline = await _polylineManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(
+                coordinates: coordinates.take(2).toList(),
+              ),
+              lineColor: const Color(0xFF2F8E50).toARGB32(),
+              lineOpacity: 0.9,
+              lineWidth: _routeLineWidth,
+              lineJoin: mapbox.LineJoin.ROUND,
+            ),
+          );
+          if (_animatedPolyline != null) {
+            _lastAnimatedIndex = 2;
+            _animateRoute(_animatedPolyline!);
+          }
+        } else {
+          await _polylineManager!.create(
+            mapbox.PolylineAnnotationOptions(
+              geometry: mapbox.LineString(coordinates: coordinates),
+              lineColor:
+                  (hasDetailedRoute
+                          ? const Color(0xFF2F8E50)
+                          : const Color(0xFFF59E0B))
+                      .toARGB32(),
+              lineOpacity: hasDetailedRoute ? 0.9 : 0.72,
+              lineWidth: hasDetailedRoute
+                  ? _routeLineWidth + 0.5
+                  : _routeLineWidth,
+              lineJoin: mapbox.LineJoin.ROUND,
+            ),
+          );
         }
-      } else {
-        // Static route
-        await _polylineManager?.create(
-          mapbox.PolylineAnnotationOptions(
-            geometry: mapbox.LineString(
-              coordinates: [
-                for (final pt in _routePoints)
-                  mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-              ],
-            ),
-            lineColor: const Color(0xFF2F8E50).toARGB32(),
-            lineOpacity: 0.86,
-            lineWidth: _routeLineWidth,
-            lineJoin: mapbox.LineJoin.ROUND,
+      }
+
+      final circleOptions = <mapbox.CircleAnnotationOptions>[
+        for (final checkpoint
+            in _checkpointPoints
+                .skip(1)
+                .take(math.max(0, _checkpointPoints.length - 2)))
+          mapbox.CircleAnnotationOptions(
+            geometry: checkpoint,
+            circleColor: const Color(0xFF2F8E50).toARGB32(),
+            circleOpacity: 0.65,
+            circleRadius: 4.2,
+            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+            circleStrokeWidth: 1.2,
           ),
+        mapbox.CircleAnnotationOptions(
+          geometry: _startPoint,
+          circleColor: const Color(0xFF7BC90E).toARGB32(),
+          circleRadius: 6.5,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 2,
+        ),
+        mapbox.CircleAnnotationOptions(
+          geometry: _endPoint,
+          circleColor: const Color(0xFFE94B42).toARGB32(),
+          circleRadius: 6.5,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 2,
+        ),
+      ];
+      await _circleManager!.createMulti(circleOptions);
+
+      if (widget.pinnedPoints.isNotEmpty) {
+        await _pointManager!.createMulti(
+          widget.pinnedPoints
+              .map(
+                (pin) => mapbox.PointAnnotationOptions(
+                  geometry: pin,
+                  iconSize: 0.7,
+                  iconImage: 'marker',
+                  iconAnchor: mapbox.IconAnchor.BOTTOM,
+                ),
+              )
+              .toList(),
         );
       }
-      created = true;
-    }
 
-    final circleOptions = <mapbox.CircleAnnotationOptions>[
-      for (final checkpoint
-          in _checkpointPoints
-              .skip(1)
-              .take(math.max(0, _checkpointPoints.length - 2)))
-        mapbox.CircleAnnotationOptions(
-          geometry: checkpoint,
-          circleColor: const Color(0xFF2F8E50).toARGB32(),
-          circleOpacity: 0.55,
-          circleRadius: 4.2,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 1.2,
-        ),
-      mapbox.CircleAnnotationOptions(
-        geometry: _startPoint,
-        circleColor: const Color(0xFF7BC90E).toARGB32(),
-        circleRadius: 6.5,
-        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-        circleStrokeWidth: 2,
-      ),
-      mapbox.CircleAnnotationOptions(
-        geometry: _endPoint,
-        circleColor: const Color(0xFFE94B42).toARGB32(),
-        circleRadius: 6.5,
-        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-        circleStrokeWidth: 2,
-      ),
-    ];
+      if (widget.checkInPoints.isNotEmpty) {
+        await _pointManager!.createMulti(
+          widget.checkInPoints
+              .map(
+                (ci) => mapbox.PointAnnotationOptions(
+                  geometry: ci,
+                  iconSize: 0.5,
+                  iconImage: 'circle',
+                  iconColor: 0xFF0A84FF,
+                ),
+              )
+              .toList(),
+        );
+      }
 
-    if (circleOptions.isNotEmpty) {
-      await _circleManager?.createMulti(circleOptions);
-      created = true;
-    }
-
-    if (widget.pinnedPoints.isNotEmpty) {
-      await _pointManager?.createMulti(
-        widget.pinnedPoints.map(
-          (pin) => mapbox.PointAnnotationOptions(
-            geometry: pin,
-            iconSize: 0.7,
-            iconImage: 'marker',
-            iconAnchor: mapbox.IconAnchor.BOTTOM,
-          ),
-        ).toList(),
-      );
-    }
-
-    if (widget.checkInPoints.isNotEmpty) {
-      await _pointManager?.createMulti(
-        widget.checkInPoints.map(
-          (ci) => mapbox.PointAnnotationOptions(
-            geometry: ci,
-            iconSize: 0.5,
-            iconImage: 'circle',
-            iconColor: 0xFF0A84FF,
-          ),
-        ).toList(),
-      );
-    }
-
-    if (created) {
-      _routeRendered = true;
-      await Future.delayed(const Duration(milliseconds: 50));
+      if (!mounted || generation != _renderGeneration) {
+        return;
+      }
+      setState(() {
+        _routeRendered = true;
+      });
+      await Future.delayed(const Duration(milliseconds: 180));
       await _fitRoute();
+    } catch (_) {
+      if (mounted && generation == _renderGeneration) {
+        setState(() {
+          _routeRendered = false;
+          _initialFitComplete = false;
+        });
+        _scheduleRenderRetry();
+      }
+    } finally {
+      _isRendering = false;
     }
+  }
+
+  void _scheduleRenderRetry() {
+    _renderRetryTimer?.cancel();
+    _renderRetryTimer = Timer(const Duration(milliseconds: 700), () {
+      if (mounted) {
+        unawaited(_renderRouteIfReady());
+      }
+    });
+  }
+
+  void _scheduleStyleWatchdog() {
+    _styleWatchdogTimer?.cancel();
+    _styleWatchdogTimer = Timer(const Duration(seconds: 15), () {
+      if (!mounted || _styleLoaded) {
+        return;
+      }
+      setState(() {
+        _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
+        _routeRendered = false;
+        _initialFitComplete = false;
+        _polylineManager = null;
+        _circleManager = null;
+        _pointManager = null;
+        _renderGeneration++;
+      });
+      _scheduleStyleWatchdog();
+    });
   }
 
   void _animateRoute(mapbox.PolylineAnnotation annotation) {
@@ -464,53 +576,110 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   Future<void> _fitRoute() async {
     final map = _mapboxMap;
-    if (map == null || _visibleMapPoints.length < 2) return;
+    if (map == null || _visibleMapPoints.length < 2 || _isFitting) return;
 
-    final b = boundsFor(_visibleMapPoints);
-    if (b.minLon > b.maxLon || b.minLat > b.maxLat) return;
+    final bounds = boundsFor(_visibleMapPoints);
+    if (bounds.minLon > bounds.maxLon || bounds.minLat > bounds.maxLat) {
+      return;
+    }
 
+    _isFitting = true;
     try {
-      try {
-        final camera = await map.cameraForCoordinateBounds(
-          mapbox.CoordinateBounds(
-            southwest: mapbox.Point(
-              coordinates: mapbox.Position(b.minLon, b.minLat),
-            ),
-            northeast: mapbox.Point(
-              coordinates: mapbox.Position(b.maxLon, b.maxLat),
-            ),
-            infiniteBounds: false,
+      final camera = await map.cameraForCoordinateBounds(
+        mapbox.CoordinateBounds(
+          southwest: mapbox.Point(
+            coordinates: mapbox.Position(bounds.minLon, bounds.minLat),
           ),
-          mapbox.MbxEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
-          null,
-          null,
-          null,
-          null,
-        );
-        if (camera != null &&
-            camera.zoom != null &&
-            camera.zoom!.isFinite &&
-            camera.center != null &&
-            camera.center!.coordinates[0] != null) {
-          await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 300));
-        } else {
-          throw Exception('Invalid camera from cameraForCoordinateBounds');
-        }
-      } catch (_) {
-        final center = centerFor(_visibleMapPoints);
-        await map.flyTo(
-          mapbox.CameraOptions(center: center, zoom: 13.5),
-          mapbox.MapAnimationOptions(duration: 300),
-        );
+          northeast: mapbox.Point(
+            coordinates: mapbox.Position(bounds.maxLon, bounds.maxLat),
+          ),
+          infiniteBounds: false,
+        ),
+        mapbox.MbxEdgeInsets(top: 48, left: 48, bottom: 48, right: 48),
+        null,
+        null,
+        null,
+        null,
+      );
+      if (camera.zoom == null ||
+          !camera.zoom!.isFinite ||
+          camera.center == null ||
+          camera.center!.coordinates[0] == null ||
+          camera.center!.coordinates[1] == null) {
+        throw StateError('Mapbox did not return a valid route camera.');
+      }
+
+      await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 350));
+      await Future.delayed(const Duration(milliseconds: 380));
+      final state = await map.getCameraState();
+      final centerLongitude = state.center.coordinates[0]!.toDouble();
+      final centerLatitude = state.center.coordinates[1]!.toDouble();
+      final latitudeMargin = math.max(
+        0.002,
+        (bounds.maxLat - bounds.minLat) * 0.75,
+      );
+      final longitudeMargin = math.max(
+        0.002,
+        (bounds.maxLon - bounds.minLon) * 0.75,
+      );
+      final centerLooksValid =
+          centerLatitude >= bounds.minLat - latitudeMargin &&
+          centerLatitude <= bounds.maxLat + latitudeMargin &&
+          centerLongitude >= bounds.minLon - longitudeMargin &&
+          centerLongitude <= bounds.maxLon + longitudeMargin &&
+          state.zoom.isFinite;
+      if (!centerLooksValid) {
+        throw StateError('The route camera did not settle on the route.');
+      }
+
+      _fitRetryTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          _initialFitComplete = true;
+        });
       }
     } catch (_) {
-      // Map channel may not be ready yet (e.g. 64x64 invalid-size fallback).
-      // Retry once the viewport stabilises.
-      Future.delayed(const Duration(milliseconds: 600), () {
-        if (mounted) unawaited(_fitRoute());
-      });
+      try {
+        final latitudeSpan = bounds.maxLat - bounds.minLat;
+        final longitudeSpan = bounds.maxLon - bounds.minLon;
+        final largestSpan = math.max(
+          0.0005,
+          math.max(latitudeSpan, longitudeSpan),
+        );
+        final fallbackZoom = (math.log(360 / largestSpan) / math.ln2 - 1.8)
+            .clamp(kMapMinZoom, 17.5)
+            .toDouble();
+        await map.flyTo(
+          mapbox.CameraOptions(
+            center: centerFor(_visibleMapPoints),
+            zoom: fallbackZoom,
+            pitch: 0,
+          ),
+          mapbox.MapAnimationOptions(duration: 350),
+        );
+        _fitRetryTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _initialFitComplete = true;
+          });
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _initialFitComplete = false;
+          });
+          _fitRetryTimer?.cancel();
+          _fitRetryTimer = Timer(const Duration(milliseconds: 800), () {
+            if (mounted) {
+              unawaited(_fitRoute());
+            }
+          });
+        }
+      }
+    } finally {
+      _isFitting = false;
     }
-    await _syncScaleFromCamera();
+    unawaited(_syncScaleFromCamera());
   }
 
   Future<void> _zoomBy(double amount) async {
@@ -529,11 +698,24 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
       _styleLoaded = false;
       _routeRendered = false;
+      _initialFitComplete = false;
+      _polylineManager = null;
+      _circleManager = null;
+      _pointManager = null;
+      _renderGeneration++;
     });
+    _scheduleStyleWatchdog();
   }
 
   void _onCameraChange(mapbox.CameraChangedEventData data) {
     _updateScale(data);
+  }
+
+  void _onMapIdle() {
+    unawaited(_syncScaleFromCamera());
+    if (_routeRendered && !_initialFitComplete) {
+      unawaited(_fitRoute());
+    }
   }
 
   Future<void> _syncScaleFromCamera() async {
@@ -577,38 +759,18 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   List<mapbox.Point> _decodePolyline(String encoded) {
-    final points = <mapbox.Point>[];
-    var index = 0;
-    var latitude = 0;
-    var longitude = 0;
-
-    while (index < encoded.length) {
-      var shift = 0;
-      var result = 0;
-      int byte;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      latitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-
-      shift = 0;
-      result = 0;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      longitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-
-      points.add(
-        mapbox.Point(
-          coordinates: mapbox.Position(longitude / 100000, latitude / 100000),
-        ),
-      );
+    try {
+      return PolylineCodec.decode(encoded)
+          .where((point) => point.latitude.isFinite && point.longitude.isFinite)
+          .map(
+            (point) => mapbox.Point(
+              coordinates: mapbox.Position(point.longitude, point.latitude),
+            ),
+          )
+          .toList();
+    } catch (_) {
+      return const [];
     }
-    return points;
   }
 
   List<mapbox.Point> _orientRoutePoints(List<mapbox.Point> points) {
@@ -631,7 +793,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   @override
   Widget build(BuildContext context) {
-    final center = centerFor(_visibleMapPoints);
+    final isPreparingMap =
+        !_styleLoaded || !_routeRendered || !_initialFitComplete;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -639,12 +802,14 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           child: mapbox.MapWidget(
             key: ValueKey(mapStyleUrls[_styleIndex]),
             styleUri: mapStyleUrls[_styleIndex],
-            gestureRecognizers: mapGestureRecognizers,
+            gestureRecognizers: widget.captureAllGestures
+                ? eagerMapGestureRecognizers
+                : mapGestureRecognizers,
             onMapCreated: _onMapCreated,
             onStyleLoadedListener: (_) => _onStyleLoaded(),
             onMapLoadedListener: (_) => _onMapLoaded(),
             onCameraChangeListener: _onCameraChange,
-            onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
+            onMapIdleListener: (_) => _onMapIdle(),
           ),
         ),
         Align(
@@ -666,6 +831,87 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
           ),
         ),
+        if (isPreparingMap)
+          Positioned.fill(
+            child: ColoredBox(
+              color: Theme.of(
+                context,
+              ).colorScheme.surface.withValues(alpha: 0.82),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox.square(
+                      dimension: 28,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      !_styleLoaded
+                          ? 'Preparing map…'
+                          : !_routeRendered
+                          ? 'Drawing route…'
+                          : 'Focusing route…',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'This can take longer on a slow connection.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          )
+        else if (widget.isRouteLoading)
+          Positioned(
+            left: 10,
+            right: 10,
+            top: 10,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.surface.withValues(alpha: 0.94),
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x22000000),
+                      blurRadius: 8,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.loadingMessage,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }

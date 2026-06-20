@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../app/Data/local_session_database.dart';
 import '../../trail/Model/trail_models.dart';
 import 'geoapify_service.dart';
@@ -98,7 +100,7 @@ class HikingRouteService {
         endLatitude: endLat,
         endLongitude: endLng,
         waypoints: waypoints,
-      );
+      ).timeout(const Duration(seconds: 45));
 
       double elevation = ors.ascentMeters;
       List<List<double>> coords = ors.coordinates;
@@ -107,7 +109,7 @@ class HikingRouteService {
         try {
           final topo = await _openTopoDataService.getElevations(
             coordinates: coords,
-          );
+          ).timeout(const Duration(seconds: 25));
           elevation = topo.elevationGainMeters;
         } catch (_) {}
       }
@@ -129,6 +131,8 @@ class HikingRouteService {
       );
     } on OpenRouteServiceException {
       // fall through to Geoapify
+    } on TimeoutException {
+      // fall through to Geoapify
     }
 
     try {
@@ -138,7 +142,7 @@ class HikingRouteService {
         endLatitude: endLat,
         endLongitude: endLng,
         waypoints: waypoints,
-      );
+      ).timeout(const Duration(seconds: 45));
 
       double elevation = geoapify.elevationGainMeters ?? 0;
       List<List<double>> coords = geoapify.coordinates;
@@ -147,7 +151,7 @@ class HikingRouteService {
         try {
           final topo = await _openTopoDataService.getElevations(
             coordinates: coords,
-          );
+          ).timeout(const Duration(seconds: 25));
           elevation = topo.elevationGainMeters;
         } catch (_) {}
       }
@@ -169,11 +173,15 @@ class HikingRouteService {
       );
     } on GeoapifyException {
       // fall through to Google
+    } on TimeoutException {
+      // fall through to Google
     }
 
     try {
       final googleRoute =
-          await _googleRoutesService.computeWalkingRouteForTrail(trail);
+          await _googleRoutesService
+              .computeWalkingRouteForTrail(trail)
+              .timeout(const Duration(seconds: 45));
       if (!_routeDistanceLooksUsable(trail, googleRoute.distanceMeters)) {
         throw GoogleRoutesServiceException(
           'Google route distance ${googleRoute.distanceLabel} does not match ${trail.distanceLabel}.',
@@ -190,6 +198,10 @@ class HikingRouteService {
         encodedPolyline: googleRoute.encodedPolyline,
         elevationGainMeters: googleRoute.elevationGainMeters,
         sourceLabel: 'Google Walking Route',
+      );
+    } on TimeoutException {
+      throw const HikingRouteServiceException(
+        'Route providers are responding slowly. The route will be retried.',
       );
     } on GoogleRoutesServiceException catch (googleError) {
       throw HikingRouteServiceException(
@@ -212,6 +224,17 @@ class HikingRouteService {
   Future<HikingRouteResult> findHikingRouteForTrailWithCache(
     Trail trail,
   ) async {
+    final savedPolyline = trail.routeEncodedPolyline?.trim() ?? '';
+    if (_isUsablePolyline(savedPolyline)) {
+      return HikingRouteResult(
+        distanceMeters: (trail.distanceKm * 1000).round(),
+        duration: Duration(minutes: trail.estimatedDurationMinutes),
+        encodedPolyline: savedPolyline,
+        elevationGainMeters: trail.elevationGainMeters.toDouble(),
+        sourceLabel: 'Saved trail route',
+      );
+    }
+
     final db = _localDatabase;
     if (db != null) {
       final hash = checkpointsHash(trail.checkpoints);
@@ -221,16 +244,19 @@ class HikingRouteService {
           checkpointsHash: hash,
         );
         if (cached != null) {
-          return HikingRouteResult(
-            distanceMeters: cached['distance_meters'] as int,
-            duration:
-                Duration(seconds: cached['duration_seconds'] as int),
-            encodedPolyline: cached['encoded_polyline'] as String,
-            elevationGainMeters:
-                (cached['elevation_gain_meters'] as num?)?.toDouble(),
-            sourceLabel:
-                '${cached['source_label']} (cached)',
-          );
+          final cachedPolyline = cached['encoded_polyline'] as String? ?? '';
+          if (_isUsablePolyline(cachedPolyline)) {
+            return HikingRouteResult(
+              distanceMeters: cached['distance_meters'] as int,
+              duration:
+                  Duration(seconds: cached['duration_seconds'] as int),
+              encodedPolyline: cachedPolyline,
+              elevationGainMeters:
+                  (cached['elevation_gain_meters'] as num?)?.toDouble(),
+              sourceLabel:
+                  '${cached['source_label']} (cached)',
+            );
+          }
         }
       } catch (_) {
         // Cache lookup failure is non-fatal; proceed to fetch route.
@@ -256,6 +282,17 @@ class HikingRouteService {
     }
 
     return result;
+  }
+
+  bool _isUsablePolyline(String encodedPolyline) {
+    if (encodedPolyline.isEmpty) {
+      return false;
+    }
+    try {
+      return PolylineCodec.decode(encodedPolyline).length >= 2;
+    } catch (_) {
+      return false;
+    }
   }
 
   bool _routeDistanceLooksUsable(Trail trail, int distanceMeters) {

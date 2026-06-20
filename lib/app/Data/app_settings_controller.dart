@@ -37,6 +37,19 @@ class AppSettingsController extends ChangeNotifier {
   bool get hapticSafetyFeedbackEnabled => _hapticSafetyFeedbackEnabled;
   bool get lowBatterySafetyWarningEnabled => _lowBatterySafetyWarningEnabled;
 
+  Map<String, Object?> get debugSnapshot => {
+    'storageType': 'In-memory app settings',
+    'persistence': 'Process lifetime only',
+    'themeSetting': _themeSetting.label,
+    'themeMode': _themeSetting.themeMode.name,
+    'preciseLocationEnabled': _preciseLocationEnabled,
+    'anonymousTrailRecommendationsEnabled':
+        _anonymousTrailRecommendationsEnabled,
+    'hapticSafetyFeedbackEnabled': _hapticSafetyFeedbackEnabled,
+    'lowBatterySafetyWarningEnabled': _lowBatterySafetyWarningEnabled,
+    'hasListeners': hasListeners,
+  };
+
   void setThemeSetting(HikerCircleThemeSetting setting) {
     if (_themeSetting == setting) {
       return;

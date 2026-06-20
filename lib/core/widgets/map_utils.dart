@@ -8,6 +8,10 @@ const mapGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
   Factory<OneSequenceGestureRecognizer>(ScaleGestureRecognizer.new),
 };
 
+const eagerMapGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
+  Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
+};
+
 const mapStyleUrls = [
   'https://tiles.openfreemap.org/styles/liberty',
   'https://tiles.openfreemap.org/styles/positron',
@@ -19,23 +23,25 @@ const mapStyleUrls = [
 
 Future<void> enableTerrain3D(MapboxMap map) async {
   try {
-    await map.style.addSource(RasterDemSource(
-      id: 'mapbox-dem',
-      url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
-    ));
+    await map.style.addSource(
+      RasterDemSource(
+        id: 'mapbox-dem',
+        url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
+      ),
+    );
   } catch (_) {}
   try {
-    await map.style
-        .setStyleTerrain('{"source": "mapbox-dem", "exaggeration": 1.5}');
+    await map.style.setStyleTerrain(
+      '{"source": "mapbox-dem", "exaggeration": 1.5}',
+    );
   } catch (_) {}
 }
 
 void schedulePitch(MapboxMap map, {double pitch = 50}) {
   Future.delayed(const Duration(milliseconds: 300), () {
-    map.flyTo(
-      CameraOptions(pitch: pitch),
-      MapAnimationOptions(duration: 800),
-    ).catchError((_) {});
+    map
+        .flyTo(CameraOptions(pitch: pitch), MapAnimationOptions(duration: 800))
+        .catchError((_) {});
   });
 }
 
@@ -78,21 +84,23 @@ Point centerFor(List<Point> points) {
     maxLon += 0.0005;
   }
 
-  return (
-    minLat: minLat,
-    maxLat: maxLat,
-    minLon: minLon,
-    maxLon: maxLon,
-  );
+  return (minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon);
 }
 
 double distanceMeters(Point a, Point b) {
   const earthRadiusMeters = 6371000.0;
   final lat1 = a.coordinates[1]!.toDouble() * math.pi / 180;
   final lat2 = b.coordinates[1]!.toDouble() * math.pi / 180;
-  final dLat = (b.coordinates[1]!.toDouble() - a.coordinates[1]!.toDouble()) * math.pi / 180;
-  final dLon = (b.coordinates[0]!.toDouble() - a.coordinates[0]!.toDouble()) * math.pi / 180;
-  final h = math.sin(dLat / 2) * math.sin(dLat / 2) +
+  final dLat =
+      (b.coordinates[1]!.toDouble() - a.coordinates[1]!.toDouble()) *
+      math.pi /
+      180;
+  final dLon =
+      (b.coordinates[0]!.toDouble() - a.coordinates[0]!.toDouble()) *
+      math.pi /
+      180;
+  final h =
+      math.sin(dLat / 2) * math.sin(dLat / 2) +
       math.cos(lat1) * math.cos(lat2) * math.sin(dLon / 2) * math.sin(dLon / 2);
   return 2 * earthRadiusMeters * math.asin(math.sqrt(h));
 }

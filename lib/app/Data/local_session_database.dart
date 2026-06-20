@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart'
     show databaseFactoryFfi, sqfliteFfiInit;
 
+import '../../home/Model/hike_session_models.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/app_session.dart';
 
@@ -40,7 +42,65 @@ class LocalSessionDatabase {
 
   Future<void> clearSession() async {
     final database = await _openDatabase();
-    await database.delete('users');
+    await database.transaction((transaction) async {
+      await transaction.delete('users');
+      await transaction.delete('active_hike_session');
+    });
+  }
+
+  Future<void> saveActiveHikeSession({
+    required String phoneNumber,
+    required ActiveHikeSession activeHike,
+  }) async {
+    final database = await _openDatabase();
+    await database.insert('active_hike_session', {
+      'owner_phone_number': phoneNumber,
+      'session_id': activeHike.sessionId,
+      'payload_json': jsonEncode(activeHike.toPersistence()),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<ActiveHikeSession?> loadActiveHikeSession({
+    required String phoneNumber,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'active_hike_session',
+      where: 'owner_phone_number = ?',
+      whereArgs: [phoneNumber],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    try {
+      final payload = jsonDecode(rows.first['payload_json'] as String);
+      if (payload is! Map) {
+        throw const FormatException('Active hike payload is not an object.');
+      }
+      final activeHike = ActiveHikeSession.fromPersistence(
+        Map<String, dynamic>.from(payload),
+      );
+      if (activeHike.sessionId.isEmpty) {
+        throw const FormatException('Active hike session ID is missing.');
+      }
+      return activeHike;
+    } catch (error) {
+      debugPrint('Unable to restore active hike snapshot: $error');
+      await clearActiveHikeSession(phoneNumber: phoneNumber);
+      return null;
+    }
+  }
+
+  Future<void> clearActiveHikeSession({required String phoneNumber}) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'active_hike_session',
+      where: 'owner_phone_number = ?',
+      whereArgs: [phoneNumber],
+    );
   }
 
   Future<String> loadOrCreateAppInstanceId() async {
@@ -149,7 +209,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 8,
+      version: 9,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -168,6 +228,7 @@ class LocalSessionDatabase {
         await _createEmergencyContactsTable(database);
         await _createRouteCacheTable(database);
         await _createPendingMessagesTable(database);
+        await _createActiveHikeSessionTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -222,6 +283,9 @@ class LocalSessionDatabase {
             columnName: 'firestore_doc_id',
             definition: "TEXT DEFAULT ''",
           );
+        }
+        if (oldVersion < 9) {
+          await _createActiveHikeSessionTable(database);
         }
       },
     );
@@ -429,6 +493,17 @@ class LocalSessionDatabase {
     ''');
   }
 
+  Future<void> _createActiveHikeSessionTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS active_hike_session (
+        owner_phone_number TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+  }
+
   Future<void> insertPendingMessage({
     required String localId,
     required String chatId,
@@ -456,7 +531,11 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final batch = database.batch();
     for (final row in rows) {
-      batch.insert('pending_messages', row, conflictAlgorithm: ConflictAlgorithm.replace);
+      batch.insert(
+        'pending_messages',
+        row,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
     await batch.commit(noResult: true);
   }
@@ -484,7 +563,9 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<List<Map<String, dynamic>>> loadAllLocalMessagesForChat(String chatId) async {
+  Future<List<Map<String, dynamic>>> loadAllLocalMessagesForChat(
+    String chatId,
+  ) async {
     final database = await _openDatabase();
     return database.query(
       'pending_messages',
@@ -494,7 +575,11 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<void> updateLocalMessageStatus(String localId, String status, {String? firestoreDocId}) async {
+  Future<void> updateLocalMessageStatus(
+    String localId,
+    String status, {
+    String? firestoreDocId,
+  }) async {
     final database = await _openDatabase();
     final values = <String, dynamic>{'send_status': status};
     if (firestoreDocId != null) {
@@ -508,7 +593,9 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<List<Map<String, dynamic>>> loadPendingMessagesForChat(String chatId) async {
+  Future<List<Map<String, dynamic>>> loadPendingMessagesForChat(
+    String chatId,
+  ) async {
     final database = await _openDatabase();
     return database.query(
       'pending_messages',
@@ -580,20 +667,16 @@ class LocalSessionDatabase {
     required String sourceLabel,
   }) async {
     final database = await _openDatabase();
-    await database.insert(
-      'route_cache',
-      {
-        'trail_id': trailId,
-        'checkpoints_hash': checkpointsHash,
-        'encoded_polyline': encodedPolyline,
-        'distance_meters': distanceMeters,
-        'duration_seconds': durationSeconds,
-        'elevation_gain_meters': elevationGainMeters,
-        'source_label': sourceLabel,
-        'cached_at': DateTime.now().toUtc().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await database.insert('route_cache', {
+      'trail_id': trailId,
+      'checkpoints_hash': checkpointsHash,
+      'encoded_polyline': encodedPolyline,
+      'distance_meters': distanceMeters,
+      'duration_seconds': durationSeconds,
+      'elevation_gain_meters': elevationGainMeters,
+      'source_label': sourceLabel,
+      'cached_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<Map<String, dynamic>?> loadRouteCache({
@@ -629,16 +712,18 @@ class LocalSessionDatabase {
 
   Future<Map<String, List<Map<String, dynamic>>>> dumpAllTables() async {
     final database = await _openDatabase();
-    final tableNames = [
-      'users',
-      'local_location_points',
-      'queued_alerts',
-      'downloaded_maps',
-      'network_observations',
-      'app_device',
-      'emergency_contacts',
-      'route_cache',
-    ];
+    final tableRows = await database.rawQuery('''
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name NOT LIKE 'sqlite_%'
+        AND name NOT LIKE 'android_%'
+      ORDER BY name
+    ''');
+    final tableNames = tableRows
+        .map((row) => row['name'])
+        .whereType<String>()
+        .toList();
     final result = <String, List<Map<String, dynamic>>>{};
     for (final table in tableNames) {
       result[table] = await database.query(table);

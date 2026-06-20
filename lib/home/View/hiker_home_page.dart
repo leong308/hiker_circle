@@ -27,6 +27,7 @@ import '../../sos/View/ios_sos_volume_guard.dart';
 import '../../sos/View/sos_page.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
+import '../Data/active_hike_weather_service.dart';
 import '../Data/active_hike_live_status_service.dart';
 import '../Model/hike_session_models.dart';
 import 'active_tracking_map_view.dart';
@@ -95,6 +96,9 @@ class _HikerHomePageState extends State<HikerHomePage>
   FallStillnessMonitorStatus lastFallStillnessStatus =
       FallStillnessMonitorStatus.inactive;
   ActiveHikeSession? activeHike;
+  Future<void>? _activeHikeRestoreFuture;
+  Future<void> _activeHikePersistenceQueue = Future<void>.value();
+  bool isRestoringActiveHike = true;
   int selectedTabIndex = 0;
   int manualSosRequestId = 0;
   int immediateSosRequestId = 0;
@@ -132,6 +136,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     WidgetsBinding.instance.addObserver(this);
     tabController = TabController(length: tabs.length, vsync: this);
     tabController.addListener(updateTabIndex);
+    _activeHikeRestoreFuture = _restoreActiveHikeSession();
     _deepLinkChannel.setMethodCallHandler(_handleDeepLinkMethodCall);
     unawaited(LocationSnapshotService.instance.start());
     unawaited(_refreshBatteryLevel());
@@ -158,13 +163,63 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
   }
 
+  Future<void> _restoreActiveHikeSession() async {
+    try {
+      final restoredHike = await hikerCircleRepository.localDatabase
+          .loadActiveHikeSession(phoneNumber: widget.session.phoneNumber);
+      if (!mounted || restoredHike == null) {
+        return;
+      }
+      setState(() {
+        activeHike = restoredHike;
+        selectedTabIndex = 0;
+      });
+      tabController.animateTo(0);
+      _syncActiveHikeServices(restoredHike, forceLiveStatus: true);
+    } catch (error) {
+      debugPrint('Unable to restore active hike: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          isRestoringActiveHike = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _waitForActiveHikeRestore() async {
+    final restoreFuture = _activeHikeRestoreFuture;
+    if (restoreFuture != null) {
+      await restoreFuture;
+    }
+  }
+
+  void _persistActiveHikeSnapshot(ActiveHikeSession? hike) {
+    _activeHikePersistenceQueue = _activeHikePersistenceQueue.then((_) async {
+      try {
+        if (hike == null) {
+          await hikerCircleRepository.localDatabase.clearActiveHikeSession(
+            phoneNumber: widget.session.phoneNumber,
+          );
+        } else {
+          await hikerCircleRepository.localDatabase.saveActiveHikeSession(
+            phoneNumber: widget.session.phoneNumber,
+            activeHike: hike,
+          );
+        }
+      } catch (error) {
+        debugPrint('Unable to persist active hike snapshot: $error');
+      }
+    });
+  }
+
   Future<void> _loadInitialDeepLink() async {
     try {
       final link = await _deepLinkChannel.invokeMethod<String>(
         'consumeInitialDeepLink',
       );
       if (link != null) {
-        _handleDeepLink(link);
+        await _handleDeepLink(link);
       }
     } catch (_) {
       // Deep links are optional on platforms that do not expose a native hook.
@@ -177,14 +232,20 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     final link = call.arguments;
     if (link is String) {
-      _handleDeepLink(link);
+      await _handleDeepLink(link);
     }
   }
 
-  void _handleDeepLink(String link) {
+  Future<void> _handleDeepLink(String link) async {
     final uri = Uri.tryParse(link);
     if (uri == null || uri.scheme != 'hikercircle') {
       return;
+    }
+    if (uri.host == 'hike') {
+      await _waitForActiveHikeRestore();
+      if (!mounted) {
+        return;
+      }
     }
     if (uri.host == 'sos' && uri.path == '/manual') {
       requestManualSos();
@@ -378,27 +439,25 @@ class _HikerHomePageState extends State<HikerHomePage>
         }
       }
       _trailsSubscription?.cancel();
-      _trailsSubscription = hikerCircleRepository
-          .watchTrails()
-          .listen(
-            (liveTrails) {
-              if (!mounted) return;
-              setState(() {
-                trails = liveTrails;
-                isLoadingLiveData = false;
-              });
-            },
-            onError: (_) {
-              if (mounted) setState(() => isLoadingLiveData = false);
-            },
-          );
+      _trailsSubscription = hikerCircleRepository.watchTrails().listen(
+        (liveTrails) {
+          if (!mounted) return;
+          setState(() {
+            trails = liveTrails;
+            isLoadingLiveData = false;
+          });
+        },
+        onError: (_) {
+          if (mounted) setState(() => isLoadingLiveData = false);
+        },
+      );
       _myUpcomingHikesSubscription?.cancel();
       _myUpcomingHikesSubscription = hikerCircleRepository
           .watchMyUpcomingHikes(widget.session.phoneNumber)
           .listen((hikes) {
-        if (!mounted) return;
-        setState(() => myUpcomingHikes = hikes);
-      });
+            if (!mounted) return;
+            setState(() => myUpcomingHikes = hikes);
+          });
       await hikerCircleRepository.ensureAchievementSeeds();
     } finally {
       if (mounted) {
@@ -414,7 +473,11 @@ class _HikerHomePageState extends State<HikerHomePage>
       return;
     }
 
-    final trail = await showAddTrailSheet(context);
+    final trail = await showAddTrailSheet(
+      context,
+      session: widget.session,
+      repository: hikerCircleRepository,
+    );
     if (trail == null || !mounted) {
       return;
     }
@@ -621,6 +684,7 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     final updatedActiveHike = activeHike;
     if (updatedActiveHike != null) {
+      _persistActiveHikeSnapshot(updatedActiveHike);
       _syncActiveHikeLiveStatus(updatedActiveHike, force: true);
     }
   }
@@ -847,6 +911,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       selectedTabIndex = 0;
     });
     _syncActiveHikeServices(liveHike, forceLiveStatus: true);
+    await _activeHikePersistenceQueue;
     tabController.animateTo(0);
     closeStartProgressDialog();
     unawaited(_recordInitialActiveHikeLocation(liveHike));
@@ -929,6 +994,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       setState(() {
         activeHike = updatedHike;
       });
+      _persistActiveHikeSnapshot(updatedHike);
       _syncActiveHikeLiveStatus(updatedHike, force: true);
       _syncTeamHikeLocation(updatedHike, location);
     } catch (_) {
@@ -941,6 +1007,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     ActiveHikeSession currentHike,
   ) async {
     final location = await LocationSnapshotService.instance.refresh();
+    final checkedInAt = DateTime.now();
     final batteryLevel = await _readBatteryLevel(
       fallback: currentHike.batteryLevel,
     );
@@ -964,12 +1031,22 @@ class _HikerHomePageState extends State<HikerHomePage>
         location: location,
         apiRequestSuccess: widget.firebaseBootstrapResult.isAvailable,
       );
-      final updatedHike = _hikeWithRecordedLocation(
-        hikeWithBattery,
-        location,
-        checkIns: currentHike.checkIns + 1,
-        queuedUpdates: queuedUpdates,
-      );
+      final updatedHike =
+          _hikeWithRecordedLocation(
+            hikeWithBattery,
+            location,
+            checkIns: currentHike.checkIns + 1,
+            queuedUpdates: queuedUpdates,
+          ).copyWith(
+            checkInRecords: [
+              ...currentHike.checkInRecords,
+              HikeCheckInRecord(
+                id: 'check_in_${checkedInAt.microsecondsSinceEpoch}',
+                checkedInAt: checkedInAt,
+                coordinate: HikeCoordinate.fromTriggerLocation(location),
+              ),
+            ],
+          );
       _syncTeamHikeLocation(updatedHike, location);
       return updatedHike;
     }
@@ -977,6 +1054,13 @@ class _HikerHomePageState extends State<HikerHomePage>
     return hikeWithBattery.copyWith(
       checkIns: currentHike.checkIns + 1,
       queuedUpdates: currentHike.queuedUpdates + 1,
+      checkInRecords: [
+        ...currentHike.checkInRecords,
+        HikeCheckInRecord(
+          id: 'check_in_${checkedInAt.microsecondsSinceEpoch}',
+          checkedInAt: checkedInAt,
+        ),
+      ],
     );
   }
 
@@ -1049,9 +1133,11 @@ class _HikerHomePageState extends State<HikerHomePage>
         participantPhoneNumber: phoneNumber,
       );
       if (mounted) {
+        final updatedHike = currentHike.copyWith(teamHikeSession: teamSession);
         setState(() {
-          activeHike = currentHike.copyWith(teamHikeSession: teamSession);
+          activeHike = updatedHike;
         });
+        _persistActiveHikeSnapshot(updatedHike);
       }
       return teamSession;
     } on HikerCircleFirebaseRepositoryException catch (error) {
@@ -1163,6 +1249,28 @@ class _HikerHomePageState extends State<HikerHomePage>
       );
   }
 
+  Future<void> _applyActiveHikeCheckIn(ActiveHikeSession hike) async {
+    final updatedHike = await checkInActiveHike(hike);
+    if (!mounted || activeHike?.sessionId != hike.sessionId) {
+      return;
+    }
+    setState(() {
+      activeHike = updatedHike;
+    });
+    _syncActiveHikeServices(updatedHike, forceLiveStatus: true);
+  }
+
+  Future<void> _applyActiveHikePin(ActiveHikeSession hike) async {
+    final result = await pinCurrentLocation(hike);
+    if (!mounted || activeHike?.sessionId != hike.sessionId) {
+      return;
+    }
+    setState(() {
+      activeHike = result.hike;
+    });
+    _syncActiveHikeServices(result.hike, forceLiveStatus: true);
+  }
+
   void _showNoActiveHikeSnackBar() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -1201,7 +1309,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (result == 'viewTrail' && trail != null) {
       openTrailDetail(trail);
     } else if (result == 'start' && trail != null) {
-      final hikeType = hike.participantCount > 1 ? HikeType.team : HikeType.solo;
+      final hikeType = hike.participantCount > 1
+          ? HikeType.team
+          : HikeType.solo;
       final draft = HikeSessionDraft.fromTrail(trail).copyWith(
         hikeType: hikeType,
         departureTime: hike.departureTime,
@@ -1241,7 +1351,10 @@ class _HikerHomePageState extends State<HikerHomePage>
         teamHikeSession: hikeToStart.teamHikeSession,
       );
       final batteryLevel = await _readBatteryLevel(fallback: 100);
-      liveHike = liveHike.copyWith(batteryLevel: batteryLevel, batteryStartedLevel: batteryLevel);
+      liveHike = liveHike.copyWith(
+        batteryLevel: batteryLevel,
+        batteryStartedLevel: batteryLevel,
+      );
     } on HikerCircleFirebaseRepositoryException catch (_) {
       // Proceed in offline mode
     }
@@ -1251,6 +1364,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       selectedTabIndex = 0;
     });
     _syncActiveHikeServices(liveHike, forceLiveStatus: true);
+    await _activeHikePersistenceQueue;
     tabController.animateTo(0);
     unawaited(_recordInitialActiveHikeLocation(liveHike));
   }
@@ -1365,6 +1479,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         selectedTabIndex = 0;
       });
       _syncActiveHikeServices(liveHike, forceLiveStatus: true);
+      await _activeHikePersistenceQueue;
       tabController.animateTo(0);
       unawaited(_recordInitialActiveHikeLocation(liveHike));
     } on HikerCircleFirebaseRepositoryException catch (error) {
@@ -1394,10 +1509,12 @@ class _HikerHomePageState extends State<HikerHomePage>
       final currentHike = activeHike;
       if (currentHike != null &&
           currentHike.teamHikeSessionId == teamHikeSessionId) {
+        final updatedHike = currentHike.copyWith(teamHikeSession: teamSession);
         setState(() {
-          activeHike = currentHike.copyWith(teamHikeSession: teamSession);
+          activeHike = updatedHike;
           selectedTabIndex = 0;
         });
+        _persistActiveHikeSnapshot(updatedHike);
         tabController.animateTo(0);
       }
       ScaffoldMessenger.of(context)
@@ -1471,7 +1588,6 @@ class _HikerHomePageState extends State<HikerHomePage>
     );
   }
 
-
   void openSosTab() {
     setState(() {
       selectedTabIndex = 1;
@@ -1494,6 +1610,17 @@ class _HikerHomePageState extends State<HikerHomePage>
       immediateSosRequestId += 1;
     });
     tabController.animateTo(1);
+  }
+
+  void _signOutAndClearActiveHike() {
+    _persistActiveHikeSnapshot(null);
+    unawaited(
+      _activeHikePersistenceQueue.then((_) {
+        if (mounted) {
+          widget.onSignOut();
+        }
+      }),
+    );
   }
 
   Future<void> _endActiveHikeSession() async {
@@ -1536,6 +1663,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       // Native safety outputs are best effort when ending a hike.
     }
     _syncActiveHikeServices(null);
+    await _activeHikePersistenceQueue;
     isFallStillnessLocalAlarmActive = false;
     if (!mounted) {
       return;
@@ -1569,6 +1697,191 @@ class _HikerHomePageState extends State<HikerHomePage>
     );
   }
 
+  Map<String, Object?> get _adminRuntimeDebugData {
+    final hike = activeHike;
+    final plan = plannedHike;
+    final fallSnapshot = fallStillnessMonitor.snapshot;
+    return {
+      'Home shell temporary state': {
+        'storageType': 'Mounted HikerHomePage widget state',
+        'persistence': 'Cleared when the signed-in home shell is disposed',
+        'selectedTabIndex': selectedTabIndex,
+        'selectedTabLabel':
+            selectedTabIndex >= 0 && selectedTabIndex < tabs.length
+            ? tabs[selectedTabIndex].label
+            : null,
+        'isLoadingLiveData': isLoadingLiveData,
+        'isSendingFallStillnessSos': isSendingFallStillnessSos,
+        'isRecordingActiveHikeLocation': isRecordingActiveHikeLocation,
+        'isFallStillnessDialogVisible': isFallStillnessDialogVisible,
+        'isFallStillnessLocalAlarmActive': isFallStillnessLocalAlarmActive,
+        'fallStillnessCountdownWasBackgrounded':
+            fallStillnessCountdownWasBackgrounded,
+        'manualSosRequestId': manualSosRequestId,
+        'immediateSosRequestId': immediateSosRequestId,
+        'immediateSosRequestMode': immediateSosRequestMode?.name,
+        'loadedTrails': trails.map((trail) => trail.toFirestore()).toList(),
+        'emergencyContacts': emergencyContacts
+            .map((contact) => contact.toFirestore())
+            .toList(),
+      },
+      'Home timers, subscriptions, and tracking flags': {
+        'storageType': 'Runtime handles and temporary tracking state',
+        'persistence': 'Process/widget lifetime only',
+        'upcomingHikesSubscriptionActive': _myUpcomingHikesSubscription != null,
+        'trailsSubscriptionActive': _trailsSubscription != null,
+        'activeHikeRecordingTimerActive':
+            activeHikeRecordingTimer?.isActive == true,
+        'batteryLevelTimerActive': batteryLevelTimer?.isActive == true,
+        'teamHikeSessionSubscriptionActive':
+            teamHikeSessionSubscription != null,
+        'teamHikeWatchSessionId': teamHikeWatchSessionId,
+        'activeHikeRecordingSessionId': activeHikeRecordingSessionId,
+        'activeHikeRecordingIntervalSeconds':
+            activeHikeRecordingInterval?.inSeconds,
+        'lastActiveHikeLocationRecordedAt': lastActiveHikeLocationRecordedAt
+            ?.toUtc()
+            .toIso8601String(),
+        'lastActiveHikeLiveStatusSentAt': lastActiveHikeLiveStatusSentAt
+            ?.toUtc()
+            .toIso8601String(),
+        'stationaryWatchReferenceLocation': stationaryWatchReferenceLocation
+            ?.toFirestore(),
+        'stationaryWatchStartedAt': stationaryWatchStartedAt
+            ?.toUtc()
+            .toIso8601String(),
+        'isStationaryLocationWatchActive': isStationaryLocationWatchActive,
+        'lastFallStillnessStatus': lastFallStillnessStatus.name,
+        'fallStillnessCancelTaps': fallStillnessCancelTaps
+            .map((date) => date.toUtc().toIso8601String())
+            .toList(),
+      },
+      'Active hike session': {
+        'storageType': 'Runtime state backed by durable local SQLite',
+        'persistence':
+            'The full snapshot is saved in active_hike_session and restored after app termination; telemetry is also mirrored separately to SQLite/Firestore',
+        'value': hike == null
+            ? null
+            : {
+                'sessionId': hike.sessionId,
+                'startedAt': hike.startedAt.toUtc().toIso8601String(),
+                'batteryLevel': hike.batteryLevel,
+                'batteryStartedLevel': hike.batteryStartedLevel,
+                'queuedUpdates': hike.queuedUpdates,
+                'manualPins': hike.manualPins,
+                'checkIns': hike.checkIns,
+                'recordedDistanceKm': hike.recordedDistanceKm,
+                'latestLocation': hike.latestLocation?.toFirestore(),
+                'routePoints': hike.routePoints
+                    .map((point) => point.toFirestore())
+                    .toList(),
+                'manualPinLocations': hike.manualPinLocations
+                    .map((pin) => pin.toFirestore())
+                    .toList(),
+                'checkInRecords': hike.checkInRecords
+                    .map((record) => record.toPersistence())
+                    .toList(),
+                'teamHikeSessionId': hike.teamHikeSessionId,
+                'teamHikeSession': hike.teamHikeSession?.toFirestore(),
+                'draft': {
+                  'hikeType': hike.draft.hikeType.name,
+                  'trail': hike.draft.trail.toFirestore(),
+                  'startPointName': hike.draft.startPointName,
+                  'destinationName': hike.draft.destinationName,
+                  'departureTime': hike.draft.departureTime
+                      .toUtc()
+                      .toIso8601String(),
+                  'expectedArrivalTime': hike.draft.expectedArrivalTime
+                      .toUtc()
+                      .toIso8601String(),
+                  'expectedReturnTime': hike.draft.expectedReturnTime
+                      .toUtc()
+                      .toIso8601String(),
+                  'safetyCheckInIntervalSeconds':
+                      hike.draft.safetyCheckInInterval.inSeconds,
+                  'locationRecordingIntervalSeconds':
+                      hike.draft.locationRecordingInterval.inSeconds,
+                  'emergencyContactNames': hike.draft.emergencyContactNames,
+                  'shareLiveLocation': hike.draft.shareLiveLocation,
+                  'fallDetectionEnabled': hike.draft.fallDetectionEnabled,
+                  'fallDetectionSettings': {
+                    'sensorSensitivity':
+                        hike.draft.fallDetectionSettings.sensorSensitivity,
+                    'stillnessDurationSeconds': hike
+                        .draft
+                        .fallDetectionSettings
+                        .stillnessDuration
+                        .inSeconds,
+                  },
+                  'pathDeviationEnabled': hike.draft.pathDeviationEnabled,
+                  'offlinePhysicalAlertEnabled':
+                      hike.draft.offlinePhysicalAlertEnabled,
+                  'duressEnabled': hike.draft.duressEnabled,
+                  'completedChecklistItems': hike.draft.completedChecklistItems
+                      .toList(),
+                  'teamBuddies': hike.draft.teamBuddies
+                      .map((buddy) => buddy.toFirestore())
+                      .toList(),
+                  'customCheckpoints': hike.draft.customCheckpoints
+                      ?.map((checkpoint) => checkpoint.toFirestore())
+                      .toList(),
+                },
+              },
+      },
+      'Planned and upcoming hike memory': {
+        'storageType': 'Temporary loaded/planned hike state',
+        'persistence':
+            'Widget lifetime; upcoming records also exist in Firestore',
+        'plannedHike': plan == null
+            ? null
+            : {
+                'trail': plan.trail.toFirestore(),
+                'plannedStartTime': plan.plannedStartTime
+                    .toUtc()
+                    .toIso8601String(),
+                'expectedReturnTime': plan.expectedReturnTime
+                    .toUtc()
+                    .toIso8601String(),
+                'weatherCached': plan.weatherCached,
+                'offlineMapDownloaded': plan.offlineMapDownloaded,
+                'emergencyContactsSelected': plan.emergencyContactsSelected,
+                'checklistCompleted': plan.checklistCompleted,
+                'checklistTotal': plan.checklistTotal,
+                'phoneBatteryLevel': plan.phoneBatteryLevel,
+                'liveLocationConfigured': plan.liveLocationConfigured,
+              },
+        'myUpcomingHikes': myUpcomingHikes
+            .map((upcoming) => {'id': upcoming.id, ...upcoming.toFirestore()})
+            .toList(),
+      },
+      'Fall/stillness monitor snapshot': {
+        'storageType': 'Temporary sensor-monitor state',
+        'persistence': 'Only while the monitor/app process is alive',
+        'status': fallSnapshot.status.name,
+        'message': fallSnapshot.message,
+        'detectedAt': fallSnapshot.detectedAt?.toUtc().toIso8601String(),
+        'countdownEndsAt': fallSnapshot.countdownEndsAt
+            ?.toUtc()
+            .toIso8601String(),
+        'triggeredAt': fallSnapshot.triggeredAt?.toUtc().toIso8601String(),
+        'lastCancelledAt': fallSnapshot.lastCancelledAt
+            ?.toUtc()
+            .toIso8601String(),
+        'secondsRemaining': fallSnapshot.secondsRemaining,
+        'accelerationMagnitude': fallSnapshot.accelerationMagnitude,
+        'altitudeDropMeters': fallSnapshot.altitudeDropMeters,
+        'isBackpackTrapLikely': fallSnapshot.isBackpackTrapLikely,
+        'settings': fallSnapshot.settings == null
+            ? null
+            : {
+                'sensorSensitivity': fallSnapshot.settings!.sensorSensitivity,
+                'stillnessDurationSeconds':
+                    fallSnapshot.settings!.stillnessDuration.inSeconds,
+              },
+      },
+    };
+  }
+
   Widget pageFor(HikerBottomNavDestination tab) {
     final isActive = activeHike != null;
     switch (tab.label) {
@@ -1577,17 +1890,31 @@ class _HikerHomePageState extends State<HikerHomePage>
           return ActiveHikeHomePage(
             activeHike: activeHike!,
             onEndHike: () => unawaited(_endActiveHikeSession()),
-            onCheckIn: () => unawaited(checkInActiveHike(activeHike!)),
-            onPinLocation: () => unawaited(pinCurrentLocation(activeHike!)),
+            onCheckIn: () {
+              final hike = activeHike;
+              if (hike != null) {
+                unawaited(_applyActiveHikeCheckIn(hike));
+              }
+            },
+            onPinLocation: () {
+              final hike = activeHike;
+              if (hike != null) {
+                unawaited(_applyActiveHikePin(hike));
+              }
+            },
             fallStillnessSnapshot: fallStillnessMonitor.snapshot,
             onCancelFallStillnessSos: () =>
                 _cancelFallStillnessSos('Phone tap response received'),
           );
         }
         final now = DateTime.now();
-        final activePlannedHike = (plannedHike != null &&
+        final activePlannedHike =
+            (plannedHike != null &&
                 !now.isAfter(
-                    plannedHike!.plannedStartTime.add(const Duration(minutes: 10))))
+                  plannedHike!.plannedStartTime.add(
+                    const Duration(minutes: 10),
+                  ),
+                ))
             ? plannedHike
             : null;
         return HomeDashboardPage(
@@ -1644,7 +1971,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         return MePage(
           session: widget.session,
           phoneNumber: widget.session.phoneNumber,
-          onSignOut: widget.onSignOut,
+          onSignOut: _signOutAndClearActiveHike,
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
         );
       case 'Admin':
@@ -1652,6 +1979,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           session: widget.session,
           hikerCircleRepository: hikerCircleRepository,
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
+          runtimeDebugData: _adminRuntimeDebugData,
         );
       default:
         return const SizedBox.shrink();
@@ -1868,6 +2196,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     ActiveHikeSession? hike, {
     bool forceLiveStatus = false,
   }) {
+    _persistActiveHikeSnapshot(hike);
     _syncFallStillnessMonitor(hike);
     _syncTeamHikeSessionWatch(hike);
     if (hike == null) {
@@ -1906,9 +2235,13 @@ class _HikerHomePageState extends State<HikerHomePage>
               currentHike.teamHikeSessionId != teamSession.id) {
             return;
           }
+          final updatedHike = currentHike.copyWith(
+            teamHikeSession: teamSession,
+          );
           setState(() {
-            activeHike = currentHike.copyWith(teamHikeSession: teamSession);
+            activeHike = updatedHike;
           });
+          _persistActiveHikeSnapshot(updatedHike);
         });
   }
 
@@ -2039,6 +2372,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       setState(() {
         activeHike = updatedHike;
       });
+      _persistActiveHikeSnapshot(updatedHike);
       _syncActiveHikeLiveStatus(updatedHike, force: true);
       _syncTeamHikeLocation(updatedHike, location);
       didRecordLocation = true;
@@ -2122,9 +2456,11 @@ class _HikerHomePageState extends State<HikerHomePage>
             currentHike.teamHikeSessionId != teamSession.id) {
           return;
         }
+        final updatedHike = currentHike.copyWith(teamHikeSession: teamSession);
         setState(() {
-          activeHike = currentHike.copyWith(teamHikeSession: teamSession);
+          activeHike = updatedHike;
         });
+        _persistActiveHikeSnapshot(updatedHike);
       } catch (_) {
         // Team position sync should never stop the local tracking loop.
       }
@@ -2182,7 +2518,12 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   List<HikerBottomNavDestination> _visibleTabs() {
     if (activeHike != null) {
-      return tabs.where((t) => t.label == 'Home' || t.label == 'SOS' || t.label == 'Profile').toList();
+      return tabs
+          .where(
+            (t) =>
+                t.label == 'Home' || t.label == 'SOS' || t.label == 'Profile',
+          )
+          .toList();
     }
     return tabs;
   }
@@ -2192,22 +2533,44 @@ class _HikerHomePageState extends State<HikerHomePage>
     return Scaffold(
       extendBody: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (_) => _recordFallStillnessCancelTap(),
-        child: TabBarView(
-          controller: tabController,
-          physics: activeHike != null
-              ? const NeverScrollableScrollPhysics()
-              : null,
-          children: tabs.map(pageFor).toList(),
-        ),
+      body: Stack(
+        children: [
+          Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) => _recordFallStillnessCancelTap(),
+            child: TabBarView(
+              controller: tabController,
+              physics: activeHike != null
+                  ? const NeverScrollableScrollPhysics()
+                  : null,
+              children: tabs.map(pageFor).toList(),
+            ),
+          ),
+          if (isRestoringActiveHike)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                child: const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('Restoring your active hike...'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
-      bottomNavigationBar: HikerBottomNavBar(
-        currentIndex: selectedTabIndex,
-        onDestinationSelected: onTabTap,
-        destinations: _visibleTabs(),
-      ),
+      bottomNavigationBar: isRestoringActiveHike
+          ? null
+          : HikerBottomNavBar(
+              currentIndex: selectedTabIndex,
+              onDestinationSelected: onTabTap,
+              destinations: _visibleTabs(),
+            ),
     );
   }
 }
@@ -2856,44 +3219,33 @@ class _HikeSummaryReportPage extends StatefulWidget {
 class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
   bool _isSharingCommunity = false;
 
-  List<mapbox.Point> get _dummyPins {
-    final cp = widget.activeHike.trail.checkpoints;
-    if (cp.isEmpty) {
-      return [
-        mapbox.Point(coordinates: mapbox.Position(103.842, 1.281)),
-        mapbox.Point(coordinates: mapbox.Position(103.849, 1.277)),
-      ];
-    }
-    final base = cp.first;
-    return [
-      mapbox.Point(coordinates: mapbox.Position(base.longitude + 0.004, base.latitude + 0.002)),
-      mapbox.Point(coordinates: mapbox.Position(base.longitude + 0.001, base.latitude - 0.003)),
-      mapbox.Point(coordinates: mapbox.Position(base.longitude - 0.003, base.latitude + 0.001)),
-    ];
-  }
+  List<mapbox.Point> get _actualPinPoints => widget
+      .activeHike
+      .manualPinLocations
+      .map(
+        (pin) => mapbox.Point(
+          coordinates: mapbox.Position(
+            pin.coordinate.longitude,
+            pin.coordinate.latitude,
+          ),
+        ),
+      )
+      .toList();
 
-  List<mapbox.Point> get _dummyCheckIns {
-    final cp = widget.activeHike.trail.checkpoints;
-    if (cp.length < 2) return [];
-    final sorted = [...cp]..sort((a, b) => a.order.compareTo(b.order));
-    // Generate check-in points at 25%, 50%, 75% along the trail
-    final first = sorted.first;
-    final last = sorted.last;
-    return [
-      mapbox.Point(coordinates: mapbox.Position(
-        first.longitude + (last.longitude - first.longitude) * 0.25 + 0.002,
-        first.latitude + (last.latitude - first.latitude) * 0.25 + 0.001,
-      )),
-      mapbox.Point(coordinates: mapbox.Position(
-        first.longitude + (last.longitude - first.longitude) * 0.5 - 0.001,
-        first.latitude + (last.latitude - first.latitude) * 0.5 - 0.002,
-      )),
-      mapbox.Point(coordinates: mapbox.Position(
-        first.longitude + (last.longitude - first.longitude) * 0.75 + 0.003,
-        first.latitude + (last.latitude - first.latitude) * 0.75 - 0.001,
-      )),
-    ];
-  }
+  List<mapbox.Point> get _actualCheckInPoints => widget
+      .activeHike
+      .checkInRecords
+      .map((record) => record.coordinate)
+      .whereType<HikeCoordinate>()
+      .map(
+        (coordinate) => mapbox.Point(
+          coordinates: mapbox.Position(
+            coordinate.longitude,
+            coordinate.latitude,
+          ),
+        ),
+      )
+      .toList();
 
   Future<void> _shareToCommunity() async {
     if (_isSharingCommunity) {
@@ -2968,7 +3320,14 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
   }
 
   HikingRouteResult? get _summaryRouteResult {
-    final encoded = widget.activeHike.trail.routeEncodedPolyline;
+    final recordedPoints = widget.activeHike.routePoints;
+    final encoded = recordedPoints.length >= 2
+        ? PolylineCodec.encode(
+            recordedPoints
+                .map((point) => LatLng(point.latitude, point.longitude))
+                .toList(),
+          )
+        : widget.activeHike.trail.routeEncodedPolyline;
     if (encoded == null || encoded.isEmpty) return null;
     return HikingRouteResult(
       distanceMeters: (widget.report.distanceKm * 1000).round(),
@@ -2980,17 +3339,12 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
   @override
   Widget build(BuildContext context) {
     final report = widget.report;
-    final started = report.startedAt;
-    final quarterTime = started.add(report.duration ~/ 4);
-    final halfTime = started.add(report.duration ~/ 2);
-    final threeQuarterTime = started.add(report.duration * 3 ~/ 4);
 
     String formatTime(DateTime dt) {
-      final now = DateTime.now();
-      final diff = now.difference(dt);
-      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-      if (diff.inHours < 24) return '${diff.inHours}h ago';
-      return '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      final local = dt.toLocal();
+      return '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}:'
+          '${local.second.toString().padLeft(2, '0')}';
     }
 
     return Scaffold(
@@ -3067,8 +3421,9 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                       child: RoutePreviewMap(
                         trail: widget.activeHike.trail,
                         route: _summaryRouteResult,
-                        pinnedPoints: _dummyPins,
-                        checkInPoints: _dummyCheckIns,
+                        pinnedPoints: _actualPinPoints,
+                        checkInPoints: _actualCheckInPoints,
+                        captureAllGestures: true,
                         animateRoute: false,
                       ),
                     ),
@@ -3152,36 +3507,41 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                   ),
                   const SizedBox(height: 8),
                   _SummaryCard(
-                    child: Column(
-                      children: [
-                        _DummyCheckInRow(
-                          icon: Icons.location_on_rounded,
-                          label: 'Trailhead',
-                          subtitle: 'Started the hike',
-                          time: formatTime(started),
-                        ),
-                        Divider(
-                          height: 1,
-                          color: _SummaryColors.separatorFor(context),
-                        ),
-                        _DummyCheckInRow(
-                          icon: Icons.location_on_rounded,
-                          label: 'Midpoint Lookout',
-                          subtitle: 'Took a break, great views!',
-                          time: formatTime(quarterTime),
-                        ),
-                        Divider(
-                          height: 1,
-                          color: _SummaryColors.separatorFor(context),
-                        ),
-                        _DummyCheckInRow(
-                          icon: Icons.location_on_rounded,
-                          label: 'Summit Ridge',
-                          subtitle: 'Halfway checkpoint',
-                          time: formatTime(halfTime),
-                        ),
-                      ],
-                    ),
+                    child: widget.activeHike.checkInRecords.isEmpty
+                        ? const _SummaryEmptyEvents(
+                            message: 'No check-ins recorded.',
+                          )
+                        : Column(
+                            children: [
+                              for (
+                                var index = 0;
+                                index < widget.activeHike.checkInRecords.length;
+                                index++
+                              ) ...[
+                                if (index > 0)
+                                  Divider(
+                                    height: 1,
+                                    color: _SummaryColors.separatorFor(context),
+                                  ),
+                                _SummaryEventRow(
+                                  icon: Icons.location_on_rounded,
+                                  label: 'Check-in ${index + 1}',
+                                  subtitle: _coordinateLabel(
+                                    widget
+                                        .activeHike
+                                        .checkInRecords[index]
+                                        .coordinate,
+                                  ),
+                                  time: formatTime(
+                                    widget
+                                        .activeHike
+                                        .checkInRecords[index]
+                                        .checkedInAt,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                   ),
                   const SizedBox(height: 18),
                   Text(
@@ -3194,39 +3554,43 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                   ),
                   const SizedBox(height: 8),
                   _SummaryCard(
-                    child: Column(
-                      children: [
-                        _DummyCheckInRow(
-                          icon: Icons.push_pin_rounded,
-                          label: 'Water Stream',
-                          subtitle: 'Good water source',
-                          time: formatTime(quarterTime),
-                          iconColor: const Color(0xFFE11D48),
-                        ),
-                        Divider(
-                          height: 1,
-                          color: _SummaryColors.separatorFor(context),
-                        ),
-                        _DummyCheckInRow(
-                          icon: Icons.push_pin_rounded,
-                          label: 'Rocky Viewpoint',
-                          subtitle: 'Nice photo spot',
-                          time: formatTime(halfTime),
-                          iconColor: const Color(0xFFE11D48),
-                        ),
-                        Divider(
-                          height: 1,
-                          color: _SummaryColors.separatorFor(context),
-                        ),
-                        _DummyCheckInRow(
-                          icon: Icons.push_pin_rounded,
-                          label: 'Campsite Area',
-                          subtitle: 'Flat ground, sheltered',
-                          time: formatTime(threeQuarterTime),
-                          iconColor: const Color(0xFFE11D48),
-                        ),
-                      ],
-                    ),
+                    child: widget.activeHike.manualPinLocations.isEmpty
+                        ? const _SummaryEmptyEvents(
+                            message: 'No locations pinned.',
+                          )
+                        : Column(
+                            children: [
+                              for (
+                                var index = 0;
+                                index <
+                                    widget.activeHike.manualPinLocations.length;
+                                index++
+                              ) ...[
+                                if (index > 0)
+                                  Divider(
+                                    height: 1,
+                                    color: _SummaryColors.separatorFor(context),
+                                  ),
+                                _SummaryEventRow(
+                                  icon: Icons.push_pin_rounded,
+                                  label: 'Pinned location ${index + 1}',
+                                  subtitle: _coordinateLabel(
+                                    widget
+                                        .activeHike
+                                        .manualPinLocations[index]
+                                        .coordinate,
+                                  ),
+                                  time: formatTime(
+                                    widget
+                                        .activeHike
+                                        .manualPinLocations[index]
+                                        .pinnedAt,
+                                  ),
+                                  iconColor: const Color(0xFFE11D48),
+                                ),
+                              ],
+                            ],
+                          ),
                   ),
                   const SizedBox(height: 18),
                   Text(
@@ -3285,10 +3649,20 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
   String _formatReportDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
-    if (hours == 0) {
-      return '${minutes}m';
+    final seconds = duration.inSeconds.remainder(60);
+    return [
+      hours.toString().padLeft(2, '0'),
+      minutes.toString().padLeft(2, '0'),
+      seconds.toString().padLeft(2, '0'),
+    ].join(':');
+  }
+
+  String _coordinateLabel(HikeCoordinate? coordinate) {
+    if (coordinate == null) {
+      return 'Location unavailable';
     }
-    return '${hours}h ${minutes}m';
+    return '${coordinate.latitude.toStringAsFixed(5)}, '
+        '${coordinate.longitude.toStringAsFixed(5)}';
   }
 }
 
@@ -3309,8 +3683,8 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-class _DummyCheckInRow extends StatelessWidget {
-  const _DummyCheckInRow({
+class _SummaryEventRow extends StatelessWidget {
+  const _SummaryEventRow({
     required this.icon,
     required this.label,
     required this.time,
@@ -3366,6 +3740,26 @@ class _DummyCheckInRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SummaryEmptyEvents extends StatelessWidget {
+  const _SummaryEmptyEvents({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: _SummaryColors.secondaryTextFor(context),
+        ),
       ),
     );
   }
@@ -3584,8 +3978,18 @@ class ActiveHikeHomePage extends StatefulWidget {
 }
 
 class _ActiveHikeHomePageState extends State<ActiveHikeHomePage> {
+  static const _weatherRefreshInterval = Duration(minutes: 5);
+
   DateTime _now = DateTime.now();
   Timer? _timer;
+  Timer? _weatherTimer;
+  final ActiveHikeWeatherService _weatherService =
+      const ActiveHikeWeatherService();
+  final ValueNotifier<_ActiveHikeWeatherViewState> _weatherViewState =
+      ValueNotifier(const _ActiveHikeWeatherViewState());
+  ActiveHikeWeatherSnapshot? _weatherSnapshot;
+  bool _isWeatherLoading = false;
+  String? _weatherError;
 
   @override
   void initState() {
@@ -3593,19 +3997,97 @@ class _ActiveHikeHomePageState extends State<ActiveHikeHomePage> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
+    unawaited(_refreshRouteWeather());
+    _weatherTimer = Timer.periodic(
+      _weatherRefreshInterval,
+      (_) => unawaited(_refreshRouteWeather()),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant ActiveHikeHomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activeHike.sessionId != widget.activeHike.sessionId) {
+      _weatherSnapshot = null;
+      _weatherError = null;
+      unawaited(_refreshRouteWeather());
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _weatherTimer?.cancel();
+    _weatherViewState.dispose();
     super.dispose();
+  }
+
+  Future<void> _refreshRouteWeather() async {
+    if (_isWeatherLoading) {
+      return;
+    }
+    setState(() {
+      _isWeatherLoading = true;
+      _weatherError = null;
+    });
+    _publishWeatherViewState();
+    try {
+      final snapshot = await _weatherService.fetchForHike(widget.activeHike);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weatherSnapshot = snapshot;
+      });
+      _publishWeatherViewState();
+    } on ActiveHikeWeatherException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weatherError = error.message;
+      });
+      _publishWeatherViewState();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isWeatherLoading = false;
+        });
+        _publishWeatherViewState();
+      }
+    }
+  }
+
+  void _publishWeatherViewState() {
+    _weatherViewState.value = _ActiveHikeWeatherViewState(
+      snapshot: _weatherSnapshot,
+      isLoading: _isWeatherLoading,
+      error: _weatherError,
+    );
+  }
+
+  void _openRouteWeather() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) =>
+          _ActiveHikeWeatherSheet(weatherState: _weatherViewState),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final expectedReturn = widget.activeHike.draft.expectedReturnTime;
-    final elapsed = _now.difference(widget.activeHike.startedAt);
-    final elapsedLabel = '${elapsed.inHours}h ${elapsed.inMinutes.remainder(60)}m';
+    final measuredElapsed = _now.difference(widget.activeHike.startedAt);
+    final elapsed = measuredElapsed.isNegative
+        ? Duration.zero
+        : measuredElapsed;
+    final elapsedLabel = [
+      elapsed.inHours.toString().padLeft(2, '0'),
+      elapsed.inMinutes.remainder(60).toString().padLeft(2, '0'),
+      elapsed.inSeconds.remainder(60).toString().padLeft(2, '0'),
+    ].join(':');
     final returnLabel =
         '${expectedReturn.hour.toString().padLeft(2, '0')}:${expectedReturn.minute.toString().padLeft(2, '0')}';
     final bottomInset = MediaQuery.of(context).padding.bottom;
@@ -3618,8 +4100,10 @@ class _ActiveHikeHomePageState extends State<ActiveHikeHomePage> {
             trailName: widget.activeHike.draft.trail.name,
             elapsedLabel: elapsedLabel,
             returnLabel: returnLabel,
-            batteryLevel: widget.activeHike.batteryLevel,
             gpsPointCount: widget.activeHike.routePointCount,
+            currentWeather: _weatherSnapshot?.current,
+            isWeatherLoading: _isWeatherLoading,
+            onOpenWeather: _openRouteWeather,
           ),
         ),
         Expanded(
@@ -3628,6 +4112,7 @@ class _ActiveHikeHomePageState extends State<ActiveHikeHomePage> {
             child: ActiveTrackingMapView(
               activeHike: widget.activeHike,
               teamHikeSession: widget.activeHike.teamHikeSession,
+              weatherSamples: _weatherSnapshot?.samples ?? const [],
               showLegend: false,
             ),
           ),
@@ -3648,15 +4133,19 @@ class _ActiveHikeTopBar extends StatelessWidget {
     required this.trailName,
     required this.elapsedLabel,
     required this.returnLabel,
-    required this.batteryLevel,
     required this.gpsPointCount,
+    required this.currentWeather,
+    required this.isWeatherLoading,
+    required this.onOpenWeather,
   });
 
   final String trailName;
   final String elapsedLabel;
   final String returnLabel;
-  final int batteryLevel;
   final int gpsPointCount;
+  final ActiveHikeWeatherSample? currentWeather;
+  final bool isWeatherLoading;
+  final VoidCallback onOpenWeather;
 
   @override
   Widget build(BuildContext context) {
@@ -3691,29 +4180,48 @@ class _ActiveHikeTopBar extends StatelessWidget {
                     ),
                   ),
                 ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: onOpenWeather,
+                  tooltip: 'View weather forecast',
+                  icon: isWeatherLoading && currentWeather == null
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          _activeWeatherIconForCode(
+                            currentWeather?.weatherCode,
+                          ),
+                        ),
+                  color: Theme.of(context).colorScheme.primary,
+                  style: IconButton.styleFrom(
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.1),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 10),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                _MetricChip(
-                  icon: Icons.timer_outlined,
-                  label: elapsedLabel,
-                ),
-                const SizedBox(width: 8),
-                _MetricChip(
-                  icon: Icons.schedule_rounded,
-                  label: 'Expected $returnLabel',
-                ),
-                const SizedBox(width: 8),
-                _MetricChip(
-                  icon: Icons.battery_std_rounded,
-                  label: '$batteryLevel%',
-                ),
-                const SizedBox(width: 8),
-                _MetricChip(
-                  icon: Icons.gps_fixed_rounded,
-                  label: '$gpsPointCount pts',
+                _ElapsedTimeDisplay(elapsedLabel: elapsedLabel),
+                const Spacer(),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _MetricChip(
+                      icon: Icons.schedule_rounded,
+                      label: 'Expected $returnLabel',
+                    ),
+                    const SizedBox(height: 6),
+                    _MetricChip(
+                      icon: Icons.gps_fixed_rounded,
+                      label: '$gpsPointCount pts',
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -3724,11 +4232,252 @@ class _ActiveHikeTopBar extends StatelessWidget {
   }
 }
 
-class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.icon,
-    required this.label,
+class _ElapsedTimeDisplay extends StatelessWidget {
+  const _ElapsedTimeDisplay({required this.elapsedLabel});
+
+  final String elapsedLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'ELAPSED TIME',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.timer_outlined,
+              size: 22,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 7),
+            Text(
+              elapsedLabel,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.2,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ActiveHikeWeatherSheet extends StatelessWidget {
+  const _ActiveHikeWeatherSheet({required this.weatherState});
+
+  final ValueListenable<_ActiveHikeWeatherViewState> weatherState;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: ValueListenableBuilder<_ActiveHikeWeatherViewState>(
+        valueListenable: weatherState,
+        builder: (context, state, _) {
+          final snapshot = state.snapshot;
+          final samples =
+              snapshot?.samples ?? const <ActiveHikeWeatherSample>[];
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Weather along your hike',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  snapshot == null
+                      ? 'Checking your location and the trail ahead.'
+                      : 'Updated ${_activeWeatherTimeLabel(snapshot.fetchedAt)} · refreshes every 5 minutes',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (samples.isEmpty && state.isLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 32),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (samples.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Text(
+                      state.error ??
+                          'Route weather is temporarily unavailable.',
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          for (
+                            var index = 0;
+                            index < samples.length;
+                            index++
+                          ) ...[
+                            if (index > 0) const SizedBox(height: 10),
+                            _ActiveHikeWeatherCard(sample: samples[index]),
+                          ],
+                          if (state.error != null) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              'Latest refresh failed. Showing the previous update.',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ActiveHikeWeatherViewState {
+  const _ActiveHikeWeatherViewState({
+    this.snapshot,
+    this.isLoading = false,
+    this.error,
   });
+
+  final ActiveHikeWeatherSnapshot? snapshot;
+  final bool isLoading;
+  final String? error;
+}
+
+class _ActiveHikeWeatherCard extends StatelessWidget {
+  const _ActiveHikeWeatherCard({required this.sample});
+
+  final ActiveHikeWeatherSample sample;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _activeWeatherIconForCode(sample.weatherCode),
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    sample.label,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Text(
+                    sample.summary,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Feels ${sample.apparentTemperatureCelsius.round()}° · '
+                    '${sample.humidityPercent}% humidity · '
+                    '${sample.windSpeedKph.toStringAsFixed(1)} km/h wind',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '${sample.temperatureCelsius.round()}°',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+IconData _activeWeatherIconForCode(int? code) {
+  if (code == null) {
+    return Icons.cloud_sync_rounded;
+  }
+  if (code == 0 || code == 1) {
+    return Icons.wb_sunny_rounded;
+  }
+  if (code == 2 || code == 3) {
+    return Icons.cloud_rounded;
+  }
+  if (code == 45 || code == 48) {
+    return Icons.foggy;
+  }
+  if (code >= 95) {
+    return Icons.thunderstorm_rounded;
+  }
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
+    return Icons.water_drop_rounded;
+  }
+  if ((code >= 71 && code <= 77) || code >= 85) {
+    return Icons.ac_unit_rounded;
+  }
+  return Icons.cloud_rounded;
+}
+
+String _activeWeatherTimeLabel(DateTime dateTime) {
+  final local = dateTime.toLocal();
+  return '${local.hour.toString().padLeft(2, '0')}:'
+      '${local.minute.toString().padLeft(2, '0')}';
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
@@ -3790,7 +4539,10 @@ class _ActiveHikeBottomBar extends StatelessWidget {
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: onCheckIn,
-                    icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                    icon: const Icon(
+                      Icons.check_circle_outline_rounded,
+                      size: 18,
+                    ),
                     label: const Text('Check In'),
                   ),
                 ),
@@ -3854,10 +4606,9 @@ class _UpcomingHikeDetailSheet extends StatelessWidget {
                 height: 4,
                 margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.2),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -3890,19 +4641,17 @@ class _UpcomingHikeDetailSheet extends StatelessWidget {
                         hike.trailName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
+                        style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       Text(
                         isCreator ? 'Created by you' : 'Joined by you',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: isCreator
-                                  ? const Color(0xFF34A853)
-                                  : Colors.grey.shade600,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          color: isCreator
+                              ? const Color(0xFF34A853)
+                              : Colors.grey.shade600,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
@@ -3987,8 +4736,18 @@ class _UpcomingHikeDetailSheet extends StatelessWidget {
 
   String _formatDate(DateTime dt) {
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
   }
@@ -4026,18 +4785,18 @@ class _DetailRow extends StatelessWidget {
             child: Text(
               label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
           Expanded(
             flex: 4,
             child: Text(
               value,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
         ],

@@ -6,6 +6,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../Data/active_hike_weather_service.dart';
 import '../Model/hike_session_models.dart';
 
 final _teamColors = <Color>[
@@ -25,8 +26,16 @@ Color _colorForParticipant(int index) =>
     _teamColors[index % _teamColors.length];
 
 const _dummyNames = [
-  'Alice', 'Bob', 'Charlie', 'Diana', 'Eve',
-  'Frank', 'Grace', 'Henry', 'Ivy', 'Jack',
+  'Alice',
+  'Bob',
+  'Charlie',
+  'Diana',
+  'Eve',
+  'Frank',
+  'Grace',
+  'Henry',
+  'Ivy',
+  'Jack',
 ];
 
 class ActiveTrackingMapView extends StatefulWidget {
@@ -34,12 +43,14 @@ class ActiveTrackingMapView extends StatefulWidget {
     super.key,
     required this.activeHike,
     this.teamHikeSession,
+    this.weatherSamples = const [],
     this.interactive = true,
     this.showLegend = false,
   });
 
   final ActiveHikeSession activeHike;
   final TeamHikeSession? teamHikeSession;
+  final List<ActiveHikeWeatherSample> weatherSamples;
   final bool interactive;
   final bool showLegend;
 
@@ -51,9 +62,13 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   mapbox.MapboxMap? _mapboxMap;
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
+  List<Offset?> _weatherScreenPositions = const [];
+  var _weatherProjectionScheduled = false;
   var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
+  var _isRendering = false;
+  var _renderPending = false;
   late double _currentZoom;
   late double _scaleLatitude;
 
@@ -96,9 +111,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
 
   List<mapbox.Point> get _recordedRoutePoints {
     return widget.activeHike.routePoints
-        .map((point) => mapbox.Point(
-              coordinates: mapbox.Position(point.longitude, point.latitude),
-            ))
+        .map(
+          (point) => mapbox.Point(
+            coordinates: mapbox.Position(point.longitude, point.latitude),
+          ),
+        )
         .toList();
   }
 
@@ -108,7 +125,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     return checkpoints
         .map(
           (checkpoint) => mapbox.Point(
-            coordinates: mapbox.Position(checkpoint.longitude, checkpoint.latitude),
+            coordinates: mapbox.Position(
+              checkpoint.longitude,
+              checkpoint.latitude,
+            ),
           ),
         )
         .toList();
@@ -166,7 +186,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
         latestLocation: HikeCoordinate(
           latitude: lat,
           longitude: lng,
-          capturedAt: now.subtract(Duration(minutes: math.Random(i + 200).nextInt(10))),
+          capturedAt: now.subtract(
+            Duration(minutes: math.Random(i + 200).nextInt(10)),
+          ),
           accuracyMeters: (5 + math.Random(i + 300).nextInt(10)).toDouble(),
         ),
       );
@@ -192,7 +214,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     if (latest == null) {
       return null;
     }
-    return mapbox.Point(coordinates: mapbox.Position(latest.longitude, latest.latitude));
+    return mapbox.Point(
+      coordinates: mapbox.Position(latest.longitude, latest.latitude),
+    );
   }
 
   List<mapbox.Point> get _visiblePoints {
@@ -268,6 +292,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
       _routeRendered = false;
       unawaited(_renderRouteIfReady());
     }
+    if (!identical(oldWidget.weatherSamples, widget.weatherSamples)) {
+      _scheduleWeatherProjection();
+    }
   }
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
@@ -275,9 +302,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     await mapboxMap.compass.updateSettings(
       mapbox.CompassSettings(enabled: false),
     );
-    await mapboxMap.logo.updateSettings(
-      mapbox.LogoSettings(enabled: false),
-    );
+    await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
     await mapboxMap.gestures.updateSettings(
       mapbox.GesturesSettings(
         scrollEnabled: widget.interactive,
@@ -289,12 +314,13 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     await mapboxMap.setBounds(
       mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
     );
-    _polylineManager =
-        await mapboxMap.annotations.createPolylineAnnotationManager();
-    _circleManager =
-        await mapboxMap.annotations.createCircleAnnotationManager();
+    _polylineManager = await mapboxMap.annotations
+        .createPolylineAnnotationManager();
+    _circleManager = await mapboxMap.annotations
+        .createCircleAnnotationManager();
     await _renderRouteIfReady();
     await _syncScaleFromCamera();
+    _scheduleWeatherProjection();
   }
 
   Future<void> _onStyleLoaded() async {
@@ -303,11 +329,41 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     _styleLoaded = true;
     _routeRendered = false;
     await _renderRouteIfReady();
+    _scheduleWeatherProjection();
   }
 
   Future<void> _renderRouteIfReady() async {
+    if (_isRendering) {
+      _renderPending = true;
+      return;
+    }
     final map = _mapboxMap;
-    if (map == null || !_styleLoaded || _routeRendered || _visiblePoints.isEmpty) {
+    if (map == null ||
+        !_styleLoaded ||
+        _routeRendered ||
+        _visiblePoints.isEmpty) {
+      return;
+    }
+
+    _isRendering = true;
+    try {
+      await _renderRouteNow();
+    } finally {
+      _isRendering = false;
+      if (_renderPending && mounted) {
+        _renderPending = false;
+        _routeRendered = false;
+        unawaited(_renderRouteIfReady());
+      }
+    }
+  }
+
+  Future<void> _renderRouteNow() async {
+    final map = _mapboxMap;
+    if (map == null ||
+        !_styleLoaded ||
+        _routeRendered ||
+        _visiblePoints.isEmpty) {
       return;
     }
 
@@ -325,10 +381,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     if (hasTrailRoute) {
       await _polylineManager?.create(
         mapbox.PolylineAnnotationOptions(
-          geometry: mapbox.LineString(coordinates: [
-            for (final pt in _routePoints)
-              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-          ]),
+          geometry: mapbox.LineString(
+            coordinates: [
+              for (final pt in _routePoints)
+                mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+            ],
+          ),
           lineColor: const Color(0xFF2F8E50).toARGB32(),
           lineOpacity: 0.86,
           lineWidth: 3,
@@ -342,10 +400,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     if (recordedRoute.length >= 2) {
       await _polylineManager?.create(
         mapbox.PolylineAnnotationOptions(
-          geometry: mapbox.LineString(coordinates: [
-            for (final pt in recordedRoute)
-              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-          ]),
+          geometry: mapbox.LineString(
+            coordinates: [
+              for (final pt in recordedRoute)
+                mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+            ],
+          ),
           lineColor: const Color(0xFF34A853).toARGB32(),
           lineOpacity: 0.92,
           lineWidth: 4.2,
@@ -359,10 +419,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     if (!hasTrailRoute && recordedRoute.length < 2 && hasCheckpoints) {
       await _polylineManager?.create(
         mapbox.PolylineAnnotationOptions(
-          geometry: mapbox.LineString(coordinates: [
-            for (final pt in _checkpointPoints)
-              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-          ]),
+          geometry: mapbox.LineString(
+            coordinates: [
+              for (final pt in _checkpointPoints)
+                mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+            ],
+          ),
           lineColor: const Color(0xFF6E6E73).toARGB32(),
           lineOpacity: 0.5,
           lineWidth: 2.4,
@@ -413,9 +475,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
           circleStrokeWidth: 2,
         ),
       if (hasCheckpoints)
-        for (final cp in _checkpointPoints
-            .skip(1)
-            .take(math.max(0, _checkpointPoints.length - 2)))
+        for (final cp
+            in _checkpointPoints
+                .skip(1)
+                .take(math.max(0, _checkpointPoints.length - 2)))
           mapbox.CircleAnnotationOptions(
             geometry: cp,
             circleColor: const Color(0xFF2F8E50).toARGB32(),
@@ -452,6 +515,58 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
     }
 
     await _fitRoute();
+  }
+
+  void _scheduleWeatherProjection() {
+    if (_weatherProjectionScheduled) {
+      return;
+    }
+    _weatherProjectionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _weatherProjectionScheduled = false;
+      if (mounted) {
+        unawaited(_projectWeatherMarkers());
+      }
+    });
+  }
+
+  Future<void> _projectWeatherMarkers() async {
+    final map = _mapboxMap;
+    if (map == null || !_styleLoaded || widget.weatherSamples.isEmpty) {
+      if (mounted && _weatherScreenPositions.isNotEmpty) {
+        setState(() {
+          _weatherScreenPositions = const [];
+        });
+      }
+      return;
+    }
+
+    try {
+      final pixels = await map.pixelsForCoordinates([
+        for (final sample in widget.weatherSamples)
+          mapbox.Point(
+            coordinates: mapbox.Position(
+              sample.coordinate.longitude,
+              sample.coordinate.latitude,
+            ),
+          ),
+      ]);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weatherScreenPositions = pixels
+            .map((pixel) => pixel == null ? null : Offset(pixel.x, pixel.y))
+            .toList();
+      });
+    } catch (error) {
+      debugPrint('Unable to project hike weather markers: $error');
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          _scheduleWeatherProjection();
+        }
+      });
+    }
   }
 
   Future<void> _fitRoute() async {
@@ -502,8 +617,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
           null,
           null,
         );
-        if (camera != null &&
-            camera.zoom != null &&
+        if (camera.zoom != null &&
             camera.zoom!.isFinite &&
             camera.center != null &&
             camera.center!.coordinates[0] != null) {
@@ -547,6 +661,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
 
   void _onCameraChange(mapbox.CameraChangedEventData data) {
     _updateScale(data);
+    _scheduleWeatherProjection();
   }
 
   Future<void> _syncScaleFromCamera() async {
@@ -560,6 +675,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
       _currentZoom = nextZoom;
       _scaleLatitude = nextLatitude;
     });
+    _scheduleWeatherProjection();
   }
 
   void _updateScale(mapbox.CameraChangedEventData data) {
@@ -596,24 +712,28 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
           onMapCreated: _onMapCreated,
           onStyleLoadedListener: (_) => _onStyleLoaded(),
           onCameraChangeListener: _onCameraChange,
-          onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
+          onMapIdleListener: (_) {
+            unawaited(_syncScaleFromCamera());
+            _scheduleWeatherProjection();
+          },
         ),
-        Positioned(
-          left: 10,
-          top: 10,
-          child: _MapPill(
-            label:
-                (widget.teamHikeSession ?? widget.activeHike.teamHikeSession) !=
-                    null
-                    ? 'Live team map'
-                    : widget.activeHike.routePoints.length >= 2
-                        ? 'Live trail'
-                        : 'Checkpoint route',
-            color: widget.activeHike.routePoints.length >= 2
-                ? const Color(0xFF34A853)
-                : const Color(0xFF6E6E73),
-          ),
-        ),
+        for (
+          var index = 0;
+          index < widget.weatherSamples.length &&
+              index < _weatherScreenPositions.length;
+          index++
+        )
+          if (_weatherScreenPositions[index] != null)
+            Positioned(
+              left: _weatherScreenPositions[index]!.dx - 38,
+              top: _weatherScreenPositions[index]!.dy - 70,
+              child: IgnorePointer(
+                child: _ProjectedWeatherMarker(
+                  sample: widget.weatherSamples[index],
+                  markerOffset: _weatherMarkerVisualOffset(index),
+                ),
+              ),
+            ),
         if (widget.interactive)
           Align(
             alignment: Alignment.topRight,
@@ -645,12 +765,23 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
           Positioned(
             right: 10,
             top: 56,
-            child: _TeamParticipantPanel(
-              participants: _effectiveParticipants,
-            ),
+            child: _TeamParticipantPanel(participants: _effectiveParticipants),
           ),
       ],
     );
+  }
+
+  Offset _weatherMarkerVisualOffset(int index) {
+    final sample = widget.weatherSamples[index];
+    final coincidentCount = widget.weatherSamples
+        .take(index)
+        .where(
+          (previous) => previous.coordinate.distanceTo(sample.coordinate) < 12,
+        )
+        .length;
+    final direction = index.isEven ? -1.0 : 1.0;
+    final separation = coincidentCount * 14.0;
+    return Offset(direction * (18 + separation), -54);
   }
 }
 
@@ -714,31 +845,168 @@ class _LegendDot extends StatelessWidget {
   }
 }
 
-class _MapPill extends StatelessWidget {
-  const _MapPill({required this.label, required this.color});
+IconData _weatherIconForCode(int code) {
+  if (code == 0 || code == 1) {
+    return Icons.wb_sunny_rounded;
+  }
+  if (code == 2 || code == 3) {
+    return Icons.cloud_rounded;
+  }
+  if (code == 45 || code == 48) {
+    return Icons.foggy;
+  }
+  if (code >= 95) {
+    return Icons.thunderstorm_rounded;
+  }
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
+    return Icons.water_drop_rounded;
+  }
+  if ((code >= 71 && code <= 77) || code >= 85) {
+    return Icons.ac_unit_rounded;
+  }
+  return Icons.cloud_rounded;
+}
 
-  final String label;
-  final Color color;
+Color _weatherColorForCode(int code) {
+  if (code == 0 || code == 1) {
+    return const Color(0xFFF59E0B);
+  }
+  if (code >= 95) {
+    return const Color(0xFF7C3AED);
+  }
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
+    return const Color(0xFF0A84FF);
+  }
+  if ((code >= 71 && code <= 77) || code >= 85) {
+    return const Color(0xFF38BDF8);
+  }
+  return const Color(0xFF64748B);
+}
+
+class _ProjectedWeatherMarker extends StatelessWidget {
+  const _ProjectedWeatherMarker({
+    required this.sample,
+    required this.markerOffset,
+  });
+
+  final ActiveHikeWeatherSample sample;
+  final Offset markerOffset;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0,
-          ),
+    return SizedBox(
+      width: 76,
+      height: 70,
+      child: CustomPaint(
+        painter: _WeatherMarkerConnectorPainter(markerOffset: markerOffset),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: 38 + markerOffset.dx - 22,
+              top: 70 + markerOffset.dy - 14,
+              child: SizedBox(
+                width: 44,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surface.withValues(alpha: 0.97),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFF34A853),
+                          width: 1.5,
+                        ),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x33000000),
+                            blurRadius: 5,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        _weatherIconForCode(sample.weatherCode),
+                        size: 15,
+                        color: _weatherColorForCode(sample.weatherCode),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xEFFFFFFF),
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: const [
+                          BoxShadow(color: Color(0x22000000), blurRadius: 3),
+                        ],
+                      ),
+                      child: Text(
+                        '${sample.shortLabel} ${sample.temperatureCelsius.round()}°',
+                        maxLines: 1,
+                        style: const TextStyle(
+                          color: Color(0xFF1C1C1E),
+                          fontSize: 8,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Positioned(
+              left: 35.5,
+              bottom: 0,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Color(0xFF34A853),
+                  shape: BoxShape.circle,
+                ),
+                child: SizedBox.square(dimension: 5),
+              ),
+            ),
+          ],
         ),
       ),
     );
+  }
+}
+
+class _WeatherMarkerConnectorPainter extends CustomPainter {
+  const _WeatherMarkerConnectorPainter({required this.markerOffset});
+
+  final Offset markerOffset;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final anchor = Offset(size.width / 2, size.height - 2.5);
+    final markerBottom = Offset(
+      size.width / 2 + markerOffset.dx,
+      size.height + markerOffset.dy + 25,
+    );
+    canvas.drawLine(
+      anchor,
+      markerBottom,
+      Paint()
+        ..color = const Color(0xAA34A853)
+        ..strokeWidth = 1.5
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _WeatherMarkerConnectorPainter oldDelegate) {
+    return oldDelegate.markerOffset != markerOffset;
   }
 }
 
@@ -812,10 +1080,7 @@ class _ParticipantRow extends StatelessWidget {
           Container(
             width: 10,
             height: 10,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 8),
           Text(

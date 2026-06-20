@@ -9,6 +9,8 @@ class TrailCoverImageService {
 
   static const instance = TrailCoverImageService();
   static final _futureCache = <String, Future<String>>{};
+  static final _resolvedCache = <String, String>{};
+  static final _cacheErrors = <String, String>{};
 
   final http.Client? _client;
 
@@ -25,8 +27,39 @@ class TrailCoverImageService {
       trail.state,
     ].join('|').toLowerCase();
 
-    return _futureCache.putIfAbsent(key, () => _fetchImageUrlForTrail(trail));
+    return _futureCache.putIfAbsent(key, () {
+      final future = _fetchImageUrlForTrail(trail);
+      future.then(
+        (url) {
+          _resolvedCache[key] = url;
+          _cacheErrors.remove(key);
+        },
+        onError: (Object error) {
+          _cacheErrors[key] = error.toString();
+        },
+      );
+      return future;
+    });
   }
+
+  Map<String, Object?> get debugSnapshot => {
+    'storageType': 'In-memory trail cover lookup cache',
+    'persistence': 'Process lifetime only',
+    'entryCount': _futureCache.length,
+    'entries': [
+      for (final key in _futureCache.keys)
+        {
+          'key': key,
+          'status': _cacheErrors.containsKey(key)
+              ? 'error'
+              : _resolvedCache.containsKey(key)
+              ? 'resolved'
+              : 'pending',
+          if (_resolvedCache.containsKey(key)) 'url': _resolvedCache[key],
+          if (_cacheErrors.containsKey(key)) 'error': _cacheErrors[key],
+        },
+    ],
+  };
 
   Future<String> _fetchImageUrlForTrail(Trail trail) async {
     final client = _client ?? http.Client();

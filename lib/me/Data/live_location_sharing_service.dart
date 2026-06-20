@@ -33,6 +33,27 @@ class LiveLocationSharingService extends ChangeNotifier {
   bool get isSharing => _isSharing;
   String? get errorMessage => _errorMessage;
 
+  Map<String, Object?> get debugSnapshot => {
+    'storageType': 'In-memory live-location sharing session',
+    'persistence': 'Process lifetime; cloud share is stored separately',
+    'repositoryConfigured': _repository != null,
+    'configuredPhoneNumber': _phoneNumber,
+    'publishTimerActive': _publishTimer?.isActive == true,
+    'isActive': _isActive,
+    'isBusy': _isBusy,
+    'isSharing': _isSharing,
+    'isPublishing': _isPublishing,
+    'errorMessage': _errorMessage,
+    'share': _share == null
+        ? null
+        : {
+            'id': _share!.id,
+            'shareUrl': _share!.shareUrl,
+            'isActive': _share!.isActive,
+            'latestLocation': _share!.latestLocation?.toFirestore(),
+          },
+  };
+
   Future<void> loadExisting({
     required String phoneNumber,
     required FirebaseBootstrapResult firebaseBootstrapResult,
