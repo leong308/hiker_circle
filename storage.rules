@@ -3,9 +3,25 @@ service firebase.storage {
   match /b/{bucket}/o {
     match /trail_covers/{trailId}/{imageName} {
       allow read: if true;
-      allow write: if request.resource == null
-        || (request.resource.size < 10 * 1024 * 1024
-          && request.resource.contentType.matches('image/.*'));
+      allow delete: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /group_chats/{chatId}/attachments/{fileName} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+        && request.resource.metadata.senderPhone == request.auth.token.phoneNumber
+        && request.resource.size <= 25 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('image/.*')
+          || request.resource.contentType.matches('video/.*')
+          || request.resource.contentType == 'application/pdf'
+          || request.resource.contentType.matches('application/.*')
+          || request.resource.contentType.matches('text/.*')
+        );
+      allow delete: if request.auth != null;
     }
   }
 }

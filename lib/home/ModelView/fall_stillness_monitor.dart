@@ -131,9 +131,12 @@ class FallStillnessMonitor extends ChangeNotifier {
 
     _countdownTimer?.cancel();
     _countdownTimer = null;
+    final alertName = _snapshot.isProlongedStillnessDetection
+        ? 'Prolonged-stillness SOS'
+        : 'Fall SOS';
     _resetToNormal(
       settings: settings,
-      message: '$reason. Fall SOS response countdown cancelled.',
+      message: '$reason. $alertName response countdown cancelled.',
       lastCancelledAt: _clock(),
     );
   }
@@ -161,8 +164,9 @@ class FallStillnessMonitor extends ChangeNotifier {
         accelerationMagnitude: null,
         altitudeDropMeters: null,
         isBackpackTrapLikely: false,
+        isProlongedStillnessDetection: true,
         message:
-            'Location has not changed for 3 minutes. Checking phone movement with gyroscope.',
+            'Location has not changed for ${settings.longestRestDurationLabel}. Checking phone movement with gyroscope.',
       ),
     );
     _startCountdownTimer();
@@ -189,9 +193,12 @@ class FallStillnessMonitor extends ChangeNotifier {
     }
 
     _isHandlingEmergency = false;
+    final alertName = _snapshot.isProlongedStillnessDetection
+        ? 'Prolonged-stillness SOS'
+        : 'Fall SOS';
     _resetToNormal(
       settings: settings,
-      message: message ?? 'Fall SOS escalated. Listening restarted.',
+      message: message ?? '$alertName escalated. Listening restarted.',
     );
   }
 
@@ -274,15 +281,17 @@ class FallStillnessMonitor extends ChangeNotifier {
     _gyroscopeQuietStartedAt ??= now;
     final quietDuration = now.difference(_gyroscopeQuietStartedAt!);
     final secondsUntilResponse =
-        settings.stillnessDuration.inSeconds - quietDuration.inSeconds;
+        FallDetectionSettings.stillnessVerificationDuration.inSeconds -
+        quietDuration.inSeconds;
     _setSnapshot(
       current.copyWith(
         secondsRemaining: math.max(0, secondsUntilResponse),
-        message:
-            'Phone is still. SOS response countdown starts if stillness continues.',
+        message: _isStationaryLocationWatch
+            ? 'No phone movement detected. The SOS response timer starts if stillness continues.'
+            : 'Phone is still after the impact. The SOS response timer starts if stillness continues.',
       ),
     );
-    if (quietDuration >= settings.stillnessDuration) {
+    if (quietDuration >= FallDetectionSettings.stillnessVerificationDuration) {
       _startResponseCountdown(settings: settings, now: now);
     }
   }
@@ -402,16 +411,17 @@ class FallStillnessMonitor extends ChangeNotifier {
     required DateTime now,
   }) {
     _phase = _FallDetectionPhase.responseCountdown;
-    final responseEndsAt = now.add(settings.stillnessDuration);
+    final responseEndsAt = now.add(settings.fallResponseDuration);
     _setSnapshot(
       FallStillnessMonitorSnapshot.awaitingResponse(
         settings: settings,
         detectedAt: _lastCandidateAt ?? now,
         countdownEndsAt: responseEndsAt,
-        secondsRemaining: settings.stillnessDuration.inSeconds,
+        secondsRemaining: settings.fallResponseDuration.inSeconds,
         accelerationMagnitude: _latestImpactAcceleration,
         altitudeDropMeters: _lastAltitudeDropMeters,
         isBackpackTrapLikely: _isBackpackTrapLikely,
+        isProlongedStillnessDetection: _isStationaryLocationWatch,
       ),
     );
     _startCountdownTimer();
@@ -485,7 +495,10 @@ class FallStillnessMonitor extends ChangeNotifier {
         accelerationMagnitude: _latestImpactAcceleration,
         altitudeDropMeters: _lastAltitudeDropMeters,
         isBackpackTrapLikely: _isBackpackTrapLikely,
-        message: 'Response countdown ended. Sending Fall SOS.',
+        isProlongedStillnessDetection: _isStationaryLocationWatch,
+        message: _isStationaryLocationWatch
+            ? 'Response countdown ended. Sending prolonged-stillness SOS.'
+            : 'Response countdown ended. Sending Fall SOS.',
       ),
     );
 
@@ -646,6 +659,7 @@ class FallStillnessMonitorSnapshot {
     this.accelerationMagnitude,
     this.altitudeDropMeters,
     this.isBackpackTrapLikely = false,
+    this.isProlongedStillnessDetection = false,
     this.message,
   });
 
@@ -709,6 +723,7 @@ class FallStillnessMonitorSnapshot {
     required double? accelerationMagnitude,
     required double? altitudeDropMeters,
     required bool isBackpackTrapLikely,
+    bool isProlongedStillnessDetection = false,
     String? message,
   }) {
     return FallStillnessMonitorSnapshot(
@@ -720,6 +735,7 @@ class FallStillnessMonitorSnapshot {
       accelerationMagnitude: accelerationMagnitude,
       altitudeDropMeters: altitudeDropMeters,
       isBackpackTrapLikely: isBackpackTrapLikely,
+      isProlongedStillnessDetection: isProlongedStillnessDetection,
       message:
           message ??
           (isBackpackTrapLikely
@@ -736,6 +752,7 @@ class FallStillnessMonitorSnapshot {
     required double? accelerationMagnitude,
     required double? altitudeDropMeters,
     required bool isBackpackTrapLikely,
+    required bool isProlongedStillnessDetection,
   }) {
     return FallStillnessMonitorSnapshot(
       status: FallStillnessMonitorStatus.awaitingResponse,
@@ -746,7 +763,10 @@ class FallStillnessMonitorSnapshot {
       accelerationMagnitude: accelerationMagnitude,
       altitudeDropMeters: altitudeDropMeters,
       isBackpackTrapLikely: isBackpackTrapLikely,
-      message: 'Severe fall suspected. Cancel now if you are okay.',
+      isProlongedStillnessDetection: isProlongedStillnessDetection,
+      message: isProlongedStillnessDetection
+          ? 'Unusually long stillness detected. Cancel now if you are resting safely.'
+          : 'Severe fall suspected. Cancel now if you are okay.',
     );
   }
 
@@ -757,6 +777,7 @@ class FallStillnessMonitorSnapshot {
     required double? accelerationMagnitude,
     required double? altitudeDropMeters,
     required bool isBackpackTrapLikely,
+    required bool isProlongedStillnessDetection,
     String? message,
   }) {
     return FallStillnessMonitorSnapshot(
@@ -767,6 +788,7 @@ class FallStillnessMonitorSnapshot {
       accelerationMagnitude: accelerationMagnitude,
       altitudeDropMeters: altitudeDropMeters,
       isBackpackTrapLikely: isBackpackTrapLikely,
+      isProlongedStillnessDetection: isProlongedStillnessDetection,
       message: message,
     );
   }
@@ -792,6 +814,7 @@ class FallStillnessMonitorSnapshot {
   final double? accelerationMagnitude;
   final double? altitudeDropMeters;
   final bool isBackpackTrapLikely;
+  final bool isProlongedStillnessDetection;
   final String? message;
 
   FallStillnessMonitorSnapshot copyWith({
@@ -805,6 +828,7 @@ class FallStillnessMonitorSnapshot {
     double? accelerationMagnitude,
     double? altitudeDropMeters,
     bool? isBackpackTrapLikely,
+    bool? isProlongedStillnessDetection,
     String? message,
   }) {
     return FallStillnessMonitorSnapshot(
@@ -819,6 +843,8 @@ class FallStillnessMonitorSnapshot {
           accelerationMagnitude ?? this.accelerationMagnitude,
       altitudeDropMeters: altitudeDropMeters ?? this.altitudeDropMeters,
       isBackpackTrapLikely: isBackpackTrapLikely ?? this.isBackpackTrapLikely,
+      isProlongedStillnessDetection:
+          isProlongedStillnessDetection ?? this.isProlongedStillnessDetection,
       message: message ?? this.message,
     );
   }

@@ -1,4 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
@@ -15,16 +17,28 @@ class FirebaseUserRepositoryException implements Exception {
 class FirebaseUserRepository {
   FirebaseUserRepository({
     FirebaseFirestore? firestore,
+    FirebaseAuth? firebaseAuth,
+    FirebaseFunctions? firebaseFunctions,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
+       _firebaseAuth = firebaseAuth,
+       _firebaseFunctions = firebaseFunctions,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   final FirebaseFirestore? _firestore;
+  final FirebaseAuth? _firebaseAuth;
+  final FirebaseFunctions? _firebaseFunctions;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
+
+  FirebaseAuth get _resolvedFirebaseAuth =>
+      _firebaseAuth ?? FirebaseAuth.instance;
+
+  FirebaseFunctions get _resolvedFirebaseFunctions =>
+      _firebaseFunctions ?? FirebaseFunctions.instance;
 
   CollectionReference<Map<String, dynamic>> get _users {
     return _resolvedFirestore.collection('users');
@@ -48,7 +62,9 @@ class FirebaseUserRepository {
         documentIdForPhoneNumber(session.phoneNumber),
       );
 
-      return _resolvedFirestore.runTransaction((transaction) async {
+      final registeredSession = await _resolvedFirestore.runTransaction((
+        transaction,
+      ) async {
         final snapshot = await transaction.get(userDocument);
         final appInstanceId = session.appInstanceId;
         if (!snapshot.exists) {
@@ -118,19 +134,25 @@ class FirebaseUserRepository {
           isOnboardingProfileComplete: isOnboardingProfileComplete,
         );
       });
+      await authenticateAppSession(registeredSession);
+      return registeredSession;
     } on FirebaseException catch (error) {
       throw FirebaseUserRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Firebase ${error.code}: ${error.message ?? 'No details provided.'}',
       );
     }
   }
 
   Future<AppSession> refreshBoundSession(AppSession session) async {
     if (!_firebaseBootstrapResult.isAvailable) {
-      return session;
+      throw FirebaseUserRepositoryException(
+        'Firebase is not ready yet. ${_firebaseBootstrapResult.errorMessage ?? ''}'
+            .trim(),
+      );
     }
 
     try {
+      await authenticateAppSession(session);
       final snapshot = await _users
           .doc(documentIdForPhoneNumber(session.phoneNumber))
           .get();
@@ -161,6 +183,63 @@ class FirebaseUserRepository {
         'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
       );
     }
+  }
+
+  Future<User> authenticateAppSession(AppSession session) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      throw FirebaseUserRepositoryException(
+        'Firebase is not ready yet. ${_firebaseBootstrapResult.errorMessage ?? ''}'
+            .trim(),
+      );
+    }
+    if (session.phoneNumber.trim().isEmpty ||
+        session.appInstanceId.trim().isEmpty) {
+      throw const FirebaseUserRepositoryException(
+        'The saved login credentials are incomplete. Sign in again.',
+      );
+    }
+
+    try {
+      final callable = _resolvedFirebaseFunctions.httpsCallable(
+        'authenticateAppSession',
+      );
+      final response = await callable.call(<String, Object?>{
+        'phoneNumber': session.phoneNumber,
+        'appInstanceId': session.appInstanceId,
+      });
+      final data = response.data;
+      if (data is! Map || data['customToken'] is! String) {
+        throw const FirebaseUserRepositoryException(
+          'Firebase returned an invalid authentication response.',
+        );
+      }
+      final expectedUserId = documentIdForPhoneNumber(session.phoneNumber);
+      final credential = await _resolvedFirebaseAuth.signInWithCustomToken(
+        data['customToken'] as String,
+      );
+      final user = credential.user;
+      if (user == null || user.uid != expectedUserId) {
+        await _resolvedFirebaseAuth.signOut();
+        throw const FirebaseUserRepositoryException(
+          'Firebase could not validate this HikerCircle account.',
+        );
+      }
+      return user;
+    } on FirebaseUserRepositoryException {
+      rethrow;
+    } on FirebaseFunctionsException catch (error) {
+      throw FirebaseUserRepositoryException(
+        error.message ?? 'Firebase rejected the saved login.',
+      );
+    } on FirebaseAuthException catch (error) {
+      throw FirebaseUserRepositoryException(
+        error.message ?? 'Firebase authentication failed.',
+      );
+    }
+  }
+
+  Future<void> signOut() async {
+    await _resolvedFirebaseAuth.signOut();
   }
 
   DateTime? _dateFromValue(Object? value) {

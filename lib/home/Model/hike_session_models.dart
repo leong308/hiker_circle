@@ -20,7 +20,8 @@ enum HikeType {
 class FallDetectionSettings {
   const FallDetectionSettings({
     required this.sensorSensitivity,
-    required this.stillnessDuration,
+    this.fallResponseDuration = const Duration(seconds: 30),
+    this.longestRestDuration = const Duration(minutes: 3),
   });
 
   static const double minSensorSensitivity = 1;
@@ -32,7 +33,8 @@ class FallDetectionSettings {
   static const Duration backpackTrapStillnessDuration = Duration(seconds: 20);
 
   final double sensorSensitivity;
-  final Duration stillnessDuration;
+  final Duration fallResponseDuration;
+  final Duration longestRestDuration;
 
   double get normalizedSensitivity {
     final clamped = sensorSensitivity.clamp(
@@ -90,13 +92,19 @@ class FallDetectionSettings {
   }
 
   String get responseCountdownDurationLabel {
-    if (stillnessDuration.inSeconds < 60) {
-      return '${stillnessDuration.inSeconds} sec';
+    if (fallResponseDuration.inSeconds < 60) {
+      return '${fallResponseDuration.inSeconds} sec';
     }
-    return '${stillnessDuration.inMinutes} min';
+    return '${fallResponseDuration.inMinutes} min';
   }
 
-  String get stillnessDurationLabel => responseCountdownDurationLabel;
+  String get longestRestDurationLabel {
+    if (longestRestDuration.inMinutes < 60) {
+      return '${longestRestDuration.inMinutes} min';
+    }
+    final hours = longestRestDuration.inHours;
+    return '$hours hr${hours == 1 ? '' : 's'}';
+  }
 
   bool get isHighSensitivity => sensorSensitivity > 7;
 
@@ -269,6 +277,9 @@ class TeamHikeParticipant {
     this.lastPingAt,
     this.lastOkAt,
     this.updatedAt,
+    this.safetySettings = const {},
+    this.isolatedSince,
+    this.separationAlertActive = false,
   });
 
   factory TeamHikeParticipant.fromFirestore(Map<String, dynamic> data) {
@@ -295,6 +306,9 @@ class TeamHikeParticipant {
       lastPingAt: _modelDateFromValue(data['lastPingAtLocal']),
       lastOkAt: _modelDateFromValue(data['lastOkAtLocal']),
       updatedAt: _modelDateFromValue(data['updatedAtLocal']),
+      safetySettings: _modelMapFrom(data['safetySettings']),
+      isolatedSince: _modelDateFromValue(data['isolatedSinceLocal']),
+      separationAlertActive: data['separationAlertActive'] == true,
     );
   }
 
@@ -310,6 +324,9 @@ class TeamHikeParticipant {
   final DateTime? lastPingAt;
   final DateTime? lastOkAt;
   final DateTime? updatedAt;
+  final Map<String, dynamic> safetySettings;
+  final DateTime? isolatedSince;
+  final bool separationAlertActive;
 
   String get phoneNumber => buddy.phoneNumber;
 
@@ -343,6 +360,10 @@ class TeamHikeParticipant {
     DateTime? lastPingAt,
     DateTime? lastOkAt,
     DateTime? updatedAt,
+    Map<String, dynamic>? safetySettings,
+    DateTime? isolatedSince,
+    bool? separationAlertActive,
+    bool clearIsolatedSince = false,
   }) {
     return TeamHikeParticipant(
       buddy: buddy ?? this.buddy,
@@ -357,6 +378,12 @@ class TeamHikeParticipant {
       lastPingAt: lastPingAt ?? this.lastPingAt,
       lastOkAt: lastOkAt ?? this.lastOkAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      safetySettings: safetySettings ?? this.safetySettings,
+      isolatedSince: clearIsolatedSince
+          ? null
+          : isolatedSince ?? this.isolatedSince,
+      separationAlertActive:
+          separationAlertActive ?? this.separationAlertActive,
     );
   }
 
@@ -381,6 +408,10 @@ class TeamHikeParticipant {
         'lastOkAtLocal': lastOkAt!.toUtc().toIso8601String(),
       if (updatedAt != null)
         'updatedAtLocal': updatedAt!.toUtc().toIso8601String(),
+      if (safetySettings.isNotEmpty) 'safetySettings': safetySettings,
+      if (isolatedSince != null)
+        'isolatedSinceLocal': isolatedSince!.toUtc().toIso8601String(),
+      'separationAlertActive': separationAlertActive,
     };
   }
 }
@@ -579,7 +610,8 @@ class HikeSessionDraft {
       fallDetectionEnabled: true,
       fallDetectionSettings: const FallDetectionSettings(
         sensorSensitivity: 5,
-        stillnessDuration: Duration(seconds: 30),
+        fallResponseDuration: Duration(seconds: 30),
+        longestRestDuration: Duration(minutes: 3),
       ),
       pathDeviationEnabled: true,
       offlinePhysicalAlertEnabled: true,
@@ -629,12 +661,23 @@ class HikeSessionDraft {
           _modelMapFrom(data['fallDetectionSettings'])['sensorSensitivity'],
           fallback: 5,
         ),
-        stillnessDuration: Duration(
+        fallResponseDuration: Duration(
+          seconds: _modelIntFrom(
+            _modelMapFrom(
+                  data['fallDetectionSettings'],
+                )['fallResponseDurationSeconds'] ??
+                _modelMapFrom(
+                  data['fallDetectionSettings'],
+                )['stillnessDurationSeconds'],
+            fallback: 30,
+          ),
+        ),
+        longestRestDuration: Duration(
           seconds: _modelIntFrom(
             _modelMapFrom(
               data['fallDetectionSettings'],
-            )['stillnessDurationSeconds'],
-            fallback: 30,
+            )['longestRestDurationSeconds'],
+            fallback: 180,
           ),
         ),
       ),
@@ -691,8 +734,14 @@ class HikeSessionDraft {
       'fallDetectionEnabled': fallDetectionEnabled,
       'fallDetectionSettings': {
         'sensorSensitivity': fallDetectionSettings.sensorSensitivity,
+        'fallResponseDurationSeconds':
+            fallDetectionSettings.fallResponseDuration.inSeconds,
+        'longestRestDurationSeconds':
+            fallDetectionSettings.longestRestDuration.inSeconds,
+        // Keep the legacy key so older app builds can still restore the
+        // post-fall response duration.
         'stillnessDurationSeconds':
-            fallDetectionSettings.stillnessDuration.inSeconds,
+            fallDetectionSettings.fallResponseDuration.inSeconds,
       },
       'pathDeviationEnabled': pathDeviationEnabled,
       'offlinePhysicalAlertEnabled': offlinePhysicalAlertEnabled,
@@ -733,7 +782,7 @@ class HikeSessionDraft {
   HikeSessionDraft removeCheckpointAt(int index) {
     final cps = [...(customCheckpoints ?? trail.checkpoints)]
       ..sort((a, b) => a.order.compareTo(b.order));
-    if (cps.length <= 2) return this;
+    if (cps.length <= 3) return this;
     if (index == 0 || index == cps.length - 1) return this;
     cps.removeAt(index);
     final reindexed = cps
@@ -971,6 +1020,7 @@ class ActiveHikeSession {
 
   ActiveHikeSession copyWith({
     String? sessionId,
+    HikeSessionDraft? draft,
     int? batteryLevel,
     int? batteryStartedLevel,
     int? queuedUpdates,
@@ -985,7 +1035,7 @@ class ActiveHikeSession {
   }) {
     return ActiveHikeSession(
       sessionId: sessionId ?? this.sessionId,
-      draft: draft,
+      draft: draft ?? this.draft,
       startedAt: startedAt,
       batteryLevel: batteryLevel ?? this.batteryLevel,
       batteryStartedLevel: batteryStartedLevel ?? this.batteryStartedLevel,
@@ -1467,6 +1517,8 @@ class GroupChat {
     required this.participantPhones,
     required this.creatorPhone,
     required this.createdAt,
+    this.chatType = 'group',
+    this.participantNames = const {},
     this.lastMessage,
     this.lastMessageAt,
   });
@@ -1477,8 +1529,26 @@ class GroupChat {
   final List<String> participantPhones;
   final String creatorPhone;
   final DateTime createdAt;
+  final String chatType;
+  final Map<String, String> participantNames;
   final String? lastMessage;
   final DateTime? lastMessageAt;
+
+  bool get isDirect => chatType == 'direct';
+
+  String displayNameFor(String phoneNumber) {
+    if (!isDirect) {
+      return trailName;
+    }
+    for (final phone in participantPhones) {
+      if (_modelPhoneKey(phone) == _modelPhoneKey(phoneNumber)) {
+        continue;
+      }
+      final name = participantNames[_modelPhoneKey(phone)]?.trim() ?? '';
+      return name.isEmpty ? phone : name;
+    }
+    return trailName.isEmpty ? 'Private chat' : trailName;
+  }
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -1486,6 +1556,8 @@ class GroupChat {
       'trailName': trailName,
       'participantPhones': participantPhones,
       'creatorPhone': creatorPhone,
+      'chatType': chatType,
+      if (participantNames.isNotEmpty) 'participantNames': participantNames,
       'createdAtLocal': createdAt.toUtc().toIso8601String(),
       if (lastMessage != null) 'lastMessage': lastMessage,
       if (lastMessageAt != null)
@@ -1499,6 +1571,13 @@ class GroupChat {
             ?.map((e) => e is String ? e : '')
             .toList() ??
         const <String>[];
+    final rawNames = data['participantNames'];
+    final participantNames = rawNames is Map
+        ? rawNames.map(
+            (key, value) =>
+                MapEntry(key.toString(), value is String ? value : ''),
+          )
+        : <String, String>{};
     return GroupChat(
       id: id,
       hikeSessionId: _modelStringFrom(data['hikeSessionId']),
@@ -1506,6 +1585,10 @@ class GroupChat {
       participantPhones: phones,
       creatorPhone: _modelStringFrom(data['creatorPhone']),
       createdAt: _modelDateFromValue(data['createdAtLocal']) ?? DateTime.now(),
+      chatType: _modelStringFrom(data['chatType']).isEmpty
+          ? 'group'
+          : _modelStringFrom(data['chatType']),
+      participantNames: participantNames,
       lastMessage: data['lastMessage'] is String
           ? data['lastMessage'] as String
           : null,
@@ -1515,6 +1598,8 @@ class GroupChat {
     );
   }
 }
+
+String _modelPhoneKey(String value) => value.replaceAll(RegExp(r'[^0-9]'), '');
 
 class ChatMessage {
   const ChatMessage({
@@ -1527,6 +1612,7 @@ class ChatMessage {
     this.isSystemMessage = false,
     this.seenBy = const [],
     this.sendStatus = SendStatus.sent,
+    this.attachment,
   });
 
   final String id;
@@ -1538,6 +1624,7 @@ class ChatMessage {
   final bool isSystemMessage;
   final List<String> seenBy;
   final SendStatus sendStatus;
+  final ChatAttachment? attachment;
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -1548,6 +1635,7 @@ class ChatMessage {
       'sentAtLocal': sentAt.toUtc().toIso8601String(),
       'isSystemMessage': isSystemMessage,
       'seenBy': seenBy,
+      if (attachment != null) 'attachment': attachment!.toFirestore(),
     };
   }
 
@@ -1565,6 +1653,11 @@ class ChatMessage {
       sentAt: _modelDateFromValue(data['sentAtLocal']) ?? DateTime.now(),
       isSystemMessage: data['isSystemMessage'] == true,
       seenBy: seenBy,
+      attachment: data['attachment'] is Map
+          ? ChatAttachment.fromFirestore(
+              Map<String, dynamic>.from(data['attachment'] as Map),
+            )
+          : null,
     );
   }
 
@@ -1576,6 +1669,7 @@ class ChatMessage {
     required String text,
     required DateTime createdAt,
     SendStatus sendStatus = SendStatus.sending,
+    ChatAttachment? attachment,
   }) {
     return ChatMessage(
       id: localId,
@@ -1585,7 +1679,49 @@ class ChatMessage {
       text: text,
       sentAt: createdAt,
       sendStatus: sendStatus,
+      attachment: attachment,
     );
+  }
+}
+
+enum ChatAttachmentType { image, video, document }
+
+class ChatAttachment {
+  const ChatAttachment({
+    required this.type,
+    required this.url,
+    required this.fileName,
+    required this.contentType,
+    required this.sizeBytes,
+  });
+
+  factory ChatAttachment.fromFirestore(Map<String, dynamic> data) {
+    return ChatAttachment(
+      type: ChatAttachmentType.values.firstWhere(
+        (type) => type.name == _modelStringFrom(data['type']),
+        orElse: () => ChatAttachmentType.document,
+      ),
+      url: _modelStringFrom(data['url']),
+      fileName: _modelStringFrom(data['fileName']),
+      contentType: _modelStringFrom(data['contentType']),
+      sizeBytes: _modelIntFrom(data['sizeBytes']),
+    );
+  }
+
+  final ChatAttachmentType type;
+  final String url;
+  final String fileName;
+  final String contentType;
+  final int sizeBytes;
+
+  Map<String, dynamic> toFirestore() {
+    return {
+      'type': type.name,
+      'url': url,
+      'fileName': fileName,
+      'contentType': contentType,
+      'sizeBytes': sizeBytes,
+    };
   }
 }
 

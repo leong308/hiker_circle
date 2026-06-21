@@ -68,6 +68,11 @@ void main() {
     );
     final draft = HikeSessionDraft.fromTrail(trail).copyWith(
       hikeType: HikeType.team,
+      fallDetectionSettings: const FallDetectionSettings(
+        sensorSensitivity: 7,
+        fallResponseDuration: Duration(minutes: 2),
+        longestRestDuration: Duration(minutes: 15),
+      ),
       teamBuddies: const [
         TeamHikeBuddy(
           name: 'Amin',
@@ -145,6 +150,14 @@ void main() {
     expect(restored.latestLocation?.accuracyMeters, 4);
     expect(restored.teamHikeSession?.phase, TeamHikePhase.active);
     expect(restored.draft.hikeType, HikeType.team);
+    expect(
+      restored.draft.fallDetectionSettings.fallResponseDuration,
+      const Duration(minutes: 2),
+    );
+    expect(
+      restored.draft.fallDetectionSettings.longestRestDuration,
+      const Duration(minutes: 15),
+    );
     expect(restored.draft.teamBuddies.single.name, 'Amin');
     expect(restored.trail.difficulty, 'Moderate');
     expect(restored.trail.coverImageUrls, hasLength(1));

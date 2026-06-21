@@ -11,6 +11,7 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/models/hiker_level.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
 import '../../sos/Model/sos_models.dart';
@@ -1044,6 +1045,10 @@ class _AchievementProfileItem {
     required this.category,
     required this.iconName,
     required this.rewardPoints,
+    required this.pointsAwarded,
+    required this.rewardType,
+    required this.progressCount,
+    required this.targetCount,
     required this.sortOrder,
     required this.accentColorValue,
     required this.isUnlocked,
@@ -1056,10 +1061,20 @@ class _AchievementProfileItem {
   final String category;
   final String iconName;
   final int rewardPoints;
+  final int pointsAwarded;
+  final String rewardType;
+  final int progressCount;
+  final int targetCount;
   final int sortOrder;
   final int accentColorValue;
   final bool isUnlocked;
   final DateTime? awardedAt;
+
+  bool get isCumulative => rewardType == 'cumulative';
+
+  double get progress => targetCount <= 0
+      ? 0
+      : (progressCount / targetCount).clamp(0, 1).toDouble();
 
   Color get accentColor {
     if (accentColorValue == 0) {
@@ -1081,6 +1096,12 @@ class _AchievementProfileItem {
       category: category.isEmpty ? 'Safety' : category,
       iconName: iconName.isEmpty ? 'emoji_events' : iconName,
       rewardPoints: _mapInt(row['rewardPoints']),
+      pointsAwarded: _mapInt(row['pointsAwarded']),
+      rewardType: _mapString(row['rewardType']) == 'cumulative'
+          ? 'cumulative'
+          : 'one_time',
+      progressCount: _mapInt(row['progressCount']),
+      targetCount: _mapInt(row['targetCount']).clamp(1, 1000000000),
       sortOrder: _mapInt(row['sortOrder']),
       accentColorValue: _mapInt(row['accentColorValue']),
       isUnlocked: row['isUnlocked'] == true,
@@ -1788,7 +1809,8 @@ class _AchievementsSummaryCard extends StatelessWidget {
         final progress = total == 0 ? 0.0 : unlocked / total;
         final points = items
             .where((item) => item.isUnlocked)
-            .fold<int>(0, (total, item) => total + item.rewardPoints);
+            .fold<int>(0, (total, item) => total + item.pointsAwarded);
+        final level = HikerLevel.fromPoints(points);
         final locked = items.where((item) => !item.isUnlocked).toList();
         final subtitle = isLoading
             ? 'Loading safety badges'
@@ -1837,7 +1859,7 @@ class _AchievementsSummaryCard extends StatelessWidget {
                                 ),
                               )
                             else
-                              _MiniPill(label: '$points pts'),
+                              _MiniPill(label: level.badgeLabel),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -2036,11 +2058,9 @@ class _AchievementProgressPanel extends StatelessWidget {
     final locked = items.length - earned.length;
     final points = earned.fold<int>(
       0,
-      (total, item) => total + item.rewardPoints,
+      (total, item) => total + item.pointsAwarded,
     );
-    final progress = items.isEmpty ? 0.0 : earned.length / items.length;
-    final next = items.where((item) => !item.isUnlocked).toList();
-
+    final level = HikerLevel.fromPoints(points);
     return _InsetGroup(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -2069,7 +2089,7 @@ class _AchievementProgressPanel extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${(progress * 100).round()}% complete',
+                        level.badgeLabel,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           color: _MeColors.textFor(context),
                           fontWeight: FontWeight.w900,
@@ -2078,9 +2098,9 @@ class _AchievementProgressPanel extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        next.isEmpty
-                            ? 'Every current badge is unlocked. Nice safety streak.'
-                            : 'Next badge: ${next.first.title}',
+                        level.nextLevelPoints == null
+                            ? '$points points - maximum level reached'
+                            : '$points points - ${level.pointsToNextLevel(points)} to ${HikerLevel.tiers[level.number].name}',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: _MeColors.secondaryTextFor(context),
                           letterSpacing: 0,
@@ -2095,7 +2115,7 @@ class _AchievementProgressPanel extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(999),
               child: LinearProgressIndicator(
-                value: progress,
+                value: level.progressFor(points),
                 minHeight: 8,
                 backgroundColor: _MeColors.greenSoftFor(context),
                 valueColor: const AlwaysStoppedAnimation<Color>(
@@ -2255,8 +2275,44 @@ class _AchievementTile extends StatelessWidget {
                           ),
                         if (!item.isUnlocked)
                           const _AchievementTag(label: 'Locked'),
+                        _AchievementTag(
+                          label: item.isCumulative
+                              ? 'Accumulation'
+                              : 'One-time',
+                        ),
                       ],
                     ),
+                    if (item.isCumulative && !item.isUnlocked) ...[
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: LinearProgressIndicator(
+                                value: item.progress,
+                                minHeight: 6,
+                                backgroundColor: _MeColors.greenSoftFor(
+                                  context,
+                                ),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  accent,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${item.progressCount}/${item.targetCount}',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: _MeColors.secondaryTextFor(context),
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -2373,6 +2429,13 @@ class _AchievementDetailSheet extends StatelessWidget {
                 _InfoLine(
                   label: 'Reward',
                   value: '${item.rewardPoints} points',
+                ),
+                const _HorizontalSeparator(),
+                _InfoLine(
+                  label: 'Reward type',
+                  value: item.isCumulative
+                      ? 'Accumulation (${item.progressCount}/${item.targetCount})'
+                      : 'One-time reward',
                 ),
                 const SizedBox(height: 12),
                 CupertinoButton(

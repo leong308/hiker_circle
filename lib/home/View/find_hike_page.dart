@@ -9,6 +9,36 @@ import '../../app/Model/app_session.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/hike_session_models.dart';
 
+Future<void> showUpcomingHikePopup(
+  BuildContext context, {
+  required UpcomingHike hike,
+  required AppSession session,
+  required HikerCircleFirebaseRepository repository,
+  double? userLat,
+  double? userLng,
+  VoidCallback? onJoin,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+        child: UpcomingHikeCard(
+          hike: hike,
+          userLat: userLat,
+          userLng: userLng,
+          phoneNumber: session.phoneNumber,
+          userName: session.username,
+          repository: repository,
+          onJoin: onJoin ?? () {},
+        ),
+      ),
+    ),
+  );
+}
+
 class FindHikePage extends StatefulWidget {
   const FindHikePage({
     super.key,
@@ -49,14 +79,21 @@ class _FindHikePageState extends State<FindHikePage> {
       final userLng = location?.longitude;
 
       final now = DateTime.now();
-      final active = hikes.where((h) =>
-          !now.isAfter(h.departureTime.add(const Duration(minutes: 10)))).toList();
+      final active = hikes
+          .where(
+            (h) =>
+                !now.isAfter(h.departureTime.add(const Duration(minutes: 10))),
+          )
+          .toList();
 
       List<UpcomingHike> sorted;
       if (userLat != null && userLng != null) {
         sorted = List.of(active)
-          ..sort((a, b) => a.distanceFrom(userLat, userLng)
-              .compareTo(b.distanceFrom(userLat, userLng)));
+          ..sort(
+            (a, b) => a
+                .distanceFrom(userLat, userLng)
+                .compareTo(b.distanceFrom(userLat, userLng)),
+          );
       } else {
         sorted = active;
       }
@@ -93,8 +130,8 @@ class _FindHikePageState extends State<FindHikePage> {
                     subtitle: _isLoading
                         ? 'Loading...'
                         : _error != null
-                            ? 'Something went wrong'
-                            : '${_hikes.length} hike${_hikes.length == 1 ? '' : 's'} near you',
+                        ? 'Something went wrong'
+                        : '${_hikes.length} hike${_hikes.length == 1 ? '' : 's'} near you',
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
@@ -169,7 +206,7 @@ class _FindHikePageState extends State<FindHikePage> {
         padding: EdgeInsets.zero,
         itemCount: _hikes.length,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) => _HikeCard(
+        itemBuilder: (context, index) => UpcomingHikeCard(
           hike: _hikes[index],
           userLat: _userLat,
           userLng: _userLng,
@@ -183,8 +220,9 @@ class _FindHikePageState extends State<FindHikePage> {
   }
 }
 
-class _HikeCard extends StatefulWidget {
-  const _HikeCard({
+class UpcomingHikeCard extends StatefulWidget {
+  const UpcomingHikeCard({
+    super.key,
     required this.hike,
     this.userLat,
     this.userLng,
@@ -203,22 +241,25 @@ class _HikeCard extends StatefulWidget {
   final VoidCallback onJoin;
 
   @override
-  State<_HikeCard> createState() => _HikeCardState();
+  State<UpcomingHikeCard> createState() => _UpcomingHikeCardState();
 }
 
-class _HikeCardState extends State<_HikeCard> {
+class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
   bool _joining = false;
+  bool _joinedLocally = false;
 
   bool get _isParticipating {
     final phone = widget.phoneNumber;
-    return phone == widget.hike.creatorPhone ||
+    return _joinedLocally ||
+        phone == widget.hike.creatorPhone ||
         widget.hike.participantPhones.contains(phone);
   }
 
   Future<void> _openDirections() async {
     final lat = widget.hike.latitude;
     final lng = widget.hike.longitude;
-    final googleUrl = 'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng';
+    final googleUrl =
+        'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng';
     final wazeUrl = 'https://waze.com/ul?ll=$lat,$lng&navigate=yes';
     final uri = Uri.parse(googleUrl);
     if (await canLaunchUrl(uri)) {
@@ -242,6 +283,7 @@ class _HikeCardState extends State<_HikeCard> {
     if (!mounted) return;
     setState(() => _joining = false);
     if (ok) {
+      setState(() => _joinedLocally = true);
       widget.onJoin();
     }
   }
@@ -283,11 +325,12 @@ class _HikeCardState extends State<_HikeCard> {
                         widget.hike.trailName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: _AppColors.text,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0,
-                        ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _AppColors.text,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
                       ),
                       const SizedBox(height: 3),
                       Text(
@@ -314,9 +357,19 @@ class _HikeCardState extends State<_HikeCard> {
             const SizedBox(height: 12),
             const _HorizontalSeparator(),
             const SizedBox(height: 10),
-            _infoRow(context, Icons.directions_walk_rounded, 'Start', widget.hike.startPointName),
+            _infoRow(
+              context,
+              Icons.directions_walk_rounded,
+              'Start',
+              widget.hike.startPointName,
+            ),
             const SizedBox(height: 4),
-            _infoRow(context, Icons.flag_rounded, 'Destination', widget.hike.destinationName),
+            _infoRow(
+              context,
+              Icons.flag_rounded,
+              'Destination',
+              widget.hike.destinationName,
+            ),
             const SizedBox(height: 10),
             const _HorizontalSeparator(),
             const SizedBox(height: 10),
@@ -325,32 +378,22 @@ class _HikeCardState extends State<_HikeCard> {
                 _chip(context, Icons.schedule_rounded, '$dateText $timeText'),
                 const SizedBox(width: 8),
                 _chip(context, Icons.straighten_rounded, distText),
-                const SizedBox(width: 4),
-                Tooltip(
-                  message: 'Open in Maps',
-                  child: SizedBox(
-                    width: 30,
-                    height: 30,
-                    child: CupertinoButton(
-                      padding: EdgeInsets.zero,
-                      onPressed: _openDirections,
-                      child: Icon(
-                        Icons.navigation_rounded,
-                        size: 16,
-                        color: _AppColors.green,
-                      ),
-                    ),
-                  ),
-                ),
                 const SizedBox(width: 8),
-                _chip(context, Icons.people_rounded, '${widget.hike.participantCount}'),
+                _chip(
+                  context,
+                  Icons.people_rounded,
+                  '${widget.hike.participantCount}',
+                ),
               ],
             ),
             const SizedBox(height: 8),
             Row(
               children: [
-                Icon(Icons.timeline_rounded,
-                    size: 13, color: _AppColors.secondaryText),
+                Icon(
+                  Icons.timeline_rounded,
+                  size: 13,
+                  color: _AppColors.secondaryText,
+                ),
                 const SizedBox(width: 4),
                 Text(
                   '${widget.hike.distanceKm.toStringAsFixed(1)} km \u00b7 ${widget.hike.durationMinutes} min \u00b7 ${widget.hike.difficulty}',
@@ -361,6 +404,41 @@ class _HikeCardState extends State<_HikeCard> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            Material(
+              color: _AppColors.green.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: _openDirections,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 11,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Get a route to this hike',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: _AppColors.green,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.navigation_rounded,
+                        size: 19,
+                        color: _AppColors.green,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
             if (participating) ...[
               const SizedBox(height: 10),
@@ -411,7 +489,12 @@ class _HikeCardState extends State<_HikeCard> {
     );
   }
 
-  Widget _infoRow(BuildContext context, IconData icon, String label, String value) {
+  Widget _infoRow(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value,
+  ) {
     return Row(
       children: [
         Icon(icon, size: 15, color: _AppColors.secondaryText),
@@ -587,11 +670,7 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Divider(
-      height: 1,
-      thickness: 0.7,
-      color: _AppColors.separator,
-    );
+    return Divider(height: 1, thickness: 0.7, color: _AppColors.separator);
   }
 }
 

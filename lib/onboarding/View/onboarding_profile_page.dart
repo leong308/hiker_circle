@@ -1,5 +1,8 @@
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../authentication/Model/password_validator.dart';
 import '../Data/google_city_geocoding_service.dart';
 import '../Model/onboarding_profile.dart';
 import 'residential_city_picker_page.dart';
@@ -23,6 +26,8 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
   final _residentialCityFieldKey =
       GlobalKey<FormFieldState<ResidentialCitySelection>>();
   late final TextEditingController _usernameController;
+  late final TextEditingController _passwordController;
+  late final TextEditingController _confirmPasswordController;
   String? _gender;
   String? _hikerExperience;
   String? _hikeFrequency;
@@ -36,6 +41,8 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
     _usernameController = TextEditingController(
       text: widget.initialProfile.username,
     );
+    _passwordController = TextEditingController();
+    _confirmPasswordController = TextEditingController();
     _gender = widget.initialProfile.gender.isEmpty
         ? null
         : widget.initialProfile.gender;
@@ -63,6 +70,8 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
   @override
   void dispose() {
     _usernameController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -100,6 +109,25 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
       _errorMessage = null;
     });
     try {
+      final functions = FirebaseFunctions.instance;
+      final auth = FirebaseAuth.instance;
+      if (auth.currentUser == null) {
+        throw Exception('You must be signed in to set a password.');
+      }
+      try {
+        await functions.httpsCallable('linkPasswordToAccount').call({
+          'password': _passwordController.text,
+          'username': _usernameController.text.trim(),
+        });
+      } on FirebaseFunctionsException catch (e) {
+        if (e.code == 'not-found') {
+          throw Exception(
+            'Password setup function is not deployed. '
+            'Run: firebase deploy --only functions',
+          );
+        }
+        rethrow;
+      }
       await widget.onSubmit(
         OnboardingProfile(
           username: _usernameController.text,
@@ -114,7 +142,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _errorMessage = error.toString();
+          _errorMessage = _friendlyError(error);
         });
       }
     } finally {
@@ -124,6 +152,13 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
         });
       }
     }
+  }
+
+  String _friendlyError(Object error) {
+    if (error is FirebaseFunctionsException) {
+      return error.message ?? 'Password setup failed. Please try again.';
+    }
+    return error.toString();
   }
 
   @override
@@ -183,6 +218,38 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                         },
                       ),
                       const SizedBox(height: 14),
+                      TextFormField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        enabled: !_isSaving,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                          prefixIcon: Icon(Icons.key),
+                        ),
+                        validator: (value) {
+                          final result = PasswordValidator.validate(value ?? '');
+                          return result.isValid ? null : result.errorMessage;
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      TextFormField(
+                        controller: _confirmPasswordController,
+                        obscureText: true,
+                        enabled: !_isSaving,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Confirm password',
+                          prefixIcon: Icon(Icons.key),
+                        ),
+                        validator: (value) {
+                          if (value != _passwordController.text) {
+                            return 'Passwords do not match.';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 14),
                       DropdownButtonFormField<String>(
                         initialValue: _gender,
                         decoration: const InputDecoration(
@@ -231,7 +298,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                         onChanged: _isSaving
                             ? null
                             : (value) =>
-                                  setState(() => _hikerExperience = value),
+                                setState(() => _hikerExperience = value),
                         validator: (value) => value == null
                             ? 'Select your hiking experience.'
                             : null,

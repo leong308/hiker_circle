@@ -30,6 +30,14 @@
 				<string>hikercircle</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.google.firebase.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>app-1-41069899337-ios-1633f87257716481a61998</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
@@ -44,7 +52,7 @@
 	<key>NSMotionUsageDescription</key>
 	<string>HikerCircle uses motion sensors during active hikes to detect a possible fall followed by stillness and start a cancellable SOS countdown.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>HikerCircle lets administrators select trail photos from the photo library.</string>
+	<string>HikerCircle lets you select photos and videos for group chats and lets administrators select trail photos.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

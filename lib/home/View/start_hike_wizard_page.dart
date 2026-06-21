@@ -115,6 +115,23 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       return;
     }
 
+    final checkpointStep = _draft.hikeType == HikeType.team ? 2 : 1;
+    if (_stepIndex == checkpointStep &&
+        (_draft.effectiveCheckpoints.length < 3 ||
+            _draft.effectiveCheckpoints.length > 12)) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Add between 3 and 12 checkpoints before continuing.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
     if (_isFinalStep) {
       if (_draft.departureTime.isAfter(DateTime.now())) {
         unawaited(_scheduleAndFinish());
@@ -602,20 +619,27 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
 
   List<TrailCheckpoint> get _checkpoints => widget.draft.effectiveCheckpoints;
 
+  Trail get _routeTrail =>
+      widget.draft.trail.copyWith(checkpoints: _checkpoints);
+
   @override
   void initState() {
     super.initState();
     _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
-      widget.draft.trail,
+      _routeTrail,
     );
   }
 
   @override
   void didUpdateWidget(covariant _TrailSelectionStep oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.draft.trail.trailId != widget.draft.trail.trailId) {
+    if (oldWidget.draft.trail.trailId != widget.draft.trail.trailId ||
+        HikingRouteService.checkpointsHash(
+              oldWidget.draft.effectiveCheckpoints,
+            ) !=
+            HikingRouteService.checkpointsHash(_checkpoints)) {
       _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
-        widget.draft.trail,
+        _routeTrail,
       );
       _highlightedCheckpointIndex = null;
     }
@@ -628,7 +652,8 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
 
     return _StepCard(
       title: 'Select Trail',
-      subtitle: 'Pick a verified trail and pin any extra checkpoints.',
+      subtitle:
+          'Use 3–12 checkpoints. Start and end stay fixed; middle stops are optimized.',
       children: [
         DropdownButtonFormField<String>(
           initialValue: widget.draft.trail.trailId,
@@ -681,10 +706,10 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
               child: Text(
                 '${cpsSorted.length} checkpoints',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: _WizardColors.textFor(context),
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0,
-                    ),
+                  color: _WizardColors.textFor(context),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
               ),
             ),
             CupertinoButton(
@@ -693,6 +718,16 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
               child: Text(_showMap ? 'Hide map' : 'Show map'),
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${12 - cpsSorted.length} of 12 checkpoint slots remaining',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cpsSorted.length >= 12
+                ? _WizardColors.orange
+                : _WizardColors.secondaryTextFor(context),
+            fontWeight: FontWeight.w700,
+          ),
         ),
         const SizedBox(height: 8),
         _WizardCheckpointTimeline(
@@ -714,7 +749,7 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _addCheckpoint,
+                onPressed: cpsSorted.length >= 12 ? null : _addCheckpoint,
                 icon: const Icon(Icons.add_location_alt_rounded),
                 label: const Text('Add Checkpoint'),
               ),
@@ -735,6 +770,7 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
   }
 
   Future<void> _addCheckpoint() async {
+    if (_checkpoints.length >= 12) return;
     final checkpoint = await showModalBottomSheet<TrailCheckpoint>(
       context: context,
       showDragHandle: true,
@@ -770,7 +806,8 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
   }
 
   Future<void> _showEditCheckpointDialog(int index) async {
-    final cp = _checkpoints.toList()..sort((a, b) => a.order.compareTo(b.order));
+    final cp = _checkpoints.toList()
+      ..sort((a, b) => a.order.compareTo(b.order));
     final checkpoint = cp[index];
     final controller = TextEditingController(text: checkpoint.name);
     final newName = await showDialog<String>(
@@ -795,17 +832,20 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
       ),
     );
     if (newName != null && newName.isNotEmpty && mounted) {
-      final sorted = [..._checkpoints]..sort((a, b) => a.order.compareTo(b.order));
-      final updated = sorted.map((c) =>
-        c.name == checkpoint.name && c.latitude == checkpoint.latitude
-            ? c.copyWith(name: newName)
-            : c,
-      ).toList();
+      final sorted = [..._checkpoints]
+        ..sort((a, b) => a.order.compareTo(b.order));
+      final updated = sorted
+          .map(
+            (c) =>
+                c.name == checkpoint.name && c.latitude == checkpoint.latitude
+                ? c.copyWith(name: newName)
+                : c,
+          )
+          .toList();
       widget.onChanged(widget.draft.copyWith(customCheckpoints: updated));
     }
   }
 }
-
 
 class _CheckpointStep extends StatefulWidget {
   const _CheckpointStep({required this.draft, required this.onChanged});
@@ -825,25 +865,33 @@ class _CheckpointStepState extends State<_CheckpointStep> {
 
   List<TrailCheckpoint> get _checkpoints => widget.draft.effectiveCheckpoints;
 
+  Trail get _routeTrail =>
+      widget.draft.trail.copyWith(checkpoints: _checkpoints);
+
   @override
   void initState() {
     super.initState();
     _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
-      widget.draft.trail,
+      _routeTrail,
     );
   }
 
   @override
   void didUpdateWidget(covariant _CheckpointStep oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.draft.trail.trailId != widget.draft.trail.trailId) {
+    if (oldWidget.draft.trail.trailId != widget.draft.trail.trailId ||
+        HikingRouteService.checkpointsHash(
+              oldWidget.draft.effectiveCheckpoints,
+            ) !=
+            HikingRouteService.checkpointsHash(_checkpoints)) {
       _routeFuture = HikingRouteService().findHikingRouteForTrailWithCache(
-        widget.draft.trail,
+        _routeTrail,
       );
     }
   }
 
   void _addCheckpoint() {
+    if (_checkpoints.length >= 12) return;
     showModalBottomSheet<TrailCheckpoint>(
       context: context,
       showDragHandle: true,
@@ -856,7 +904,10 @@ class _CheckpointStepState extends State<_CheckpointStep> {
         return SafeArea(
           child: Padding(
             padding: EdgeInsets.fromLTRB(
-              18, 6, 18, 18 + MediaQuery.of(context).viewInsets.bottom,
+              18,
+              6,
+              18,
+              18 + MediaQuery.of(context).viewInsets.bottom,
             ),
             child: _CheckpointPickerSheet(trail: widget.draft.trail),
           ),
@@ -877,7 +928,8 @@ class _CheckpointStepState extends State<_CheckpointStep> {
   }
 
   Future<void> _showEditCheckpointDialog(int index) async {
-    final sorted = [..._checkpoints]..sort((a, b) => a.order.compareTo(b.order));
+    final sorted = [..._checkpoints]
+      ..sort((a, b) => a.order.compareTo(b.order));
     final checkpoint = sorted[index];
     final controller = TextEditingController(text: checkpoint.name);
     final newName = await showDialog<String>(
@@ -902,11 +954,14 @@ class _CheckpointStepState extends State<_CheckpointStep> {
       ),
     );
     if (newName != null && newName.isNotEmpty && mounted) {
-      final updated = sorted.map((c) =>
-        c.name == checkpoint.name && c.latitude == checkpoint.latitude
-            ? c.copyWith(name: newName)
-            : c,
-      ).toList();
+      final updated = sorted
+          .map(
+            (c) =>
+                c.name == checkpoint.name && c.latitude == checkpoint.latitude
+                ? c.copyWith(name: newName)
+                : c,
+          )
+          .toList();
       widget.onChanged(widget.draft.copyWith(customCheckpoints: updated));
     }
   }
@@ -918,7 +973,8 @@ class _CheckpointStepState extends State<_CheckpointStep> {
 
     return _StepCard(
       title: 'Checkpoints',
-      subtitle: 'Customise your hike checkpoints. Trailhead and trail end are fixed.',
+      subtitle:
+          'Use 3–12 checkpoints. Trailhead and trail end are fixed; middle stops are optimized.',
       children: [
         if (_showMap)
           SizedBox(
@@ -945,10 +1001,10 @@ class _CheckpointStepState extends State<_CheckpointStep> {
               child: Text(
                 '${cpsSorted.length} checkpoints',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: _WizardColors.textFor(context),
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0,
-                    ),
+                  color: _WizardColors.textFor(context),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
               ),
             ),
             CupertinoButton(
@@ -978,7 +1034,7 @@ class _CheckpointStepState extends State<_CheckpointStep> {
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _addCheckpoint,
+                onPressed: cpsSorted.length >= 12 ? null : _addCheckpoint,
                 icon: const Icon(Icons.add_location_alt_rounded),
                 label: const Text('Add Checkpoint'),
               ),
@@ -1191,13 +1247,20 @@ class _SafetySettingsStep extends StatelessWidget {
   final ValueChanged<HikeSessionDraft> onChanged;
 
   static const List<Duration> _responseCountdownOptions = [
-    Duration(seconds: 5),
     Duration(seconds: 15),
     Duration(seconds: 30),
     Duration(minutes: 1),
     Duration(minutes: 2),
     Duration(minutes: 3),
     Duration(minutes: 5),
+  ];
+
+  static const List<Duration> _longestRestOptions = [
+    Duration(minutes: 3),
+    Duration(minutes: 5),
+    Duration(minutes: 10),
+    Duration(minutes: 15),
+    Duration(minutes: 30),
   ];
 
   @override
@@ -1232,7 +1295,10 @@ class _SafetySettingsStep extends StatelessWidget {
               draft.copyWith(
                 fallDetectionSettings: FallDetectionSettings(
                   sensorSensitivity: value,
-                  stillnessDuration: fallDetectionSettings.stillnessDuration,
+                  fallResponseDuration:
+                      fallDetectionSettings.fallResponseDuration,
+                  longestRestDuration:
+                      fallDetectionSettings.longestRestDuration,
                 ),
               ),
             );
@@ -1242,13 +1308,13 @@ class _SafetySettingsStep extends StatelessWidget {
         DropdownButtonFormField<Duration>(
           initialValue:
               _responseCountdownOptions.contains(
-                fallDetectionSettings.stillnessDuration,
+                fallDetectionSettings.fallResponseDuration,
               )
-              ? fallDetectionSettings.stillnessDuration
+              ? fallDetectionSettings.fallResponseDuration
               : _responseCountdownOptions[1],
           decoration: const InputDecoration(
-            labelText: 'Response Countdown Before SOS',
-            prefixIcon: Icon(Icons.timer_rounded),
+            labelText: 'Longest response time after a fall',
+            prefixIcon: Icon(Icons.personal_injury_rounded),
           ),
           items: [
             for (final duration in _responseCountdownOptions)
@@ -1267,7 +1333,9 @@ class _SafetySettingsStep extends StatelessWidget {
                       fallDetectionSettings: FallDetectionSettings(
                         sensorSensitivity:
                             fallDetectionSettings.sensorSensitivity,
-                        stillnessDuration: duration,
+                        fallResponseDuration: duration,
+                        longestRestDuration:
+                            fallDetectionSettings.longestRestDuration,
                       ),
                     ),
                   );
@@ -1276,7 +1344,53 @@ class _SafetySettingsStep extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'After free fall, impact, and a fixed stillness check, HikerCircle uses this countdown for the final tap response before sending Fall SOS.',
+          'After a fall and fixed stillness check, this is how long you have to cancel before Fall SOS is sent.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: _WizardColors.secondaryTextFor(context),
+            letterSpacing: 0,
+          ),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<Duration>(
+          initialValue:
+              _longestRestOptions.contains(
+                fallDetectionSettings.longestRestDuration,
+              )
+              ? fallDetectionSettings.longestRestDuration
+              : _longestRestOptions.first,
+          decoration: const InputDecoration(
+            labelText: 'Longest time for a rest',
+            prefixIcon: Icon(Icons.self_improvement_rounded),
+          ),
+          items: [
+            for (final duration in _longestRestOptions)
+              DropdownMenuItem<Duration>(
+                value: duration,
+                child: Text(_durationLabel(duration)),
+              ),
+          ],
+          onChanged: draft.fallDetectionEnabled
+              ? (duration) {
+                  if (duration == null) {
+                    return;
+                  }
+                  onChanged(
+                    draft.copyWith(
+                      fallDetectionSettings: FallDetectionSettings(
+                        sensorSensitivity:
+                            fallDetectionSettings.sensorSensitivity,
+                        fallResponseDuration:
+                            fallDetectionSettings.fallResponseDuration,
+                        longestRestDuration: duration,
+                      ),
+                    ),
+                  );
+                }
+              : null,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'If your location stays within 5 m for this long, HikerCircle checks for phone movement and asks you to respond before sending a prolonged-stillness SOS.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: _WizardColors.secondaryTextFor(context),
             letterSpacing: 0,
@@ -1690,12 +1804,7 @@ class _CheckpointPickerSheetState extends State<_CheckpointPickerSheet> {
           onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 12),
-        SizedBox(
-          height: 280,
-          child: RoutePreviewMap(
-            trail: widget.trail,
-          ),
-        ),
+        SizedBox(height: 280, child: RoutePreviewMap(trail: widget.trail)),
         const SizedBox(height: 10),
         Text(
           '${_latitude.toStringAsFixed(5)}, ${_longitude.toStringAsFixed(5)}',
@@ -2459,9 +2568,8 @@ class _WizardCheckpointTimeline extends StatelessWidget {
 
   Widget _buildEditRow(BuildContext context, int index) {
     final cp = checkpoints[index];
-    final canRemove = checkpoints.length > 2 &&
-        index > 0 &&
-        index < checkpoints.length - 1;
+    final canRemove =
+        checkpoints.length > 3 && index > 0 && index < checkpoints.length - 1;
     return Padding(
       key: ValueKey('edit_cp_$index'),
       padding: const EdgeInsets.only(bottom: 4),
@@ -2578,6 +2686,7 @@ abstract final class _WizardColors {
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
+  static const Color orange = Color(0xFFF59E0B);
   static const Color red = Color(0xFFE11D48);
 
   static bool isDark(BuildContext context) =>

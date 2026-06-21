@@ -31,29 +31,24 @@ class SessionRepository {
   bool get isSignedIn => _session != null;
 
   Future<void> loadSavedSession() async {
-    AppSession? boundSession;
     try {
       final savedSession = await _localSessionDatabase.loadSession();
       if (savedSession == null) {
+        await _firebaseUserRepository.signOut();
         _session = null;
         return;
       }
       final appInstanceId = savedSession.appInstanceId.isEmpty
           ? await _localSessionDatabase.loadOrCreateAppInstanceId()
           : savedSession.appInstanceId;
-      boundSession = savedSession.copyWith(appInstanceId: appInstanceId);
+      final boundSession = savedSession.copyWith(appInstanceId: appInstanceId);
       final refreshedSession = await _firebaseUserRepository
           .refreshBoundSession(boundSession);
       await _localSessionDatabase.saveSession(refreshedSession);
       _session = refreshedSession;
-    } on FirebaseUserRepositoryException catch (error) {
-      if (error.message.contains('bound to another phone')) {
-        await _localSessionDatabase.clearSession();
-        _session = null;
-      } else {
-        _session = boundSession;
-      }
     } catch (_) {
+      await _firebaseUserRepository.signOut();
+      await _localSessionDatabase.clearSession();
       _session = null;
     }
   }
@@ -101,6 +96,7 @@ class SessionRepository {
 
   void signOut() {
     _session = null;
+    unawaited(_firebaseUserRepository.signOut());
     unawaited(_localSessionDatabase.clearSession());
   }
 }

@@ -83,9 +83,12 @@ import ActivityKit
     options: [UIApplication.OpenURLOptionsKey : Any] = [:]
   ) -> Bool {
     let handledByFlutter = super.application(app, open: url, options: options)
-    pendingDeepLink = url.absoluteString
-    deepLinkChannel?.invokeMethod("onDeepLink", arguments: url.absoluteString)
-    return handledByFlutter || url.scheme == "hikercircle"
+    if url.scheme == "hikercircle" {
+      pendingDeepLink = url.absoluteString
+      deepLinkChannel?.invokeMethod("onDeepLink", arguments: url.absoluteString)
+      return true
+    }
+    return handledByFlutter
   }
 
   override func application(

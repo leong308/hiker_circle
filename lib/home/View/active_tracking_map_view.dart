@@ -46,6 +46,7 @@ class ActiveTrackingMapView extends StatefulWidget {
     this.weatherSamples = const [],
     this.interactive = true,
     this.showLegend = false,
+    this.onStyleChanged,
   });
 
   final ActiveHikeSession activeHike;
@@ -53,6 +54,7 @@ class ActiveTrackingMapView extends StatefulWidget {
   final List<ActiveHikeWeatherSample> weatherSamples;
   final bool interactive;
   final bool showLegend;
+  final ValueChanged<int>? onStyleChanged;
 
   @override
   State<ActiveTrackingMapView> createState() => _ActiveTrackingMapViewState();
@@ -646,6 +648,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
       _styleLoaded = false;
       _routeRendered = false;
     });
+    widget.onStyleChanged?.call(_styleIndex);
   }
 
   Future<void> _zoomBy(double amount) async {

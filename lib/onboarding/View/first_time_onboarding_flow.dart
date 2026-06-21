@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Model/app_session.dart';
+import '../../authentication/View/safety_questions_setup_page.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../sos/View/emergency_contacts_page.dart';
@@ -33,6 +34,7 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
   OnboardingProfile _profile = const OnboardingProfile();
   List<EmergencyContact> _contacts = const [];
   late bool _profileComplete;
+  bool _safetyQuestionsComplete = false;
   bool _isLoading = true;
   String? _loadError;
 
@@ -87,6 +89,12 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
     });
   }
 
+  Future<void> _onSafetyQuestionsDone() async {
+    setState(() {
+      _safetyQuestionsComplete = true;
+    });
+  }
+
   Future<void> _complete(List<EmergencyContact> contacts) async {
     await _contactsRepository.saveEmergencyContacts(session: widget.session, contacts: contacts);
     await _onboardingRepository.completeOnboarding(widget.session);
@@ -127,6 +135,9 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
     }
     if (!_profileComplete) {
       return OnboardingProfilePage(initialProfile: _profile, onSubmit: _saveProfile);
+    }
+    if (!_safetyQuestionsComplete) {
+      return SafetyQuestionsSetupPage(onSubmitted: _onSafetyQuestionsDone);
     }
     return EmergencyContactsPage(
       session: widget.session,

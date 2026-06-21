@@ -1293,7 +1293,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   }
 
   void _removeCheckpoint(int index) {
-    if (_checkpoints.length <= 2) return;
+    if (_checkpoints.length <= 3) return;
     setState(() {
       _checkpoints.removeAt(index).dispose();
     });
@@ -1416,10 +1416,11 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         state.isEmpty ||
         latitude == null ||
         longitude == null ||
-        checkpoints.length < 2) {
+        checkpoints.length < 3 ||
+        checkpoints.length > 12) {
       setState(() {
         _errorMessage =
-            'Fill in trail identity and add at least 2 checkpoints.';
+            'Fill in trail identity and add between 3 and 12 checkpoints.';
       });
       return;
     }
@@ -1465,22 +1466,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       return;
     }
 
-    if (_hasFetchedRoute && checkpoints.length == 2) {
-      _confirmSaveWithTwoCheckpoints(
-        name: name,
-        area: area,
-        state: state,
-        latitude: latitude,
-        longitude: longitude,
-        distance: distance,
-        duration: duration,
-        elevation: elevation,
-        rating: rating,
-        checkpoints: checkpoints,
-      );
-      return;
-    }
-
     await _doSaveTrail(
       name: name,
       area: area,
@@ -1492,62 +1477,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       elevation: elevation,
       rating: rating,
       checkpoints: checkpoints,
-    );
-  }
-
-  void _confirmSaveWithTwoCheckpoints({
-    required String name,
-    required String area,
-    required String state,
-    required double latitude,
-    required double longitude,
-    required double distance,
-    required int duration,
-    required int elevation,
-    required double rating,
-    required List<TrailCheckpoint> checkpoints,
-  }) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _TrailColors.surfaceFor(context),
-        title: Text(
-          'Only 2 checkpoints',
-          style: TextStyle(color: _TrailColors.textFor(context)),
-        ),
-        content: Text(
-          'A route was found with intermediate waypoints. Adding them '
-          'improves navigation for hikers. Save with just trailhead and summit?',
-          style: TextStyle(color: _TrailColors.secondaryTextFor(context)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(context).pop();
-              unawaited(
-                _doSaveTrail(
-                  name: name,
-                  area: area,
-                  state: state,
-                  latitude: latitude,
-                  longitude: longitude,
-                  distance: distance,
-                  duration: duration,
-                  elevation: elevation,
-                  rating: rating,
-                  checkpoints: checkpoints,
-                ),
-              );
-            },
-            icon: const Icon(Icons.cloud_upload_rounded, size: 18),
-            label: const Text('Save anyway'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -2055,6 +1984,14 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                         ],
                       ),
                       const SizedBox(height: 6),
+                      if (_routeResult != null) ...[
+                        _routeMetricRow(
+                          context,
+                          'Provider',
+                          _routeResult!.sourceLabel,
+                        ),
+                        const SizedBox(height: 4),
+                      ],
                       _routeMetricRow(
                         context,
                         'Distance',
@@ -2109,7 +2046,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                   child: _CheckpointDraftFields(
                     draft: draft,
                     index: index,
-                    canRemove: _checkpoints.length > 2,
+                    canRemove: _checkpoints.length > 3,
                     onRemove: () => _removeCheckpoint(index),
                   ),
                 );
@@ -2348,6 +2285,17 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
     if (tappedIndex != null) {
       setState(() => _pins.removeAt(tappedIndex));
     } else {
+      if (!widget.singlePinMode && _pins.length >= 12) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('A route can contain up to 12 checkpoints.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        return;
+      }
       setState(() {
         if (widget.singlePinMode && _pins.isNotEmpty) {
           _pins.clear();
@@ -2442,7 +2390,7 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                               ? 'Tap the map to set a new location for checkpoint ${editable + 1}'
                               : widget.singlePinMode
                               ? 'Tap the map to select a trail location'
-                              : 'Tap to add pins \u00b7 tap pin to remove',
+                              : 'Add 3–12 pins · tap a pin to remove',
                           textAlign: TextAlign.center,
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
@@ -2461,7 +2409,11 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                 children: [
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: _pins.isEmpty
+                      onPressed:
+                          _pins.isEmpty ||
+                              (!widget.singlePinMode &&
+                                  editable == null &&
+                                  (_pins.length < 3 || _pins.length > 12))
                           ? null
                           : () => widget.onConfirm(List.of(_pins)),
                       icon: const Icon(Icons.check_rounded),
@@ -3566,7 +3518,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   }
 
   void _removeCheckpoint(int index) {
-    if (_checkpoints.length <= 2) return;
+    if (_checkpoints.length <= 3) return;
     setState(() {
       _checkpoints.removeAt(index).dispose();
     });
@@ -3629,7 +3581,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
 
   Future<void> _refreshMetrics() async {
     final models = _buildCheckpointModels();
-    if (models.length < 2) return;
+    if (models.length < 3 || models.length > 12) return;
 
     setState(() => _isRefreshing = true);
 
@@ -3706,7 +3658,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
           ? widget.trail.state
           : _stateController.text.trim(),
       difficulty: _difficulty,
-      checkpoints: models.length >= 2 ? models : widget.trail.checkpoints,
+      checkpoints: models.length >= 3 && models.length <= 12
+          ? models
+          : widget.trail.checkpoints,
       distanceKm: _refreshedRoute != null
           ? _refreshedRoute!.distanceMeters / 1000
           : widget.trail.distanceKm,
@@ -3858,8 +3812,8 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Route metrics are determined by the routing API and '
-                      'cannot be edited manually.',
+                      'Routes use 3–12 checkpoints. Mapbox keeps the first and '
+                      'last fixed and optimizes intermediate checkpoint order.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: _TrailColors.secondaryTextFor(context),
                       ),
@@ -3896,7 +3850,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                   child: _CheckpointDraftFields(
                     draft: draft,
                     index: index,
-                    canRemove: _checkpoints.length > 2,
+                    canRemove: _checkpoints.length > 3,
                     onRemove: () => _removeCheckpoint(index),
                     onEdit: () => unawaited(_editCheckpointOnMap(index)),
                   ),

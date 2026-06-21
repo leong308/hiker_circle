@@ -1,5 +1,11 @@
 import java.util.Properties
 
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -36,11 +42,25 @@ android {
             localProperties.getProperty("google.maps.apiKey", "")
     }
 
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            val releaseSigning = signingConfigs.findByName("release")
+                ?: throw GradleException(
+                    "Release signing is not configured. Run " +
+                        "scripts/create_android_upload_key.ps1 first.",
+                )
+            signingConfig = releaseSigning
         }
     }
 }

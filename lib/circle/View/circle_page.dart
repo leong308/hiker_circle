@@ -35,20 +35,42 @@ class _CirclePageState extends State<CirclePage> {
   int _selectedSection = 0;
 
   bool get _isAdmin => widget.session.isAdmin;
-  final Set<String> _buddyHandles = {'@ainatrails', '@jasonridge'};
-  late final List<_CommunityPerson> _people = _seedPeople();
+  final Set<String> _buddyPhones = {};
+  List<_CommunityPerson> _people = const [];
   late List<_CommunityPost> _posts = const [];
   late final List<_TeamPlan> _teams = _seedTeams();
   bool _isLoadingPosts = false;
   List<GroupChat> _groupChats = const [];
   bool _isLoadingChats = false;
+  Set<String> _pinnedChatIds = {};
   StreamSubscription<List<GroupChat>>? _chatsSubscription;
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadCommunityPosts());
+    unawaited(_loadCommunityPeople());
+    unawaited(_loadPinnedChats());
     _listenToGroupChats();
+  }
+
+  Future<void> _loadCommunityPeople() async {
+    final results = await Future.wait<Object>([
+      widget.hikerCircleRepository.loadCommunityProfiles(
+        session: widget.session,
+      ),
+      widget.hikerCircleRepository.loadBuddyPhoneNumbers(
+        session: widget.session,
+      ),
+    ]);
+    if (!mounted) return;
+    final profiles = results[0] as List<Map<String, dynamic>>;
+    setState(() {
+      _people = profiles.map(_communityPersonFromProfile).toList();
+      _buddyPhones
+        ..clear()
+        ..addAll(results[1] as Set<String>);
+    });
   }
 
   @override
@@ -61,21 +83,154 @@ class _CirclePageState extends State<CirclePage> {
     final phone = widget.session.phoneNumber;
     _chatsSubscription = widget.hikerCircleRepository
         .userGroupChatsStream(phone)
-        .listen((chats) {
-      if (!mounted) return;
-      setState(() {
-        _groupChats = chats;
-        _isLoadingChats = false;
-      });
-    }, onError: (error) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingChats = false;
-      });
-    });
+        .listen(
+          (chats) {
+            if (!mounted) return;
+            setState(() {
+              _groupChats = chats;
+              _isLoadingChats = false;
+            });
+          },
+          onError: (error) {
+            if (!mounted) return;
+            setState(() {
+              _isLoadingChats = false;
+            });
+          },
+        );
     setState(() {
       _isLoadingChats = true;
     });
+  }
+
+  Future<void> _loadPinnedChats() async {
+    final pinned = await widget.hikerCircleRepository.loadPinnedChats(
+      session: widget.session,
+    );
+    if (!mounted) return;
+    setState(() => _pinnedChatIds = pinned);
+  }
+
+  Future<void> _showChatNotifications(GroupChat chat) async {
+    final mutedUntil = await widget.hikerCircleRepository
+        .loadGroupChatMutedUntil(session: widget.session, chatId: chat.id);
+    if (!mounted) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _ChatNotificationSettingsSheet(
+        chatName: chat.displayNameFor(widget.session.phoneNumber),
+        isMuted: mutedUntil != null && mutedUntil.isAfter(DateTime.now()),
+      ),
+    );
+    if (action == null || !mounted) return;
+    final now = DateTime.now();
+    final muteDuration = switch (action) {
+      'unmute' => null,
+      '1h' => const Duration(hours: 1),
+      '8h' => const Duration(hours: 8),
+      '1d' => const Duration(days: 1),
+      '1w' => const Duration(days: 7),
+      _ => null,
+    };
+    final newMutedUntil = muteDuration == null ? null : now.add(muteDuration);
+    try {
+      await widget.hikerCircleRepository.setGroupChatMutedUntil(
+        session: widget.session,
+        chatId: chat.id,
+        mutedUntil: newMutedUntil,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              newMutedUntil == null
+                  ? 'Notifications turned on for this chat.'
+                  : 'Chat muted.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to update notification setting.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  void _pinChat(GroupChat chat) {
+    final isPinned = _pinnedChatIds.contains(chat.id);
+    setState(() {
+      if (isPinned) {
+        _pinnedChatIds.remove(chat.id);
+      } else {
+        _pinnedChatIds.add(chat.id);
+      }
+    });
+    unawaited(
+      widget.hikerCircleRepository.setChatPinned(
+        session: widget.session,
+        chatId: chat.id,
+        pinned: !isPinned,
+      ),
+    );
+  }
+
+  Future<void> _deleteChat(GroupChat chat) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete this conversation?'),
+        content: Text(
+          chat.isDirect
+              ? 'This will delete the conversation on your end. '
+                    'The other person will see that you left.'
+              : 'This will delete the conversation on your end. '
+                    'Other members will see that you left.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: _CircleColors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      await widget.hikerCircleRepository.deleteChatForUser(
+        session: widget.session,
+        chatId: chat.id,
+        senderName: widget.session.username,
+        participantPhones: chat.participantPhones,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to delete conversation.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
   Future<void> _loadCommunityPosts() async {
@@ -97,19 +252,114 @@ class _CirclePageState extends State<CirclePage> {
     }
   }
 
-  void _addBuddy(_CommunityPerson person) {
-    if (_buddyHandles.contains(person.handle)) {
+  Future<void> _addBuddy(_CommunityPerson person) async {
+    if (person.phoneNumber == widget.session.phoneNumber) return;
+    if (_buddyPhones.contains(person.phoneNumber) ||
+        person.phoneNumber.isEmpty) {
       return;
     }
 
+    await widget.hikerCircleRepository.addBuddy(
+      session: widget.session,
+      buddyPhoneNumber: person.phoneNumber,
+    );
+    if (!mounted) return;
     setState(() {
-      _buddyHandles.add(person.handle);
+      _buddyPhones.add(person.phoneNumber);
     });
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           content: Text('${person.name} added as a buddy.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  Future<void> _openDirectChat(_CommunityPerson person) async {
+    if (person.phoneNumber == widget.session.phoneNumber) return;
+    final chat = await widget.hikerCircleRepository.openDirectChat(
+      session: widget.session,
+      otherPhoneNumber: person.phoneNumber,
+      otherDisplayName: person.name,
+    );
+    if (!mounted) return;
+    _openGroupChat(chat);
+  }
+
+  Future<void> _showCommunityProfile(_CommunityPost post) async {
+    final profile = await widget.hikerCircleRepository.loadCommunityProfile(
+      userId: post.authorId,
+      phoneNumber: post.authorPhoneNumber,
+    );
+    if (!mounted || profile == null) return;
+    final person = _communityPersonFromProfile(profile);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _CommunityProfileSheet(
+        person: person,
+        isBuddy: _buddyPhones.contains(person.phoneNumber),
+        isOwnProfile: person.phoneNumber == widget.session.phoneNumber,
+        onAddBuddy: () {
+          Navigator.of(context).pop();
+          unawaited(_addBuddy(person));
+        },
+        onMessage: () {
+          Navigator.of(context).pop();
+          if (person.phoneNumber == widget.session.phoneNumber) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text(
+                  'You cannot start a conversation with yourself.',
+                ),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          } else {
+            unawaited(_openDirectChat(person));
+          }
+        },
+      ),
+    );
+  }
+
+  Future<void> _sharePostToGroupChat(_CommunityPost post) async {
+    final groupChats = _groupChats.where((chat) => !chat.isDirect).toList();
+    if (groupChats.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Join or create a group chat before sharing.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+    final chat = await showModalBottomSheet<GroupChat>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _SharePostToChatSheet(chats: groupChats),
+    );
+    if (chat == null || !mounted) return;
+    await widget.hikerCircleRepository.sendGroupChatMessage(
+      chatId: chat.id,
+      senderPhone: widget.session.phoneNumber,
+      senderName: widget.session.username,
+      text:
+          'Shared ${post.author}’s community post:\n${post.body}\nTrail: ${post.trail}',
+      localId: 'share_${DateTime.now().microsecondsSinceEpoch}',
+      sentAt: DateTime.now(),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Post shared to ${chat.trailName}.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -196,6 +446,8 @@ class _CirclePageState extends State<CirclePage> {
             session: widget.session,
             repository: widget.hikerCircleRepository,
             post: post,
+            onOpenProfile: () => _showCommunityProfile(post),
+            onShare: () => _sharePostToGroupChat(post),
           );
         },
       ),
@@ -204,7 +456,7 @@ class _CirclePageState extends State<CirclePage> {
 
   void _createTeam() {
     final buddies = _people
-        .where((person) => _buddyHandles.contains(person.handle))
+        .where((person) => _buddyPhones.contains(person.phoneNumber))
         .take(4)
         .map((person) => person.name)
         .toList();
@@ -249,6 +501,7 @@ class _CirclePageState extends State<CirclePage> {
       MaterialPageRoute<void>(
         builder: (context) => _CircleSettingsPage(
           session: widget.session,
+          repository: widget.hikerCircleRepository,
         ),
       ),
     );
@@ -268,9 +521,7 @@ class _CirclePageState extends State<CirclePage> {
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: isSelected
-                ? _CircleColors.green
-                : Colors.transparent,
+            color: isSelected ? _CircleColors.green : Colors.transparent,
             borderRadius: BorderRadius.circular(9),
           ),
           child: Row(
@@ -304,7 +555,7 @@ class _CirclePageState extends State<CirclePage> {
   @override
   Widget build(BuildContext context) {
     final buddies = _people
-        .where((person) => _buddyHandles.contains(person.handle))
+        .where((person) => _buddyPhones.contains(person.phoneNumber))
         .toList();
 
     return ColoredBox(
@@ -326,8 +577,9 @@ class _CirclePageState extends State<CirclePage> {
                       color: _CircleColors.surfaceFor(context),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _CircleColors.separatorFor(context)
-                            .withValues(alpha: 0.5),
+                        color: _CircleColors.separatorFor(
+                          context,
+                        ).withValues(alpha: 0.5),
                       ),
                     ),
                     child: Row(
@@ -354,24 +606,35 @@ class _CirclePageState extends State<CirclePage> {
                               people: _people,
                               posts: _posts,
                               isLoadingPosts: _isLoadingPosts,
-                              buddyHandles: _buddyHandles,
-                              onAddBuddy: _addBuddy,
+                              buddyPhones: _buddyPhones,
+                              currentUserPhone: widget.session.phoneNumber,
+                              onAddBuddy: (person) =>
+                                  unawaited(_addBuddy(person)),
+                              onMessageBuddy: (person) =>
+                                  unawaited(_openDirectChat(person)),
+                              onOpenProfile: _showCommunityProfile,
+                              onSharePost: _sharePostToGroupChat,
                               onCreatePost: _createCommunityPost,
                               onShareHike: _shareActiveHikeUpdate,
                               onOpenPost: _openPostDetail,
                             )
                           : _isAdmin && _selectedSection == 1
-                              ? _TeamsSection(
-                                  buddies: buddies,
-                                  teams: _teams,
-                                  onCreateTeam: _createTeam,
-                                )
-                              : _ChatsSection(
-                                  chats: _groupChats,
-                                  isLoading: _isLoadingChats,
-                                  phoneNumber: widget.session.phoneNumber,
-                                  onOpenChat: _openGroupChat,
-                                ),
+                          ? _TeamsSection(
+                              buddies: buddies,
+                              teams: _teams,
+                              onCreateTeam: _createTeam,
+                            )
+                          : _ChatsSection(
+                              chats: _groupChats,
+                              isLoading: _isLoadingChats,
+                              phoneNumber: widget.session.phoneNumber,
+                              pinnedChatIds: _pinnedChatIds,
+                              currentUserName: widget.session.username,
+                              onOpenChat: _openGroupChat,
+                              onChatNotifications: _showChatNotifications,
+                              onDeleteChat: _deleteChat,
+                              onPinChat: _pinChat,
+                            ),
                     ),
                   ),
                 ],
@@ -386,25 +649,39 @@ class _CirclePageState extends State<CirclePage> {
 
 class _CommunityPerson {
   const _CommunityPerson({
+    this.userId = '',
+    this.phoneNumber = '',
     required this.name,
     required this.handle,
     required this.subtitle,
     required this.trailAffinity,
     required this.color,
+    this.level = 1,
+    this.levelName = 'Trailhead',
+    this.gender = '',
   });
 
+  final String userId;
+  final String phoneNumber;
   final String name;
   final String handle;
   final String subtitle;
   final String trailAffinity;
   final Color color;
+  final int level;
+  final String levelName;
+  final String gender;
 }
 
 class _CommunityPost {
   const _CommunityPost({
     this.postId,
+    required this.authorId,
+    required this.authorPhoneNumber,
     required this.author,
     required this.handle,
+    required this.levelBadge,
+    required this.level,
     required this.timeLabel,
     required this.trail,
     required this.body,
@@ -417,8 +694,12 @@ class _CommunityPost {
   });
 
   final String? postId;
+  final String authorId;
+  final String authorPhoneNumber;
   final String author;
   final String handle;
+  final String levelBadge;
+  final int level;
   final String timeLabel;
   final String trail;
   final String body;
@@ -436,12 +717,16 @@ class _CommunityComment {
   const _CommunityComment({
     required this.author,
     required this.handle,
+    required this.levelBadge,
+    required this.level,
     required this.body,
     required this.timeLabel,
   });
 
   final String author;
   final String handle;
+  final String levelBadge;
+  final int level;
   final String body;
   final String timeLabel;
 }
@@ -523,8 +808,12 @@ class _CommunitySection extends StatelessWidget {
     required this.people,
     required this.posts,
     required this.isLoadingPosts,
-    required this.buddyHandles,
+    required this.buddyPhones,
+    required this.currentUserPhone,
     required this.onAddBuddy,
+    required this.onMessageBuddy,
+    required this.onOpenProfile,
+    required this.onSharePost,
     required this.onCreatePost,
     required this.onShareHike,
     required this.onOpenPost,
@@ -534,16 +823,23 @@ class _CommunitySection extends StatelessWidget {
   final List<_CommunityPerson> people;
   final List<_CommunityPost> posts;
   final bool isLoadingPosts;
-  final Set<String> buddyHandles;
+  final Set<String> buddyPhones;
+  final String currentUserPhone;
   final ValueChanged<_CommunityPerson> onAddBuddy;
+  final ValueChanged<_CommunityPerson> onMessageBuddy;
+  final ValueChanged<_CommunityPost> onOpenProfile;
+  final ValueChanged<_CommunityPost> onSharePost;
   final Future<void> Function(String caption) onCreatePost;
   final Future<void> Function() onShareHike;
   final ValueChanged<_CommunityPost> onOpenPost;
 
   @override
   Widget build(BuildContext context) {
+    final buddies = people
+        .where((person) => buddyPhones.contains(person.phoneNumber))
+        .toList();
     final suggestions = people
-        .where((person) => !buddyHandles.contains(person.handle))
+        .where((person) => !buddyPhones.contains(person.phoneNumber))
         .toList();
 
     return Column(
@@ -555,6 +851,28 @@ class _CommunitySection extends StatelessWidget {
           onShareHike: onShareHike,
         ),
         const SizedBox(height: 18),
+        if (buddies.isNotEmpty) ...[
+          _SectionTitle(label: 'Buddies'),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 210,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: buddies.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final person = buddies[index];
+                return _BuddySuggestionCard(
+                  person: person,
+                  isBuddy: true,
+                  onAddBuddy: () {},
+                  onMessage: () => onMessageBuddy(person),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 18),
+        ],
         _SectionTitle(label: 'Add Buddies'),
         const SizedBox(height: 8),
         if (suggestions.isEmpty)
@@ -577,6 +895,7 @@ class _CommunitySection extends StatelessWidget {
                   person: person,
                   isBuddy: false,
                   onAddBuddy: () => onAddBuddy(person),
+                  onMessage: () => onMessageBuddy(person),
                 );
               },
             ),
@@ -601,21 +920,10 @@ class _CommunitySection extends StatelessWidget {
         for (final post in posts) ...[
           _CommunityPostCard(
             post: post,
-            isBuddy: buddyHandles.contains(post.handle),
+            isOwnPost: post.authorPhoneNumber == currentUserPhone,
             onOpenPost: () => onOpenPost(post),
-            onAddBuddy: () {
-              final person = people.firstWhere(
-                (person) => person.handle == post.handle,
-                orElse: () => _CommunityPerson(
-                  name: post.author,
-                  handle: post.handle,
-                  subtitle: 'Community hiker',
-                  trailAffinity: post.trail,
-                  color: post.color,
-                ),
-              );
-              onAddBuddy(person);
-            },
+            onOpenProfile: () => onOpenProfile(post),
+            onShare: () => onSharePost(post),
           ),
           const SizedBox(height: 12),
         ],
@@ -642,9 +950,7 @@ class _ComposerCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: _CircleColors.green.withValues(alpha: 0.15),
-        ),
+        border: Border.all(color: _CircleColors.green.withValues(alpha: 0.15)),
         boxShadow: [
           BoxShadow(
             color: _CircleColors.green.withValues(alpha: isDark ? 0.08 : 0.06),
@@ -677,8 +983,9 @@ class _ComposerCard extends StatelessWidget {
                             : const Color(0xFFF5F7F5),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: _CircleColors.separatorFor(context)
-                              .withValues(alpha: 0.5),
+                          color: _CircleColors.separatorFor(
+                            context,
+                          ).withValues(alpha: 0.5),
                         ),
                       ),
                       child: Text(
@@ -762,7 +1069,11 @@ class _ComposerCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  const _Avatar(label: 'Y', color: _CircleColors.green, size: 36),
+                  const _Avatar(
+                    label: 'Y',
+                    color: _CircleColors.green,
+                    size: 36,
+                  ),
                   const SizedBox(width: 10),
                   Text(
                     'Create a post',
@@ -839,11 +1150,13 @@ class _BuddySuggestionCard extends StatelessWidget {
     required this.person,
     required this.isBuddy,
     required this.onAddBuddy,
+    required this.onMessage,
   });
 
   final _CommunityPerson person;
   final bool isBuddy;
   final VoidCallback onAddBuddy;
+  final VoidCallback onMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -939,30 +1252,43 @@ class _BuddySuggestionCard extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: isBuddy
-                    ? const _StatusPill(
+              if (isBuddy)
+                Row(
+                  children: [
+                    const Expanded(
+                      child: _StatusPill(
                         label: 'Buddy',
                         color: _CircleColors.green,
-                      )
-                    : FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _CircleColors.green,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                        onPressed: onAddBuddy,
-                        icon: const Icon(
-                          Icons.person_add_alt_1_rounded,
-                          size: 16,
-                        ),
-                        label: const Text('Add Buddy', style: TextStyle(fontSize: 13)),
                       ),
-              ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      tooltip: 'Start conversation',
+                      onPressed: onMessage,
+                      icon: const Icon(Icons.chat_rounded, size: 18),
+                    ),
+                  ],
+                )
+              else
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _CircleColors.green,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    onPressed: onAddBuddy,
+                    icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
+                    label: const Text(
+                      'Add Buddy',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -974,15 +1300,17 @@ class _BuddySuggestionCard extends StatelessWidget {
 class _CommunityPostCard extends StatelessWidget {
   const _CommunityPostCard({
     required this.post,
-    required this.isBuddy,
+    required this.isOwnPost,
     required this.onOpenPost,
-    required this.onAddBuddy,
+    required this.onOpenProfile,
+    required this.onShare,
   });
 
   final _CommunityPost post;
-  final bool isBuddy;
+  final bool isOwnPost;
   final VoidCallback onOpenPost;
-  final VoidCallback onAddBuddy;
+  final VoidCallback onOpenProfile;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -1014,9 +1342,12 @@ class _CommunityPostCard extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _Avatar(
-                      label: post.author.substring(0, 1),
-                      color: post.color,
+                    GestureDetector(
+                      onTap: onOpenProfile,
+                      child: _Avatar(
+                        label: post.author.substring(0, 1),
+                        color: post.color,
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -1027,7 +1358,9 @@ class _CommunityPostCard extends StatelessWidget {
                             children: [
                               Flexible(
                                 child: Text(
-                                  post.author,
+                                  isOwnPost
+                                      ? '${post.author} (You)'
+                                      : post.author,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.bodyLarge
@@ -1039,20 +1372,7 @@ class _CommunityPostCard extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(width: 6),
-                              Flexible(
-                                child: Text(
-                                  post.handle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: _CircleColors.secondaryTextFor(
-                                          context,
-                                        ),
-                                        letterSpacing: 0,
-                                      ),
-                                ),
-                              ),
+                              _LevelBadge(level: post.level),
                             ],
                           ),
                           const SizedBox(height: 2),
@@ -1070,31 +1390,6 @@ class _CommunityPostCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    isBuddy
-                        ? const _StatusPill(
-                            label: 'Buddy',
-                            color: _CircleColors.green,
-                          )
-                        : OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _CircleColors.green,
-                              side: BorderSide(
-                                color: _CircleColors.green.withValues(alpha: 0.3),
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              minimumSize: Size.zero,
-                            ),
-                            onPressed: onAddBuddy,
-                            child: const Text('Add',
-                                style: TextStyle(fontSize: 12)),
-                          ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1124,8 +1419,9 @@ class _CommunityPostCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     border: Border(
                       top: BorderSide(
-                        color: _CircleColors.separatorFor(context)
-                            .withValues(alpha: 0.4),
+                        color: _CircleColors.separatorFor(
+                          context,
+                        ).withValues(alpha: 0.4),
                       ),
                     ),
                   ),
@@ -1146,8 +1442,7 @@ class _CommunityPostCard extends StatelessWidget {
                       _PostAction(
                         icon: CupertinoIcons.arrowshape_turn_up_right,
                         label: 'Share',
-                        onTap: () =>
-                            _showDummySnack(context, 'Share sheet opened.'),
+                        onTap: onShare,
                       ),
                     ],
                   ),
@@ -1166,11 +1461,15 @@ class _CommunityPostDetailPage extends StatefulWidget {
     required this.session,
     required this.repository,
     required this.post,
+    required this.onOpenProfile,
+    required this.onShare,
   });
 
   final AppSession session;
   final HikerCircleFirebaseRepository repository;
   final _CommunityPost post;
+  final VoidCallback onOpenProfile;
+  final VoidCallback onShare;
 
   @override
   State<_CommunityPostDetailPage> createState() =>
@@ -1285,9 +1584,11 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                   const SizedBox(height: 16),
                   _CommunityPostCard(
                     post: post,
-                    isBuddy: true,
+                    isOwnPost:
+                        post.authorPhoneNumber == widget.session.phoneNumber,
                     onOpenPost: () {},
-                    onAddBuddy: () {},
+                    onOpenProfile: widget.onOpenProfile,
+                    onShare: widget.onShare,
                   ),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Comments'),
@@ -1297,8 +1598,9 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                       color: _CircleColors.surfaceFor(context),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
-                        color: _CircleColors.separatorFor(context)
-                            .withValues(alpha: 0.5),
+                        color: _CircleColors.separatorFor(
+                          context,
+                        ).withValues(alpha: 0.5),
                       ),
                     ),
                     child: Padding(
@@ -1319,7 +1621,9 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                               decoration: InputDecoration(
                                 hintText: 'Write a comment...',
                                 hintStyle: TextStyle(
-                                  color: _CircleColors.secondaryTextFor(context),
+                                  color: _CircleColors.secondaryTextFor(
+                                    context,
+                                  ),
                                 ),
                                 filled: true,
                                 fillColor: _CircleColors.isDark(context)
@@ -1381,8 +1685,9 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                         color: _CircleColors.surfaceFor(context),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: _CircleColors.separatorFor(context)
-                              .withValues(alpha: 0.5),
+                          color: _CircleColors.separatorFor(
+                            context,
+                          ).withValues(alpha: 0.5),
                         ),
                       ),
                       child: const Padding(
@@ -1401,8 +1706,9 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                         color: _CircleColors.surfaceFor(context),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: _CircleColors.separatorFor(context)
-                              .withValues(alpha: 0.5),
+                          color: _CircleColors.separatorFor(
+                            context,
+                          ).withValues(alpha: 0.5),
                         ),
                       ),
                       child: Column(
@@ -1452,13 +1758,33 @@ class _CommentRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${comment.author} ${comment.handle}',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _CircleColors.textFor(context),
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        comment.author,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: _CircleColors.textFor(context),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    _LevelBadge(level: comment.level),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        comment.handle,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _CircleColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 3),
                 Text(
@@ -1560,9 +1886,7 @@ class _TeamBuilderCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: _CircleColors.green.withValues(alpha: 0.15),
-        ),
+        border: Border.all(color: _CircleColors.green.withValues(alpha: 0.15)),
         boxShadow: [
           BoxShadow(
             color: _CircleColors.green.withValues(alpha: isDark ? 0.08 : 0.06),
@@ -1786,8 +2110,9 @@ class _TeamPlanCard extends StatelessWidget {
                         height: 24,
                         child: VerticalDivider(
                           width: 1,
-                          color: _CircleColors.separatorFor(context)
-                              .withValues(alpha: 0.5),
+                          color: _CircleColors.separatorFor(
+                            context,
+                          ).withValues(alpha: 0.5),
                         ),
                       ),
                       Expanded(
@@ -1811,8 +2136,8 @@ class _TeamPlanCard extends StatelessWidget {
                           color: team.readiness >= 80
                               ? _CircleColors.green
                               : team.readiness >= 50
-                                  ? _CircleColors.orange
-                                  : _CircleColors.red,
+                              ? _CircleColors.orange
+                              : _CircleColors.red,
                           backgroundColor: _CircleColors.green.withValues(
                             alpha: 0.1,
                           ),
@@ -1879,8 +2204,9 @@ class _TeamDetailPage extends StatelessWidget {
                       color: _CircleColors.surfaceFor(context),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: _CircleColors.separatorFor(context)
-                            .withValues(alpha: 0.5),
+                        color: _CircleColors.separatorFor(
+                          context,
+                        ).withValues(alpha: 0.5),
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -1897,7 +2223,9 @@ class _TeamDetailPage extends StatelessWidget {
                           children: [
                             Expanded(
                               child: _InfoLine(
-                                  label: 'Start', value: team.dateLabel),
+                                label: 'Start',
+                                value: team.dateLabel,
+                              ),
                             ),
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -1907,15 +2235,14 @@ class _TeamDetailPage extends StatelessWidget {
                               decoration: BoxDecoration(
                                 color: team.readiness >= 80
                                     ? _CircleColors.green.withValues(alpha: 0.1)
-                                    : _CircleColors.orange
-                                        .withValues(alpha: 0.1),
+                                    : _CircleColors.orange.withValues(
+                                        alpha: 0.1,
+                                      ),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Text(
                                 team.status,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
+                                style: Theme.of(context).textTheme.labelSmall
                                     ?.copyWith(
                                       color: team.readiness >= 80
                                           ? _CircleColors.green
@@ -1936,8 +2263,8 @@ class _TeamDetailPage extends StatelessWidget {
                             color: team.readiness >= 80
                                 ? _CircleColors.green
                                 : team.readiness >= 50
-                                    ? _CircleColors.orange
-                                    : _CircleColors.red,
+                                ? _CircleColors.orange
+                                : _CircleColors.red,
                             backgroundColor: _CircleColors.green.withValues(
                               alpha: 0.1,
                             ),
@@ -1946,9 +2273,7 @@ class _TeamDetailPage extends StatelessWidget {
                         const SizedBox(height: 8),
                         Text(
                           '${team.readiness}% team readiness',
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelSmall
+                          style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(
                                 color: _CircleColors.secondaryTextFor(context),
                                 fontWeight: FontWeight.w600,
@@ -1966,15 +2291,18 @@ class _TeamDetailPage extends StatelessWidget {
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 13),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
+                                  ),
                                 ),
                                 onPressed: () => _showDummySnack(
                                   context,
                                   'Team check-in schedule opened.',
                                 ),
                                 icon: const Icon(
-                                    Icons.check_circle_rounded, size: 18),
+                                  Icons.check_circle_rounded,
+                                  size: 18,
+                                ),
                                 label: const Text('Check-ins'),
                               ),
                             ),
@@ -1984,21 +2312,25 @@ class _TeamDetailPage extends StatelessWidget {
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: _CircleColors.green,
                                   side: BorderSide(
-                                    color: _CircleColors.green
-                                        .withValues(alpha: 0.3),
+                                    color: _CircleColors.green.withValues(
+                                      alpha: 0.3,
+                                    ),
                                   ),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 13),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
+                                  ),
                                 ),
                                 onPressed: () => _showDummySnack(
                                   context,
                                   'Invite manager opened.',
                                 ),
                                 icon: const Icon(
-                                    Icons.group_add_rounded, size: 18),
+                                  Icons.group_add_rounded,
+                                  size: 18,
+                                ),
                                 label: const Text('Invite'),
                               ),
                             ),
@@ -2015,8 +2347,9 @@ class _TeamDetailPage extends StatelessWidget {
                       color: _CircleColors.surfaceFor(context),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
-                        color: _CircleColors.separatorFor(context)
-                            .withValues(alpha: 0.5),
+                        color: _CircleColors.separatorFor(
+                          context,
+                        ).withValues(alpha: 0.5),
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -2055,8 +2388,9 @@ class _TeamDetailPage extends StatelessWidget {
                       color: _CircleColors.surfaceFor(context),
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
-                        color: _CircleColors.separatorFor(context)
-                            .withValues(alpha: 0.5),
+                        color: _CircleColors.separatorFor(
+                          context,
+                        ).withValues(alpha: 0.5),
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -2101,10 +2435,220 @@ class _TeamDetailPage extends StatelessWidget {
   }
 }
 
+class _CommunityProfileSheet extends StatelessWidget {
+  const _CommunityProfileSheet({
+    required this.person,
+    required this.isBuddy,
+    required this.isOwnProfile,
+    required this.onAddBuddy,
+    required this.onMessage,
+  });
+
+  final _CommunityPerson person;
+  final bool isBuddy;
+  final bool isOwnProfile;
+  final VoidCallback onAddBuddy;
+  final VoidCallback onMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
+        child: _InsetGroup(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _Avatar(
+                      label: person.name.substring(0, 1),
+                      color: person.color,
+                      size: 58,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            person.name,
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  color: _CircleColors.textFor(context),
+                                  fontWeight: FontWeight.w900,
+                                ),
+                          ),
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              _LevelBadge(level: person.level),
+                              const SizedBox(width: 7),
+                              Flexible(
+                                child: Text(
+                                  person.levelName,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: _CircleColors.secondaryTextFor(
+                                          context,
+                                        ),
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isOwnProfile)
+                      const _StatusPill(
+                        label: 'You',
+                        color: _CircleColors.green,
+                      )
+                    else if (!isBuddy)
+                      IconButton.filled(
+                        tooltip: 'Add buddy',
+                        onPressed: onAddBuddy,
+                        icon: const Icon(Icons.person_add_rounded),
+                      )
+                    else
+                      const _StatusPill(
+                        label: 'Buddy',
+                        color: _CircleColors.green,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                _ProfileInfoRow(
+                  icon: Icons.terrain_rounded,
+                  label: 'Experience',
+                  value: person.subtitle.isEmpty
+                      ? 'Not provided'
+                      : person.subtitle,
+                ),
+                _ProfileInfoRow(
+                  icon: Icons.location_city_rounded,
+                  label: 'Area',
+                  value: person.trailAffinity,
+                ),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: onMessage,
+                  icon: const Icon(Icons.chat_rounded),
+                  label: const Text('Start conversation'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileInfoRow extends StatelessWidget {
+  const _ProfileInfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          Icon(icon, color: _CircleColors.green, size: 19),
+          const SizedBox(width: 10),
+          Text(
+            '$label: ',
+            style: TextStyle(
+              color: _CircleColors.secondaryTextFor(context),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: _CircleColors.textFor(context),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SharePostToChatSheet extends StatelessWidget {
+  const _SharePostToChatSheet({required this.chats});
+
+  final List<GroupChat> chats;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
+        child: _InsetGroup(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                  child: Text(
+                    'Share to group chat',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: _CircleColors.textFor(context),
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                for (final chat in chats)
+                  ListTile(
+                    leading: const CircleAvatar(
+                      backgroundColor: _CircleColors.greenSoft,
+                      child: Icon(
+                        Icons.groups_rounded,
+                        color: _CircleColors.green,
+                      ),
+                    ),
+                    title: Text(chat.trailName),
+                    subtitle: Text(
+                      '${chat.participantPhones.length} participants',
+                    ),
+                    trailing: const Icon(Icons.send_rounded),
+                    onTap: () => Navigator.of(context).pop(chat),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CircleSettingsPage extends StatefulWidget {
-  const _CircleSettingsPage({required this.session});
+  const _CircleSettingsPage({required this.session, required this.repository});
 
   final AppSession session;
+  final HikerCircleFirebaseRepository repository;
 
   @override
   State<_CircleSettingsPage> createState() => _CircleSettingsPageState();
@@ -2115,6 +2659,67 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
   bool _nearbyTrailPosts = true;
   bool _teamInviteAlerts = true;
   bool _showHikeHistory = true;
+  bool _groupChatNotificationsEnabled = true;
+  bool _isLoadingGroupChatSetting = true;
+  bool _isSavingGroupChatSetting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadGroupChatNotificationSetting());
+  }
+
+  Future<void> _loadGroupChatNotificationSetting() async {
+    final enabled = await widget.repository.loadGroupChatNotificationsEnabled(
+      session: widget.session,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _groupChatNotificationsEnabled = enabled;
+      _isLoadingGroupChatSetting = false;
+    });
+  }
+
+  Future<void> _setGroupChatNotificationsEnabled(bool enabled) async {
+    if (_isSavingGroupChatSetting) {
+      return;
+    }
+    final previous = _groupChatNotificationsEnabled;
+    setState(() {
+      _groupChatNotificationsEnabled = enabled;
+      _isSavingGroupChatSetting = true;
+    });
+    try {
+      await widget.repository.setGroupChatNotificationsEnabled(
+        session: widget.session,
+        enabled: enabled,
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _groupChatNotificationsEnabled = previous;
+        });
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Unable to update group chat notifications right now.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingGroupChatSetting = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2170,6 +2775,20 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                   ),
                   const SizedBox(height: 8),
                   _SettingsSwitchTile(
+                    title: 'Group chat notifications',
+                    subtitle: _groupChatNotificationsEnabled
+                        ? 'Receive new-message alerts except for chats you muted individually.'
+                        : 'All group chat message notifications are muted.',
+                    value: _groupChatNotificationsEnabled,
+                    onChanged:
+                        _isLoadingGroupChatSetting || _isSavingGroupChatSetting
+                        ? null
+                        : (value) => unawaited(
+                            _setGroupChatNotificationsEnabled(value),
+                          ),
+                  ),
+                  const SizedBox(height: 8),
+                  _SettingsSwitchTile(
                     title: 'Show hike history on profile',
                     subtitle: 'Buddies can see completed public hikes.',
                     value: _showHikeHistory,
@@ -2188,8 +2807,9 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                         color: _CircleColors.surfaceFor(context),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: _CircleColors.separatorFor(context)
-                              .withValues(alpha: 0.5),
+                          color: _CircleColors.separatorFor(
+                            context,
+                          ).withValues(alpha: 0.5),
                         ),
                         boxShadow: [
                           BoxShadow(
@@ -2237,7 +2857,7 @@ class _SettingsSwitchTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool value;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2285,7 +2905,10 @@ class _SettingsSwitchTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            _CircleAnimatedToggle(value: value, onChanged: onChanged),
+            Opacity(
+              opacity: onChanged == null ? 0.55 : 1,
+              child: _CircleAnimatedToggle(value: value, onChanged: onChanged),
+            ),
           ],
         ),
       ),
@@ -2297,7 +2920,7 @@ class _CircleAnimatedToggle extends StatelessWidget {
   const _CircleAnimatedToggle({required this.value, required this.onChanged});
 
   final bool value;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2393,8 +3016,8 @@ class _RosterRow extends StatelessWidget {
               color: isLeader
                   ? _CircleColors.green.withValues(alpha: 0.1)
                   : isSweep
-                      ? _CircleColors.orange.withValues(alpha: 0.1)
-                      : _CircleColors.blue.withValues(alpha: 0.1),
+                  ? _CircleColors.orange.withValues(alpha: 0.1)
+                  : _CircleColors.blue.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -2404,14 +3027,14 @@ class _RosterRow extends StatelessWidget {
                   isLeader
                       ? Icons.star_rounded
                       : isSweep
-                          ? Icons.gps_fixed_rounded
-                          : Icons.person_rounded,
+                      ? Icons.gps_fixed_rounded
+                      : Icons.person_rounded,
                   size: 13,
                   color: isLeader
                       ? _CircleColors.green
                       : isSweep
-                          ? _CircleColors.orange
-                          : _CircleColors.blue,
+                      ? _CircleColors.orange
+                      : _CircleColors.blue,
                 ),
                 const SizedBox(width: 4),
                 Text(
@@ -2420,8 +3043,8 @@ class _RosterRow extends StatelessWidget {
                     color: isLeader
                         ? _CircleColors.green
                         : isSweep
-                            ? _CircleColors.orange
-                            : _CircleColors.blue,
+                        ? _CircleColors.orange
+                        : _CircleColors.blue,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0,
                     fontSize: 11,
@@ -2491,7 +3114,9 @@ class _TeamFlowRow extends StatelessWidget {
           ),
           Icon(
             Icons.chevron_right_rounded,
-            color: _CircleColors.secondaryTextFor(context).withValues(alpha: 0.5),
+            color: _CircleColors.secondaryTextFor(
+              context,
+            ).withValues(alpha: 0.5),
             size: 18,
           ),
         ],
@@ -2738,6 +3363,50 @@ class _CircleIcon extends StatelessWidget {
   }
 }
 
+class _LevelBadge extends StatelessWidget {
+  const _LevelBadge({required this.level});
+
+  final int level;
+
+  IconData get _icon => switch (level) {
+    1 => Icons.eco_rounded,
+    2 => Icons.explore_rounded,
+    3 => Icons.hiking_rounded,
+    4 => Icons.landscape_rounded,
+    5 => Icons.verified_rounded,
+    6 => Icons.shield_rounded,
+    _ => Icons.workspace_premium_rounded,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: _CircleColors.green.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _CircleColors.green.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_icon, size: 12, color: _CircleColors.green),
+          const SizedBox(width: 3),
+          Text(
+            'L$level',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: _CircleColors.green,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _StatusPill extends StatelessWidget {
   const _StatusPill({required this.label, required this.color});
 
@@ -2788,10 +3457,7 @@ class _InsetGroup extends StatelessWidget {
           ),
         ],
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: child,
-      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(14), child: child),
     );
   }
 }
@@ -2865,9 +3531,7 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
     await mapboxMap.compass.updateSettings(
       mapbox.CompassSettings(enabled: false),
     );
-    await mapboxMap.logo.updateSettings(
-      mapbox.LogoSettings(enabled: false),
-    );
+    await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
     await mapboxMap.gestures.updateSettings(
       mapbox.GesturesSettings(
         scrollEnabled: true,
@@ -2876,10 +3540,10 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
         pitchEnabled: true,
       ),
     );
-    _polylineManager =
-        await mapboxMap.annotations.createPolylineAnnotationManager();
-    _circleManager =
-        await mapboxMap.annotations.createCircleAnnotationManager();
+    _polylineManager = await mapboxMap.annotations
+        .createPolylineAnnotationManager();
+    _circleManager = await mapboxMap.annotations
+        .createCircleAnnotationManager();
     await _renderRoute();
     await _syncScaleFromCamera();
   }
@@ -2894,7 +3558,10 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
 
   Future<void> _renderRoute() async {
     final points = _routePoints;
-    if (_mapboxMap == null || !_styleLoaded || _routeRendered || points.length < 2) {
+    if (_mapboxMap == null ||
+        !_styleLoaded ||
+        _routeRendered ||
+        points.length < 2) {
       return;
     }
 
@@ -2903,10 +3570,12 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
 
     await _polylineManager?.create(
       mapbox.PolylineAnnotationOptions(
-        geometry: mapbox.LineString(coordinates: [
-          for (final pt in points)
-            mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-        ]),
+        geometry: mapbox.LineString(
+          coordinates: [
+            for (final pt in points)
+              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+          ],
+        ),
         lineColor: const Color(0xFF34A853).toARGB32(),
         lineOpacity: 0.94,
         lineWidth: 4.0,
@@ -3001,7 +3670,9 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
       children: [
         DeferredMap(
           child: mapbox.MapWidget(
-            key: ValueKey('${widget.post.postId}:${widget.post.routePointCount}'),
+            key: ValueKey(
+              '${widget.post.postId}:${widget.post.routePointCount}',
+            ),
             styleUri: mapStyleUrls[0],
             gestureRecognizers: mapGestureRecognizers,
             onMapCreated: _onMapCreated,
@@ -3042,10 +3713,7 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
           alignment: Alignment.bottomLeft,
           child: Padding(
             padding: const EdgeInsets.all(10),
-            child: MapScaleBar(
-              zoom: _currentZoom,
-              latitude: _scaleLatitude,
-            ),
+            child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
           ),
         ),
       ],
@@ -3121,39 +3789,6 @@ class _CommunityImagePainter extends CustomPainter {
   }
 }
 
-List<_CommunityPerson> _seedPeople() {
-  return const [
-    _CommunityPerson(
-      name: 'Aina',
-      handle: '@ainatrails',
-      subtitle: 'Weekend ridge hiker. Shares weather notes and route timing.',
-      trailAffinity: 'Broga Hill',
-      color: _CircleColors.green,
-    ),
-    _CommunityPerson(
-      name: 'Jason',
-      handle: '@jasonridge',
-      subtitle: 'Team lead for beginner-friendly morning hikes.',
-      trailAffinity: 'Bukit Gasing',
-      color: _CircleColors.blue,
-    ),
-    _CommunityPerson(
-      name: 'Mei Lin',
-      handle: '@meiclimbs',
-      subtitle: 'Likes technical climbs and careful checkpoint planning.',
-      trailAffinity: 'Bukit Tabur',
-      color: _CircleColors.orange,
-    ),
-    _CommunityPerson(
-      name: 'Farid',
-      handle: '@faridforest',
-      subtitle: 'Photographer, sweep role, and rain-route planner.',
-      trailAffinity: 'Penang Hill',
-      color: _CircleColors.purple,
-    ),
-  ];
-}
-
 List<_TeamPlan> _seedTeams() {
   return const [
     _TeamPlan(
@@ -3195,8 +3830,16 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
 
   return _CommunityPost(
     postId: _stringFrom(data['postId']),
+    authorId: _stringFrom(data['authorId']),
+    authorPhoneNumber: authorPhone,
     author: authorName,
     handle: handle,
+    levelBadge: _stringFrom(data['authorLevelBadge']).isEmpty
+        ? 'Lv. 1 Trailhead'
+        : _stringFrom(data['authorLevelBadge']),
+    level: _intFrom(data['authorLevel']) == 0
+        ? 1
+        : _intFrom(data['authorLevel']),
     timeLabel: _relativeTimeLabel(data['createdAtLocal']),
     trail: trailName,
     body: caption,
@@ -3220,8 +3863,41 @@ _CommunityComment _communityCommentFromFirestore(Map<String, dynamic> data) {
     handle: _stringFrom(data['authorHandle']).isEmpty
         ? _handleForPhone(authorPhone)
         : _stringFrom(data['authorHandle']),
+    levelBadge: _stringFrom(data['authorLevelBadge']).isEmpty
+        ? 'Lv. 1 Trailhead'
+        : _stringFrom(data['authorLevelBadge']),
+    level: _intFrom(data['authorLevel']) == 0
+        ? 1
+        : _intFrom(data['authorLevel']),
     body: _stringFrom(data['body']),
     timeLabel: _relativeTimeLabel(data['createdAtLocal']),
+  );
+}
+
+_CommunityPerson _communityPersonFromProfile(Map<String, dynamic> data) {
+  final name = _stringFrom(data['displayName']).isEmpty
+      ? 'Hiker'
+      : _stringFrom(data['displayName']);
+  final experience = _stringFrom(data['hikerExperience']);
+  final frequency = _stringFrom(data['hikeFrequency']);
+  return _CommunityPerson(
+    userId: _stringFrom(data['userId']),
+    phoneNumber: _stringFrom(data['phoneNumber']),
+    name: name,
+    handle: _stringFrom(data['handle']),
+    subtitle: [
+      if (experience.isNotEmpty) experience,
+      if (frequency.isNotEmpty) frequency,
+    ].join(' · '),
+    trailAffinity: _stringFrom(data['residentialLocation']).isEmpty
+        ? 'HikerCircle'
+        : _stringFrom(data['residentialLocation']),
+    color: _colorForPost(_stringFrom(data['userId'])),
+    level: _intFrom(data['level']) == 0 ? 1 : _intFrom(data['level']),
+    levelName: _stringFrom(data['levelName']).isEmpty
+        ? 'Trailhead'
+        : _stringFrom(data['levelName']),
+    gender: _stringFrom(data['gender']),
   );
 }
 
@@ -3263,13 +3939,23 @@ class _ChatsSection extends StatelessWidget {
     required this.chats,
     required this.isLoading,
     required this.phoneNumber,
+    required this.pinnedChatIds,
+    required this.currentUserName,
     required this.onOpenChat,
+    required this.onChatNotifications,
+    required this.onDeleteChat,
+    required this.onPinChat,
   });
 
   final List<GroupChat> chats;
   final bool isLoading;
   final String phoneNumber;
+  final Set<String> pinnedChatIds;
+  final String currentUserName;
   final ValueChanged<GroupChat> onOpenChat;
+  final ValueChanged<GroupChat> onChatNotifications;
+  final ValueChanged<GroupChat> onDeleteChat;
+  final ValueChanged<GroupChat> onPinChat;
 
   @override
   Widget build(BuildContext context) {
@@ -3323,20 +4009,62 @@ class _ChatsSection extends StatelessWidget {
       );
     }
 
+    final sorted = List<GroupChat>.from(chats)
+      ..sort(
+        (a, b) => (b.lastMessageAt ?? b.createdAt).compareTo(
+          a.lastMessageAt ?? a.createdAt,
+        ),
+      );
+    final pinned = sorted.where((c) => pinnedChatIds.contains(c.id)).toList();
+    final unpinned = sorted
+        .where((c) => !pinnedChatIds.contains(c.id))
+        .toList();
+
+    final tiles = <Widget>[];
+    if (pinned.isNotEmpty) {
+      tiles.add(_SectionTitle(label: 'Pinned chats'));
+      tiles.add(const SizedBox(height: 10));
+      for (final chat in pinned) {
+        tiles.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _GroupChatTile(
+              chat: chat,
+              phoneNumber: phoneNumber,
+              isPinned: true,
+              onTap: () => onOpenChat(chat),
+              onChatNotifications: () => onChatNotifications(chat),
+              onDeleteChat: () => onDeleteChat(chat),
+              onPinChat: () => onPinChat(chat),
+            ),
+          ),
+        );
+      }
+    }
+    if (unpinned.isNotEmpty) {
+      tiles.add(_SectionTitle(label: 'Chats'));
+      tiles.add(const SizedBox(height: 10));
+      for (final chat in unpinned) {
+        tiles.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _GroupChatTile(
+              chat: chat,
+              phoneNumber: phoneNumber,
+              isPinned: false,
+              onTap: () => onOpenChat(chat),
+              onChatNotifications: () => onChatNotifications(chat),
+              onDeleteChat: () => onDeleteChat(chat),
+              onPinChat: () => onPinChat(chat),
+            ),
+          ),
+        );
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _SectionTitle(label: 'Group Chats'),
-        const SizedBox(height: 10),
-        ...chats.map((chat) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _GroupChatTile(
-                chat: chat,
-                phoneNumber: phoneNumber,
-                onTap: () => onOpenChat(chat),
-              ),
-            )),
-      ],
+      children: tiles,
     );
   }
 }
@@ -3345,12 +4073,20 @@ class _GroupChatTile extends StatelessWidget {
   const _GroupChatTile({
     required this.chat,
     required this.phoneNumber,
+    required this.isPinned,
     required this.onTap,
+    required this.onChatNotifications,
+    required this.onDeleteChat,
+    required this.onPinChat,
   });
 
   final GroupChat chat;
   final String phoneNumber;
+  final bool isPinned;
   final VoidCallback onTap;
+  final VoidCallback onChatNotifications;
+  final VoidCallback onDeleteChat;
+  final VoidCallback onPinChat;
 
   @override
   Widget build(BuildContext context) {
@@ -3359,7 +4095,27 @@ class _GroupChatTile extends StatelessWidget {
         ? '$otherCount ${otherCount == 1 ? 'other' : 'others'}'
         : 'Just you';
 
-    return Container(
+    final displayName = chat.displayNameFor(phoneNumber);
+
+    Future<void> showActionSheet() async {
+      final action = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) =>
+            _ChatActionSheet(displayName: displayName, isPinned: isPinned),
+      );
+      if (action == null) return;
+      switch (action) {
+        case 'notifications':
+          onChatNotifications();
+        case 'delete':
+          onDeleteChat();
+        case 'pin':
+          onPinChat();
+      }
+    }
+
+    final tile = Container(
       decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
         borderRadius: BorderRadius.circular(14),
@@ -3386,8 +4142,8 @@ class _GroupChatTile extends StatelessWidget {
                 CircleAvatar(
                   backgroundColor: _CircleColors.greenSoftFor(context),
                   radius: 26,
-                  child: const Icon(
-                    Icons.chat_rounded,
+                  child: Icon(
+                    chat.isDirect ? Icons.person_rounded : Icons.groups_rounded,
                     color: _CircleColors.green,
                     size: 24,
                   ),
@@ -3398,7 +4154,7 @@ class _GroupChatTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        chat.trailName,
+                        displayName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -3422,18 +4178,25 @@ class _GroupChatTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: _CircleColors.greenSoftFor(context),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.chevron_right_rounded,
-                    color: _CircleColors.green,
-                    size: 18,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (chat.lastMessageAt != null)
+                      Text(
+                        _compactChatTime(chat.lastMessageAt!),
+                        style: TextStyle(
+                          color: _CircleColors.secondaryTextFor(context),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    const SizedBox(height: 6),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: _CircleColors.green,
+                      size: 20,
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -3441,7 +4204,339 @@ class _GroupChatTile extends StatelessWidget {
         ),
       ),
     );
+
+    return Dismissible(
+      key: ValueKey('chat_tile_${chat.id}'),
+      direction: DismissDirection.endToStart,
+      dismissThresholds: const {DismissDirection.endToStart: 0.35},
+      background: Container(
+        decoration: BoxDecoration(
+          color: _CircleColors.surfaceFor(context),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+          ),
+        ),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: _CircleColors.greenSoftFor(context),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(Icons.more_horiz_rounded, color: _CircleColors.green),
+        ),
+      ),
+      confirmDismiss: (_) async {
+        await showActionSheet();
+        return false;
+      },
+      child: tile,
+    );
   }
+}
+
+class _ChatActionSheet extends StatelessWidget {
+  const _ChatActionSheet({required this.displayName, required this.isPinned});
+
+  final String displayName;
+  final bool isPinned;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _CircleColors.surfaceFor(context),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: _CircleColors.separatorFor(context),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 8),
+                child: Text(
+                  displayName,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: _CircleColors.textFor(context),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              _ActionOption(
+                icon: isPinned
+                    ? Icons.push_pin_rounded
+                    : Icons.push_pin_outlined,
+                title: isPinned ? 'Unpin' : 'Pin',
+                onTap: () => Navigator.of(context).pop('pin'),
+              ),
+              _ActionOption(
+                icon: Icons.notifications_outlined,
+                title: 'Chat notifications',
+                onTap: () => Navigator.of(context).pop('notifications'),
+              ),
+              _ActionOption(
+                icon: Icons.delete_outline_rounded,
+                title: 'Delete',
+                titleColor: _CircleColors.red,
+                onTap: () => Navigator.of(context).pop('delete'),
+              ),
+              _ActionOption(
+                icon: Icons.close_rounded,
+                title: 'Cancel',
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionOption extends StatelessWidget {
+  const _ActionOption({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+    this.titleColor,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+  final Color? titleColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Divider(height: 1),
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            child: Row(
+              children: [
+                Icon(icon, color: _CircleColors.green, size: 22),
+                const SizedBox(width: 14),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: titleColor ?? _CircleColors.textFor(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChatNotificationSettingsSheet extends StatelessWidget {
+  const _ChatNotificationSettingsSheet({
+    required this.chatName,
+    required this.isMuted,
+  });
+
+  final String chatName;
+  final bool isMuted;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _CircleColors.surfaceFor(context),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: _CircleColors.separatorFor(context),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Chat notifications',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: _CircleColors.textFor(context),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      chatName,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _CircleColors.secondaryTextFor(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              _NotificationOption(
+                icon: Icons.notifications_active_rounded,
+                title: 'Notifications on',
+                subtitle: isMuted
+                    ? 'Currently muted'
+                    : 'This chat is not muted',
+                selected: !isMuted,
+                onTap: () => Navigator.of(context).pop('unmute'),
+              ),
+              _NotificationOption(
+                icon: Icons.schedule_rounded,
+                title: 'Mute for 1 hour',
+                onTap: () => Navigator.of(context).pop('1h'),
+              ),
+              _NotificationOption(
+                icon: Icons.bedtime_rounded,
+                title: 'Mute for 8 hours',
+                onTap: () => Navigator.of(context).pop('8h'),
+              ),
+              _NotificationOption(
+                icon: Icons.today_rounded,
+                title: 'Mute for 1 day',
+                onTap: () => Navigator.of(context).pop('1d'),
+              ),
+              _NotificationOption(
+                icon: Icons.date_range_rounded,
+                title: 'Mute for 1 week',
+                onTap: () => Navigator.of(context).pop('1w'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationOption extends StatelessWidget {
+  const _NotificationOption({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.selected = false,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Divider(height: 1),
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  color: selected
+                      ? _CircleColors.green
+                      : _CircleColors.secondaryTextFor(context),
+                  size: 22,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: _CircleColors.textFor(context),
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _CircleColors.secondaryTextFor(context),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (selected)
+                  Icon(
+                    Icons.check_rounded,
+                    color: _CircleColors.green,
+                    size: 22,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _compactChatTime(DateTime value) {
+  final local = value.toLocal();
+  final now = DateTime.now();
+  if (local.year == now.year &&
+      local.month == now.month &&
+      local.day == now.day) {
+    final hour = local.hour == 0
+        ? 12
+        : local.hour > 12
+        ? local.hour - 12
+        : local.hour;
+    return '$hour:${local.minute.toString().padLeft(2, '0')} ${local.hour < 12 ? 'AM' : 'PM'}';
+  }
+  return '${local.day}/${local.month}';
 }
 
 int _intFrom(Object? value) {

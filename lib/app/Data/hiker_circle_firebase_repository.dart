@@ -4,9 +4,12 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../core/models/hiker_level.dart';
+import '../../core/services/open_meteo_service.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../trail/Model/trail_models.dart';
@@ -14,7 +17,6 @@ import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
-import '../../core/services/open_meteo_service.dart';
 
 class HikerCircleFirebaseRepositoryException implements Exception {
   const HikerCircleFirebaseRepositoryException(this.message);
@@ -68,8 +70,68 @@ class HikerCircleFirebaseRepository {
 
   FirebaseStorage get _resolvedStorage => _storage ?? FirebaseStorage.instance;
 
+  Future<void> registerFcmToken({
+    required AppSession session,
+    required String token,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable || token.isEmpty) {
+      return;
+    }
+    await _resolvedFirestore.collection('users').doc(_userIdFor(session)).set({
+      'fcmTokens': FieldValue.arrayUnion([token]),
+      'lastFcmToken': token,
+      'lastFcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+      'lastFcmTokenUpdatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> updateActiveHikeMonitoringHeartbeat({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    required String lifecycleState,
+    String fcmToken = '',
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    await _hikeSessions.doc(activeHike.sessionId).set({
+      'monitoringHeartbeatAt': FieldValue.serverTimestamp(),
+      'monitoringHeartbeatAtLocal': now.toIso8601String(),
+      'monitoringLifecycleState': lifecycleState,
+      'monitoringExpected': true,
+      if (fcmToken.isNotEmpty) 'monitoringFcmToken': fcmToken,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAtLocal': now.toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> signalActiveHikePotentialTermination({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    String fcmToken = '',
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    await _hikeSessions.doc(activeHike.sessionId).set({
+      'terminationSignalNonce':
+          '${now.microsecondsSinceEpoch}_${session.phoneNumber.hashCode}',
+      'terminationSignalAt': FieldValue.serverTimestamp(),
+      'terminationSignalAtLocal': now.toIso8601String(),
+      'monitoringLifecycleState': 'detached',
+      'monitoringExpected': true,
+      if (fcmToken.isNotEmpty) 'monitoringFcmToken': fcmToken,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAtLocal': now.toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
   CollectionReference<Map<String, dynamic>> get _trails =>
       _resolvedFirestore.collection('trails');
+  CollectionReference<Map<String, dynamic>> get _users =>
+      _resolvedFirestore.collection('users');
   CollectionReference<Map<String, dynamic>> get _hikeSessions =>
       _resolvedFirestore.collection('hikeSessions');
   CollectionReference<Map<String, dynamic>> get _locationPoints =>
@@ -123,6 +185,10 @@ class HikerCircleFirebaseRepository {
       'category': 'Hike milestone',
       'iconName': 'verified_user',
       'rewardPoints': 120,
+      'rewardType': 'one_time',
+      'metricKey': 'hike_completed',
+      'targetCount': 1,
+      'isActive': true,
       'sortOrder': 10,
       'accentColorValue': 0xFF34A853,
     },
@@ -132,6 +198,10 @@ class HikerCircleFirebaseRepository {
       'category': 'Preparation',
       'iconName': 'map',
       'rewardPoints': 90,
+      'rewardType': 'one_time',
+      'metricKey': 'hike_started',
+      'targetCount': 1,
+      'isActive': true,
       'sortOrder': 20,
       'accentColorValue': 0xFF2F80ED,
     },
@@ -141,15 +211,23 @@ class HikerCircleFirebaseRepository {
       'category': 'Preparation',
       'iconName': 'health_and_safety',
       'rewardPoints': 100,
+      'rewardType': 'one_time',
+      'metricKey': 'checklist_completed',
+      'targetCount': 1,
+      'isActive': true,
       'sortOrder': 30,
       'accentColorValue': 0xFFF2994A,
     },
     'reliable_check_in': {
       'title': 'Reliable Check-In',
-      'condition': 'Complete scheduled check-ins during a hike',
+      'condition': 'Complete 5 scheduled check-ins during hikes',
       'category': 'Safety habit',
       'iconName': 'task_alt',
       'rewardPoints': 110,
+      'rewardType': 'cumulative',
+      'metricKey': 'check_in_completed',
+      'targetCount': 5,
+      'isActive': true,
       'sortOrder': 40,
       'accentColorValue': 0xFF9B51E0,
     },
@@ -159,15 +237,23 @@ class HikerCircleFirebaseRepository {
       'category': 'Community',
       'iconName': 'volunteer_activism',
       'rewardPoints': 140,
+      'rewardType': 'one_time',
+      'metricKey': 'hazard_report_approved',
+      'targetCount': 1,
+      'isActive': true,
       'sortOrder': 50,
       'accentColorValue': 0xFFEB5757,
     },
     'team_guardian': {
       'title': 'Team Guardian',
-      'condition': 'Complete team hikes without separation emergency',
+      'condition': 'Complete 3 team hikes without a separation emergency',
       'category': 'Team hike',
       'iconName': 'groups',
       'rewardPoints': 160,
+      'rewardType': 'cumulative',
+      'metricKey': 'team_hike_completed',
+      'targetCount': 3,
+      'isActive': true,
       'sortOrder': 60,
       'accentColorValue': 0xFF00A99D,
     },
@@ -343,6 +429,22 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  Future<UpcomingHike?> loadUpcomingHikeById(String hikeId) async {
+    if (!_firebaseBootstrapResult.isAvailable || hikeId.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final document = await _upcomingHikes.doc(hikeId.trim()).get();
+      final data = document.data();
+      if (!document.exists || data == null) {
+        return null;
+      }
+      return UpcomingHike.fromFirestore(document.id, data);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<List<UpcomingHike>> loadMyUpcomingHikes(String phoneNumber) async {
     if (!_firebaseBootstrapResult.isAvailable) return const [];
     try {
@@ -422,10 +524,35 @@ class HikerCircleFirebaseRepository {
   }) async {
     if (!_firebaseBootstrapResult.isAvailable) return false;
     try {
-      await _upcomingHikes.doc(hikeId).set({
-        'participantPhones': FieldValue.arrayUnion([phoneNumber]),
-        'participantCount': FieldValue.increment(1),
-      }, SetOptions(merge: true));
+      final hikeReference = _upcomingHikes.doc(hikeId);
+      await _resolvedFirestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(hikeReference);
+        final data = snapshot.data();
+        if (!snapshot.exists || data == null) {
+          throw const HikerCircleFirebaseRepositoryException(
+            'This upcoming hike is no longer available.',
+          );
+        }
+        final currentPhones = data['participantPhones'] is Iterable
+            ? (data['participantPhones'] as Iterable)
+                  .whereType<String>()
+                  .toSet()
+            : <String>{};
+        final storedCreatorPhone = _stringFrom(data['creatorPhone']);
+        if (storedCreatorPhone.isNotEmpty) {
+          currentPhones.add(storedCreatorPhone);
+        }
+        if (currentPhones.contains(phoneNumber)) {
+          return;
+        }
+        currentPhones.add(phoneNumber);
+        transaction.set(hikeReference, {
+          'participantPhones': currentPhones.toList(),
+          'participantCount': currentPhones.length,
+          'updatedAt': FieldValue.serverTimestamp(),
+          'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+        }, SetOptions(merge: true));
+      });
 
       final snapshot = await _upcomingHikes.doc(hikeId).get();
       final data = snapshot.data();
@@ -475,6 +602,7 @@ class HikerCircleFirebaseRepository {
         participantPhones: participantPhones,
         creatorPhone: creatorPhone,
         createdAt: DateTime.now(),
+        chatType: 'group',
       );
       await doc.set(chat.toFirestore());
     } catch (_) {}
@@ -487,11 +615,33 @@ class HikerCircleFirebaseRepository {
           .where('participantPhones', arrayContains: phoneNumber)
           .orderBy('createdAtLocal', descending: true)
           .get();
-      return snapshot.docs
+      final chats = snapshot.docs
           .map((doc) => GroupChat.fromFirestore(doc.id, doc.data()))
           .toList();
+      chats.sort(
+        (a, b) => (b.lastMessageAt ?? b.createdAt).compareTo(
+          a.lastMessageAt ?? a.createdAt,
+        ),
+      );
+      return chats;
     } catch (_) {
       return const [];
+    }
+  }
+
+  Future<GroupChat?> loadGroupChatById(String chatId) async {
+    if (!_firebaseBootstrapResult.isAvailable || chatId.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final snapshot = await _groupChats.doc(chatId.trim()).get();
+      final data = snapshot.data();
+      if (!snapshot.exists || data == null) {
+        return null;
+      }
+      return GroupChat.fromFirestore(snapshot.id, data);
+    } catch (_) {
+      return null;
     }
   }
 
@@ -500,11 +650,304 @@ class HikerCircleFirebaseRepository {
         .where('participantPhones', arrayContains: phoneNumber)
         .orderBy('createdAtLocal', descending: true)
         .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
+        .map((snapshot) {
+          final chats = snapshot.docs
               .map((doc) => GroupChat.fromFirestore(doc.id, doc.data()))
-              .toList(),
-        );
+              .toList();
+          chats.sort(
+            (a, b) => (b.lastMessageAt ?? b.createdAt).compareTo(
+              a.lastMessageAt ?? a.createdAt,
+            ),
+          );
+          return chats;
+        });
+  }
+
+  Future<GroupChat> openDirectChat({
+    required AppSession session,
+    required String otherPhoneNumber,
+    required String otherDisplayName,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    final ownPhone = session.phoneNumber.trim();
+    final otherPhone = otherPhoneNumber.trim();
+    if (otherPhone.isEmpty || _samePhone(ownPhone, otherPhone)) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Choose another hiker to start a private conversation.',
+      );
+    }
+    final phoneKeys = [_phoneKeyFor(ownPhone), _phoneKeyFor(otherPhone)]
+      ..sort();
+    final chatId = 'direct_${phoneKeys.join('_')}';
+    final reference = _groupChats.doc(chatId);
+    final now = DateTime.now().toUtc();
+    final names = <String, String>{
+      _phoneKeyFor(ownPhone): session.username.trim().isEmpty
+          ? ownPhone
+          : session.username.trim(),
+      _phoneKeyFor(otherPhone): otherDisplayName.trim().isEmpty
+          ? otherPhone
+          : otherDisplayName.trim(),
+    };
+    await reference.set({
+      'hikeSessionId': '',
+      'trailName': 'Private chat',
+      'chatType': 'direct',
+      'participantPhones': [ownPhone, otherPhone],
+      'participantNames': names,
+      'creatorPhone': ownPhone,
+      'createdAt': FieldValue.serverTimestamp(),
+      'createdAtLocal': now.toIso8601String(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAtLocal': now.toIso8601String(),
+    }, SetOptions(merge: true));
+    final snapshot = await reference.get();
+    return GroupChat.fromFirestore(chatId, snapshot.data()!);
+  }
+
+  Future<List<Map<String, dynamic>>> loadCommunityProfiles({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const [];
+    }
+    final snapshot = await _users.limit(80).get();
+    final ownId = _userIdFor(session);
+    return snapshot.docs
+        .where((document) => document.id != ownId)
+        .map((document) {
+          final data = document.data();
+          final profile = data['profile'] is Map
+              ? Map<String, dynamic>.from(data['profile'] as Map)
+              : const <String, dynamic>{};
+          final points = _intFrom(data['achievementPoints']);
+          final level = HikerLevel.fromPoints(points);
+          final username = _stringFrom(data['username']).trim().isNotEmpty
+              ? _stringFrom(data['username']).trim()
+              : _stringFrom(profile['username']).trim();
+          return <String, dynamic>{
+            'userId': document.id,
+            'phoneNumber': _stringFrom(data['phoneNumber']),
+            'displayName': username.isEmpty ? 'Hiker' : username,
+            'handle': _handleForPhone(_stringFrom(data['phoneNumber'])),
+            'gender': _stringFrom(profile['gender']),
+            'hikerExperience': _stringFrom(profile['hikerExperience']),
+            'hikeFrequency': _stringFrom(profile['hikeFrequency']),
+            'residentialLocation': _stringFrom(profile['residentialLocation']),
+            'achievementPoints': points,
+            'level': level.number,
+            'levelName': level.name,
+          };
+        })
+        .where((profile) => _stringFrom(profile['phoneNumber']).isNotEmpty)
+        .toList();
+  }
+
+  Future<Map<String, dynamic>?> loadCommunityProfile({
+    String userId = '',
+    String phoneNumber = '',
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return null;
+    }
+    DocumentSnapshot<Map<String, dynamic>> snapshot;
+    if (userId.trim().isNotEmpty) {
+      snapshot = await _users.doc(userId.trim()).get();
+    } else if (phoneNumber.trim().isNotEmpty) {
+      snapshot = await _users
+          .doc(FirebaseUserRepository.documentIdForPhoneNumber(phoneNumber))
+          .get();
+    } else {
+      return null;
+    }
+    final data = snapshot.data();
+    if (data == null) {
+      return null;
+    }
+    final profile = data['profile'] is Map
+        ? Map<String, dynamic>.from(data['profile'] as Map)
+        : const <String, dynamic>{};
+    final points = _intFrom(data['achievementPoints']);
+    final level = HikerLevel.fromPoints(points);
+    final username = _stringFrom(data['username']).trim().isNotEmpty
+        ? _stringFrom(data['username']).trim()
+        : _stringFrom(profile['username']).trim();
+    return {
+      'userId': snapshot.id,
+      'phoneNumber': _stringFrom(data['phoneNumber']),
+      'displayName': username.isEmpty ? 'Hiker' : username,
+      'handle': _handleForPhone(_stringFrom(data['phoneNumber'])),
+      'gender': _stringFrom(profile['gender']),
+      'hikerExperience': _stringFrom(profile['hikerExperience']),
+      'hikeFrequency': _stringFrom(profile['hikeFrequency']),
+      'residentialLocation': _stringFrom(profile['residentialLocation']),
+      'achievementPoints': points,
+      'level': level.number,
+      'levelName': level.name,
+    };
+  }
+
+  Future<Set<String>> loadBuddyPhoneNumbers({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const {};
+    }
+    final snapshot = await _users.doc(_userIdFor(session)).get();
+    final raw = snapshot.data()?['buddyPhoneNumbers'];
+    return raw is Iterable ? raw.whereType<String>().toSet() : <String>{};
+  }
+
+  Future<void> addBuddy({
+    required AppSession session,
+    required String buddyPhoneNumber,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    if (buddyPhoneNumber.trim().isEmpty) {
+      return;
+    }
+    await _users.doc(_userIdFor(session)).set({
+      'buddyPhoneNumbers': FieldValue.arrayUnion([buddyPhoneNumber.trim()]),
+      'buddiesUpdatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<bool> loadGroupChatNotificationsEnabled({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return true;
+    }
+    try {
+      final snapshot = await _users.doc(_userIdFor(session)).get();
+      return snapshot.data()?['groupChatNotificationsEnabled'] != false;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> setGroupChatNotificationsEnabled({
+    required AppSession session,
+    required bool enabled,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    await _users.doc(_userIdFor(session)).set({
+      'groupChatNotificationsEnabled': enabled,
+      'groupChatNotificationSettingsUpdatedAt': FieldValue.serverTimestamp(),
+      'groupChatNotificationSettingsUpdatedAtLocal': DateTime.now()
+          .toUtc()
+          .toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<DateTime?> loadGroupChatMutedUntil({
+    required AppSession session,
+    required String chatId,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable || chatId.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final rawMap = snapshot.data()?['groupChatMutedUntil'];
+      if (rawMap is! Map) {
+        return null;
+      }
+      final mutedUntil = _dateFromValue(rawMap[chatId.trim()]);
+      if (mutedUntil == null || !mutedUntil.isAfter(DateTime.now())) {
+        return null;
+      }
+      return mutedUntil;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> setGroupChatMutedUntil({
+    required AppSession session,
+    required String chatId,
+    DateTime? mutedUntil,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    final normalizedChatId = chatId.trim();
+    if (normalizedChatId.isEmpty) {
+      return;
+    }
+    final userReference = _users.doc(_userIdFor(session));
+    final now = DateTime.now().toUtc();
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(userReference);
+      final current = snapshot.data()?['groupChatMutedUntil'];
+      final updated = current is Map
+          ? Map<String, dynamic>.from(current)
+          : <String, dynamic>{};
+      updated.removeWhere((_, value) {
+        final date = _dateFromValue(value);
+        return date == null || !date.isAfter(now);
+      });
+      if (mutedUntil == null || !mutedUntil.isAfter(now)) {
+        updated.remove(normalizedChatId);
+      } else {
+        updated[normalizedChatId] = mutedUntil.toUtc().toIso8601String();
+      }
+      transaction.set(userReference, {
+        'groupChatMutedUntil': updated,
+        'groupChatNotificationSettingsUpdatedAt': FieldValue.serverTimestamp(),
+        'groupChatNotificationSettingsUpdatedAtLocal': now.toIso8601String(),
+      }, SetOptions(merge: true));
+    });
+  }
+
+  Future<Set<String>> loadPinnedChats({required AppSession session}) async {
+    if (!_firebaseBootstrapResult.isAvailable) return {};
+    try {
+      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final raw = snapshot.data()?['pinnedChats'];
+      if (raw is Map) {
+        return raw.keys
+            .where((k) => raw[k] == true || raw[k] is Timestamp)
+            .cast<String>()
+            .toSet();
+      }
+      return {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> setChatPinned({
+    required AppSession session,
+    required String chatId,
+    required bool pinned,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    final normalizedChatId = chatId.trim();
+    if (normalizedChatId.isEmpty) return;
+    await _users.doc(_userIdFor(session)).set({
+      'pinnedChats': {
+        normalizedChatId:
+            pinned ? FieldValue.serverTimestamp() : FieldValue.delete(),
+      },
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> deleteChatForUser({
+    required AppSession session,
+    required String chatId,
+    required String senderName,
+    required List<String> participantPhones,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    await sendSystemMessage(
+      chatId: chatId,
+      text: '$senderName left the conversation',
+      senderPhone: session.phoneNumber,
+      senderName: senderName,
+      participantPhones: participantPhones,
+    );
+    await _groupChats.doc(chatId).update({
+      'participantPhones': FieldValue.arrayRemove([session.phoneNumber]),
+    });
   }
 
   Future<void> sendGroupChatMessage({
@@ -514,14 +957,17 @@ class HikerCircleFirebaseRepository {
     required String text,
     required String localId,
     required DateTime sentAt,
+    ChatAttachment? attachment,
   }) async {
-    await _localDatabase.insertPendingMessage(
-      localId: localId,
-      chatId: chatId,
-      senderPhone: senderPhone,
-      senderName: senderName,
-      text: text,
-    );
+    if (attachment == null) {
+      await _localDatabase.insertPendingMessage(
+        localId: localId,
+        chatId: chatId,
+        senderPhone: senderPhone,
+        senderName: senderName,
+        text: text,
+      );
+    }
 
     try {
       final msgDoc = _groupChatMessagesFor(chatId).doc();
@@ -533,11 +979,12 @@ class HikerCircleFirebaseRepository {
         text: text,
         sentAt: sentAt,
         seenBy: [senderPhone],
+        attachment: attachment,
       );
 
       await msgDoc.set(msg.toFirestore());
       await _groupChats.doc(chatId).update({
-        'lastMessage': text,
+        'lastMessage': text.isNotEmpty ? text : _attachmentSummary(attachment),
         'lastMessageAtLocal': sentAt.toUtc().toIso8601String(),
       });
 
@@ -547,12 +994,97 @@ class HikerCircleFirebaseRepository {
         return;
       }
 
-      await _localDatabase.updateLocalMessageStatus(
-        localId,
-        'sent',
-        firestoreDocId: msgDoc.id,
+      if (attachment == null) {
+        await _localDatabase.updateLocalMessageStatus(
+          localId,
+          'sent',
+          firestoreDocId: msgDoc.id,
+        );
+      }
+    } catch (error) {
+      if (attachment != null) {
+        throw HikerCircleFirebaseRepositoryException(
+          'Unable to send attachment. Please try again.',
+        );
+      }
+    }
+  }
+
+  Future<ChatAttachment> uploadGroupChatAttachment({
+    required String chatId,
+    required String senderPhone,
+    required ChatAttachmentType type,
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    if (bytes.isEmpty) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The selected attachment is empty.',
       );
-    } catch (_) {}
+    }
+    const maxAttachmentBytes = 25 * 1024 * 1024;
+    if (bytes.length > maxAttachmentBytes) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Attachments must be 25 MB or smaller.',
+      );
+    }
+
+    final safeName = fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final safePhone = senderPhone.replaceAll(RegExp(r'[^0-9+]'), '');
+    final objectName =
+        '${DateTime.now().microsecondsSinceEpoch}_${safePhone}_$safeName';
+    final normalizedContentType = contentType.trim().isEmpty
+        ? 'application/octet-stream'
+        : contentType.trim();
+    try {
+      final firebaseUser = FirebaseBootstrap.requireAuthenticatedUser();
+      final expectedUserId = FirebaseUserRepository.documentIdForPhoneNumber(
+        senderPhone,
+      );
+      if (firebaseUser.uid != expectedUserId) {
+        throw FirebaseAuthException(
+          code: 'firebase-session-mismatch',
+          message: 'The Firebase account does not match the chat sender.',
+        );
+      }
+      final reference = _resolvedStorage.ref(
+        'group_chats/$chatId/attachments/$objectName',
+      );
+      await reference.putData(
+        bytes,
+        SettableMetadata(
+          contentType: normalizedContentType,
+          customMetadata: {
+            'chatId': chatId,
+            'senderPhone': senderPhone,
+            'attachmentType': type.name,
+          },
+        ),
+      );
+      return ChatAttachment(
+        type: type,
+        url: await reference.getDownloadURL(),
+        fileName: fileName,
+        contentType: normalizedContentType,
+        sizeBytes: bytes.length,
+      );
+    } on FirebaseAuthException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ??
+            'Your login could not be validated. Sign in again and retry.',
+      );
+    } on FirebaseException catch (error) {
+      if (error.code == 'unauthorized') {
+        throw const HikerCircleFirebaseRepositoryException(
+          'Attachment upload is blocked by Firebase Storage rules or Storage App Check.',
+        );
+      }
+      throw HikerCircleFirebaseRepositoryException(
+        'Attachment upload failed: ${error.message ?? error.code}',
+      );
+    }
   }
 
   Future<void> sendSystemMessage({
@@ -577,6 +1109,15 @@ class HikerCircleFirebaseRepository {
       );
       await msgDoc.set(msg.toFirestore());
     } catch (_) {}
+  }
+
+  String _attachmentSummary(ChatAttachment? attachment) {
+    return switch (attachment?.type) {
+      ChatAttachmentType.image => 'Photo',
+      ChatAttachmentType.video => 'Video',
+      ChatAttachmentType.document => 'Document',
+      null => '',
+    };
   }
 
   Future<void> markMessageAsSeen({
@@ -605,6 +1146,7 @@ class HikerCircleFirebaseRepository {
             createdAt:
                 DateTime.tryParse(row['created_at'] as String? ?? '') ??
                 DateTime.now(),
+            attachment: _attachmentFromLocalRow(row),
           ),
         )
         .toList();
@@ -628,6 +1170,7 @@ class HikerCircleFirebaseRepository {
             DateTime.tryParse(row['created_at'] as String? ?? '') ??
             DateTime.now(),
         sendStatus: status,
+        attachment: _attachmentFromLocalRow(row),
       );
     }).toList();
   }
@@ -648,6 +1191,9 @@ class HikerCircleFirebaseRepository {
             'send_status': m.sendStatus == SendStatus.sent ? 'sent' : 'pending',
             'retry_count': 0,
             'firestore_doc_id': '',
+            'attachment_json': m.attachment == null
+                ? ''
+                : jsonEncode(m.attachment!.toFirestore()),
           },
         )
         .toList();
@@ -717,6 +1263,21 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  ChatAttachment? _attachmentFromLocalRow(Map<String, dynamic> row) {
+    final raw = row['attachment_json'];
+    if (raw is! String || raw.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map
+          ? ChatAttachment.fromFirestore(Map<String, dynamic>.from(decoded))
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<UpcomingHike?> loadUpcomingHikeForChat(String hikeSessionId) async {
     if (!_firebaseBootstrapResult.isAvailable) return null;
     try {
@@ -773,7 +1334,12 @@ class HikerCircleFirebaseRepository {
         createdAt: now,
         participantPhones: participantPhones,
       );
-      await upcomingDoc.set(upcoming.toFirestore());
+      await upcomingDoc.set({
+        ...upcoming.toFirestore(),
+        'creatorUserId': _userIdFor(session),
+        'creatorName': session.username.trim(),
+        'notificationRadiusKm': 20,
+      });
 
       if (participantPhones.length > 1) {
         await createGroupChat(
@@ -875,8 +1441,12 @@ class HikerCircleFirebaseRepository {
         'fallDetectionEnabled': draft.fallDetectionEnabled,
         'fallDetectionSensorSensitivity':
             draft.fallDetectionSettings.sensorSensitivity,
+        'fallDetectionResponseDurationSeconds':
+            draft.fallDetectionSettings.fallResponseDuration.inSeconds,
+        'fallDetectionLongestRestDurationSeconds':
+            draft.fallDetectionSettings.longestRestDuration.inSeconds,
         'fallDetectionStillnessDurationSeconds':
-            draft.fallDetectionSettings.stillnessDuration.inSeconds,
+            draft.fallDetectionSettings.fallResponseDuration.inSeconds,
         'pathDeviationEnabled': draft.pathDeviationEnabled,
         'offlinePhysicalAlertEnabled': draft.offlinePhysicalAlertEnabled,
         'duressEnabled': draft.duressEnabled,
@@ -887,11 +1457,16 @@ class HikerCircleFirebaseRepository {
         'updatedAtLocal': now.toIso8601String(),
       });
 
-      await awardAchievement(
+      await recordAchievementMetric(
         session: session,
-        achievementId: 'prepared_adventurer',
-        condition: 'Started a hike with offline preparation enabled.',
+        metricKey: 'hike_started',
       );
+      if (draft.completedChecklistItems.isNotEmpty) {
+        await recordAchievementMetric(
+          session: session,
+          metricKey: 'checklist_completed',
+        );
+      }
 
       try {
         final upcomingDoc = _upcomingHikes.doc();
@@ -921,7 +1496,12 @@ class HikerCircleFirebaseRepository {
           createdAt: now,
           participantPhones: participantPhones,
         );
-        await upcomingDoc.set(upcoming.toFirestore());
+        await upcomingDoc.set({
+          ...upcoming.toFirestore(),
+          'creatorUserId': _userIdFor(session),
+          'creatorName': session.username.trim(),
+          'notificationRadiusKm': 20,
+        });
       } catch (_) {
         // Best-effort: upcoming hike listing is non-critical.
       }
@@ -945,6 +1525,7 @@ class HikerCircleFirebaseRepository {
 
       if (teamHikeSessionId.isNotEmpty) {
         await attachActiveHikeToTeamSession(
+          session: session,
           teamHikeSessionId: teamHikeSessionId,
           activeHikeSessionId: document.id,
         );
@@ -1088,7 +1669,18 @@ class HikerCircleFirebaseRepository {
   Future<TeamHikeSession> markTeamParticipantReady({
     required AppSession session,
     required String teamHikeSessionId,
+    required Map<String, dynamic> safetySettings,
   }) async {
+    if (safetySettings['liveLocationSharing'] != true ||
+        safetySettings['pathDeviationAlerts'] != true ||
+        safetySettings['teammateSeparationAlerts'] != true ||
+        safetySettings['sensorSensitivity'] is! num ||
+        safetySettings['fallResponseDurationSeconds'] is! num ||
+        safetySettings['longestRestDurationSeconds'] is! num) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Complete the required team safety settings before marking ready.',
+      );
+    }
     var shouldQueueCountdown = false;
     final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
       current,
@@ -1103,6 +1695,7 @@ class HikerCircleFirebaseRepository {
           joinedAt: participant.joinedAt ?? now,
           readyAt: now,
           updatedAt: now,
+          safetySettings: safetySettings,
         );
       }).toList();
       final hasPendingInvite = participants.any(
@@ -1138,12 +1731,23 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<TeamHikeSession> activateTeamHikeSession({
+    required AppSession session,
     required String teamHikeSessionId,
   }) async {
     final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
       current,
       now,
     ) {
+      if (!_samePhone(current.hostPhoneNumber, session.phoneNumber)) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'Only the host can start this team hike.',
+        );
+      }
+      if (!current.everyoneReady) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'Every participant must be ready before the host can start.',
+        );
+      }
       final participants = current.participants.map((participant) {
         if (!participant.status.isReadyForStart) {
           return participant;
@@ -1170,17 +1774,34 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<void> attachActiveHikeToTeamSession({
+    required AppSession session,
     required String teamHikeSessionId,
     required String activeHikeSessionId,
   }) async {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
       return;
     }
-    await _teamHikeSessions.doc(teamHikeSessionId).set({
-      'activeHikeSessionId': activeHikeSessionId,
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
-    }, SetOptions(merge: true));
+    final reference = _teamHikeSessions.doc(teamHikeSessionId);
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      final data = snapshot.data() ?? const <String, dynamic>{};
+      final sessionIds = data['activeHikeSessionIdsByPhone'] is Map
+          ? Map<String, dynamic>.from(
+              data['activeHikeSessionIdsByPhone'] as Map,
+            )
+          : <String, dynamic>{};
+      sessionIds[_phoneKeyFor(session.phoneNumber)] = activeHikeSessionId;
+      transaction.set(reference, {
+        if (_samePhone(
+          session.phoneNumber,
+          _stringFrom(data['hostPhoneNumber']),
+        ))
+          'activeHikeSessionId': activeHikeSessionId,
+        'activeHikeSessionIdsByPhone': sessionIds,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+      }, SetOptions(merge: true));
+    });
   }
 
   Future<TeamHikeSession?> syncTeamHikeParticipantLocation({
@@ -1194,7 +1815,11 @@ class HikerCircleFirebaseRepository {
     }
     final coordinate = HikeCoordinate.fromTriggerLocation(location);
     final progressMeters = _progressMetersFor(activeHike, coordinate);
-    return _mutateTeamHikeSession(teamHikeSessionId, (current, now) {
+    final newlyIsolated = <TeamHikeParticipant>[];
+    final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
+      current,
+      now,
+    ) {
       var participants = current.participants.map((participant) {
         if (!_samePhone(participant.phoneNumber, session.phoneNumber)) {
           return participant;
@@ -1212,12 +1837,66 @@ class HikerCircleFirebaseRepository {
           isLeader: _samePhone(participant.phoneNumber, leaderPhoneNumber),
         );
       }).toList();
+      participants = participants.map((participant) {
+        final location = participant.latestLocation;
+        if (location == null || participants.length < 2) {
+          return participant;
+        }
+        final nearestDistance = participants
+            .where(
+              (other) =>
+                  !_samePhone(other.phoneNumber, participant.phoneNumber) &&
+                  other.latestLocation != null,
+            )
+            .map((other) => location.distanceTo(other.latestLocation!))
+            .fold<double>(
+              double.infinity,
+              (nearest, distance) => distance < nearest ? distance : nearest,
+            );
+        final threshold =
+            (participant.safetySettings['separationDistanceMeters'] as num?)
+                ?.toDouble() ??
+            150;
+        final graceSeconds =
+            (participant.safetySettings['isolationGraceSeconds'] as num?)
+                ?.toInt() ??
+            180;
+        if (!nearestDistance.isFinite || nearestDistance <= threshold) {
+          return participant.copyWith(
+            clearIsolatedSince: true,
+            separationAlertActive: false,
+          );
+        }
+        final isolatedSince = participant.isolatedSince ?? now;
+        final shouldAlert =
+            !participant.separationAlertActive &&
+            now.difference(isolatedSince).inSeconds >= graceSeconds;
+        final next = participant.copyWith(
+          isolatedSince: isolatedSince,
+          separationAlertActive:
+              participant.separationAlertActive || shouldAlert,
+        );
+        if (shouldAlert) {
+          newlyIsolated.add(next);
+        }
+        return next;
+      }).toList();
       return current.copyWith(
         phase: TeamHikePhase.active,
         participants: participants,
         updatedAt: now,
       );
     });
+    for (final participant in newlyIsolated) {
+      await _queueTeamStatusOutbox(
+        teamSession: updated,
+        type: 'team_hike_separation_alert',
+        title: 'Teammate separation alert',
+        body:
+            '${participant.buddy.shortName} may be isolated from the team. Check the team map and send an OK ping.',
+      );
+    }
+    return updated;
   }
 
   Future<TeamHikeSession> pingTeamParticipant({
@@ -1359,6 +2038,10 @@ class HikerCircleFirebaseRepository {
       'lastCheckInAtLocal': now.toIso8601String(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+    await recordAchievementMetric(
+      session: session,
+      metricKey: 'check_in_completed',
+    );
   }
 
   Future<void> endHikeSession({
@@ -1373,6 +2056,8 @@ class HikerCircleFirebaseRepository {
     final now = DateTime.now().toUtc();
     await _hikeSessions.doc(activeHike.sessionId).set({
       'status': 'completed',
+      'monitoringExpected': false,
+      'monitoringLifecycleState': 'completed',
       'endedAt': FieldValue.serverTimestamp(),
       'endedAtLocal': now.toIso8601String(),
       'distanceKm': summary?.distanceKm ?? activeHike.recordedDistanceKm,
@@ -1401,11 +2086,16 @@ class HikerCircleFirebaseRepository {
         'updatedAtLocal': now.toIso8601String(),
       }, SetOptions(merge: true));
     }
-    await awardAchievement(
+    await recordAchievementMetric(
       session: session,
-      achievementId: 'first_safe_hike',
-      condition: 'Completed a hike session.',
+      metricKey: 'hike_completed',
     );
+    if (activeHike.teamHikeSessionId.isNotEmpty) {
+      await recordAchievementMetric(
+        session: session,
+        metricKey: 'team_hike_completed',
+      );
+    }
   }
 
   Future<void> submitHazardReport({
@@ -1542,6 +2232,7 @@ class HikerCircleFirebaseRepository {
 
     final now = DateTime.now().toUtc();
     final document = _communityPosts.doc();
+    final author = await _communityAuthorSnapshot(session);
     final routePoints = _actualRoutePointsFor(activeHike);
     final routePreviewPoints = _routePreviewPointsFor(routePoints);
     final routeBounds = _routeBoundsFor(routePoints);
@@ -1556,8 +2247,7 @@ class HikerCircleFirebaseRepository {
       'postId': document.id,
       'authorId': _userIdFor(session),
       'authorPhoneNumber': session.phoneNumber,
-      'authorName': 'You',
-      'authorHandle': _handleForPhone(session.phoneNumber),
+      ...author,
       'postType': postType,
       'trailId': activeHike.trail.trailId,
       'trailName': activeHike.trail.name,
@@ -1587,6 +2277,10 @@ class HikerCircleFirebaseRepository {
       'createdAt': FieldValue.serverTimestamp(),
       'createdAtLocal': now.toIso8601String(),
     });
+    await recordAchievementMetric(
+      session: session,
+      metricKey: 'community_post_created',
+    );
   }
 
   Future<void> createCommunityPost({
@@ -1600,12 +2294,12 @@ class HikerCircleFirebaseRepository {
 
     final now = DateTime.now().toUtc();
     final document = _communityPosts.doc();
+    final author = await _communityAuthorSnapshot(session);
     await document.set({
       'postId': document.id,
       'authorId': _userIdFor(session),
       'authorPhoneNumber': session.phoneNumber,
-      'authorName': 'You',
-      'authorHandle': _handleForPhone(session.phoneNumber),
+      ...author,
       'postType': postType,
       if (trailId != null) 'trailId': trailId,
       if (trailName != null) 'trailName': trailName,
@@ -1617,6 +2311,10 @@ class HikerCircleFirebaseRepository {
       'createdAt': FieldValue.serverTimestamp(),
       'createdAtLocal': now.toIso8601String(),
     });
+    await recordAchievementMetric(
+      session: session,
+      metricKey: 'community_post_created',
+    );
   }
 
   Future<List<Map<String, dynamic>>> loadCommunityPosts() async {
@@ -1629,7 +2327,9 @@ class HikerCircleFirebaseRepository {
           .orderBy('createdAtLocal', descending: true)
           .limit(20)
           .get();
-      return snapshot.docs.map((document) => document.data()).toList();
+      return _hydrateCommunityAuthorLevels(
+        snapshot.docs.map((document) => document.data()).toList(),
+      );
     } catch (_) {
       return const [];
     }
@@ -1649,14 +2349,14 @@ class HikerCircleFirebaseRepository {
 
     final now = DateTime.now().toUtc();
     final comment = _communityCommentsFor(postId).doc();
+    final author = await _communityAuthorSnapshot(session);
     final batch = _resolvedFirestore.batch();
     batch.set(comment, {
       'commentId': comment.id,
       'postId': postId,
       'authorId': _userIdFor(session),
       'authorPhoneNumber': session.phoneNumber,
-      'authorName': 'You',
-      'authorHandle': _handleForPhone(session.phoneNumber),
+      ...author,
       'body': trimmedBody,
       'createdAt': FieldValue.serverTimestamp(),
       'createdAtLocal': now.toIso8601String(),
@@ -1680,7 +2380,9 @@ class HikerCircleFirebaseRepository {
       final snapshot = await _communityCommentsFor(
         postId,
       ).orderBy('createdAtLocal', descending: false).limit(100).get();
-      return snapshot.docs.map((document) => document.data()).toList();
+      return _hydrateCommunityAuthorLevels(
+        snapshot.docs.map((document) => document.data()).toList(),
+      );
     } catch (_) {
       return const [];
     }
@@ -1973,6 +2675,13 @@ class HikerCircleFirebaseRepository {
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedAtLocal': now.toIso8601String(),
     }, SetOptions(merge: true));
+    final reporterUserId = _stringFrom(report['reportedBy']);
+    if (reporterUserId.isNotEmpty) {
+      await recordAchievementMetricForUserId(
+        userId: reporterUserId,
+        metricKey: 'hazard_report_approved',
+      );
+    }
   }
 
   Future<void> moderateCommunityPost({
@@ -2017,15 +2726,145 @@ class HikerCircleFirebaseRepository {
     }
 
     await ensureAchievementSeeds();
-    final userAchievementId = '${_userIdFor(session)}_$achievementId';
-    await _userAchievements.doc(userAchievementId).set({
-      'userAchievementId': userAchievementId,
-      'userId': _userIdFor(session),
-      'achievementId': achievementId,
-      'condition': condition,
-      'awardedAt': FieldValue.serverTimestamp(),
-      'awardedAtLocal': DateTime.now().toUtc().toIso8601String(),
-    }, SetOptions(merge: true));
+    await _applyAchievementProgress(
+      userId: _userIdFor(session),
+      achievementId: achievementId,
+      increment: 1,
+      forceUnlock: true,
+      condition: condition,
+    );
+  }
+
+  Future<void> recordAchievementMetric({
+    required AppSession session,
+    required String metricKey,
+    int increment = 1,
+  }) {
+    return recordAchievementMetricForUserId(
+      userId: _userIdFor(session),
+      metricKey: metricKey,
+      increment: increment,
+    );
+  }
+
+  Future<void> recordAchievementMetricForUserId({
+    required String userId,
+    required String metricKey,
+    int increment = 1,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable ||
+        userId.trim().isEmpty ||
+        metricKey.trim().isEmpty ||
+        increment <= 0) {
+      return;
+    }
+
+    await ensureAchievementSeeds();
+    final snapshot = await _achievements
+        .where('metricKey', isEqualTo: metricKey.trim())
+        .get();
+    for (final definition in snapshot.docs) {
+      if (definition.data()['isActive'] == false) {
+        continue;
+      }
+      await _applyAchievementProgress(
+        userId: userId.trim(),
+        achievementId: definition.id,
+        increment: increment,
+      );
+    }
+  }
+
+  Future<void> _applyAchievementProgress({
+    required String userId,
+    required String achievementId,
+    required int increment,
+    bool forceUnlock = false,
+    String condition = '',
+  }) async {
+    final definitionReference = _achievements.doc(achievementId);
+    final userAchievementId = '${userId}_$achievementId';
+    final progressReference = _userAchievements.doc(userAchievementId);
+    final userReference = _users.doc(userId);
+    final now = DateTime.now().toUtc();
+
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final definitionSnapshot = await transaction.get(definitionReference);
+      final definition = definitionSnapshot.data();
+      if (!definitionSnapshot.exists ||
+          definition == null ||
+          definition['isActive'] == false) {
+        return;
+      }
+
+      final progressSnapshot = await transaction.get(progressReference);
+      final existing = progressSnapshot.data() ?? const <String, dynamic>{};
+      final wasUnlocked =
+          existing['isUnlocked'] == true ||
+          existing['awardedAt'] != null ||
+          existing['awardedAtLocal'] != null;
+      final rewardType = _stringFrom(definition['rewardType']) == 'cumulative'
+          ? 'cumulative'
+          : 'one_time';
+      final targetCount = rewardType == 'one_time'
+          ? 1
+          : _intFrom(definition['targetCount']).clamp(1, 1000000000);
+      final previousProgress = _intFrom(
+        existing['progressCount'],
+      ).clamp(0, targetCount);
+      final nextProgress =
+          wasUnlocked || forceUnlock || rewardType == 'one_time'
+          ? targetCount
+          : (previousProgress + increment).clamp(0, targetCount);
+      final isUnlocked = wasUnlocked || nextProgress >= targetCount;
+      final rewardPoints = _intFrom(
+        definition['rewardPoints'],
+      ).clamp(0, 1000000000);
+      final newlyUnlocked = !wasUnlocked && isUnlocked;
+      final existingPointsAwarded = _intFrom(existing['pointsAwarded']);
+      final userSnapshot = newlyUnlocked
+          ? await transaction.get(userReference)
+          : null;
+
+      transaction.set(progressReference, {
+        'userAchievementId': userAchievementId,
+        'userId': userId,
+        'achievementId': achievementId,
+        'achievementTitle': _stringFrom(definition['title']),
+        'rewardType': rewardType,
+        'metricKey': _stringFrom(definition['metricKey']),
+        'targetCount': targetCount,
+        'progressCount': nextProgress,
+        'isUnlocked': isUnlocked,
+        if (condition.trim().isNotEmpty) 'condition': condition.trim(),
+        if (newlyUnlocked) ...{
+          'pointsAwarded': rewardPoints,
+          'awardedAt': FieldValue.serverTimestamp(),
+          'awardedAtLocal': now.toIso8601String(),
+        } else if (wasUnlocked && existingPointsAwarded > 0)
+          'pointsAwarded': existingPointsAwarded,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedAtLocal': now.toIso8601String(),
+      }, SetOptions(merge: true));
+
+      if (!newlyUnlocked) {
+        return;
+      }
+
+      final currentPoints = _intFrom(
+        userSnapshot?.data()?['achievementPoints'],
+      );
+      final totalPoints = currentPoints + rewardPoints;
+      final level = HikerLevel.fromPoints(totalPoints);
+      transaction.set(userReference, {
+        'achievementPoints': totalPoints,
+        'hikerLevel': level.number,
+        'hikerLevelName': level.name,
+        'hikerLevelBadge': level.badgeLabel,
+        'achievementSummaryUpdatedAt': FieldValue.serverTimestamp(),
+        'achievementSummaryUpdatedAtLocal': now.toIso8601String(),
+      }, SetOptions(merge: true));
+    });
   }
 
   Future<List<Map<String, dynamic>>> loadUserAchievementProgress({
@@ -2063,12 +2902,14 @@ class HikerCircleFirebaseRepository {
         };
       }
 
-      return _achievementProgressFrom(
+      final rows = _achievementProgressFrom(
         achievements: achievements.isEmpty
             ? _achievementSeedRows()
             : achievements,
         userAwardsByAchievementId: awardsByAchievementId,
       );
+      unawaited(_syncUserAchievementSummary(userId: userId, rows: rows));
+      return rows;
     } catch (_) {
       return _achievementProgressFrom(
         achievements: _achievementSeedRows(),
@@ -2082,16 +2923,128 @@ class HikerCircleFirebaseRepository {
       return;
     }
 
+    final snapshots = await Future.wait(
+      _achievementSeeds.keys.map((id) => _achievements.doc(id).get()),
+    );
     final batch = _resolvedFirestore.batch();
-    for (final entry in _achievementSeeds.entries) {
-      batch.set(_achievements.doc(entry.key), {
-        'achievementId': entry.key,
-        ...entry.value,
-        'rewardsSafeBehaviour': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+    for (var index = 0; index < snapshots.length; index++) {
+      final entry = _achievementSeeds.entries.elementAt(index);
+      final snapshot = snapshots[index];
+      final existing = snapshot.data() ?? const <String, dynamic>{};
+      final missingValues = <String, Object>{
+        for (final value in entry.value.entries)
+          if (!existing.containsKey(value.key)) value.key: value.value,
+      };
+      if (!snapshot.exists) {
+        batch.set(_achievements.doc(entry.key), {
+          'achievementId': entry.key,
+          ...entry.value,
+          'rewardsSafeBehaviour': true,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } else if (missingValues.isNotEmpty) {
+        batch.set(_achievements.doc(entry.key), {
+          ...missingValues,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
     }
     await batch.commit();
+  }
+
+  Future<List<Map<String, dynamic>>> loadAdminAchievements({
+    required AppSession session,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    await ensureAchievementSeeds();
+    final snapshot = await _achievements.orderBy('sortOrder').get();
+    return snapshot.docs
+        .map((document) => {'achievementId': document.id, ...document.data()})
+        .toList();
+  }
+
+  Future<String> saveAchievementByAdmin({
+    required AppSession session,
+    required Map<String, dynamic> achievement,
+    String achievementId = '',
+  }) async {
+    _throwIfAdminUnavailable(session);
+    final title = _stringFrom(achievement['title']).trim();
+    final condition = _stringFrom(achievement['condition']).trim();
+    final metricKey = _stringFrom(achievement['metricKey']).trim();
+    if (title.isEmpty || condition.isEmpty || metricKey.isEmpty) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Title, requirement, and progress metric are required.',
+      );
+    }
+    final rewardType = _stringFrom(achievement['rewardType']) == 'cumulative'
+        ? 'cumulative'
+        : 'one_time';
+    final rewardPoints = _intFrom(
+      achievement['rewardPoints'],
+    ).clamp(1, 1000000);
+    final targetCount = rewardType == 'one_time'
+        ? 1
+        : _intFrom(achievement['targetCount']).clamp(1, 1000000000);
+    var id = achievementId.trim();
+    if (id.isEmpty) {
+      final slug = title
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+          .replaceAll(RegExp(r'^_+|_+$'), '');
+      id = slug.isEmpty ? 'achievement' : slug;
+      if ((await _achievements.doc(id).get()).exists) {
+        id = '${id}_${DateTime.now().millisecondsSinceEpoch}';
+      }
+    }
+    final now = DateTime.now().toUtc();
+    await _achievements.doc(id).set({
+      'achievementId': id,
+      'title': title,
+      'condition': condition,
+      'category': _stringFrom(achievement['category']).trim().isEmpty
+          ? 'Hiking'
+          : _stringFrom(achievement['category']).trim(),
+      'iconName': _stringFrom(achievement['iconName']).trim().isEmpty
+          ? 'emoji_events'
+          : _stringFrom(achievement['iconName']).trim(),
+      'rewardPoints': rewardPoints,
+      'rewardType': rewardType,
+      'metricKey': metricKey,
+      'targetCount': targetCount,
+      'isActive': achievement['isActive'] != false,
+      'sortOrder': _intFrom(achievement['sortOrder']),
+      'accentColorValue': _intFrom(achievement['accentColorValue']) == 0
+          ? 0xFF34A853
+          : _intFrom(achievement['accentColorValue']),
+      'rewardsSafeBehaviour': true,
+      'updatedByAdminId': _userIdFor(session),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAtLocal': now.toIso8601String(),
+      if (achievementId.trim().isEmpty) ...{
+        'createdAt': FieldValue.serverTimestamp(),
+        'createdAtLocal': now.toIso8601String(),
+      },
+    }, SetOptions(merge: true));
+    return id;
+  }
+
+  Future<void> setAchievementActiveByAdmin({
+    required AppSession session,
+    required String achievementId,
+    required bool isActive,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    if (achievementId.trim().isEmpty) {
+      return;
+    }
+    await _achievements.doc(achievementId.trim()).set({
+      'isActive': isActive,
+      'updatedByAdminId': _userIdFor(session),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+    }, SetOptions(merge: true));
   }
 
   List<Map<String, dynamic>> _achievementSeedRows() {
@@ -2104,36 +3057,69 @@ class HikerCircleFirebaseRepository {
     required List<Map<String, dynamic>> achievements,
     required Map<String, Map<String, dynamic>> userAwardsByAchievementId,
   }) {
-    final rows = achievements.map((achievement) {
-      final achievementId = _stringFrom(achievement['achievementId']);
-      final award = userAwardsByAchievementId[achievementId];
-      final awardedAt = award == null
-          ? null
-          : _dateFromValue(award['awardedAt']) ??
-                _dateFromValue(award['awardedAtLocal']);
-      final title = _stringFrom(achievement['title']);
-      final condition = _stringFrom(achievement['condition']);
-      final category = _stringFrom(achievement['category']);
-      final iconName = _stringFrom(achievement['iconName']);
-      final sortOrder = _intFrom(achievement['sortOrder']);
+    final rows = achievements
+        .map((achievement) {
+          final achievementId = _stringFrom(achievement['achievementId']);
+          final award = userAwardsByAchievementId[achievementId];
+          final isActive = achievement['isActive'] != false;
+          if (!isActive && award == null) {
+            return <String, dynamic>{};
+          }
+          final awardedAt = award == null
+              ? null
+              : _dateFromValue(award['awardedAt']) ??
+                    _dateFromValue(award['awardedAtLocal']);
+          final title = _stringFrom(achievement['title']);
+          final condition = _stringFrom(achievement['condition']);
+          final category = _stringFrom(achievement['category']);
+          final iconName = _stringFrom(achievement['iconName']);
+          final sortOrder = _intFrom(achievement['sortOrder']);
 
-      return <String, dynamic>{
-        'achievementId': achievementId,
-        'title': title.isEmpty ? 'Achievement' : title,
-        'condition': condition.isEmpty
-            ? 'Complete a safety milestone'
-            : condition,
-        'category': category.isEmpty ? 'Safety' : category,
-        'iconName': iconName.isEmpty ? 'emoji_events' : iconName,
-        'rewardPoints': _intFrom(achievement['rewardPoints']),
-        'sortOrder': sortOrder,
-        'accentColorValue': _intFrom(achievement['accentColorValue']),
-        'isUnlocked': award != null,
-        if (award != null)
-          'userAchievementId': _stringFrom(award['userAchievementId']),
-        if (awardedAt != null) 'awardedAtLocal': awardedAt.toIso8601String(),
-      };
-    }).toList();
+          final rewardType =
+              _stringFrom(achievement['rewardType']) == 'cumulative'
+              ? 'cumulative'
+              : 'one_time';
+          final targetCount = rewardType == 'one_time'
+              ? 1
+              : _intFrom(achievement['targetCount']).clamp(1, 1000000000);
+          final isUnlocked =
+              award?['isUnlocked'] == true ||
+              award?['awardedAt'] != null ||
+              award?['awardedAtLocal'] != null;
+          final progressCount = isUnlocked
+              ? targetCount
+              : _intFrom(award?['progressCount']).clamp(0, targetCount);
+
+          return <String, dynamic>{
+            'achievementId': achievementId,
+            'title': title.isEmpty ? 'Achievement' : title,
+            'condition': condition.isEmpty
+                ? 'Complete a safety milestone'
+                : condition,
+            'category': category.isEmpty ? 'Safety' : category,
+            'iconName': iconName.isEmpty ? 'emoji_events' : iconName,
+            'rewardPoints': _intFrom(achievement['rewardPoints']),
+            'pointsAwarded': isUnlocked
+                ? (_intFrom(award?['pointsAwarded']) > 0
+                      ? _intFrom(award?['pointsAwarded'])
+                      : _intFrom(achievement['rewardPoints']))
+                : 0,
+            'rewardType': rewardType,
+            'metricKey': _stringFrom(achievement['metricKey']),
+            'targetCount': targetCount,
+            'progressCount': progressCount,
+            'sortOrder': sortOrder,
+            'accentColorValue': _intFrom(achievement['accentColorValue']),
+            'isActive': isActive,
+            'isUnlocked': isUnlocked,
+            if (award != null)
+              'userAchievementId': _stringFrom(award['userAchievementId']),
+            if (awardedAt != null)
+              'awardedAtLocal': awardedAt.toIso8601String(),
+          };
+        })
+        .where((row) => row.isNotEmpty)
+        .toList();
 
     rows.sort((left, right) {
       final orderComparison = _intFrom(
@@ -2145,6 +3131,110 @@ class HikerCircleFirebaseRepository {
       return _stringFrom(left['title']).compareTo(_stringFrom(right['title']));
     });
     return rows;
+  }
+
+  Future<void> _syncUserAchievementSummary({
+    required String userId,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    try {
+      final points = rows.fold<int>(
+        0,
+        (total, row) =>
+            total +
+            (row['isUnlocked'] == true ? _intFrom(row['pointsAwarded']) : 0),
+      );
+      final level = HikerLevel.fromPoints(points);
+      await _users.doc(userId).set({
+        'achievementPoints': points,
+        'hikerLevel': level.number,
+        'hikerLevelName': level.name,
+        'hikerLevelBadge': level.badgeLabel,
+        'achievementSummaryUpdatedAt': FieldValue.serverTimestamp(),
+        'achievementSummaryUpdatedAtLocal': DateTime.now()
+            .toUtc()
+            .toIso8601String(),
+      }, SetOptions(merge: true));
+    } catch (_) {
+      // The achievement list is still useful if the profile summary cannot sync.
+    }
+  }
+
+  Future<Map<String, dynamic>> _communityAuthorSnapshot(
+    AppSession session,
+  ) async {
+    var points = 0;
+    var storedUsername = '';
+    try {
+      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final data = snapshot.data();
+      points = _intFrom(data?['achievementPoints']);
+      storedUsername = _stringFrom(data?['username']).trim();
+      final profile = data?['profile'];
+      if (storedUsername.isEmpty && profile is Map) {
+        storedUsername = _stringFrom(profile['username']).trim();
+      }
+    } catch (_) {
+      // Fall back to the authenticated session snapshot.
+    }
+    final level = HikerLevel.fromPoints(points);
+    final displayName = session.username.trim().isNotEmpty
+        ? session.username.trim()
+        : storedUsername.isNotEmpty
+        ? storedUsername
+        : 'Hiker';
+    return {
+      'authorName': displayName,
+      'authorHandle': _handleForPhone(session.phoneNumber),
+      'authorAchievementPoints': points,
+      'authorLevel': level.number,
+      'authorLevelName': level.name,
+      'authorLevelBadge': level.badgeLabel,
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> _hydrateCommunityAuthorLevels(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final authorIds = rows
+        .map((row) => _stringFrom(row['authorId']))
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (authorIds.isEmpty) {
+      return rows;
+    }
+    try {
+      final snapshots = await Future.wait(
+        authorIds.map((id) => _users.doc(id).get()),
+      );
+      final usersById = <String, Map<String, dynamic>>{
+        for (final snapshot in snapshots)
+          if (snapshot.data() != null) snapshot.id: snapshot.data()!,
+      };
+      return rows.map((row) {
+        final user = usersById[_stringFrom(row['authorId'])];
+        if (user == null) {
+          return row;
+        }
+        final points = _intFrom(user['achievementPoints']);
+        final level = HikerLevel.fromPoints(points);
+        var username = _stringFrom(user['username']).trim();
+        final profile = user['profile'];
+        if (username.isEmpty && profile is Map) {
+          username = _stringFrom(profile['username']).trim();
+        }
+        return {
+          ...row,
+          if (username.isNotEmpty) 'authorName': username,
+          'authorAchievementPoints': points,
+          'authorLevel': level.number,
+          'authorLevelName': level.name,
+          'authorLevelBadge': level.badgeLabel,
+        };
+      }).toList();
+    } catch (_) {
+      return rows;
+    }
   }
 
   Future<void> recordNetworkObservation({
@@ -2227,7 +3317,9 @@ class HikerCircleFirebaseRepository {
 
     addParticipant(
       TeamHikeBuddy(
-        name: 'You',
+        name: session.username.trim().isEmpty
+            ? _handleForPhone(session.phoneNumber)
+            : session.username.trim(),
         handle: _handleForPhone(session.phoneNumber),
         phoneNumber: session.phoneNumber,
         role: 'Host',

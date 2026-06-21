@@ -106,6 +106,7 @@ enum SosAlertMode {
   manual,
   medical,
   fallStillness,
+  prolongedStillness,
   duress;
 
   String get firestoreValue {
@@ -116,6 +117,8 @@ enum SosAlertMode {
         return 'medical';
       case SosAlertMode.fallStillness:
         return 'fall_stillness';
+      case SosAlertMode.prolongedStillness:
+        return 'prolonged_stillness';
       case SosAlertMode.duress:
         return 'duress';
     }
@@ -129,6 +132,8 @@ enum SosAlertMode {
         return 'Medical Help';
       case SosAlertMode.fallStillness:
         return 'Fall SOS';
+      case SosAlertMode.prolongedStillness:
+        return 'Prolonged-Stillness SOS';
       case SosAlertMode.duress:
         return 'Duress SOS';
     }
@@ -139,6 +144,7 @@ enum SosAlertMode {
       case SosAlertMode.manual:
       case SosAlertMode.medical:
       case SosAlertMode.fallStillness:
+      case SosAlertMode.prolongedStillness:
         return true;
       case SosAlertMode.duress:
         return false;
@@ -328,6 +334,8 @@ abstract final class SosAlertMessageComposer {
         return 'Medical help request was triggered from HikerCircle.';
       case SosAlertMode.fallStillness:
         return 'Possible fall followed by stillness was detected and escalated.';
+      case SosAlertMode.prolongedStillness:
+        return 'Location and phone movement remained still beyond the selected safe rest time.';
       case SosAlertMode.duress:
         return 'Silent duress SOS was triggered. Avoid calling if that may increase risk.';
     }

@@ -24,7 +24,7 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.enterText(find.byType(TextFormField), 'trailwalker');
+    await tester.enterText(find.byType(TextFormField).at(0), 'trailwalker');
     await tester.pump();
 
     expect(

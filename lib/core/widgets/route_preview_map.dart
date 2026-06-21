@@ -24,6 +24,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.captureAllGestures = false,
     this.isRouteLoading = false,
     this.loadingMessage = 'Loading route…',
+    this.initialStyleIndex = 0,
   });
 
   final Trail trail;
@@ -38,6 +39,7 @@ class RoutePreviewMap extends StatefulWidget {
   final bool captureAllGestures;
   final bool isRouteLoading;
   final String loadingMessage;
+  final int initialStyleIndex;
 
   List<TrailCheckpoint> get effectiveCheckpoints =>
       customCheckpoints ?? trail.checkpoints;
@@ -60,7 +62,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PointAnnotationManager? _pointManager;
-  var _styleIndex = 4;
+  var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
   late final AnimationController _routeAnimController;
@@ -81,6 +83,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   @override
   void initState() {
     super.initState();
+    _styleIndex = widget.initialStyleIndex;
     _routeAnimController = AnimationController(
       vsync: this,
       duration: widget.animationDuration,

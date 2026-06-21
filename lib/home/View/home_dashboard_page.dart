@@ -293,10 +293,7 @@ class _PreparationDashboard extends StatelessWidget {
           subtitle: 'Review your route, preparation, and nearby trail options.',
         ),
         const SizedBox(height: 16),
-        _StartHikeActions(
-          onStartHike: onStartHike,
-          onFindHike: onFindHike,
-        ),
+        _StartHikeActions(onStartHike: onStartHike, onFindHike: onFindHike),
         const SizedBox(height: 18),
         _UpcomingHikeCard(
           plannedHike: plannedHike,
@@ -400,10 +397,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
           subtitle: 'Start a solo session or choose a trail from Best Matches.',
         ),
         const SizedBox(height: 16),
-        _StartHikeActions(
-          onStartHike: onStartHike,
-          onFindHike: onFindHike,
-        ),
+        _StartHikeActions(onStartHike: onStartHike, onFindHike: onFindHike),
         if (myUpcomingHikes.isNotEmpty) ...[
           const SizedBox(height: 22),
           _MyUpcomingHikesSection(
@@ -744,7 +738,9 @@ class _BestMatchTrailCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fallbackColor = Color(trail.coverColorValue);
-    final url = trail.coverImageUrls.isNotEmpty ? trail.coverImageUrls.first : '';
+    final url = trail.coverImageUrls.isNotEmpty
+        ? trail.coverImageUrls.first
+        : '';
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: SizedBox(
@@ -1942,8 +1938,13 @@ class _MonitoringCard extends StatelessWidget {
           ),
           const _HorizontalSeparator(),
           _StatusRow(
-            label: 'Response Countdown',
+            label: 'Fall Response Time',
             value: settings.responseCountdownDurationLabel,
+          ),
+          const _HorizontalSeparator(),
+          _StatusRow(
+            label: 'Longest Rest Time',
+            value: settings.longestRestDurationLabel,
           ),
           if (fallStillnessSnapshot.status ==
               FallStillnessMonitorStatus.verifyingStillness) ...[
@@ -2021,7 +2022,9 @@ class _FallStillnessCountdownRow extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Possible fall detected. SOS in $seconds seconds.',
+                  snapshot.isProlongedStillnessDetection
+                      ? 'Prolonged stillness detected. SOS in $seconds seconds.'
+                      : 'Possible fall detected. SOS in $seconds seconds.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: _HomeColors.red,
                     fontWeight: FontWeight.w700,
@@ -2056,7 +2059,7 @@ class _FallStillnessCountdownRow extends StatelessWidget {
       return null;
     }
 
-    final totalDurationSeconds = settings.stillnessDuration.inSeconds;
+    final totalDurationSeconds = settings.fallResponseDuration.inSeconds;
     if (totalDurationSeconds <= 0) {
       return null;
     }
@@ -2424,9 +2427,7 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                                 hike.trailName,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
+                                style: Theme.of(context).textTheme.titleMedium
                                     ?.copyWith(
                                       color: _HomeColors.textFor(context),
                                       fontWeight: FontWeight.w700,
@@ -2438,12 +2439,11 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                                 hike.startPointName,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelSmall
+                                style: Theme.of(context).textTheme.labelSmall
                                     ?.copyWith(
-                                      color:
-                                          _HomeColors.secondaryTextFor(context),
+                                      color: _HomeColors.secondaryTextFor(
+                                        context,
+                                      ),
                                       fontWeight: FontWeight.w500,
                                     ),
                               ),
@@ -2458,17 +2458,16 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: (hike.creatorPhone == phoneNumber)
                                 ? _HomeColors.green.withValues(alpha: 0.12)
-                                : _HomeColors.secondaryTextFor(context)
-                                    .withValues(alpha: 0.12),
+                                : _HomeColors.secondaryTextFor(
+                                    context,
+                                  ).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
                             hike.creatorPhone == phoneNumber
                                 ? 'Creator'
                                 : 'Joined',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
+                            style: Theme.of(context).textTheme.labelSmall
                                 ?.copyWith(
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0,
