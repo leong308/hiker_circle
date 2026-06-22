@@ -63,8 +63,9 @@ class DefaultFirebaseOptions {
     messagingSenderId: '41069899337',
     projectId: 'hiker-circle',
     storageBucket: 'hiker-circle.firebasestorage.app',
-    androidClientId: '41069899337-trphik29v5dkihopd4g8ubblm1qelqk2.apps.googleusercontent.com',
-    iosBundleId: 'com.example.hikerCircle',
+    androidClientId:
+        '41069899337-trphik29v5dkihopd4g8ubblm1qelqk2.apps.googleusercontent.com',
+    iosBundleId: 'com.leongziqi.hikerCircle',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -73,8 +74,9 @@ class DefaultFirebaseOptions {
     messagingSenderId: '41069899337',
     projectId: 'hiker-circle',
     storageBucket: 'hiker-circle.firebasestorage.app',
-    androidClientId: '41069899337-trphik29v5dkihopd4g8ubblm1qelqk2.apps.googleusercontent.com',
-    iosBundleId: 'com.example.hikerCircle',
+    androidClientId:
+        '41069899337-trphik29v5dkihopd4g8ubblm1qelqk2.apps.googleusercontent.com',
+    iosBundleId: 'com.leongziqi.hikerCircle',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(

@@ -11,7 +11,7 @@ import WidgetKit
 
 @available(iOSApplicationExtension 18.0, *)
 struct ManualSOSControl: ControlWidget {
-    static let kind: String = "com.example.hikerCircle.ManualSOS"
+    static let kind: String = "com.leongziqi.hikerCircle.ManualSOS"
 
     var body: some ControlWidgetConfiguration {
         AppIntentControlConfiguration(
