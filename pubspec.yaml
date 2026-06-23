@@ -80,7 +80,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
-
+  config:
+    enable-lldb-debugging: false
+  
   assets:
     - .env
     - assets/audios/sos_alarm.mp3
