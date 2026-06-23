@@ -960,33 +960,19 @@ class HikerCircleFirebaseRepository {
         .get()
         .timeout(_firebaseReadTimeout);
     final raw = snapshot.data()?['buddyRequestsIncoming'];
-    if (raw is! Map) {
-      return const [];
+    return _buddyRequestsFromRaw(raw);
+  }
+
+  Stream<List<Map<String, dynamic>>> watchBuddyRequests({
+    required AppSession session,
+  }) {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return Stream.value(const []);
     }
-    final requests = raw.entries
-        .map((entry) {
-          final data = entry.value is Map
-              ? Map<String, dynamic>.from(entry.value as Map)
-              : <String, dynamic>{};
-          return <String, dynamic>{
-            'requestKey': entry.key.toString(),
-            'phoneNumber': _stringFrom(data['phoneNumber']),
-            'displayName': _stringFrom(data['displayName']).isEmpty
-                ? 'Hiker'
-                : _stringFrom(data['displayName']),
-            'handle': _stringFrom(data['handle']),
-            'photoURL': _stringFrom(data['photoURL']),
-            'createdAtLocal': _stringFrom(data['createdAtLocal']),
-          };
-        })
-        .where((request) => _stringFrom(request['phoneNumber']).isNotEmpty)
-        .toList();
-    requests.sort((a, b) {
-      final first = _dateFromValue(a['createdAtLocal']) ?? DateTime(1970);
-      final second = _dateFromValue(b['createdAtLocal']) ?? DateTime(1970);
-      return second.compareTo(first);
+    return _users.doc(_userIdFor(session)).snapshots().map((snapshot) {
+      final raw = snapshot.data()?['buddyRequestsIncoming'];
+      return _buddyRequestsFromRaw(raw);
     });
-    return requests;
   }
 
   Future<void> sendBuddyRequest({
@@ -2087,11 +2073,6 @@ class HikerCircleFirebaseRepository {
     required HikeSessionDraft draft,
   }) async {
     _throwIfFirebaseUnavailable();
-    if (draft.teamBuddies.isEmpty) {
-      throw const HikerCircleFirebaseRepositoryException(
-        'Select at least one buddy before starting a team hike.',
-      );
-    }
 
     final now = DateTime.now().toUtc();
     final document = _teamHikeSessions.doc();
@@ -4383,6 +4364,36 @@ class HikerCircleFirebaseRepository {
 
   String _phoneKeyFor(String phoneNumber) {
     return phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  List<Map<String, dynamic>> _buddyRequestsFromRaw(Object? raw) {
+    if (raw is! Map) {
+      return const [];
+    }
+    final requests = raw.entries
+        .map((entry) {
+          final data = entry.value is Map
+              ? Map<String, dynamic>.from(entry.value as Map)
+              : <String, dynamic>{};
+          return <String, dynamic>{
+            'requestKey': entry.key.toString(),
+            'phoneNumber': _stringFrom(data['phoneNumber']),
+            'displayName': _stringFrom(data['displayName']).isEmpty
+                ? 'Hiker'
+                : _stringFrom(data['displayName']),
+            'handle': _stringFrom(data['handle']),
+            'photoURL': _stringFrom(data['photoURL']),
+            'createdAtLocal': _stringFrom(data['createdAtLocal']),
+          };
+        })
+        .where((request) => _stringFrom(request['phoneNumber']).isNotEmpty)
+        .toList();
+    requests.sort((a, b) {
+      final first = _dateFromValue(a['createdAtLocal']) ?? DateTime(1970);
+      final second = _dateFromValue(b['createdAtLocal']) ?? DateTime(1970);
+      return second.compareTo(first);
+    });
+    return requests;
   }
 
   Trail? _trailFromFirestore(Map<String, dynamic> data) {

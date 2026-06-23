@@ -469,7 +469,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           );
         return;
       }
-      _showAddBuddyPrompt(name: name, handle: handle);
+      _showAddBuddyPrompt(name: name, handle: handle, phoneNumber: phone);
     });
   }
 
@@ -601,6 +601,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<void> _showAddBuddyPrompt({
     required String name,
     required String handle,
+    required String phoneNumber,
   }) async {
     final shouldAdd = await showModalBottomSheet<bool>(
       context: context,
@@ -681,6 +682,26 @@ class _HikerHomePageState extends State<HikerHomePage>
       return;
     }
 
+    if (phoneNumber.isNotEmpty) {
+      try {
+        await hikerCircleRepository.sendBuddyRequest(
+          session: widget.session,
+          buddyPhoneNumber: phoneNumber,
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Unable to send buddy request: $error'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        return;
+      }
+    }
+
     setState(() {
       selectedTabIndex = 2;
     });
@@ -689,7 +710,11 @@ class _HikerHomePageState extends State<HikerHomePage>
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text('$name added to your buddies.'),
+          content: Text(
+            phoneNumber.isEmpty
+                ? '$name added to your buddies.'
+                : 'Friend request sent to $name.',
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );

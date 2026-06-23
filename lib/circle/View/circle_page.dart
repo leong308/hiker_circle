@@ -49,6 +49,7 @@ class _CirclePageState extends State<CirclePage> {
   Map<String, DateTime> _localLastReadAt = const {};
   String _currentUserPhotoURL = '';
   StreamSubscription<List<GroupChat>>? _chatsSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _buddyRequestsSubscription;
 
   @override
   void initState() {
@@ -56,9 +57,9 @@ class _CirclePageState extends State<CirclePage> {
     _currentUserPhotoURL = widget.session.photoURL ?? '';
     unawaited(_loadCommunityPosts());
     unawaited(_loadCommunityPeople());
-    unawaited(_loadBuddyRequests());
     unawaited(_loadCurrentUserPhoto());
     unawaited(_loadPinnedChats());
+    _listenToBuddyRequests();
     _listenToGroupChats();
   }
 
@@ -114,7 +115,19 @@ class _CirclePageState extends State<CirclePage> {
   @override
   void dispose() {
     _chatsSubscription?.cancel();
+    _buddyRequestsSubscription?.cancel();
     super.dispose();
+  }
+
+  void _listenToBuddyRequests() {
+    _buddyRequestsSubscription = widget.hikerCircleRepository
+        .watchBuddyRequests(session: widget.session)
+        .listen((requests) {
+          if (!mounted) return;
+          setState(() {
+            _buddyRequests = requests.map(_buddyRequestFromFirestore).toList();
+          });
+        }, onError: (_) => unawaited(_loadBuddyRequests()));
   }
 
   void _listenToGroupChats() {

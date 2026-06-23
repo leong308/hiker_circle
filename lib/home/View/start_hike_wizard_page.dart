@@ -12,7 +12,7 @@ import '../../core/widgets/route_preview_map.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 
-enum _StartHikeWizardStep { type, timing, buddies, trail, safety }
+enum _StartHikeWizardStep { type, timing, trail, safety }
 
 class StartHikeWizardPage extends StatefulWidget {
   const StartHikeWizardPage({
@@ -33,37 +33,6 @@ class StartHikeWizardPage extends StatefulWidget {
 }
 
 class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
-  static const List<TeamHikeBuddy> _teamBuddyOptions = [
-    TeamHikeBuddy(
-      name: 'Trail Buddy',
-      handle: 'Saved contact',
-      phoneNumber: '+60123001001',
-      role: 'Weather watcher',
-      avatarColorValue: 0xFF34A853,
-    ),
-    TeamHikeBuddy(
-      name: 'Route Partner',
-      handle: 'Saved contact',
-      phoneNumber: '+60123001002',
-      role: 'Ridge navigator',
-      avatarColorValue: 0xFF2563EB,
-    ),
-    TeamHikeBuddy(
-      name: 'Safety Contact',
-      handle: 'Saved contact',
-      phoneNumber: '+60123001003',
-      role: 'Checkpoint planner',
-      avatarColorValue: 0xFFF59E0B,
-    ),
-    TeamHikeBuddy(
-      name: 'Team Sweep',
-      handle: 'Saved contact',
-      phoneNumber: '+60123001004',
-      role: 'Sweep and camera',
-      avatarColorValue: 0xFF7C3AED,
-    ),
-  ];
-
   late final List<Trail> _trails;
   late HikeSessionDraft _draft;
   int _stepIndex = 0;
@@ -74,7 +43,6 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   List<_StartHikeWizardStep> get _steps => [
     _StartHikeWizardStep.type,
     _StartHikeWizardStep.timing,
-    if (_draft.hikeType == HikeType.team) _StartHikeWizardStep.buddies,
     _StartHikeWizardStep.trail,
     if (!_isUpcomingHike) _StartHikeWizardStep.safety,
   ];
@@ -115,19 +83,6 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
             content: Text(
               'Scheduled hikes must start at least 10 minutes from now.',
             ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      return;
-    }
-
-    if (currentStep == _StartHikeWizardStep.buddies &&
-        _draft.teamBuddies.isEmpty) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Select at least one buddy for a team hike.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -307,12 +262,6 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           onStartNowChanged: _updateStartNow,
           onChanged: _updateDraft,
         );
-      case _StartHikeWizardStep.buddies:
-        return _TeamBuddySelectionStep(
-          draft: _draft,
-          buddyOptions: _teamBuddyOptions,
-          onChanged: _updateDraft,
-        );
       case _StartHikeWizardStep.trail:
         return _TrailSelectionStep(
           draft: _draft,
@@ -431,187 +380,11 @@ class _HikeTypeStep extends StatelessWidget {
           icon: Icons.groups_2_rounded,
           title: 'Team Hike',
           subtitle: 'Create a session for friends or join an existing group.',
-          onTap: () => onChanged(draft.copyWith(hikeType: HikeType.team)),
+          onTap: () => onChanged(
+            draft.copyWith(hikeType: HikeType.team, teamBuddies: const []),
+          ),
         ),
       ],
-    );
-  }
-}
-
-class _TeamBuddySelectionStep extends StatelessWidget {
-  const _TeamBuddySelectionStep({
-    required this.draft,
-    required this.buddyOptions,
-    required this.onChanged,
-  });
-
-  final HikeSessionDraft draft;
-  final List<TeamHikeBuddy> buddyOptions;
-  final ValueChanged<HikeSessionDraft> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _StepCard(
-      title: 'Select Team Buddies',
-      subtitle:
-          'Invite buddies before the team hike starts. Everyone must tap the invite and press READY before the 5 second team countdown begins.',
-      children: [
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: _WizardColors.greenSoftFor(context),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                const _Glyph(icon: Icons.notifications_active_rounded),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    '${draft.teamBuddies.length} buddy${draft.teamBuddies.length == 1 ? '' : 'ies'} selected. Invites and readiness updates will be sent to your team.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _WizardColors.textFor(context),
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        for (final buddy in buddyOptions) ...[
-          _TeamBuddyTile(
-            buddy: buddy,
-            selected: _isSelected(buddy),
-            onTap: () => _toggleBuddy(buddy),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ],
-    );
-  }
-
-  bool _isSelected(TeamHikeBuddy buddy) {
-    return draft.teamBuddies.any(
-      (selected) =>
-          selected.normalizedPhoneNumber == buddy.normalizedPhoneNumber,
-    );
-  }
-
-  void _toggleBuddy(TeamHikeBuddy buddy) {
-    final isSelected = _isSelected(buddy);
-    final nextBuddies = isSelected
-        ? draft.teamBuddies
-              .where(
-                (selected) =>
-                    selected.normalizedPhoneNumber !=
-                    buddy.normalizedPhoneNumber,
-              )
-              .toList()
-        : [...draft.teamBuddies, buddy];
-    onChanged(draft.copyWith(teamBuddies: nextBuddies));
-  }
-}
-
-class _TeamBuddyTile extends StatelessWidget {
-  const _TeamBuddyTile({
-    required this.buddy,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final TeamHikeBuddy buddy;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Color(buddy.avatarColorValue);
-    return Material(
-      color: selected
-          ? color.withValues(alpha: _WizardColors.isDark(context) ? 0.28 : 0.12)
-          : _WizardColors.surfaceFor(context),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected ? color : _WizardColors.separatorFor(context),
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                child: Text(
-                  buddy.shortName.substring(0, 1).toUpperCase(),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      buddy.name,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: _WizardColors.textFor(context),
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${buddy.handle} - ${buddy.role}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _WizardColors.secondaryTextFor(context),
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: 42,
-                height: 34,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: selected ? color : _WizardColors.greenSoftFor(context),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: selected
-                        ? color
-                        : _WizardColors.separatorFor(context),
-                  ),
-                ),
-                child: Icon(
-                  selected ? Icons.check_rounded : Icons.add_rounded,
-                  color: selected ? Colors.white : _WizardColors.green,
-                  size: 20,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

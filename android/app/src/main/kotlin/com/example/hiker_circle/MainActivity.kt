@@ -39,6 +39,7 @@ class MainActivity : FlutterActivity() {
         private const val ACTIVE_HIKE_LIVE_STATUS_CHANNEL =
             "hiker_circle/active_hike_live_status"
         private const val CAMERA_REQUEST_CODE = 8472
+        const val QR_SCANNER_CAMERA_REQUEST_CODE = 8475
         private const val LOCATION_REQUEST_CODE = 8473
         private const val POST_NOTIFICATIONS_REQUEST_CODE = 8474
         private const val LOCATION_TIMEOUT_MILLIS = 6000L
@@ -66,6 +67,7 @@ class MainActivity : FlutterActivity() {
     private var deepLinkChannel: MethodChannel? = null
     private var pendingDeepLink: String? = null
     private var pendingActiveHikeLiveStatus: ActiveHikeLiveStatus? = null
+    private var qrScannerFactory: QrScannerPlatformViewFactory? = null
 
     private val sosTorchPattern = listOf(
         TorchStep(true, 220L),
@@ -117,6 +119,14 @@ class MainActivity : FlutterActivity() {
         cameraManager = getSystemService(CameraManager::class.java)
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         pendingDeepLink = intent?.dataString
+        qrScannerFactory = QrScannerPlatformViewFactory(
+            activity = this,
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+        )
+        flutterEngine
+            .platformViewsController
+            .registry
+            .registerViewFactory("hiker_circle/qr_scanner", qrScannerFactory)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -266,6 +276,13 @@ class MainActivity : FlutterActivity() {
             } else {
                 completePendingLocation(null)
             }
+            return
+        }
+
+        if (requestCode == QR_SCANNER_CAMERA_REQUEST_CODE) {
+            qrScannerFactory?.onCameraPermissionResult(
+                grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED,
+            )
             return
         }
 

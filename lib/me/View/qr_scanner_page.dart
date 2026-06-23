@@ -4,13 +4,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../app/Model/app_session.dart';
+
 class QrScannerPage extends StatefulWidget {
   const QrScannerPage({
     super.key,
+    required this.session,
+    required this.repository,
     required this.ownPhoneNumber,
     required this.ownHandle,
   });
 
+  final AppSession session;
+  final HikerCircleFirebaseRepository repository;
   final String ownPhoneNumber;
   final String ownHandle;
 
@@ -43,15 +50,33 @@ class _QrScannerPageState extends State<QrScannerPage> {
     final uri = Uri.tryParse(rawValue);
     if (uri == null || uri.scheme != 'hikercircle') return;
 
-    final handle = uri.host;
-    final name = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : handle;
+    final isProfileQr =
+        uri.host == 'buddy' &&
+        uri.pathSegments.isNotEmpty &&
+        uri.pathSegments.first == 'add';
+    final handle = isProfileQr
+        ? uri.queryParameters['h']?.trim() ?? ''
+        : uri.host;
+    final name = isProfileQr
+        ? uri.queryParameters['n']?.trim() ?? handle
+        : uri.pathSegments.isNotEmpty
+        ? uri.pathSegments.first
+        : handle;
+    final phone = isProfileQr
+        ? uri.queryParameters['p']?.trim() ??
+              uri.queryParameters['phone']?.trim() ??
+              ''
+        : '';
 
-    if (handle.toLowerCase() == widget.ownHandle.toLowerCase()) {
+    if (handle.isEmpty && name.isEmpty) return;
+
+    if (handle.toLowerCase() == widget.ownHandle.toLowerCase() ||
+        _samePhone(phone, widget.ownPhoneNumber)) {
       _showOwnQrMessage();
       return;
     }
 
-    _showAddBuddyPrompt(name: name, handle: handle);
+    _showAddBuddyPrompt(name: name, handle: handle, phoneNumber: phone);
   }
 
   void _showOwnQrMessage() {
@@ -74,6 +99,7 @@ class _QrScannerPageState extends State<QrScannerPage> {
   Future<void> _showAddBuddyPrompt({
     required String name,
     required String handle,
+    required String phoneNumber,
   }) async {
     setState(() => _isProcessing = true);
 
@@ -155,11 +181,43 @@ class _QrScannerPageState extends State<QrScannerPage> {
     if (!mounted) return;
 
     if (shouldAdd == true) {
+      if (phoneNumber.isEmpty) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('This QR is missing a phone number.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        setState(() => _isProcessing = false);
+        return;
+      }
+
+      try {
+        await widget.repository.sendBuddyRequest(
+          session: widget.session,
+          buddyPhoneNumber: phoneNumber,
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Unable to send buddy request: $error'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        setState(() => _isProcessing = false);
+        return;
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text('$name added to your buddies.'),
+            content: Text('Friend request sent to $name.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -171,6 +229,12 @@ class _QrScannerPageState extends State<QrScannerPage> {
     } else {
       setState(() => _isProcessing = false);
     }
+  }
+
+  bool _samePhone(String first, String second) {
+    final firstKey = first.replaceAll(RegExp(r'[^0-9]'), '');
+    final secondKey = second.replaceAll(RegExp(r'[^0-9]'), '');
+    return firstKey.isNotEmpty && firstKey == secondKey;
   }
 
   @override
@@ -193,10 +257,16 @@ class _QrScannerPageState extends State<QrScannerPage> {
               creationParams: null,
               creationParamsCodec: const StandardMessageCodec(),
             )
+          else if (defaultTargetPlatform == TargetPlatform.android)
+            AndroidView(
+              viewType: 'hiker_circle/qr_scanner',
+              creationParams: null,
+              creationParamsCodec: const StandardMessageCodec(),
+            )
           else
             const Center(
               child: Text(
-                'QR scanning is only available on iOS.',
+                'QR scanning is only available on iOS and Android.',
                 style: TextStyle(color: Colors.white70),
               ),
             ),

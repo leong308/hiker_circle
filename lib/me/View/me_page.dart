@@ -388,6 +388,8 @@ class _MePageState extends State<MePage> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => QrScannerPage(
+          session: widget.session,
+          repository: firebaseRepository,
           ownPhoneNumber: widget.phoneNumber,
           ownHandle: ownHandle,
         ),
@@ -1094,7 +1096,8 @@ class _MutableQr {
 String _profileLink(MeProfile profile) {
   final handle = Uri.encodeComponent(profile.handle.replaceFirst('@', ''));
   final name = Uri.encodeComponent(profile.displayName);
-  return 'hikercircle://buddy/add?h=$handle&n=$name';
+  final phone = Uri.encodeComponent(profile.phoneNumber);
+  return 'hikercircle://buddy/add?h=$handle&n=$name&p=$phone';
 }
 
 class _AchievementProfileItem {
