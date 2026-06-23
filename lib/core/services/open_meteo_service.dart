@@ -16,6 +16,8 @@ class OpenMeteoException implements Exception {
 class OpenMeteoService {
   const OpenMeteoService({http.Client? client}) : _client = client;
 
+  static const Duration _requestTimeout = Duration(seconds: 6);
+
   final http.Client? _client;
 
   Future<TrailWeather> fetchWeather({
@@ -24,20 +26,21 @@ class OpenMeteoService {
   }) async {
     final client = _client ?? http.Client();
     try {
-      final response = await client.get(
-        Uri.https('api.open-meteo.com', '/v1/forecast', {
-          'latitude': latitude.toStringAsFixed(4),
-          'longitude': longitude.toStringAsFixed(4),
-          'current':
-              'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,uv_index',
-          'daily':
-              'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,wind_speed_10m_max,uv_index_max',
-          'hourly':
-              'temperature_2m,precipitation_probability,weather_code',
-          'timezone': 'auto',
-          'forecast_hours': '12',
-        }),
-      );
+      final response = await client
+          .get(
+            Uri.https('api.open-meteo.com', '/v1/forecast', {
+              'latitude': latitude.toStringAsFixed(4),
+              'longitude': longitude.toStringAsFixed(4),
+              'current':
+                  'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,uv_index',
+              'daily':
+                  'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,wind_speed_10m_max,uv_index_max',
+              'hourly': 'temperature_2m,precipitation_probability,weather_code',
+              'timezone': 'auto',
+              'forecast_hours': '12',
+            }),
+          )
+          .timeout(_requestTimeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw OpenMeteoException(
@@ -77,21 +80,22 @@ class OpenMeteoService {
       final maxTemp = tempMax is List && tempMax.isNotEmpty
           ? (tempMax[0] as num).toDouble()
           : currentTemp is num
-              ? currentTemp.toDouble()
-              : 0.0;
+          ? currentTemp.toDouble()
+          : 0.0;
       final minTemp = tempMin is List && tempMin.isNotEmpty
           ? (tempMin[0] as num).toDouble()
           : currentTemp is num
-              ? currentTemp.toDouble()
-              : 0.0;
+          ? currentTemp.toDouble()
+          : 0.0;
 
       final dailyCode = dailyCodes is List && dailyCodes.isNotEmpty
           ? (dailyCodes[0] as num).toInt()
           : currentCode is num
-              ? currentCode.toInt()
-              : 0;
+          ? currentCode.toInt()
+          : 0;
 
-      final precipitationProbability = precipProb is List && precipProb.isNotEmpty
+      final precipitationProbability =
+          precipProb is List && precipProb.isNotEmpty
           ? (precipProb[0] as num).toInt()
           : 0;
 
@@ -116,9 +120,7 @@ class OpenMeteoService {
     } on OpenMeteoException {
       rethrow;
     } on FormatException {
-      throw const OpenMeteoException(
-        'OpenMeteo returned invalid data.',
-      );
+      throw const OpenMeteoException('OpenMeteo returned invalid data.');
     } catch (_) {
       throw const OpenMeteoException(
         'Unable to fetch weather. Check your connection and try again.',
@@ -167,13 +169,16 @@ class OpenMeteoService {
           ? precipProbs[i]
           : null;
 
-      forecasts.add(HourlyForecast(
-        time: time,
-        temperature: temp.toDouble(),
-        precipitationProbability:
-            precip is num ? precip.toInt().clamp(0, 100) : 0,
-        weatherCode: code.toInt(),
-      ));
+      forecasts.add(
+        HourlyForecast(
+          time: time,
+          temperature: temp.toDouble(),
+          precipitationProbability: precip is num
+              ? precip.toInt().clamp(0, 100)
+              : 0,
+          weatherCode: code.toInt(),
+        ),
+      );
     }
 
     return forecasts;

@@ -24,6 +24,7 @@ class OnboardingRepository {
 
   final FirebaseFirestore? _firestore;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
+  static const Duration _firebaseReadTimeout = Duration(seconds: 12);
 
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
@@ -39,7 +40,9 @@ class OnboardingRepository {
   Future<OnboardingProfile> loadProfile(AppSession session) async {
     _ensureFirebaseAvailable();
     try {
-      final snapshot = await _userDocument(session).get();
+      final snapshot = await _userDocument(
+        session,
+      ).get().timeout(_firebaseReadTimeout);
       final profile = snapshot.data()?['profile'];
       final profileData = profile is Map
           ? Map<String, dynamic>.from(profile)

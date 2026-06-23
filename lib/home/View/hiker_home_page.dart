@@ -699,6 +699,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     setState(() {
       isLoadingLiveData = true;
     });
+    Future.delayed(const Duration(seconds: 15), () {
+      if (mounted) setState(() => isLoadingLiveData = false);
+    });
     try {
       if (widget.session.isAdmin) {
         try {
@@ -729,12 +732,10 @@ class _HikerHomePageState extends State<HikerHomePage>
             if (!mounted) return;
             setState(() => myUpcomingHikes = hikes);
           });
-      await hikerCircleRepository.ensureAchievementSeeds();
-    } finally {
+      unawaited(hikerCircleRepository.ensureAchievementSeeds());
+    } catch (_) {
       if (mounted) {
-        Future.delayed(const Duration(seconds: 15), () {
-          if (mounted) setState(() => isLoadingLiveData = false);
-        });
+        setState(() => isLoadingLiveData = false);
       }
     }
   }
