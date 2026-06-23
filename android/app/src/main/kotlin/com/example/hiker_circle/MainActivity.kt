@@ -119,14 +119,15 @@ class MainActivity : FlutterActivity() {
         cameraManager = getSystemService(CameraManager::class.java)
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         pendingDeepLink = intent?.dataString
-        qrScannerFactory = QrScannerPlatformViewFactory(
+        val qrFactory = QrScannerPlatformViewFactory(
             activity = this,
             messenger = flutterEngine.dartExecutor.binaryMessenger,
         )
+        qrScannerFactory = qrFactory
         flutterEngine
             .platformViewsController
             .registry
-            .registerViewFactory("hiker_circle/qr_scanner", qrScannerFactory)
+            .registerViewFactory("hiker_circle/qr_scanner", qrFactory)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
