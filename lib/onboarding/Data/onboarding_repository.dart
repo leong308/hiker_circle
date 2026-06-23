@@ -41,9 +41,11 @@ class OnboardingRepository {
     try {
       final snapshot = await _userDocument(session).get();
       final profile = snapshot.data()?['profile'];
-      return OnboardingProfile.fromFirestore(
-        profile is Map ? Map<String, dynamic>.from(profile) : null,
-      );
+      final profileData = profile is Map
+          ? Map<String, dynamic>.from(profile)
+          : <String, dynamic>{};
+      profileData['photoURL'] ??= snapshot.data()?['photoURL'];
+      return OnboardingProfile.fromFirestore(profileData);
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));
     }
@@ -134,6 +136,6 @@ class OnboardingRepository {
   }
 
   String _firebaseMessage(FirebaseException error) {
-    return 'Firestore ${error.code}: ${error.message ?? 'No details provided.'}';
+    return 'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}';
   }
 }

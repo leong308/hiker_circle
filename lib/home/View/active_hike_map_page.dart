@@ -5,9 +5,14 @@ import '../Model/hike_session_models.dart';
 import 'active_tracking_map_view.dart';
 
 class ActiveHikeMapPage extends StatelessWidget {
-  const ActiveHikeMapPage({super.key, required this.activeHike});
+  const ActiveHikeMapPage({
+    super.key,
+    required this.activeHike,
+    this.currentPhoneNumber = '',
+  });
 
   final ActiveHikeSession activeHike;
+  final String currentPhoneNumber;
 
   @override
   Widget build(BuildContext context) {
@@ -34,6 +39,7 @@ class ActiveHikeMapPage extends StatelessWidget {
                         child: ActiveTrackingMapView(
                           activeHike: activeHike,
                           showLegend: true,
+                          currentPhoneNumber: currentPhoneNumber,
                         ),
                       ),
                     ),

@@ -74,6 +74,8 @@ class FirebaseUserRepository {
             'profileSetupCompleted': false,
             'onboardingVersion': 1,
             'boundAppInstanceId': appInstanceId,
+            'currentAppId': appInstanceId,
+            'lastSignedInAppInstanceId': appInstanceId,
             'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
             'createdAt': FieldValue.serverTimestamp(),
             'createdAtLocal': now.toIso8601String(),
@@ -112,6 +114,8 @@ class FirebaseUserRepository {
             'profileSetupCompleted': isOnboardingProfileComplete,
           if (data?['onboardingVersion'] == null) 'onboardingVersion': 1,
           'boundAppInstanceId': appInstanceId,
+          'currentAppId': appInstanceId,
+          'lastSignedInAppInstanceId': appInstanceId,
           'boundAppInstanceUpdatedAt': FieldValue.serverTimestamp(),
           'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
           if (isRebinding) ...{
@@ -181,7 +185,7 @@ class FirebaseUserRepository {
       rethrow;
     } on FirebaseException catch (error) {
       throw FirebaseUserRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }

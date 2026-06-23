@@ -55,13 +55,19 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Debug build will use Android default debug signing
+            signingConfig = signingConfigs.getByName("debug")
+        }
+
         release {
             val releaseSigning = signingConfigs.findByName("release")
-                ?: throw GradleException(
-                    "Release signing is not configured. Run " +
-                        "scripts/create_android_upload_key.ps1 first.",
-                )
-            signingConfig = releaseSigning
+
+            signingConfig = releaseSigning ?: signingConfigs.getByName("debug")
+
+            if (releaseSigning == null) {
+                println("WARNING: Release signing not configured. Using debug signing for local release build.")
+            }
         }
     }
 }

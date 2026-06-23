@@ -72,24 +72,9 @@ class MeRepository {
             subtitle: 'Circle activity and safety alerts',
           ),
           MeActionItem(
-            icon: Icons.lock_rounded,
-            title: 'Privacy',
-            subtitle: 'Profile visibility and sharing controls',
-          ),
-          MeActionItem(
             icon: Icons.help_rounded,
             title: 'Help center',
             subtitle: 'Support, guides, and app information',
-          ),
-          MeActionItem(
-            icon: Icons.account_circle_rounded,
-            title: 'Account preferences',
-            subtitle: 'Profile identity and sign-in controls',
-          ),
-          MeActionItem(
-            icon: Icons.download_rounded,
-            title: 'Export history',
-            subtitle: 'Download hikes, posts, and team activity',
           ),
         ],
       ),

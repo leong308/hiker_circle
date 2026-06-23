@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../onboarding/Data/onboarding_repository.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
@@ -32,8 +35,11 @@ class ProfileDetailsPage extends StatefulWidget {
 class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
   late final OnboardingRepository _repository;
   late final HikerCircleFirebaseRepository _firebaseRepository;
+  final LocalSessionDatabase _localSessionDatabase = LocalSessionDatabase();
   late Future<OnboardingProfile> _profileFuture;
   bool _isSaving = false;
+  Uint8List? _profilePhotoBytes;
+  String _profilePhotoURL = '';
   final ImagePicker _imagePicker = ImagePicker();
 
   @override
@@ -47,6 +53,8 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
     _firebaseRepository = HikerCircleFirebaseRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    _profilePhotoBytes = widget.session.photoBytes;
+    _profilePhotoURL = widget.session.photoURL ?? '';
     _profileFuture = _repository.loadProfile(widget.session);
   }
 
@@ -64,18 +72,34 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
       maxHeight: 1024,
     );
     if (file == null || !mounted) return;
-    setState(() => _isSaving = true);
     try {
       final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      final croppedBytes = await showDialog<Uint8List>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _ProfilePhotoCropDialog(bytes: bytes),
+      );
+      if (croppedBytes == null || !mounted) return;
+      setState(() => _isSaving = true);
       final url = await _firebaseRepository.uploadProfilePhoto(
         phoneNumber: widget.session.phoneNumber,
-        bytes: bytes,
-        fileName: file.name,
+        bytes: croppedBytes,
+        fileName: 'profile_photo.png',
+        contentType: 'image/png',
       );
       if (!mounted) return;
-      final updated = await _saveProfile(profile.copyWith(photoURL: url));
-      if (updated != null && mounted) {
-        setState(() => _profileFuture = Future.value(updated));
+      final updated = profile.copyWith(photoURL: url);
+      await _repository.saveProfile(session: widget.session, profile: updated);
+      await _localSessionDatabase.saveSession(
+        widget.session.copyWith(photoURL: url, photoBytes: croppedBytes),
+      );
+      if (mounted) {
+        setState(() {
+          _profilePhotoBytes = croppedBytes;
+          _profilePhotoURL = url;
+          _profileFuture = Future.value(updated);
+        });
       }
     } catch (error) {
       if (!mounted) return;
@@ -258,6 +282,9 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
                       children: [
                         _IdentityCard(
                           profile: profile,
+                          photoBytes: profile.photoURL == _profilePhotoURL
+                              ? _profilePhotoBytes
+                              : null,
                           onChangePhoto: _isSaving
                               ? null
                               : () => _changePhoto(profile),
@@ -332,6 +359,313 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
   }
 }
 
+class _ProfilePhotoCropDialog extends StatefulWidget {
+  const _ProfilePhotoCropDialog({required this.bytes});
+
+  final Uint8List bytes;
+
+  @override
+  State<_ProfilePhotoCropDialog> createState() =>
+      _ProfilePhotoCropDialogState();
+}
+
+class _ProfilePhotoCropDialogState extends State<_ProfilePhotoCropDialog> {
+  static const double _outputSize = 512;
+  static const double _maxScale = 5;
+
+  late final Future<ui.Image> _imageFuture;
+  ui.Image? _image;
+  double _scale = 1;
+  Offset _offset = Offset.zero;
+  double _viewportSize = 280;
+
+  double _gestureStartScale = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _imageFuture = _decodeImage(widget.bytes);
+  }
+
+  Future<ui.Image> _decodeImage(Uint8List bytes) async {
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    return frame.image;
+  }
+
+  Size _baseDisplaySize(ui.Image image, double viewportSize) {
+    final aspect = image.width / image.height;
+    if (aspect >= 1) {
+      return Size(viewportSize * aspect, viewportSize);
+    }
+    return Size(viewportSize, viewportSize / aspect);
+  }
+
+  Offset _clampOffset({
+    required Offset offset,
+    required double scale,
+    required ui.Image image,
+    required double viewportSize,
+  }) {
+    final baseSize = _baseDisplaySize(image, viewportSize);
+    final drawWidth = baseSize.width * scale;
+    final drawHeight = baseSize.height * scale;
+    final maxDx = math.max(0, (drawWidth - viewportSize) / 2);
+    final maxDy = math.max(0, (drawHeight - viewportSize) / 2);
+    return Offset(
+      offset.dx.clamp(-maxDx, maxDx).toDouble(),
+      offset.dy.clamp(-maxDy, maxDy).toDouble(),
+    );
+  }
+
+  void _handleScaleStart(ScaleStartDetails details) {
+    _gestureStartScale = _scale;
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) {
+    final image = _image;
+    if (image == null) return;
+    final nextScale = (_gestureStartScale * details.scale).clamp(1, _maxScale);
+    final nextOffset = _offset + details.focalPointDelta;
+    setState(() {
+      _scale = nextScale.toDouble();
+      _offset = _clampOffset(
+        offset: nextOffset,
+        scale: _scale,
+        image: image,
+        viewportSize: _viewportSize,
+      );
+    });
+  }
+
+  void _zoom(double delta) {
+    final image = _image;
+    if (image == null) return;
+    setState(() {
+      _scale = (_scale + delta).clamp(1, _maxScale).toDouble();
+      _offset = _clampOffset(
+        offset: _offset,
+        scale: _scale,
+        image: image,
+        viewportSize: _viewportSize,
+      );
+    });
+  }
+
+  void _reset() {
+    setState(() {
+      _scale = 1;
+      _offset = Offset.zero;
+    });
+  }
+
+  Future<Uint8List> _cropImage() async {
+    final image = _image;
+    if (image == null) {
+      throw StateError('Image is still loading.');
+    }
+    final viewportSize = _viewportSize;
+    final baseSize = _baseDisplaySize(image, viewportSize);
+    final drawWidth = baseSize.width * _scale;
+    final drawHeight = baseSize.height * _scale;
+    final left = (viewportSize - drawWidth) / 2 + _offset.dx;
+    final top = (viewportSize - drawHeight) / 2 + _offset.dy;
+    final sourceRect = Rect.fromLTWH(
+      ((0 - left) / drawWidth) * image.width,
+      ((0 - top) / drawHeight) * image.height,
+      (viewportSize / drawWidth) * image.width,
+      (viewportSize / drawHeight) * image.height,
+    );
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final outputRect = Rect.fromLTWH(0, 0, _outputSize, _outputSize);
+    canvas.clipPath(Path()..addOval(outputRect));
+    canvas.drawImageRect(
+      image,
+      sourceRect,
+      outputRect,
+      Paint()..filterQuality = FilterQuality.high,
+    );
+    final picture = recorder.endRecording();
+    final outputImage = await picture.toImage(
+      _outputSize.toInt(),
+      _outputSize.toInt(),
+    );
+    final byteData = await outputImage.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    if (byteData == null) {
+      throw StateError('Unable to encode cropped image.');
+    }
+    return byteData.buffer.asUint8List();
+  }
+
+  Future<void> _confirmCrop() async {
+    final navigator = Navigator.of(context);
+    final cropped = await _cropImage();
+    if (!mounted) return;
+    navigator.pop(cropped);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      child: FutureBuilder<ui.Image>(
+        future: _imageFuture,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.broken_image_rounded, size: 36),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Unable to load this image.',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Close'),
+                  ),
+                ],
+              ),
+            );
+          }
+          final image = snapshot.data;
+          if (image == null) {
+            return const SizedBox(
+              height: 220,
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          _image = image;
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Adjust profile photo',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Drag and zoom the photo to fit the circle.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final viewportSize = math.min(constraints.maxWidth, 320.0);
+                    _viewportSize = viewportSize;
+                    _offset = _clampOffset(
+                      offset: _offset,
+                      scale: _scale,
+                      image: image,
+                      viewportSize: viewportSize,
+                    );
+                    final baseSize = _baseDisplaySize(image, viewportSize);
+                    return Center(
+                      child: GestureDetector(
+                        onScaleStart: _handleScaleStart,
+                        onScaleUpdate: _handleScaleUpdate,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: _ProfileColors.green,
+                              width: 3,
+                            ),
+                          ),
+                          child: ClipOval(
+                            child: SizedBox.square(
+                              dimension: viewportSize,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Transform.translate(
+                                    offset: _offset,
+                                    child: Transform.scale(
+                                      scale: _scale,
+                                      child: Image.memory(
+                                        widget.bytes,
+                                        width: baseSize.width,
+                                        height: baseSize.height,
+                                        fit: BoxFit.fill,
+                                        filterQuality: FilterQuality.high,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton.outlined(
+                      tooltip: 'Zoom out',
+                      onPressed: _scale <= 1 ? null : () => _zoom(-0.2),
+                      icon: const Icon(Icons.remove_rounded),
+                    ),
+                    const SizedBox(width: 12),
+                    IconButton.outlined(
+                      tooltip: 'Reset position',
+                      onPressed: _reset,
+                      icon: const Icon(Icons.center_focus_strong_rounded),
+                    ),
+                    const SizedBox(width: 12),
+                    IconButton.outlined(
+                      tooltip: 'Zoom in',
+                      onPressed: _scale >= _maxScale ? null : () => _zoom(0.2),
+                      icon: const Icon(Icons.add_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: _confirmCrop,
+                        child: const Text('Use Photo'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _Header extends StatelessWidget {
   const _Header({required this.onBack});
 
@@ -378,9 +712,14 @@ class _Header extends StatelessWidget {
 }
 
 class _IdentityCard extends StatelessWidget {
-  const _IdentityCard({required this.profile, this.onChangePhoto});
+  const _IdentityCard({
+    required this.profile,
+    this.photoBytes,
+    this.onChangePhoto,
+  });
 
   final OnboardingProfile profile;
+  final Uint8List? photoBytes;
   final VoidCallback? onChangePhoto;
 
   @override
@@ -424,7 +763,14 @@ class _IdentityCard extends StatelessWidget {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(39),
-                    child: profile.photoURL != null
+                    child: photoBytes != null && photoBytes!.isNotEmpty
+                        ? Image.memory(
+                            photoBytes!,
+                            width: 78,
+                            height: 78,
+                            fit: BoxFit.cover,
+                          )
+                        : profile.photoURL != null
                         ? Image.network(
                             profile.photoURL!,
                             width: 78,

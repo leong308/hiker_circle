@@ -301,7 +301,7 @@ class SosAlertRepository {
       }, SetOptions(merge: true));
     } on FirebaseException catch (error) {
       throw SosAlertRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }

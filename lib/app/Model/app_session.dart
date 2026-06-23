@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 class AppSession {
   const AppSession({
     required this.phoneNumber,
@@ -9,6 +11,7 @@ class AppSession {
     this.requiresOnboarding = false,
     this.isOnboardingProfileComplete = false,
     this.photoURL,
+    this.photoBytes,
   }) : createdAt = createdAt ?? signedInAt;
 
   final String phoneNumber;
@@ -20,6 +23,7 @@ class AppSession {
   final bool requiresOnboarding;
   final bool isOnboardingProfileComplete;
   final String? photoURL;
+  final Uint8List? photoBytes;
 
   AppSession copyWith({
     String? phoneNumber,
@@ -31,6 +35,7 @@ class AppSession {
     bool? requiresOnboarding,
     bool? isOnboardingProfileComplete,
     String? photoURL,
+    Uint8List? photoBytes,
   }) {
     return AppSession(
       phoneNumber: phoneNumber ?? this.phoneNumber,
@@ -43,6 +48,7 @@ class AppSession {
       isOnboardingProfileComplete:
           isOnboardingProfileComplete ?? this.isOnboardingProfileComplete,
       photoURL: photoURL ?? this.photoURL,
+      photoBytes: photoBytes ?? this.photoBytes,
     );
   }
 }

@@ -1400,7 +1400,7 @@ class _HazardDetailPage extends StatelessWidget {
                     color: _HomeColors.green,
                     title: 'Re-check before departure',
                     subtitle:
-                        'Refresh the trail detail before departure to review the latest Firebase hazard reports and route notes.',
+                        'Refresh the trail detail before departure to review the latest hazard reports and route notes.',
                   ),
                   const SizedBox(height: 8),
                   _ChecklistInsightRow(
@@ -1576,7 +1576,10 @@ class _ActiveHikeDashboard extends StatelessWidget {
         const SizedBox(height: 14),
         _ConnectionStatusCard(queuedUpdates: activeHike.queuedUpdates),
         const SizedBox(height: 14),
-        _MiniMapCard(activeHike: activeHike),
+        _MiniMapCard(
+          activeHike: activeHike,
+          currentPhoneNumber: currentPhoneNumber,
+        ),
         const SizedBox(height: 14),
         Row(
           children: [
@@ -1854,9 +1857,13 @@ class _ConnectionStatusCard extends StatelessWidget {
 }
 
 class _MiniMapCard extends StatelessWidget {
-  const _MiniMapCard({required this.activeHike});
+  const _MiniMapCard({
+    required this.activeHike,
+    required this.currentPhoneNumber,
+  });
 
   final ActiveHikeSession activeHike;
+  final String currentPhoneNumber;
 
   @override
   Widget build(BuildContext context) {
@@ -1874,6 +1881,7 @@ class _MiniMapCard extends StatelessWidget {
                   activeHike: activeHike,
                   teamHikeSession: activeHike.teamHikeSession,
                   interactive: false,
+                  currentPhoneNumber: currentPhoneNumber,
                 ),
               ),
             ),
@@ -2310,8 +2318,9 @@ class _TeamParticipantRow extends StatelessWidget {
                               : _HomeColors.textFor(context),
                           fontWeight: FontWeight.w800,
                           letterSpacing: 0,
-                          decoration:
-                              isEnded ? TextDecoration.lineThrough : null,
+                          decoration: isEnded
+                              ? TextDecoration.lineThrough
+                              : null,
                         ),
                       ),
                     ),
@@ -2328,12 +2337,12 @@ class _TeamParticipantRow extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: isEnded
-                        ? _HomeColors.secondaryTextFor(context)
-                            .withValues(alpha: 0.5)
+                        ? _HomeColors.secondaryTextFor(
+                            context,
+                          ).withValues(alpha: 0.5)
                         : _HomeColors.secondaryTextFor(context),
                     letterSpacing: 0,
-                    decoration:
-                        isEnded ? TextDecoration.lineThrough : null,
+                    decoration: isEnded ? TextDecoration.lineThrough : null,
                   ),
                 ),
               ],
@@ -2345,8 +2354,8 @@ class _TeamParticipantRow extends StatelessWidget {
               message: isEnded
                   ? 'Buddy has ended their hike'
                   : participant.canBePinged
-                      ? 'Ping for OK response'
-                      : 'Buddy has not joined yet',
+                  ? 'Ping for OK response'
+                  : 'Buddy has not joined yet',
               child: OutlinedButton(
                 onPressed: participant.canBePinged && !isPinging
                     ? onPing

@@ -163,6 +163,7 @@ class TeamHikeBuddy {
     required this.handle,
     required this.phoneNumber,
     this.role = 'Teammate',
+    this.photoURL = '',
     this.avatarColorValue = 0xFF34A853,
   });
 
@@ -176,6 +177,7 @@ class TeamHikeBuddy {
       role: _modelStringFrom(data['role']).isEmpty
           ? 'Teammate'
           : _modelStringFrom(data['role']),
+      photoURL: _modelStringFrom(data['photoURL']),
       avatarColorValue: _modelIntFrom(
         data['avatarColorValue'],
         fallback: 0xFF34A853,
@@ -187,6 +189,7 @@ class TeamHikeBuddy {
   final String handle;
   final String phoneNumber;
   final String role;
+  final String photoURL;
   final int avatarColorValue;
 
   String get normalizedPhoneNumber =>
@@ -201,12 +204,31 @@ class TeamHikeBuddy {
     return firstPart.isEmpty ? trimmed : firstPart;
   }
 
+  TeamHikeBuddy copyWith({
+    String? name,
+    String? handle,
+    String? phoneNumber,
+    String? role,
+    String? photoURL,
+    int? avatarColorValue,
+  }) {
+    return TeamHikeBuddy(
+      name: name ?? this.name,
+      handle: handle ?? this.handle,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      role: role ?? this.role,
+      photoURL: photoURL ?? this.photoURL,
+      avatarColorValue: avatarColorValue ?? this.avatarColorValue,
+    );
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'name': name,
       'handle': handle,
       'phoneNumber': phoneNumber,
       'role': role,
+      if (photoURL.trim().isNotEmpty) 'photoURL': photoURL.trim(),
       'avatarColorValue': avatarColorValue,
     };
   }
@@ -619,12 +641,7 @@ class HikeSessionDraft {
       pathDeviationEnabled: true,
       offlinePhysicalAlertEnabled: true,
       duressEnabled: true,
-      completedChecklistItems: const {
-        'Drinking water',
-        'Charged phone',
-        'Torch',
-        'Rain protection',
-      },
+      completedChecklistItems: const {},
     );
   }
 
@@ -1222,9 +1239,8 @@ class HikeSummaryReport {
     required ActiveHikeSession activeHike,
     required DateTime endedAt,
   }) {
-    final distanceKm = activeHike.recordedDistanceKm > 0
-        ? activeHike.recordedDistanceKm
-        : activeHike.trail.distanceKm;
+    final routePoints = _actualRoutePointsFor(activeHike);
+    final distanceKm = _recordedDistanceKmFor(routePoints);
     final measuredDuration = endedAt.difference(activeHike.startedAt);
     final duration = measuredDuration.isNegative
         ? Duration.zero
@@ -1251,12 +1267,12 @@ class HikeSummaryReport {
       distanceKm: distanceKm,
       checkIns: actualCheckIns,
       manualPins: actualManualPins,
-      routePointCount: activeHike.routePointCount,
+      routePointCount: routePoints.length,
       batteryStartPercent: batteryStart,
       batteryEndPercent: activeHike.batteryLevel,
       insights: [
         'Average pace: ${paceMinutesPerKm.round()} min/km across ${distanceKm.toStringAsFixed(2)} km.',
-        'Tracking density: ${activeHike.routePointCount} GPS points saved for replay and safety review.',
+        'Tracking density: ${routePoints.length} GPS points saved for replay and safety review.',
         'Safety rhythm: $actualCheckIns check-ins and $actualManualPins pinned locations.',
         'Battery used: $batteryDrop% over ${_formatDuration(duration)} (${(batteryDrop / movingHours).toStringAsFixed(1)}% per hour).',
         if (activeHike.queuedUpdates == 0)
@@ -1265,6 +1281,30 @@ class HikeSummaryReport {
           'Cloud sync: ${activeHike.queuedUpdates} updates are still queued for upload.',
       ],
     );
+  }
+
+  static List<HikeCoordinate> _actualRoutePointsFor(
+    ActiveHikeSession activeHike,
+  ) {
+    final points = List<HikeCoordinate>.of(activeHike.routePoints);
+    final latest = activeHike.latestLocation;
+    if (latest != null &&
+        (points.isEmpty || points.last.distanceTo(latest) > 2)) {
+      points.add(latest);
+    }
+    points.sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
+    return points;
+  }
+
+  static double _recordedDistanceKmFor(List<HikeCoordinate> routePoints) {
+    if (routePoints.length < 2) {
+      return 0;
+    }
+    var totalMeters = 0.0;
+    for (var index = 1; index < routePoints.length; index++) {
+      totalMeters += routePoints[index - 1].distanceTo(routePoints[index]);
+    }
+    return totalMeters / 1000;
   }
 
   final String sessionId;
@@ -1415,6 +1455,8 @@ class UpcomingHike {
     required this.creatorName,
     required this.createdAt,
     this.participantPhones = const [],
+    this.isDeleted = false,
+    this.deletedAt,
   });
 
   final String id;
@@ -1438,6 +1480,8 @@ class UpcomingHike {
   final String creatorName;
   final DateTime createdAt;
   final List<String> participantPhones;
+  final bool isDeleted;
+  final DateTime? deletedAt;
 
   Map<String, dynamic> toFirestore() => {
     'sessionId': sessionId,
@@ -1460,6 +1504,9 @@ class UpcomingHike {
     'creatorName': creatorName,
     'createdAt': createdAt.toUtc().toIso8601String(),
     if (participantPhones.isNotEmpty) 'participantPhones': participantPhones,
+    if (isDeleted) 'isDeleted': true,
+    if (deletedAt != null)
+      'deletedAtLocal': deletedAt!.toUtc().toIso8601String(),
   };
 
   factory UpcomingHike.fromFirestore(String id, Map<String, dynamic> data) {
@@ -1495,6 +1542,8 @@ class UpcomingHike {
       creatorName: _modelStringFrom(data['creatorName']),
       createdAt: _modelDateFromValue(data['createdAt']) ?? DateTime.now(),
       participantPhones: participantPhones,
+      isDeleted: data['isDeleted'] == true,
+      deletedAt: _modelDateFromValue(data['deletedAtLocal']),
     );
   }
 
@@ -1530,9 +1579,13 @@ class GroupChat {
     this.lastMessageAt,
     this.lastMessageSenderPhone,
     this.hikeEndedAt,
+    this.chatRemovesAt,
+    this.isDeleted = false,
+    this.closureReason = '',
     this.lastReadAt = const {},
     this.unreadCount = const {},
     this.departureTime,
+    this.participantPhotoURLs = const {},
   });
 
   final String id;
@@ -1548,8 +1601,12 @@ class GroupChat {
   final DateTime? lastMessageAt;
   final String? lastMessageSenderPhone;
   final DateTime? hikeEndedAt;
+  final DateTime? chatRemovesAt;
+  final bool isDeleted;
+  final String closureReason;
   final Map<String, DateTime> lastReadAt;
   final Map<String, int> unreadCount;
+  final Map<String, String> participantPhotoURLs;
 
   bool get isDirect => chatType == 'direct';
 
@@ -1570,6 +1627,42 @@ class GroupChat {
     return trailName.isEmpty ? 'Private chat' : trailName;
   }
 
+  String photoURLFor(String phoneNumber) {
+    return participantPhotoURLs[_modelPhoneKey(phoneNumber)]?.trim() ?? '';
+  }
+
+  DateTime? lastReadAtFor(String phoneNumber) {
+    return lastReadAt[_modelPhoneKey(phoneNumber)];
+  }
+
+  int unreadCountFor(String phoneNumber) {
+    return unreadCount[_modelPhoneKey(phoneNumber)] ?? 0;
+  }
+
+  GroupChat copyWith({Map<String, String>? participantPhotoURLs}) {
+    return GroupChat(
+      id: id,
+      hikeSessionId: hikeSessionId,
+      trailName: trailName,
+      participantPhones: participantPhones,
+      creatorPhone: creatorPhone,
+      createdAt: createdAt,
+      chatType: chatType,
+      participantNames: participantNames,
+      lastMessage: lastMessage,
+      lastMessageAt: lastMessageAt,
+      lastMessageSenderPhone: lastMessageSenderPhone,
+      hikeEndedAt: hikeEndedAt,
+      chatRemovesAt: chatRemovesAt,
+      isDeleted: isDeleted,
+      closureReason: closureReason,
+      lastReadAt: lastReadAt,
+      unreadCount: unreadCount,
+      departureTime: departureTime,
+      participantPhotoURLs: participantPhotoURLs ?? this.participantPhotoURLs,
+    );
+  }
+
   static String _formatGroupChatName(String trailName, DateTime departureTime) {
     final time = _formatTime(departureTime);
     final date = _formatDate(departureTime);
@@ -1586,8 +1679,18 @@ class GroupChat {
 
   static String _formatDate(DateTime dt) {
     final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${months[dt.month - 1]} ${dt.day}';
   }
@@ -1600,6 +1703,8 @@ class GroupChat {
       'creatorPhone': creatorPhone,
       'chatType': chatType,
       if (participantNames.isNotEmpty) 'participantNames': participantNames,
+      if (participantPhotoURLs.isNotEmpty)
+        'participantPhotoURLs': participantPhotoURLs,
       'createdAtLocal': createdAt.toUtc().toIso8601String(),
       if (departureTime != null)
         'departureTimeLocal': departureTime!.toUtc().toIso8601String(),
@@ -1608,6 +1713,12 @@ class GroupChat {
         'lastMessageAtLocal': lastMessageAt!.toUtc().toIso8601String(),
       if (lastMessageSenderPhone != null)
         'lastMessageSenderPhone': lastMessageSenderPhone,
+      if (hikeEndedAt != null)
+        'hikeEndedAtLocal': hikeEndedAt!.toUtc().toIso8601String(),
+      if (chatRemovesAt != null)
+        'chatRemovesAtLocal': chatRemovesAt!.toUtc().toIso8601String(),
+      if (isDeleted) 'isDeleted': true,
+      if (closureReason.isNotEmpty) 'closureReason': closureReason,
       if (lastReadAt.isNotEmpty)
         'lastReadAt': lastReadAt.map(
           (k, v) => MapEntry(k, v.toUtc().toIso8601String()),
@@ -1629,6 +1740,33 @@ class GroupChat {
                 MapEntry(key.toString(), value is String ? value : ''),
           )
         : <String, String>{};
+    final rawPhotoURLs = data['participantPhotoURLs'];
+    final participantPhotoURLs = rawPhotoURLs is Map
+        ? rawPhotoURLs.map(
+            (key, value) =>
+                MapEntry(key.toString(), value is String ? value : ''),
+          )
+        : <String, String>{};
+    final lastReadAt = <String, DateTime>{};
+    if (data['lastReadAt'] is Map) {
+      (data['lastReadAt'] as Map).forEach((key, value) {
+        final phoneKey = _modelPhoneKey(key.toString());
+        if (phoneKey.isEmpty) {
+          return;
+        }
+        lastReadAt[phoneKey] = _modelDateFromValue(value) ?? DateTime.now();
+      });
+    }
+    final unreadCount = <String, int>{};
+    if (data['unreadCount'] is Map) {
+      (data['unreadCount'] as Map).forEach((key, value) {
+        final phoneKey = _modelPhoneKey(key.toString());
+        if (phoneKey.isEmpty) {
+          return;
+        }
+        unreadCount[phoneKey] = value is num ? value.toInt() : 0;
+      });
+    }
     return GroupChat(
       id: id,
       hikeSessionId: _modelStringFrom(data['hikeSessionId']),
@@ -1640,6 +1778,7 @@ class GroupChat {
           ? 'group'
           : _modelStringFrom(data['chatType']),
       participantNames: participantNames,
+      participantPhotoURLs: participantPhotoURLs,
       lastMessage: data['lastMessage'] is String
           ? data['lastMessage'] as String
           : null,
@@ -1650,20 +1789,12 @@ class GroupChat {
           ? data['lastMessageSenderPhone'] as String
           : null,
       hikeEndedAt: _modelDateFromValue(data['hikeEndedAt']),
+      chatRemovesAt: _modelDateFromValue(data['chatRemovesAtLocal']),
+      isDeleted: data['isDeleted'] == true,
+      closureReason: _modelStringFrom(data['closureReason']),
       departureTime: _modelDateFromValue(data['departureTimeLocal']),
-      lastReadAt: data['lastReadAt'] is Map
-          ? (data['lastReadAt'] as Map).map(
-              (k, v) => MapEntry(
-                k.toString(),
-                _modelDateFromValue(v) ?? DateTime.now(),
-              ),
-            )
-          : const {},
-      unreadCount: data['unreadCount'] is Map
-          ? (data['unreadCount'] as Map).map(
-              (k, v) => MapEntry(k.toString(), (v as num).toInt()),
-            )
-          : const {},
+      lastReadAt: lastReadAt,
+      unreadCount: unreadCount,
     );
   }
 }
@@ -1682,6 +1813,7 @@ class ChatMessage {
     this.seenBy = const [],
     this.sendStatus = SendStatus.sent,
     this.attachment,
+    this.senderPhotoURL = '',
   });
 
   final String id;
@@ -1694,6 +1826,7 @@ class ChatMessage {
   final List<String> seenBy;
   final SendStatus sendStatus;
   final ChatAttachment? attachment;
+  final String senderPhotoURL;
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -1704,6 +1837,8 @@ class ChatMessage {
       'sentAtLocal': sentAt.toUtc().toIso8601String(),
       'isSystemMessage': isSystemMessage,
       'seenBy': seenBy,
+      if (senderPhotoURL.trim().isNotEmpty)
+        'senderPhotoURL': senderPhotoURL.trim(),
       if (attachment != null) 'attachment': attachment!.toFirestore(),
     };
   }
@@ -1718,6 +1853,7 @@ class ChatMessage {
       chatId: _modelStringFrom(data['chatId']),
       senderPhone: _modelStringFrom(data['senderPhone']),
       senderName: _modelStringFrom(data['senderName']),
+      senderPhotoURL: _modelStringFrom(data['senderPhotoURL']),
       text: _modelStringFrom(data['text']),
       sentAt: _modelDateFromValue(data['sentAtLocal']) ?? DateTime.now(),
       isSystemMessage: data['isSystemMessage'] == true,
@@ -1739,6 +1875,7 @@ class ChatMessage {
     required DateTime createdAt,
     SendStatus sendStatus = SendStatus.sending,
     ChatAttachment? attachment,
+    String senderPhotoURL = '',
   }) {
     return ChatMessage(
       id: localId,
@@ -1749,6 +1886,7 @@ class ChatMessage {
       sentAt: createdAt,
       sendStatus: sendStatus,
       attachment: attachment,
+      senderPhotoURL: senderPhotoURL,
     );
   }
 }

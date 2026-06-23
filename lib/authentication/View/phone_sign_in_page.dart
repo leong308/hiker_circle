@@ -24,6 +24,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   final _passwordController = TextEditingController();
   late final AuthViewModel _viewModel;
   bool _isCompletingSignIn = false;
+  bool _obscurePassword = true;
   String? _signInError;
 
   @override
@@ -179,7 +180,8 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                   const SizedBox(height: 16),
                                   _ModeToggle(
                                     currentMode: _viewModel.authMode,
-                                    enabled: !_viewModel.isBusy &&
+                                    enabled:
+                                        !_viewModel.isBusy &&
                                         !_isCompletingSignIn &&
                                         !_viewModel.hasCodeBeenSent,
                                     onChanged: _viewModel.setAuthMode,
@@ -239,7 +241,8 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
           controller: _phoneController,
           keyboardType: TextInputType.phone,
           textInputAction: TextInputAction.next,
-          enabled: !_viewModel.isBusy &&
+          enabled:
+              !_viewModel.isBusy &&
               !_isCompletingSignIn &&
               !_viewModel.hasCodeBeenSent,
           decoration: const InputDecoration(
@@ -264,9 +267,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                       ? Icons.refresh
                       : Icons.message_outlined,
                 ),
-          label: Text(
-            _viewModel.hasCodeBeenSent ? 'Resend OTP' : 'Send OTP',
-          ),
+          label: Text(_viewModel.hasCodeBeenSent ? 'Resend OTP' : 'Send OTP'),
         ),
         if (_viewModel.hasCodeBeenSent) ...[
           const SizedBox(height: 18),
@@ -285,10 +286,9 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
           ),
           const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed:
-                _viewModel.isVerifyingCode || _isCompletingSignIn
-                    ? null
-                    : _verifyOtp,
+            onPressed: _viewModel.isVerifyingCode || _isCompletingSignIn
+                ? null
+                : _verifyOtp,
             icon: _viewModel.isVerifyingCode || _isCompletingSignIn
                 ? const SizedBox.square(
                     dimension: 18,
@@ -329,12 +329,21 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
         const SizedBox(height: 12),
         TextFormField(
           controller: _passwordController,
-          obscureText: true,
+          obscureText: _obscurePassword,
           textInputAction: TextInputAction.done,
           enabled: !_viewModel.isBusy && !_isCompletingSignIn,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Password',
-            prefixIcon: Icon(Icons.key),
+            prefixIcon: const Icon(Icons.key),
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscurePassword ? Icons.visibility_off : Icons.visibility,
+              ),
+              tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+              onPressed: () {
+                setState(() => _obscurePassword = !_obscurePassword);
+              },
+            ),
           ),
           validator: (value) {
             if (value == null || value.isEmpty) {
@@ -356,8 +365,9 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
         ),
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed:
-              _viewModel.isLoggingIn || _isCompletingSignIn ? null : _login,
+          onPressed: _viewModel.isLoggingIn || _isCompletingSignIn
+              ? null
+              : _login,
           icon: _viewModel.isLoggingIn || _isCompletingSignIn
               ? const SizedBox.square(
                   dimension: 18,

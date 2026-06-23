@@ -16,6 +16,7 @@ import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../sos/View/emergency_contacts_page.dart';
+import '../../onboarding/Data/onboarding_repository.dart';
 import '../Model/me_models.dart';
 import '../ModelView/me_view_model.dart';
 import 'location_sharing_page.dart';
@@ -43,15 +44,20 @@ class MePage extends StatefulWidget {
 class _MePageState extends State<MePage> {
   late final MeViewModel viewModel;
   late final HikerCircleFirebaseRepository firebaseRepository;
+  late final OnboardingRepository onboardingRepository;
   late Future<List<Map<String, dynamic>>> achievementsFuture;
   late final EmergencyContactsRepository emergencyContactsRepository;
   List<EmergencyContact> emergencyContacts = const [];
+  MeProfile? firestoreProfile;
 
   @override
   void initState() {
     super.initState();
     viewModel = MeViewModel(session: widget.session);
     firebaseRepository = HikerCircleFirebaseRepository(
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+    );
+    onboardingRepository = OnboardingRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
     achievementsFuture = firebaseRepository.loadUserAchievementProgress(
@@ -61,6 +67,30 @@ class _MePageState extends State<MePage> {
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
     unawaited(_loadEmergencyContacts());
+    unawaited(_loadFirestoreProfile());
+  }
+
+  MeProfile get _displayProfile => firestoreProfile ?? viewModel.profile;
+
+  Future<void> _loadFirestoreProfile() async {
+    try {
+      final profile = await onboardingRepository.loadProfile(widget.session);
+      if (!mounted) return;
+      final username = profile.username.trim();
+      setState(() {
+        firestoreProfile = MeProfile(
+          displayName: username.isEmpty
+              ? viewModel.profile.displayName
+              : username,
+          handle: username.isEmpty ? viewModel.profile.handle : '@$username',
+          phoneNumber: widget.session.phoneNumber,
+          status: viewModel.profile.status,
+          photoURL: profile.photoURL ?? viewModel.profile.photoURL,
+        );
+      });
+    } catch (_) {
+      // Keep the locally cached session profile if Firestore is unavailable.
+    }
   }
 
   Future<void> _loadEmergencyContacts() async {
@@ -99,14 +129,18 @@ class _MePageState extends State<MePage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _Header(
-                    profile: viewModel.profile,
+                    profile: _displayProfile,
                     onShowQr: _openQrCode,
                     onOpenScanner: _openQrScanner,
                     onOpenSettings: _openAdvancedSettings,
                   ),
                   const SizedBox(height: 16),
                   _ProfileCell(
-                    profile: viewModel.profile,
+                    profile: _displayProfile,
+                    photoBytes:
+                        _displayProfile.photoURL == widget.session.photoURL
+                        ? widget.session.photoBytes
+                        : null,
                     onTap: _openProfileDetails,
                   ),
                   const SizedBox(height: 14),
@@ -172,47 +206,44 @@ class _MePageState extends State<MePage> {
           ),
         );
       case 'Notifications':
-        null;
-      // _openSettingsDetail(
-      //   title: 'Notifications',
-      //   subtitle: 'Community and safety alerts',
-      //   icon: Icons.notifications_rounded,
-      //   rows: const [
-      //     ('SOS delivery updates', 'On'),
-      //     ('Buddy requests', 'On'),
-      //     ('Team invite changes', 'On'),
-      //     ('Nearby hazard reports', 'Priority only'),
-      //     ('Quiet hours', '11:00 PM - 6:00 AM'),
-      //   ],
-      // );
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (context) => _DeviceNotificationsPage(
+              phoneNumber: widget.session.phoneNumber,
+            ),
+          ),
+        );
       case 'Privacy':
-        null;
-      // _openSettingsDetail(
-      //   title: 'Privacy',
-      //   subtitle: 'Profile visibility and sharing',
-      //   icon: Icons.lock_rounded,
-      //   rows: const [
-      //     ('Profile visibility', 'Buddies and team members'),
-      //     ('Hike history', 'Show completed public hikes'),
-      //     ('Live location', 'Only during active hike'),
-      //     ('QR discovery', 'Ask before adding as buddy'),
-      //   ],
-      // );
+        _openSettingsDetail(
+          title: 'Privacy',
+          subtitle: 'Profile visibility and sharing',
+          icon: Icons.lock_rounded,
+          rows: const [
+            ('Profile visibility', 'Buddies and team members'),
+            ('Hike history', 'Show completed public hikes'),
+            ('Live location', 'Only during active hike'),
+            ('QR discovery', 'Ask before adding as buddy'),
+          ],
+        );
       case 'Help center':
         _openHelpCenter();
       case 'Account preferences':
-        null;
-      // _openSettingsDetail(
-      //   title: 'Account Preferences',
-      //   subtitle: 'Profile and sign-in controls',
-      //   icon: Icons.account_circle_rounded,
-      //   rows: const [
-      //     ('Display name', 'Trail Friend'),
-      //     ('Phone sign-in', 'Verified'),
-      //     ('Profile QR', 'Enabled'),
-      //     ('Account recovery', 'Phone number'),
-      //   ],
-      // );
+        _openSettingsDetail(
+          title: 'Account Preferences',
+          subtitle: 'Profile and sign-in controls',
+          icon: Icons.account_circle_rounded,
+          rows: [
+            (
+              'Display name',
+              widget.session.username.trim().isEmpty
+                  ? widget.phoneNumber
+                  : widget.session.username.trim(),
+            ),
+            ('Phone sign-in', 'Verified'),
+            ('Profile QR', 'Enabled'),
+            ('Account recovery', 'Phone number'),
+          ],
+        );
     }
   }
 
@@ -335,13 +366,13 @@ class _MePageState extends State<MePage> {
   void _openQrCode() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => _ProfileQrPage(profile: viewModel.profile),
+        builder: (context) => _ProfileQrPage(profile: _displayProfile),
       ),
     );
   }
 
-  void _openProfileDetails() {
-    Navigator.of(context).push(
+  Future<void> _openProfileDetails() async {
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => ProfileDetailsPage(
           session: widget.session,
@@ -349,6 +380,7 @@ class _MePageState extends State<MePage> {
         ),
       ),
     );
+    await _loadFirestoreProfile();
   }
 
   void _openQrScanner() {
@@ -476,10 +508,15 @@ class _HeaderAction extends StatelessWidget {
 }
 
 class _ProfileCell extends StatelessWidget {
-  const _ProfileCell({required this.profile, required this.onTap});
+  const _ProfileCell({
+    required this.profile,
+    required this.onTap,
+    this.photoBytes,
+  });
 
   final MeProfile profile;
   final VoidCallback onTap;
+  final Uint8List? photoBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -499,7 +536,14 @@ class _ProfileCell extends StatelessWidget {
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(29),
-                  child: profile.photoURL != null
+                  child: photoBytes != null && photoBytes!.isNotEmpty
+                      ? Image.memory(
+                          photoBytes!,
+                          width: 58,
+                          height: 58,
+                          fit: BoxFit.cover,
+                        )
+                      : profile.photoURL != null
                       ? Image.network(
                           profile.photoURL!,
                           width: 58,
@@ -1221,7 +1265,7 @@ const List<_ProfileHistoryItem> _postHistoryItems = [
 const List<_ProfileHistoryItem> _circleHistoryItems = [
   _ProfileHistoryItem(
     title: 'Gasing Easy Loop',
-    subtitle: 'Team circle with Aina, Jason, and Farid.',
+    subtitle: 'Team circle for a recent group hike.',
     meta: '4 members - Ready',
     icon: Icons.groups_2_rounded,
   ),
@@ -1241,21 +1285,21 @@ const List<_ProfileHistoryItem> _circleHistoryItems = [
 
 const List<_ProfileHistoryItem> _buddyHistoryItems = [
   _ProfileHistoryItem(
-    title: 'Aina',
-    subtitle: 'Added from Community after Broga Hill safety notes.',
-    meta: '@ainatrails',
+    title: 'Trail Buddy',
+    subtitle: 'Added from Community after sharing safety notes.',
+    meta: 'Connected',
     icon: Icons.person_rounded,
   ),
   _ProfileHistoryItem(
-    title: 'Jason',
-    subtitle: 'Joined two team hikes and leads beginner loops.',
-    meta: '@jasonridge',
+    title: 'Route Partner',
+    subtitle: 'Joined two team hikes and helps with beginner loops.',
+    meta: 'Connected',
     icon: Icons.person_rounded,
   ),
   _ProfileHistoryItem(
-    title: 'Mei Lin',
-    subtitle: 'Added from a QR scan after Tabur route planning.',
-    meta: '@meiclimbs',
+    title: 'Safety Contact',
+    subtitle: 'Added from a QR scan after route planning.',
+    meta: 'Connected',
     icon: Icons.qr_code_rounded,
   ),
 ];
@@ -1336,7 +1380,7 @@ class _ProfileHistoryPage extends StatelessWidget {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              '${items.length} history item${items.length == 1 ? '' : 's'} from dummy profile activity.',
+                              '${items.length} history item${items.length == 1 ? '' : 's'} from profile activity.',
                               style: Theme.of(context).textTheme.bodyMedium
                                   ?.copyWith(
                                     color: _MeColors.textFor(context),
@@ -1503,6 +1547,434 @@ class _ProfileSettingsDetailPage extends StatelessWidget {
   }
 }
 
+class _DeviceNotificationsPage extends StatefulWidget {
+  const _DeviceNotificationsPage({required this.phoneNumber});
+
+  final String phoneNumber;
+
+  @override
+  State<_DeviceNotificationsPage> createState() =>
+      _DeviceNotificationsPageState();
+}
+
+class _DeviceNotificationsPageState extends State<_DeviceNotificationsPage> {
+  final LocalSessionDatabase _database = LocalSessionDatabase();
+  late Future<List<DeviceNotificationRecord>> _notificationsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _notificationsFuture = _loadNotifications();
+  }
+
+  Future<List<DeviceNotificationRecord>> _loadNotifications() {
+    return _database.loadDeviceNotifications(
+      ownerPhoneNumber: widget.phoneNumber,
+      limit: 200,
+    );
+  }
+
+  Future<void> _refresh() async {
+    final nextFuture = _loadNotifications();
+    setState(() {
+      _notificationsFuture = nextFuture;
+    });
+    await nextFuture;
+  }
+
+  Future<void> _clearNotifications() async {
+    await _database.clearDeviceNotifications(
+      ownerPhoneNumber: widget.phoneNumber,
+    );
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Device notifications cleared.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    await _refresh();
+  }
+
+  Future<void> _markOpened(DeviceNotificationRecord notification) async {
+    if (notification.isOpened) {
+      return;
+    }
+    await _database.markDeviceNotificationOpened(
+      ownerPhoneNumber: widget.phoneNumber,
+      id: notification.id,
+    );
+    if (mounted) {
+      await _refresh();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _MeColors.backgroundFor(context),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          color: _MeColors.green,
+          child: FutureBuilder<List<DeviceNotificationRecord>>(
+            future: _notificationsFuture,
+            builder: (context, snapshot) {
+              final notifications =
+                  snapshot.data ?? const <DeviceNotificationRecord>[];
+              final isLoading =
+                  snapshot.connectionState == ConnectionState.waiting;
+              return SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _DetailHeader(
+                          title: 'Notifications',
+                          subtitle: 'FCMs received on this phone',
+                          onBack: () => Navigator.of(context).pop(),
+                        ),
+                        const SizedBox(height: 16),
+                        if (isLoading)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 80),
+                            child: Center(
+                              child: CircularProgressIndicator.adaptive(),
+                            ),
+                          )
+                        else if (notifications.isEmpty)
+                          _NotificationEmptyState(onRefresh: _refresh)
+                        else ...[
+                          _NotificationSummaryCard(
+                            count: notifications.length,
+                            onClear: _clearNotifications,
+                          ),
+                          const SizedBox(height: 12),
+                          for (
+                            var index = 0;
+                            index < notifications.length;
+                            index++
+                          ) ...[
+                            _DeviceNotificationTile(
+                              notification: notifications[index],
+                              onTap: _markOpened,
+                            ),
+                            if (index != notifications.length - 1)
+                              const SizedBox(height: 10),
+                          ],
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationSummaryCard extends StatelessWidget {
+  const _NotificationSummaryCard({required this.count, required this.onClear});
+
+  final int count;
+  final Future<void> Function() onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            const _Glyph(icon: CupertinoIcons.bell_fill),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '$count FCM ${count == 1 ? 'message' : 'messages'} saved on this device.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: _MeColors.textFor(context),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+            CupertinoButton(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size.zero,
+              onPressed: () => unawaited(onClear()),
+              child: Text(
+                'Clear',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: _MeColors.destructiveFor(context),
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationEmptyState extends StatelessWidget {
+  const _NotificationEmptyState({required this.onRefresh});
+
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: _MeColors.greenSoftFor(context),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                CupertinoIcons.bell,
+                color: _MeColors.green,
+                size: 24,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'No notifications on this device yet.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: _MeColors.textFor(context),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Safety, circle, chat, and hike reminders appear here after this phone receives them.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _MeColors.secondaryTextFor(context),
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 14),
+            CupertinoButton.filled(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              minimumSize: Size.zero,
+              onPressed: () => unawaited(onRefresh()),
+              child: const Text('Refresh'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeviceNotificationTile extends StatelessWidget {
+  const _DeviceNotificationTile({
+    required this.notification,
+    required this.onTap,
+  });
+
+  final DeviceNotificationRecord notification;
+  final Future<void> Function(DeviceNotificationRecord notification) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = notification.title.trim().isEmpty
+        ? 'HikerCircle update'
+        : notification.title.trim();
+    final body = notification.body.trim().isEmpty
+        ? 'Tap to view details.'
+        : notification.body.trim();
+    final type = notification.type.trim();
+    final hasDeepLink = notification.deepLink.trim().isNotEmpty;
+    return _TapSurface(
+      onTap: () => unawaited(onTap(notification)),
+      child: _InsetGroup(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _NotificationIcon(type: type, isOpened: notification.isOpened),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: notification.isOpened
+                            ? _MeColors.secondaryTextFor(context)
+                            : _MeColors.textFor(context),
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      body,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _MeColors.secondaryTextFor(context),
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        _MiniPill(label: _notificationTypeLabel(type)),
+                        _MiniPill(
+                          label: _notificationTimeLabel(
+                            notification.receivedAt,
+                          ),
+                        ),
+                        if (hasDeepLink) const _MiniPill(label: 'Opens in app'),
+                        if (notification.isOpened)
+                          const _MiniPill(label: 'Opened'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationIcon extends StatelessWidget {
+  const _NotificationIcon({required this.type, required this.isOpened});
+
+  final String type;
+  final bool isOpened;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isOpened
+        ? _MeColors.secondaryTextFor(context)
+        : _notificationAccentColor(type);
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: _MeColors.isDark(context) ? 0.2 : 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(_notificationIcon(type), color: color, size: 20),
+    );
+  }
+}
+
+IconData _notificationIcon(String type) {
+  final normalizedType = type.toLowerCase();
+  if (normalizedType.contains('chat')) {
+    return CupertinoIcons.chat_bubble_2_fill;
+  }
+  if (normalizedType.contains('team') || normalizedType.contains('hike')) {
+    return Icons.hiking_rounded;
+  }
+  if (normalizedType.contains('friend') ||
+      normalizedType.contains('buddy') ||
+      normalizedType.contains('circle')) {
+    return Icons.group_rounded;
+  }
+  if (normalizedType.contains('sos') ||
+      normalizedType.contains('alert') ||
+      normalizedType.contains('safety')) {
+    return Icons.health_and_safety_rounded;
+  }
+  if (normalizedType.contains('upcoming') ||
+      normalizedType.contains('reminder')) {
+    return CupertinoIcons.clock_fill;
+  }
+  return CupertinoIcons.bell_fill;
+}
+
+Color _notificationAccentColor(String type) {
+  final normalizedType = type.toLowerCase();
+  if (normalizedType.contains('sos') ||
+      normalizedType.contains('alert') ||
+      normalizedType.contains('safety')) {
+    return const Color(0xFFE44848);
+  }
+  if (normalizedType.contains('chat')) {
+    return const Color(0xFF3478F6);
+  }
+  if (normalizedType.contains('friend') ||
+      normalizedType.contains('buddy') ||
+      normalizedType.contains('circle')) {
+    return const Color(0xFF7A5AF8);
+  }
+  return _MeColors.green;
+}
+
+String _notificationTypeLabel(String type) {
+  final normalizedType = type.trim().replaceAll(RegExp(r'[_-]+'), ' ');
+  if (normalizedType.isEmpty) {
+    return 'Notification';
+  }
+  return normalizedType
+      .split(' ')
+      .where((word) => word.trim().isNotEmpty)
+      .map((word) {
+        final trimmed = word.trim();
+        return trimmed.length == 1
+            ? trimmed.toUpperCase()
+            : '${trimmed[0].toUpperCase()}${trimmed.substring(1)}';
+      })
+      .join(' ');
+}
+
+String _notificationTimeLabel(DateTime receivedAt) {
+  final localTime = receivedAt.toLocal();
+  final difference = DateTime.now().difference(localTime);
+  if (difference.inMinutes < 1) {
+    return 'Just now';
+  }
+  if (difference.inHours < 1) {
+    return '${difference.inMinutes}m ago';
+  }
+  if (difference.inDays < 1) {
+    return '${difference.inHours}h ago';
+  }
+  if (difference.inDays < 7) {
+    return '${difference.inDays}d ago';
+  }
+  final hour = localTime.hour % 12 == 0 ? 12 : localTime.hour % 12;
+  final minute = localTime.minute.toString().padLeft(2, '0');
+  final period = localTime.hour >= 12 ? 'PM' : 'AM';
+  return '${localTime.day}/${localTime.month} $hour:$minute$period';
+}
+
 class _HelpCenterPage extends StatelessWidget {
   const _HelpCenterPage();
 
@@ -1662,7 +2134,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
-          content: Text('Map cache and network samples cleared.'),
+          content: Text('Offline maps and connection history cleared.'),
           behavior: SnackBarBehavior.floating,
         ),
       );

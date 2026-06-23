@@ -17,6 +17,7 @@ import '../../circle/View/group_chat_detail_page.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
+import '../../core/services/device_notification_log_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
@@ -182,11 +183,10 @@ class _HikerHomePageState extends State<HikerHomePage>
         _showForegroundNotification,
       );
 
-      const androidSettings =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
-      const initSettings = InitializationSettings(
-        android: androidSettings,
+      const androidSettings = AndroidInitializationSettings(
+        '@mipmap/ic_launcher',
       );
+      const initSettings = InitializationSettings(android: androidSettings);
       await _localNotifications.initialize(
         settings: initSettings,
         onDidReceiveNotificationResponse: _handleFcmOpenFromLocal,
@@ -222,6 +222,11 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _handleFcmOpen(RemoteMessage message) async {
+    await DeviceNotificationLogService.recordFcmMessage(
+      message,
+      ownerPhoneNumber: widget.session.phoneNumber,
+      opened: true,
+    );
     final deepLink = message.data['deepLink'];
     if (deepLink is String && deepLink.isNotEmpty) {
       await _handleDeepLink(deepLink);
@@ -229,6 +234,12 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   void _showForegroundNotification(RemoteMessage message) {
+    unawaited(
+      DeviceNotificationLogService.recordFcmMessage(
+        message,
+        ownerPhoneNumber: widget.session.phoneNumber,
+      ),
+    );
     final title = message.notification?.title ?? 'HikerCircle update';
     final body = message.notification?.body ?? 'Tap to view details.';
     final type = message.data['type'];
@@ -1144,7 +1155,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     } on HikerCircleFirebaseRepositoryException catch (error) {
       startProgress.value = const _HikeStartProgress(
         title: 'Starting offline mode',
-        message: 'Cloud setup is unavailable, so this hike will run locally.',
+        message: 'Network setup is unavailable, so this hike will run locally.',
         progress: 0.72,
         icon: Icons.cloud_off_rounded,
       );
@@ -1449,7 +1460,10 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (context) => ActiveHikeMapPage(activeHike: hike),
+          builder: (context) => ActiveHikeMapPage(
+            activeHike: hike,
+            currentPhoneNumber: widget.session.phoneNumber,
+          ),
         ),
       );
     });
@@ -1603,11 +1617,14 @@ class _HikerHomePageState extends State<HikerHomePage>
             )
             .toList(),
       );
-      await _startUpcomingHikeNow(draft);
+      await _startUpcomingHikeNow(hike: hike, draft: draft);
     }
   }
 
-  Future<void> _startUpcomingHikeNow(HikeSessionDraft draft) async {
+  Future<void> _startUpcomingHikeNow({
+    required UpcomingHike hike,
+    required HikeSessionDraft draft,
+  }) async {
     var hikeToStart = ActiveHikeSession.fromDraft(draft);
     if (draft.hikeType == HikeType.team && draft.teamBuddies.isNotEmpty) {
       final teamSession = await _coordinateTeamHikeStart(draft);
@@ -1636,6 +1653,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         draft: hikeToStart.draft,
         teamHikeSessionId: hikeToStart.teamHikeSessionId,
         teamHikeSession: hikeToStart.teamHikeSession,
+        sourceUpcomingHikeId: hike.id,
       );
       final batteryLevel = await _readBatteryLevel(fallback: 100);
       liveHike = liveHike.copyWith(
@@ -1761,9 +1779,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           ..hideCurrentSnackBar()
           ..showSnackBar(
             const SnackBar(
-              content: Text(
-                'This team hike trail is not available from Firebase yet.',
-              ),
+              content: Text('This trail is not available right now.'),
               behavior: SnackBarBehavior.floating,
             ),
           );
@@ -1993,10 +2009,8 @@ class _HikerHomePageState extends State<HikerHomePage>
       _activeHikePersistenceQueue.then((_) async {
         if (mounted) {
           try {
-            await hikerCircleRepository.removeFcmToken(
-                session: widget.session);
-          } catch (_) {
-          }
+            await hikerCircleRepository.removeFcmToken(session: widget.session);
+          } catch (_) {}
           widget.onSignOut();
         }
       }),
@@ -2286,8 +2300,10 @@ class _HikerHomePageState extends State<HikerHomePage>
         if (isActive) {
           return ActiveHikeHomePage(
             activeHike: activeHike!,
+            currentPhoneNumber: widget.session.phoneNumber,
             onEndHike: () => unawaited(_endActiveHikeSession()),
-            onMapStyleChanged: (index) => setState(() => _lastMapStyleIndex = index),
+            onMapStyleChanged: (index) =>
+                setState(() => _lastMapStyleIndex = index),
             onCheckIn: () {
               final hike = activeHike;
               if (hike != null) {
@@ -3222,9 +3238,8 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
                                     teamSession.phase == TeamHikePhase.countdown
                                     ? teamSession.countdownRemainingSeconds
                                     : null,
-                                onPressed: () => unawaited(
-                                  _onButtonPressed(teamSession),
-                                ),
+                                onPressed: () =>
+                                    unawaited(_onButtonPressed(teamSession)),
                               ),
                             ],
                           ),
@@ -3256,7 +3271,7 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
     return 'The team hike session is going to start. Press READY when your gear and GPS are set.';
   }
 
-    String _readyButtonLabel(TeamHikeSession teamSession) {
+  String _readyButtonLabel(TeamHikeSession teamSession) {
     final participant = _currentParticipant(teamSession);
     final isHost = _sameTeamPhone(
       teamSession.hostPhoneNumber,
@@ -3281,7 +3296,9 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
       return _launchSubtitle(teamSession);
     }
     if (participant?.status.isReadyForStart == true) {
-      return isHost ? 'Start when everyone is ready' : 'Waiting for admin to start';
+      return isHost
+          ? 'Start when everyone is ready'
+          : 'Waiting for the host to start';
     }
     return 'press when ready';
   }
@@ -3303,7 +3320,8 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
         teamSession.hostPhoneNumber,
         widget.session.phoneNumber,
       );
-      return isHost && teamSession.phase == TeamHikePhase.readyCheck &&
+      return isHost &&
+          teamSession.phase == TeamHikePhase.readyCheck &&
           teamSession.everyoneReady;
     }
     return _canMarkReady(teamSession);
@@ -3344,18 +3362,20 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
     if (!mounted) return;
     final repo = widget.repository;
     final session = widget.session;
-    final safetySettings = await Navigator.of(context).push<Map<String, dynamic>>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => _TeamSafetyPreparationPage(
-          session: session,
-          repository: repo,
-          deviceAlertService: widget.deviceAlertService,
-          enhancedProtectionRecommended:
-              (profile?['gender'] as String? ?? '').toLowerCase() == 'female',
-        ),
-      ),
-    );
+    final safetySettings = await Navigator.of(context)
+        .push<Map<String, dynamic>>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => _TeamSafetyPreparationPage(
+              session: session,
+              repository: repo,
+              deviceAlertService: widget.deviceAlertService,
+              enhancedProtectionRecommended:
+                  (profile?['gender'] as String? ?? '').toLowerCase() ==
+                  'female',
+            ),
+          ),
+        );
     if (safetySettings == null || !mounted) {
       return;
     }
@@ -3607,203 +3627,206 @@ class _TeamSafetyPreparationPageState
                     ),
                   ),
                   const SizedBox(height: 16),
-                const _LockedTeamSafetyRow(
-                  icon: Icons.location_on_rounded,
-                  title: 'Live location sharing',
-                  subtitle: 'Visible only to this hike team while active.',
-                ),
-                const _LockedTeamSafetyRow(
-                  icon: Icons.alt_route_rounded,
-                  title: 'Path deviation alerts',
-                  subtitle: 'The team is warned when you leave the route.',
-                ),
-                const _LockedTeamSafetyRow(
-                  icon: Icons.groups_rounded,
-                  title: 'Teammate separation alerts',
-                  subtitle: 'Checks distance from the nearest teammate.',
-                ),
-                const SizedBox(height: 14),
-                InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Sensor Sensitivity',
-                    prefixIcon: Icon(Icons.sensors_rounded),
+                  const _LockedTeamSafetyRow(
+                    icon: Icons.location_on_rounded,
+                    title: 'Live location sharing',
+                    subtitle: 'Visible only to this hike team while active.',
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
+                  const _LockedTeamSafetyRow(
+                    icon: Icons.alt_route_rounded,
+                    title: 'Path deviation alerts',
+                    subtitle: 'The team is warned when you leave the route.',
+                  ),
+                  const _LockedTeamSafetyRow(
+                    icon: Icons.groups_rounded,
+                    title: 'Teammate separation alerts',
+                    subtitle: 'Checks distance from the nearest teammate.',
+                  ),
+                  const SizedBox(height: 14),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Sensor Sensitivity',
+                      prefixIcon: Icon(Icons.sensors_rounded),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${_sensitivityLabel(_sensitivity)} (${_sensitivity.round()}/10)',
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: _sensitivity,
+                          min: FallDetectionSettings.minSensorSensitivity,
+                          max: FallDetectionSettings.maxSensorSensitivity,
+                          divisions:
+                              (FallDetectionSettings.maxSensorSensitivity -
+                                      FallDetectionSettings
+                                          .minSensorSensitivity)
+                                  .round(),
+                          activeColor: colors.green,
+                          inactiveColor: colors.separator,
+                          label:
+                              '${_sensitivityLabel(_sensitivity)} ${_sensitivity.round()}/10',
+                          onChanged: (value) => setState(() {
+                            _sensitivity = value;
+                            _sensitivitySelected = true;
+                          }),
+                        ),
+                        if (_sensitivity > 7)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
                             child: Text(
-                              '${_sensitivityLabel(_sensitivity)} (${_sensitivity.round()}/10)',
-                              style: theme.textTheme.bodyLarge?.copyWith(
+                              'High sensitivity can detect softer hiking falls, '
+                              'but it may also cause more false alarms from '
+                              'backpack drops or sitting down hard.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.red,
                                 fontWeight: FontWeight.w600,
                                 letterSpacing: 0,
                               ),
                             ),
                           ),
-                        ],
-                      ),
-                      Slider(
-                        value: _sensitivity,
-                        min: FallDetectionSettings.minSensorSensitivity,
-                        max: FallDetectionSettings.maxSensorSensitivity,
-                        divisions: (FallDetectionSettings.maxSensorSensitivity -
-                                FallDetectionSettings.minSensorSensitivity)
-                            .round(),
-                        activeColor: colors.green,
-                        inactiveColor: colors.separator,
-                        label:
-                            '${_sensitivityLabel(_sensitivity)} ${_sensitivity.round()}/10',
-                        onChanged: (value) => setState(() {
-                          _sensitivity = value;
-                          _sensitivitySelected = true;
-                        }),
-                      ),
-                      if (_sensitivity > 7)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 6),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<Duration>(
+                    initialValue: _fallResponseDuration,
+                    decoration: const InputDecoration(
+                      labelText: 'Longest response time after a fall',
+                      prefixIcon: Icon(Icons.personal_injury_rounded),
+                    ),
+                    items: [
+                      for (final duration in _fallResponseOptions)
+                        DropdownMenuItem(
+                          value: duration,
                           child: Text(
-                            'High sensitivity can detect softer hiking falls, '
-                            'but it may also cause more false alarms from '
-                            'backpack drops or sitting down hard.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.red,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0,
-                            ),
+                            duration.inSeconds < 60
+                                ? '${duration.inSeconds} seconds'
+                                : '${duration.inMinutes} minute${duration.inMinutes == 1 ? '' : 's'}',
                           ),
                         ),
                     ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _fallResponseDuration = value;
+                          _fallResponseSelected = true;
+                        });
+                      }
+                    },
                   ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<Duration>(
-                  initialValue: _fallResponseDuration,
-                  decoration: const InputDecoration(
-                    labelText: 'Longest response time after a fall',
-                    prefixIcon: Icon(Icons.personal_injury_rounded),
-                  ),
-                  items: [
-                    for (final duration in _fallResponseOptions)
-                      DropdownMenuItem(
-                        value: duration,
-                        child: Text(
-                          duration.inSeconds < 60
-                              ? '${duration.inSeconds} seconds'
-                              : '${duration.inMinutes} minute${duration.inMinutes == 1 ? '' : 's'}',
-                        ),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        _fallResponseDuration = value;
-                        _fallResponseSelected = true;
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'After a fall and stillness are confirmed, this is how long '
-                  'you have to cancel before Fall SOS is sent.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.secondaryText,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<Duration>(
-                  initialValue: _longestRestDuration,
-                  decoration: const InputDecoration(
-                    labelText: 'Longest time for a rest',
-                    prefixIcon: Icon(Icons.self_improvement_rounded),
-                  ),
-                  items: [
-                    for (final duration in _longestRestOptions)
-                      DropdownMenuItem(
-                        value: duration,
-                        child: Text(
-                          '${duration.inMinutes} minute${duration.inMinutes == 1 ? '' : 's'}',
-                        ),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        _longestRestDuration = value;
-                        _longestRestSelected = true;
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'If your location stays within 5 m for this long, '
-                  'HikerCircle checks for phone movement and asks you to '
-                  'respond before sending a prolonged-stillness SOS.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.secondaryText,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    'Enhanced isolation protection',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  subtitle: Text(
-                    widget.enhancedProtectionRecommended
-                        ? 'Recommended from your private safety profile. '
-                            'Teammates are never shown why.'
-                        : 'Uses a tighter 100 m separation threshold '
-                            'and faster team escalation.',
+                  const SizedBox(height: 8),
+                  Text(
+                    'After a fall and stillness are confirmed, this is how long '
+                    'you have to cancel before Fall SOS is sent.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: colors.secondaryText,
                       letterSpacing: 0,
                     ),
                   ),
-                  value: _enhancedIsolationProtection,
-                  onChanged: (value) =>
-                      setState(() => _enhancedIsolationProtection = value),
-                ),
-                const SizedBox(height: 8),
-                if (!_sensitivitySelected ||
-                    !_fallResponseSelected ||
-                    !_longestRestSelected)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Select sensor sensitivity, fall response time, '
-                      'and longest rest time to continue.',
-                      style: TextStyle(
-                        color: colors.orange,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<Duration>(
+                    initialValue: _longestRestDuration,
+                    decoration: const InputDecoration(
+                      labelText: 'Longest time for a rest',
+                      prefixIcon: Icon(Icons.self_improvement_rounded),
+                    ),
+                    items: [
+                      for (final duration in _longestRestOptions)
+                        DropdownMenuItem(
+                          value: duration,
+                          child: Text(
+                            '${duration.inMinutes} minute${duration.inMinutes == 1 ? '' : 's'}',
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() {
+                          _longestRestDuration = value;
+                          _longestRestSelected = true;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'If your location stays within 5 m for this long, '
+                    'HikerCircle checks for phone movement and asks you to '
+                    'respond before sending a prolonged-stillness SOS.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.secondaryText,
+                      letterSpacing: 0,
                     ),
                   ),
-                FilledButton.icon(
-                  onPressed: _isLoadingPrefs ||
-                          !_sensitivitySelected ||
-                          !_fallResponseSelected ||
-                          !_longestRestSelected
-                      ? null
-                      : () => unawaited(_confirm()),
-                  icon: const Icon(Icons.verified_user_rounded),
-                  label: const Text('Save safety settings and send Ready'),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      'Enhanced isolation protection',
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    subtitle: Text(
+                      widget.enhancedProtectionRecommended
+                          ? 'Recommended from your private safety profile. '
+                                'Teammates are never shown why.'
+                          : 'Uses a tighter 100 m separation threshold '
+                                'and faster team escalation.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.secondaryText,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    value: _enhancedIsolationProtection,
+                    onChanged: (value) =>
+                        setState(() => _enhancedIsolationProtection = value),
+                  ),
+                  const SizedBox(height: 8),
+                  if (!_sensitivitySelected ||
+                      !_fallResponseSelected ||
+                      !_longestRestSelected)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'Select sensor sensitivity, fall response time, '
+                        'and longest rest time to continue.',
+                        style: TextStyle(
+                          color: colors.orange,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  FilledButton.icon(
+                    onPressed:
+                        _isLoadingPrefs ||
+                            !_sensitivitySelected ||
+                            !_fallResponseSelected ||
+                            !_longestRestSelected
+                        ? null
+                        : () => unawaited(_confirm()),
+                    icon: const Icon(Icons.verified_user_rounded),
+                    label: const Text('Save safety settings and send Ready'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
     );
   }
 
@@ -3834,10 +3857,7 @@ class _LockedTeamSafetyRow extends StatelessWidget {
       leading: Icon(Icons.lock_rounded, color: colors.green),
       title: Text(
         title,
-        style: TextStyle(
-          color: colors.text,
-          fontWeight: FontWeight.w800,
-        ),
+        style: TextStyle(color: colors.text, fontWeight: FontWeight.w800),
       ),
       subtitle: Text(
         subtitle,
@@ -3950,14 +3970,12 @@ class _ReadyLaunchButton extends StatelessWidget {
                       ),
                     ),
                   ],
-          ),
+                ),
         ),
       ),
     );
   }
 }
-
-
 
 class _TeamLaunchStatusCard extends StatelessWidget {
   const _TeamLaunchStatusCard({
@@ -4455,7 +4473,7 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text('Share sheet is unavailable on this platform.'),
+            content: Text('Sharing is unavailable on this device.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -4463,15 +4481,23 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
   }
 
   HikingRouteResult? get _summaryRouteResult {
-    final recordedPoints = widget.activeHike.routePoints;
-    final encoded = recordedPoints.length >= 2
-        ? PolylineCodec.encode(
-            recordedPoints
-                .map((point) => LatLng(point.latitude, point.longitude))
-                .toList(),
-          )
-        : widget.activeHike.trail.routeEncodedPolyline;
-    if (encoded == null || encoded.isEmpty) return null;
+    final recordedPoints = List<HikeCoordinate>.of(
+      widget.activeHike.routePoints,
+    );
+    final latest = widget.activeHike.latestLocation;
+    if (latest != null &&
+        (recordedPoints.isEmpty ||
+            recordedPoints.last.distanceTo(latest) > 2)) {
+      recordedPoints.add(latest);
+    }
+    recordedPoints.sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
+    if (recordedPoints.length < 2) return null;
+    final encoded = PolylineCodec.encode(
+      recordedPoints
+          .map((point) => LatLng(point.latitude, point.longitude))
+          .toList(),
+    );
+    if (encoded.isEmpty) return null;
     return HikingRouteResult(
       distanceMeters: (widget.report.distanceKm * 1000).round(),
       duration: widget.report.duration,
@@ -5111,6 +5137,7 @@ class ActiveHikeHomePage extends StatefulWidget {
   const ActiveHikeHomePage({
     super.key,
     required this.activeHike,
+    required this.currentPhoneNumber,
     required this.onEndHike,
     required this.onCheckIn,
     required this.onPinLocation,
@@ -5120,6 +5147,7 @@ class ActiveHikeHomePage extends StatefulWidget {
   });
 
   final ActiveHikeSession activeHike;
+  final String currentPhoneNumber;
   final VoidCallback onEndHike;
   final VoidCallback onCheckIn;
   final VoidCallback onPinLocation;
@@ -5270,6 +5298,7 @@ class _ActiveHikeHomePageState extends State<ActiveHikeHomePage> {
               teamHikeSession: widget.activeHike.teamHikeSession,
               weatherSamples: _weatherSnapshot?.samples ?? const [],
               showLegend: false,
+              currentPhoneNumber: widget.currentPhoneNumber,
               onStyleChanged: widget.onMapStyleChanged,
             ),
           ),

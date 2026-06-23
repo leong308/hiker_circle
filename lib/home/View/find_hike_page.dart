@@ -81,8 +81,7 @@ class _FindHikePageState extends State<FindHikePage> {
       final now = DateTime.now();
       final active = hikes
           .where(
-            (h) =>
-                !now.isAfter(h.departureTime.add(const Duration(minutes: 10))),
+            (h) => !now.isAfter(h.departureTime.add(const Duration(hours: 1))),
           )
           .toList();
 

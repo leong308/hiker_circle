@@ -272,7 +272,10 @@ class HikingRouteService {
     Trail trail,
   ) async {
     final savedPolyline = trail.routeEncodedPolyline?.trim() ?? '';
-    if (_isUsablePolyline(savedPolyline)) {
+    final currentHash = checkpointsHash(trail.checkpoints);
+    final savedHash = trail.routeCheckpointsHash?.trim() ?? '';
+    if (_isUsablePolyline(savedPolyline) &&
+        (savedHash.isEmpty || savedHash == currentHash)) {
       return HikingRouteResult(
         distanceMeters: (trail.distanceKm * 1000).round(),
         duration: Duration(minutes: trail.estimatedDurationMinutes),
@@ -284,11 +287,10 @@ class HikingRouteService {
 
     final db = _localDatabase;
     if (db != null) {
-      final hash = checkpointsHash(trail.checkpoints);
       try {
         final cached = await db.loadRouteCache(
           trailId: trail.trailId,
-          checkpointsHash: hash,
+          checkpointsHash: currentHash,
         );
         if (cached != null) {
           final cachedPolyline = cached['encoded_polyline'] as String? ?? '';
@@ -320,7 +322,7 @@ class HikingRouteService {
       try {
         await db.saveRouteCache(
           trailId: trail.trailId,
-          checkpointsHash: checkpointsHash(trail.checkpoints),
+          checkpointsHash: currentHash,
           encodedPolyline: result.encodedPolyline,
           distanceMeters: result.distanceMeters,
           durationSeconds: result.duration.inSeconds,

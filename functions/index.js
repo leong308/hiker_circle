@@ -19,6 +19,10 @@ function userDocumentIdForPhone(phoneNumber) {
   return String(phoneNumber || '').replace(/\//g, '_');
 }
 
+function phoneKeyFor(phoneNumber) {
+  return String(phoneNumber || '').replace(/\D/g, '');
+}
+
 function isAdminUser(user) {
   const role = String(user.role || '').toLowerCase();
   const roles = Array.isArray(user.roles)
@@ -30,6 +34,51 @@ function isAdminUser(user) {
     role === 'super_admin' ||
     roles.includes('admin')
   );
+}
+
+function latestFcmTokensForUser(user) {
+  const fcmTokenByAppId =
+    user.fcmTokenByAppId && typeof user.fcmTokenByAppId === 'object'
+      ? user.fcmTokenByAppId
+      : {};
+  const latestAppInstanceId = [
+    user.boundAppInstanceId,
+    user.lastSignedInAppInstanceId,
+    user.currentAppId,
+    user.activeFcmAppInstanceId,
+  ]
+    .map((value) => String(value || '').trim())
+    .find((value) => value);
+  const activeAppInstanceId = String(user.activeFcmAppInstanceId || '').trim();
+
+  if (latestAppInstanceId) {
+    const token = fcmTokenByAppId[latestAppInstanceId];
+    if (typeof token === 'string' && token.length > 20) {
+      return [token];
+    }
+
+    const activeToken = String(user.activeFcmToken || '').trim();
+    if (
+      activeAppInstanceId === latestAppInstanceId &&
+      activeToken.length > 20
+    ) {
+      return [activeToken];
+    }
+
+    return [];
+  }
+
+  const lastToken = String(user.lastFcmToken || '').trim();
+  if (lastToken.length > 20) {
+    return [lastToken];
+  }
+
+  const legacyTokens = Array.isArray(user.fcmTokens)
+    ? user.fcmTokens.filter(
+        (token) => typeof token === 'string' && token.length > 20
+      )
+    : [];
+  return legacyTokens.length === 1 ? legacyTokens : [];
 }
 
 exports.sendGreenApiLoginCode = onCall(
@@ -1369,6 +1418,65 @@ function dateMillis(value) {
   return Number.NaN;
 }
 
+function formatAppLocalClock(date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Singapore',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+    .format(date)
+    .replace(' ', '');
+}
+
+async function sendGroupChatSystemMessage(db, chatDoc, text) {
+  const chat = chatDoc.data() || {};
+  const participantPhones = Array.isArray(chat.participantPhones)
+    ? chat.participantPhones.map((phone) => String(phone || '')).filter(Boolean)
+    : [];
+  const now = new Date();
+  const messageRef = chatDoc.ref.collection('messages').doc();
+  await messageRef.set({
+    chatId: chatDoc.id,
+    senderPhone: String(chat.creatorPhone || 'system'),
+    senderName: 'HikerCircle',
+    text,
+    sentAtLocal: now.toISOString(),
+    isSystemMessage: true,
+    seenBy: participantPhones,
+  });
+}
+
+async function startGroupChatClosure(db, chatDoc, reason, messagePrefix) {
+  const chat = chatDoc.data() || {};
+  if (chat.isDeleted === true || chat.chatRemovesAtLocal) {
+    return false;
+  }
+  const now = new Date();
+  const removesAt = new Date(now.getTime() + 60 * 60 * 1000);
+  await chatDoc.ref.set(
+    {
+      hikeEndedAtLocal: now.toISOString(),
+      chatRemovesAtLocal: removesAt.toISOString(),
+      closureReason: reason,
+      isDeleted: false,
+      lastMessage: `${messagePrefix} (${formatAppLocalClock(removesAt)})`,
+      lastMessageAtLocal: now.toISOString(),
+      lastMessageSenderPhone: 'system',
+      closureNoticeSentAt:
+        admin.firestore.FieldValue.serverTimestamp(),
+      closureNoticeSentAtLocal: now.toISOString(),
+    },
+    { merge: true }
+  );
+  await sendGroupChatSystemMessage(
+    db,
+    chatDoc,
+    `${messagePrefix} (${formatAppLocalClock(removesAt)})`
+  );
+  return true;
+}
+
 function groupChatMessagePreview(message) {
   const text = String(message.text || '').replace(/\s+/g, ' ').trim();
   if (text) {
@@ -1401,8 +1509,15 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
     }
     const chatSnapshot = await chatReference.get();
     const chat = chatSnapshot.data() || {};
+    const chatRemovesAt = dateMillis(chat.chatRemovesAtLocal);
+    if (
+      chat.isDeleted === true ||
+      (Number.isFinite(chatRemovesAt) && chatRemovesAt <= Date.now())
+    ) {
+      return;
+    }
     const senderPhone = String(message.senderPhone || '');
-    const senderPhoneDigits = senderPhone.replace(/\D/g, '');
+    const senderPhoneDigits = phoneKeyFor(senderPhone);
     const participantPhones = [
       ...new Set(
         (Array.isArray(chat.participantPhones)
@@ -1412,7 +1527,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
           .map((phone) => String(phone || ''))
           .filter((phone) => {
             if (!phone) return false;
-            if (phone.replace(/\D/g, '') === senderPhoneDigits) return false;
+            if (phoneKeyFor(phone) === senderPhoneDigits) return false;
             return true;
           })
       ),
@@ -1448,30 +1563,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
         continue;
       }
 
-      const boundAppInstanceId = user.boundAppInstanceId ||
-        user.currentAppId || null;
-      const fcmTokenByAppId = user.fcmTokenByAppId || {};
-      const hasAppTokenMap = typeof user.fcmTokenByAppId === 'object' &&
-        user.fcmTokenByAppId !== null &&
-        Object.keys(user.fcmTokenByAppId).length > 0;
-      const userTokens = new Set();
-      if (hasAppTokenMap) {
-        if (boundAppInstanceId && fcmTokenByAppId[boundAppInstanceId]) {
-          userTokens.add(fcmTokenByAppId[boundAppInstanceId]);
-        }
-      } else {
-        if (Array.isArray(user.fcmTokens)) {
-          for (const t of user.fcmTokens) {
-            if (typeof t === 'string') userTokens.add(t);
-          }
-        }
-        if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
-          userTokens.add(user.lastFcmToken);
-        }
-      }
-      const validTokens = [...userTokens].filter(
-        (token) => typeof token === 'string' && token.length > 20
-      );
+      const validTokens = latestFcmTokensForUser(user);
       if (validTokens.length === 0) {
         continue;
       }
@@ -1553,12 +1645,17 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       const freshChat = freshChatSnapshot.data() || {};
       const unreadUpdates = {};
       for (const phone of participantPhones) {
-        const lastReadAt = freshChat.lastReadAt && freshChat.lastReadAt[phone];
+        const phoneKey = phoneKeyFor(phone);
+        if (!phoneKey || phoneKey === senderPhoneDigits) {
+          continue;
+        }
+        const lastReadAt =
+          freshChat.lastReadAt && freshChat.lastReadAt[phoneKey];
         const lastReadAtMs = lastReadAt
           ? new Date(lastReadAt).getTime()
           : 0;
         if (messageTimeMs > lastReadAtMs) {
-          unreadUpdates[`unreadCount.${phone}`] =
+          unreadUpdates[`unreadCount.${phoneKey}`] =
             admin.firestore.FieldValue.increment(1);
         }
       }
@@ -1606,30 +1703,7 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
       .doc(recipientPhone.replace(/\//g, '_'))
       .get();
     const user = userSnapshot.data() || {};
-    const boundAppInstanceId = user.boundAppInstanceId ||
-      user.currentAppId || null;
-    const fcmTokenByAppId = user.fcmTokenByAppId || {};
-    const hasAppTokenMap = typeof user.fcmTokenByAppId === 'object' &&
-      user.fcmTokenByAppId !== null &&
-      Object.keys(user.fcmTokenByAppId).length > 0;
-    const userTokens = new Set();
-    if (hasAppTokenMap) {
-      if (boundAppInstanceId && fcmTokenByAppId[boundAppInstanceId]) {
-        userTokens.add(fcmTokenByAppId[boundAppInstanceId]);
-      }
-    } else {
-      if (Array.isArray(user.fcmTokens)) {
-        for (const t of user.fcmTokens) {
-          if (typeof t === 'string') userTokens.add(t);
-        }
-      }
-      if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
-        userTokens.add(user.lastFcmToken);
-      }
-    }
-    const tokenList = [...userTokens].filter(
-      (token) => typeof token === 'string' && token.length > 20
-    );
+    const tokenList = latestFcmTokensForUser(user);
     if (tokenList.length === 0) {
       await event.data.ref.set(
         {
@@ -1725,30 +1799,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
         continue;
       }
 
-      const boundAppInstanceId = user.boundAppInstanceId ||
-        user.currentAppId || null;
-      const fcmTokenByAppId = user.fcmTokenByAppId || {};
-      const hasAppTokenMap = typeof user.fcmTokenByAppId === 'object' &&
-        user.fcmTokenByAppId !== null &&
-        Object.keys(user.fcmTokenByAppId).length > 0;
-      const userTokens = new Set();
-      if (hasAppTokenMap) {
-        if (boundAppInstanceId && fcmTokenByAppId[boundAppInstanceId]) {
-          userTokens.add(fcmTokenByAppId[boundAppInstanceId]);
-        }
-      } else {
-        if (Array.isArray(user.fcmTokens)) {
-          for (const t of user.fcmTokens) {
-            if (typeof t === 'string') userTokens.add(t);
-          }
-        }
-        if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
-          userTokens.add(user.lastFcmToken);
-        }
-      }
-      const validTokens = [...userTokens].filter(
-        (token) => typeof token === 'string' && token.length > 20
-      );
+      const validTokens = latestFcmTokensForUser(user);
       if (validTokens.length === 0) {
         continue;
       }
@@ -1839,6 +1890,178 @@ exports.sendReminderOnActiveHikeTerminationSignal = onDocumentUpdated(
     );
   }
 );
+
+async function sendUpcomingHikeReminderToPhone(db, hikeId, hike, phoneNumber) {
+  const phone = String(phoneNumber || '').trim();
+  if (!phone) {
+    return { successCount: 0, failureCount: 0, skipped: true };
+  }
+  const userSnapshot = await db
+    .collection('users')
+    .doc(userDocumentIdForPhone(phone))
+    .get();
+  if (!userSnapshot.exists) {
+    return { successCount: 0, failureCount: 0, skipped: true };
+  }
+  const tokenList = latestFcmTokensForUser(userSnapshot.data() || {});
+  if (tokenList.length === 0) {
+    return { successCount: 0, failureCount: 0, skipped: true };
+  }
+
+  const creatorPhone = String(hike.creatorPhone || '');
+  const isHost = phoneKeyFor(phone) === phoneKeyFor(creatorPhone);
+  const trailName = String(hike.trailName || 'your hike');
+  const deepLink =
+    `hikercircle://upcoming-hike/view?upcomingHikeId=` +
+    encodeURIComponent(hikeId);
+  let successCount = 0;
+  let failureCount = 0;
+  for (let index = 0; index < tokenList.length; index += 500) {
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens: tokenList.slice(index, index + 500),
+      notification: {
+        title: isHost ? 'Prepare to start your hike' : 'Upcoming hike reminder',
+        body: isHost
+          ? `${trailName} starts in about 30 minutes. Open HikerCircle to prepare.`
+          : `${trailName} starts in about 30 minutes. Get ready to join.`,
+      },
+      data: {
+        type: 'upcoming_hike_30_minute_reminder',
+        upcomingHikeId: hikeId,
+        deepLink,
+        role: isHost ? 'host' : 'participant',
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'hiker_circle_upcoming_hikes',
+          priority: 'high',
+        },
+      },
+      apns: {
+        headers: { 'apns-priority': '10' },
+        payload: { aps: { sound: 'default' } },
+      },
+    });
+    successCount += response.successCount;
+    failureCount += response.failureCount;
+  }
+  return { successCount, failureCount, skipped: false };
+}
+
+exports.processUpcomingHikeLifecycle = onSchedule(
+  'every 5 minutes',
+  async () => {
+    const db = admin.firestore();
+    const now = Date.now();
+    const reminderWindowEnd = now + 30 * 60 * 1000;
+    const expiredBefore = now - 60 * 60 * 1000;
+    const snapshot = await db.collection('upcomingHikes').get();
+
+    let hiddenCount = 0;
+    let reminderHikeCount = 0;
+    let reminderSuccessCount = 0;
+    let reminderFailureCount = 0;
+
+    for (const document of snapshot.docs) {
+      const hike = document.data() || {};
+      if (hike.isDeleted === true) {
+        continue;
+      }
+      const departureMillis = dateMillis(
+        hike.departureTimeLocal || hike.departureTime
+      );
+      if (!Number.isFinite(departureMillis)) {
+        continue;
+      }
+
+      if (departureMillis <= expiredBefore) {
+        await document.ref.set(
+          {
+            isDeleted: true,
+            deletedReason: 'departure_time_expired',
+            deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            deletedAtLocal: new Date(now).toISOString(),
+          },
+          { merge: true }
+        );
+        hiddenCount++;
+        continue;
+      }
+
+      if (
+        hike.reminder30SentAtLocal ||
+        departureMillis <= now ||
+        departureMillis > reminderWindowEnd
+      ) {
+        continue;
+      }
+
+      const phones = new Set();
+      const creatorPhone = String(hike.creatorPhone || '').trim();
+      if (creatorPhone) {
+        phones.add(creatorPhone);
+      }
+      if (Array.isArray(hike.participantPhones)) {
+        for (const phone of hike.participantPhones) {
+          const normalized = String(phone || '').trim();
+          if (normalized) {
+            phones.add(normalized);
+          }
+        }
+      }
+      if (phones.size === 0) {
+        continue;
+      }
+
+      for (const phone of phones) {
+        const result = await sendUpcomingHikeReminderToPhone(
+          db,
+          document.id,
+          hike,
+          phone
+        );
+        reminderSuccessCount += result.successCount;
+        reminderFailureCount += result.failureCount;
+      }
+      await document.ref.set(
+        {
+          reminder30SentAt: admin.firestore.FieldValue.serverTimestamp(),
+          reminder30SentAtLocal: new Date(now).toISOString(),
+          reminder30TargetCount: phones.size,
+        },
+        { merge: true }
+      );
+      reminderHikeCount++;
+    }
+
+    logger.log(
+      `Upcoming hike lifecycle: hidden ${hiddenCount}, reminded ${reminderHikeCount} hikes, ${reminderSuccessCount} sent, ${reminderFailureCount} failed.`
+    );
+  }
+);
+
+exports.cleanExpiredUpcomingHikes = onSchedule('every 60 minutes', async () => {
+  const db = admin.firestore();
+  const expiredBefore = Date.now() - 60 * 60 * 1000;
+  const snapshot = await db.collection('upcomingHikes').get();
+  let deletedCount = 0;
+
+  for (const document of snapshot.docs) {
+    const hike = document.data() || {};
+    const departureMillis = dateMillis(
+      hike.departureTimeLocal || hike.departureTime
+    );
+    if (!Number.isFinite(departureMillis) || departureMillis > expiredBefore) {
+      continue;
+    }
+
+    await document.ref.delete();
+    deletedCount++;
+  }
+
+  logger.log(`Deleted ${deletedCount} expired upcoming hike documents.`);
+});
 
 exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
   'every 1 minutes',
@@ -1971,4 +2194,87 @@ exports.cleanStaleHikeSessions = onSchedule('every 15 minutes', async () => {
   }
 
   logger.log(`Cleaned ${cleanedCount} stale hike sessions.`);
+});
+
+exports.cleanExpiredGroupChats = onSchedule('every 60 minutes', async () => {
+  const db = admin.firestore();
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const orphanThreshold = now - 60 * 60 * 1000;
+
+  const snapshot = await db
+    .collection('groupChats')
+    .where('chatType', '==', 'group')
+    .get();
+
+  let deletedCount = 0;
+  let noticeCount = 0;
+
+  for (const document of snapshot.docs) {
+    const chat = document.data() || {};
+    if (chat.isDeleted === true) {
+      continue;
+    }
+
+    const removesAt = dateMillis(chat.chatRemovesAtLocal);
+    if (Number.isFinite(removesAt) && removesAt <= now) {
+      await document.ref.set(
+        {
+          isDeleted: true,
+          deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          deletedAtLocal: nowIso,
+        },
+        { merge: true }
+      );
+      deletedCount++;
+      continue;
+    }
+
+    if (chat.chatRemovesAtLocal || chat.hikeEndedAtLocal) {
+      continue;
+    }
+
+    const createdAt = dateMillis(chat.createdAtLocal || chat.createdAt);
+    if (!Number.isFinite(createdAt) || createdAt > orphanThreshold) {
+      continue;
+    }
+
+    const hikeSessionId = String(chat.hikeSessionId || '').trim();
+    const teamHikeSessionId = String(chat.teamHikeSessionId || '').trim();
+    let hasAssociatedHike = false;
+
+    if (hikeSessionId) {
+      const [upcomingSnapshot, activeSnapshot] = await Promise.all([
+        db.collection('upcomingHikes').doc(hikeSessionId).get(),
+        db.collection('hikeSessions').doc(hikeSessionId).get(),
+      ]);
+      hasAssociatedHike = upcomingSnapshot.exists || activeSnapshot.exists;
+    }
+
+    if (!hasAssociatedHike && teamHikeSessionId) {
+      const teamSnapshot = await db
+        .collection('teamHikeSessions')
+        .doc(teamHikeSessionId)
+        .get();
+      hasAssociatedHike = teamSnapshot.exists;
+    }
+
+    if (hasAssociatedHike) {
+      continue;
+    }
+
+    const started = await startGroupChatClosure(
+      db,
+      document,
+      'no_upcoming_hike',
+      'No upcoming hike is associated to this chat, chat will be ended and removed on'
+    );
+    if (started) {
+      noticeCount++;
+    }
+  }
+
+  logger.log(
+    `Group chat cleaner marked ${deletedCount} deleted and started ${noticeCount} closure notices.`
+  );
 });

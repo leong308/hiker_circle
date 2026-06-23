@@ -33,6 +33,8 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
   String? _hikeFrequency;
   ResidentialCitySelection? _residentialCity;
   bool _isSaving = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
   String? _errorMessage;
 
   @override
@@ -220,27 +222,65 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                       const SizedBox(height: 14),
                       TextFormField(
                         controller: _passwordController,
-                        obscureText: true,
+                        obscureText: _obscurePassword,
                         enabled: !_isSaving,
                         textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Password',
-                          prefixIcon: Icon(Icons.key),
+                          prefixIcon: const Icon(Icons.key),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscurePassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            tooltip: _obscurePassword
+                                ? 'Show password'
+                                : 'Hide password',
+                            onPressed: _isSaving
+                                ? null
+                                : () {
+                                    setState(
+                                      () =>
+                                          _obscurePassword = !_obscurePassword,
+                                    );
+                                  },
+                          ),
                         ),
                         validator: (value) {
-                          final result = PasswordValidator.validate(value ?? '');
+                          final result = PasswordValidator.validate(
+                            value ?? '',
+                          );
                           return result.isValid ? null : result.errorMessage;
                         },
                       ),
                       const SizedBox(height: 14),
                       TextFormField(
                         controller: _confirmPasswordController,
-                        obscureText: true,
+                        obscureText: _obscureConfirmPassword,
                         enabled: !_isSaving,
                         textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Confirm password',
-                          prefixIcon: Icon(Icons.key),
+                          prefixIcon: const Icon(Icons.key),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscureConfirmPassword
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            tooltip: _obscureConfirmPassword
+                                ? 'Show password'
+                                : 'Hide password',
+                            onPressed: _isSaving
+                                ? null
+                                : () {
+                                    setState(
+                                      () => _obscureConfirmPassword =
+                                          !_obscureConfirmPassword,
+                                    );
+                                  },
+                          ),
                         ),
                         validator: (value) {
                           if (value != _passwordController.text) {
@@ -298,7 +338,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                         onChanged: _isSaving
                             ? null
                             : (value) =>
-                                setState(() => _hikerExperience = value),
+                                  setState(() => _hikerExperience = value),
                         validator: (value) => value == null
                             ? 'Select your hiking experience.'
                             : null,

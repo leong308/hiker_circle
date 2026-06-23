@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:http/http.dart' as http;
 
 import '../Model/app_session.dart';
 import 'firebase_user_repository.dart';
@@ -44,8 +47,12 @@ class SessionRepository {
       final boundSession = savedSession.copyWith(appInstanceId: appInstanceId);
       final refreshedSession = await _firebaseUserRepository
           .refreshBoundSession(boundSession);
-      await _localSessionDatabase.saveSession(refreshedSession);
-      _session = refreshedSession;
+      final cachedSession = await _withCachedProfilePhoto(
+        refreshedSession,
+        previousSession: savedSession,
+      );
+      await _localSessionDatabase.saveSession(cachedSession);
+      _session = cachedSession;
     } catch (_) {
       await _firebaseUserRepository.signOut();
       await _localSessionDatabase.clearSession();
@@ -66,8 +73,12 @@ class SessionRepository {
           .loadOrCreateAppInstanceId();
       final registeredSession = await _firebaseUserRepository
           .registerOrLoadUser(session.copyWith(appInstanceId: appInstanceId));
-      await _localSessionDatabase.saveSession(registeredSession);
-      _session = registeredSession;
+      final cachedSession = await _withCachedProfilePhoto(
+        registeredSession,
+        previousSession: existingSession,
+      );
+      await _localSessionDatabase.saveSession(cachedSession);
+      _session = cachedSession;
     } on SessionRepositoryException {
       rethrow;
     } on FirebaseUserRepositoryException catch (error) {
@@ -87,8 +98,12 @@ class SessionRepository {
     try {
       final refreshedSession = await _firebaseUserRepository
           .refreshBoundSession(session);
-      await _localSessionDatabase.saveSession(refreshedSession);
-      _session = refreshedSession;
+      final cachedSession = await _withCachedProfilePhoto(
+        refreshedSession,
+        previousSession: session,
+      );
+      await _localSessionDatabase.saveSession(cachedSession);
+      _session = cachedSession;
     } on FirebaseUserRepositoryException catch (error) {
       throw SessionRepositoryException(error.message);
     }
@@ -98,5 +113,49 @@ class SessionRepository {
     _session = null;
     unawaited(_firebaseUserRepository.signOut());
     unawaited(_localSessionDatabase.clearSession());
+  }
+
+  Future<AppSession> _withCachedProfilePhoto(
+    AppSession session, {
+    AppSession? previousSession,
+  }) async {
+    final photoURL = session.photoURL?.trim() ?? '';
+    if (photoURL.isEmpty) {
+      return session;
+    }
+    final previousPhotoURL = previousSession?.photoURL?.trim() ?? '';
+    final previousBytes = previousSession?.photoBytes;
+    if (previousPhotoURL == photoURL &&
+        previousBytes != null &&
+        previousBytes.isNotEmpty) {
+      return session.copyWith(photoBytes: previousBytes);
+    }
+
+    final downloadedBytes = await _downloadProfilePhoto(photoURL);
+    if (downloadedBytes == null || downloadedBytes.isEmpty) {
+      return previousBytes == null
+          ? session
+          : session.copyWith(photoBytes: previousBytes);
+    }
+    return session.copyWith(photoBytes: downloadedBytes);
+  }
+
+  Future<Uint8List?> _downloadProfilePhoto(String url) async {
+    try {
+      final uri = Uri.tryParse(url);
+      if (uri == null || !uri.hasScheme) {
+        return null;
+      }
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      if (response.bodyBytes.length > 10 * 1024 * 1024) {
+        return null;
+      }
+      return response.bodyBytes;
+    } catch (_) {
+      return null;
+    }
   }
 }

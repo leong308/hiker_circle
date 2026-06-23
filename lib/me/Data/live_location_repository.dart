@@ -64,7 +64,7 @@ class LiveLocationRepository {
       );
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }
@@ -121,7 +121,7 @@ class LiveLocationRepository {
       );
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }
@@ -164,7 +164,7 @@ class LiveLocationRepository {
       await batch.commit();
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }
@@ -199,7 +199,7 @@ class LiveLocationRepository {
       await batch.commit();
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }

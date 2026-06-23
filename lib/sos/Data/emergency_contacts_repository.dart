@@ -85,7 +85,7 @@ class EmergencyContactsRepository {
         return localContacts;
       }
       throw EmergencyContactsRepositoryException(
-        'Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }
@@ -117,7 +117,7 @@ class EmergencyContactsRepository {
       }, SetOptions(merge: true));
     } on FirebaseException catch (error) {
       throw EmergencyContactsRepositoryException(
-        'Saved on this phone, but cloud sync failed. Firestore ${error.code}: ${error.message ?? 'No details provided.'}',
+        'Saved on this phone, but cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
       );
     }
   }

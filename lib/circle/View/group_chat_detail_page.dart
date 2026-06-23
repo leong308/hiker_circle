@@ -139,19 +139,14 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   }
 
   Future<void> _showMoreMenu(BuildContext context) async {
-    final isHost =
-        widget.chat.creatorPhone == widget.session.phoneNumber;
+    final isHost = widget.chat.creatorPhone == widget.session.phoneNumber;
     final renderBox = context.findRenderObject() as RenderBox;
     final offset = renderBox.localToGlobal(Offset.zero);
     final screenSize = MediaQuery.of(context).size;
     await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
-        Rect.fromLTWH(
-          screenSize.width - 1,
-          offset.dy + kToolbarHeight,
-          1, 1,
-        ),
+        Rect.fromLTWH(screenSize.width - 1, offset.dy + kToolbarHeight, 1, 1),
         Offset.zero & screenSize,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -174,8 +169,11 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         if (isHost)
           PopupMenuItem(
             value: 'delete_all',
-            child: _moreRow(Icons.delete_forever_rounded, 'Delete Chat & Hike Session',
-                isDestructive: true),
+            child: _moreRow(
+              Icons.delete_forever_rounded,
+              'Delete Chat & Hike Session',
+              isDestructive: true,
+            ),
           ),
       ],
     );
@@ -266,7 +264,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   void _previousMatch() {
     if (_matchedIndices.isEmpty) return;
     setState(() {
-      _currentMatchIndex = (_currentMatchIndex - 1 + _matchedIndices.length) % _matchedIndices.length;
+      _currentMatchIndex =
+          (_currentMatchIndex - 1 + _matchedIndices.length) %
+          _matchedIndices.length;
     });
     _scrollToMatch();
   }
@@ -287,7 +287,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       } else if (_scrollController.hasClients) {
         final estimatedOffset = _messages.isNotEmpty
             ? (idx / _messages.length) *
-                _scrollController.position.maxScrollExtent
+                  _scrollController.position.maxScrollExtent
             : 0.0;
         _scrollController
             .animateTo(
@@ -315,13 +315,19 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     });
   }
 
-  Widget _searchArrowButton(IconData icon, VoidCallback onTap, {bool enabled = true}) {
+  Widget _searchArrowButton(
+    IconData icon,
+    VoidCallback onTap, {
+    bool enabled = true,
+  }) {
     return SizedBox(
       width: 32,
       height: 32,
       child: IconButton(
         icon: Icon(icon, size: 20),
-        color: enabled ? _green : _secondaryTextFor(context).withValues(alpha: 0.4),
+        color: enabled
+            ? _green
+            : _secondaryTextFor(context).withValues(alpha: 0.4),
         onPressed: enabled ? onTap : null,
         padding: EdgeInsets.zero,
         splashRadius: 16,
@@ -528,7 +534,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
 
   void _loadInitialCutoff() {
     final myPhone = widget.session.phoneNumber;
-    final fromWidget = widget.chat.lastReadAt[myPhone];
+    final fromWidget = widget.chat.lastReadAtFor(myPhone);
     if (fromWidget != null) {
       setState(() {
         _unreadCutoffTime = fromWidget;
@@ -540,8 +546,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   }
 
   Future<void> _loadLocalReadReceipt() async {
-    final local = await widget.repository.localDatabase
-        .loadChatReadReceipt(widget.chat.id);
+    final local = await widget.repository.localDatabase.loadChatReadReceipt(
+      widget.chat.id,
+    );
     if (local != null && mounted) {
       setState(() {
         _unreadCutoffTime = local;
@@ -552,7 +559,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
 
   void _computeUnreadPosition() {
     final myPhone = widget.session.phoneNumber;
-    final cutoff = _unreadCutoffTime ?? widget.chat.lastReadAt[myPhone];
+    final cutoff = _unreadCutoffTime ?? widget.chat.lastReadAtFor(myPhone);
     if (cutoff == null) {
       _firstUnreadIndex = null;
       _unreadMessagesCount = 0;
@@ -599,7 +606,8 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients || _messages.isEmpty) return;
       if (_firstUnreadIndex != null) {
-        final target = (_firstUnreadIndex! / _messages.length) *
+        final target =
+            (_firstUnreadIndex! / _messages.length) *
             _scrollController.position.maxScrollExtent;
         _scrollController.animateTo(
           target,
@@ -646,6 +654,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       text: text,
       sentAt: sentAt,
       sendStatus: SendStatus.sending,
+      senderPhotoURL: widget.session.photoURL ?? '',
     );
 
     setState(() {
@@ -794,6 +803,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         sentAt: sentAt,
         sendStatus: SendStatus.sending,
         attachment: attachment,
+        senderPhotoURL: widget.session.photoURL ?? '',
       );
       if (mounted) {
         setState(() {
@@ -1014,12 +1024,16 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                       onChanged: _onSearchChanged,
                       style: TextStyle(
                         fontSize: 15,
-                        color: isDark ? const Color(0xFFEAF4EE) : const Color(0xFF111111),
+                        color: isDark
+                            ? const Color(0xFFEAF4EE)
+                            : const Color(0xFF111111),
                       ),
                       decoration: InputDecoration(
                         hintText: 'Search…',
                         hintStyle: TextStyle(
-                          color: isDark ? const Color(0xFFA8B8AE) : const Color(0xFF6E6E73),
+                          color: isDark
+                              ? const Color(0xFFA8B8AE)
+                              : const Color(0xFF6E6E73),
                           fontSize: 15,
                         ),
                         filled: true,
@@ -1038,17 +1052,22 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF2B3A31) : const Color(0xFFE8EDEA),
+                      color: isDark
+                          ? const Color(0xFF2B3A31)
+                          : const Color(0xFFE8EDEA),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       _searchQuery.isEmpty
                           ? '0 of $_totalSearchableMessages'
                           : _matchedIndices.isEmpty
-                              ? '0 of $_totalSearchableMessages'
-                              : '${_currentMatchIndex + 1} of ${_matchedIndices.length}',
+                          ? '0 of $_totalSearchableMessages'
+                          : '${_currentMatchIndex + 1} of ${_matchedIndices.length}',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -1073,7 +1092,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                 widget.chat.displayNameFor(widget.session.phoneNumber),
                 style: TextStyle(
                   fontWeight: FontWeight.w700,
-                  color: isDark ? const Color(0xFFEAF4EE) : const Color(0xFF111111),
+                  color: isDark
+                      ? const Color(0xFFEAF4EE)
+                      : const Color(0xFF111111),
                 ),
               ),
         leading: _isSearching
@@ -1086,65 +1107,62 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         actions: [
           if (!_isSearching)
             PopupMenuButton<_ChatMenuAction>(
-            icon: const Icon(
-              Icons.more_vert_rounded,
-              color: _green,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            color: _surfaceFor(context),
-            surfaceTintColor: Colors.transparent,
-            onSelected: (action) async {
-              if (action == _ChatMenuAction.search) {
-                if (!context.mounted) return;
-                _enterSearch();
-              } else if (action == _ChatMenuAction.media) {
-                if (!context.mounted) return;
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => _SharedMediaPage(
-                      messages: _messages,
-                      chatName: widget.chat.displayNameFor(
-                        widget.session.phoneNumber,
+              icon: const Icon(Icons.more_vert_rounded, color: _green),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              color: _surfaceFor(context),
+              surfaceTintColor: Colors.transparent,
+              onSelected: (action) async {
+                if (action == _ChatMenuAction.search) {
+                  if (!context.mounted) return;
+                  _enterSearch();
+                } else if (action == _ChatMenuAction.media) {
+                  if (!context.mounted) return;
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => _SharedMediaPage(
+                        messages: _messages,
+                        chatName: widget.chat.displayNameFor(
+                          widget.session.phoneNumber,
+                        ),
                       ),
                     ),
-                  ),
-                );
-              } else if (action == _ChatMenuAction.mute) {
-                await _openChatSettings();
-              } else if (action == _ChatMenuAction.more) {
-                if (!context.mounted) return;
-                await _showMoreMenu(context);
-              }
-            },
-            itemBuilder: (context) => [
-              _menuItem(
-                Icons.search_rounded,
-                'Search',
-                _ChatMenuAction.search,
-              ),
-              _menuItem(
-                Icons.perm_media_rounded,
-                'Media, links, docs',
-                _ChatMenuAction.media,
-              ),
-              PopupMenuDivider(height: 1),
-              _menuItem(
-                _isChatMuted
-                    ? Icons.notifications_off_rounded
-                    : Icons.notifications_active_rounded,
-                _isChatMuted ? 'Unmute notifications' : 'Mute notifications',
-                _ChatMenuAction.mute,
-              ),
-              PopupMenuDivider(height: 1),
-              _menuItem(
-                Icons.more_horiz_rounded,
-                'More',
-                _ChatMenuAction.more,
-              ),
-            ],
-          ),
+                  );
+                } else if (action == _ChatMenuAction.mute) {
+                  await _openChatSettings();
+                } else if (action == _ChatMenuAction.more) {
+                  if (!context.mounted) return;
+                  await _showMoreMenu(context);
+                }
+              },
+              itemBuilder: (context) => [
+                _menuItem(
+                  Icons.search_rounded,
+                  'Search',
+                  _ChatMenuAction.search,
+                ),
+                _menuItem(
+                  Icons.perm_media_rounded,
+                  'Media, links, docs',
+                  _ChatMenuAction.media,
+                ),
+                PopupMenuDivider(height: 1),
+                _menuItem(
+                  _isChatMuted
+                      ? Icons.notifications_off_rounded
+                      : Icons.notifications_active_rounded,
+                  _isChatMuted ? 'Unmute notifications' : 'Mute notifications',
+                  _ChatMenuAction.mute,
+                ),
+                PopupMenuDivider(height: 1),
+                _menuItem(
+                  Icons.more_horiz_rounded,
+                  'More',
+                  _ChatMenuAction.more,
+                ),
+              ],
+            ),
           const SizedBox(width: 6),
         ],
       ),
@@ -1198,15 +1216,16 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                       } else {
                         final isPending = msg.sendStatus == SendStatus.sending;
                         final matchIndex = _matchedIndices.indexOf(index);
-                        final isHighlighted = matchIndex >= 0 &&
-                            matchIndex == _currentMatchIndex;
+                        final isHighlighted =
+                            matchIndex >= 0 && matchIndex == _currentMatchIndex;
 
                         final isGroupChat = !widget.chat.isDirect;
-                        final prevSender = index > 0 &&
-                                !_messages[index - 1].isSystemMessage
+                        final prevSender =
+                            index > 0 && !_messages[index - 1].isSystemMessage
                             ? _messages[index - 1].senderPhone
                             : null;
-                        final nextSender = index < _messages.length - 1 &&
+                        final nextSender =
+                            index < _messages.length - 1 &&
                                 !_messages[index + 1].isSystemMessage
                             ? _messages[index + 1].senderPhone
                             : null;
@@ -1226,6 +1245,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                           isGroupChat: isGroupChat,
                           isFirstInBlock: isFirstInBlock,
                           isLastInBlock: isLastInBlock,
+                          currentUserPhotoBytes: widget.session.photoBytes,
                           onTickTap: isMe && !isPending
                               ? () => _showReadReceipts(msg)
                               : null,
@@ -1235,13 +1255,15 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                       return Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (index == _firstUnreadIndex)
-                            _buildUnreadDivider(),
-                          if (_isSearching && _searchQuery.isNotEmpty &&
+                          if (index == _firstUnreadIndex) _buildUnreadDivider(),
+                          if (_isSearching &&
+                              _searchQuery.isNotEmpty &&
                               _matchedIndices.contains(index))
                             Container(
                               key: _messageKeys.putIfAbsent(
-                                  index, () => GlobalKey()),
+                                index,
+                                () => GlobalKey(),
+                              ),
                               child: item,
                             )
                           else
@@ -1677,6 +1699,7 @@ class _MessageBubble extends StatelessWidget {
     this.isGroupChat = false,
     this.isFirstInBlock = true,
     this.isLastInBlock = true,
+    this.currentUserPhotoBytes,
     this.onTickTap,
   });
 
@@ -1689,6 +1712,7 @@ class _MessageBubble extends StatelessWidget {
   final bool isGroupChat;
   final bool isFirstInBlock;
   final bool isLastInBlock;
+  final Uint8List? currentUserPhotoBytes;
   final VoidCallback? onTickTap;
 
   @override
@@ -1733,15 +1757,15 @@ class _MessageBubble extends StatelessWidget {
 
     final bubbleColor = isHighlighted
         ? (isMe
-            ? const Color(0xFF2E7D32)
-            : isDark
-                ? const Color(0xFF2B3A31)
-                : const Color(0xFFE0EED8))
+              ? const Color(0xFF2E7D32)
+              : isDark
+              ? const Color(0xFF2B3A31)
+              : const Color(0xFFE0EED8))
         : (isMe
-            ? _green
-            : isDark
-                ? const Color(0xFF1B261F)
-                : const Color(0xFFE0E4E0));
+              ? _green
+              : isDark
+              ? const Color(0xFF1B261F)
+              : const Color(0xFFE0E4E0));
 
     final showUsername = !isMe && isGroupChat && isFirstInBlock;
     final showHead = isGroupChat && isLastInBlock;
@@ -1749,10 +1773,7 @@ class _MessageBubble extends StatelessWidget {
     final bubbleRightPadding = isGroupChat ? 40.0 : 8.0;
 
     return Padding(
-      padding: EdgeInsets.only(
-        top: 3,
-        bottom: showHead ? 3 : 1,
-      ),
+      padding: EdgeInsets.only(top: 3, bottom: showHead ? 3 : 1),
       child: GestureDetector(
         onTap: onTickTap,
         child: Column(
@@ -1779,7 +1800,11 @@ class _MessageBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (!isMe && showHead)
-                  _ChatHead(name: message.senderName),
+                  _ChatHead(
+                    name: message.senderName,
+                    imageUrl: message.senderPhotoURL,
+                    imageBytes: isMe ? currentUserPhotoBytes : null,
+                  ),
                 if (!isMe) SizedBox(width: showHead ? 8 : bubbleLeftPadding),
                 Flexible(
                   child: Container(
@@ -1847,7 +1872,11 @@ class _MessageBubble extends StatelessWidget {
                 ),
                 if (isMe && showHead) const SizedBox(width: 8),
                 if (isMe && showHead)
-                  _ChatHead(name: message.senderName),
+                  _ChatHead(
+                    name: message.senderName,
+                    imageUrl: message.senderPhotoURL,
+                    imageBytes: isMe ? currentUserPhotoBytes : null,
+                  ),
                 if (isMe) SizedBox(width: showHead ? 0 : bubbleRightPadding),
               ],
             ),
@@ -1870,9 +1899,11 @@ class _MessageBubble extends StatelessWidget {
 }
 
 class _ChatHead extends StatelessWidget {
-  const _ChatHead({required this.name});
+  const _ChatHead({required this.name, this.imageUrl = '', this.imageBytes});
 
   final String name;
+  final String imageUrl;
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1889,23 +1920,39 @@ class _ChatHead extends StatelessWidget {
       const Color(0xFF795548),
     ];
     final color = colors[hash.abs() % colors.length];
+    final trimmedImageUrl = imageUrl.trim();
 
     return Container(
       width: 32,
       height: 32,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      clipBehavior: Clip.antiAlias,
       alignment: Alignment.center,
-      child: Text(
-        initial,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
+      child: imageBytes != null && imageBytes!.isNotEmpty
+          ? Image.memory(imageBytes!, width: 32, height: 32, fit: BoxFit.cover)
+          : trimmedImageUrl.isEmpty
+          ? Text(
+              initial,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            )
+          : Image.network(
+              trimmedImageUrl,
+              width: 32,
+              height: 32,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Text(
+                initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
     );
   }
 }
@@ -2122,9 +2169,7 @@ class _LinkedMessageText extends StatelessWidget {
         break;
       }
       if (matchStart > cursor) {
-        spans.add(
-          TextSpan(text: text.substring(cursor, matchStart)),
-        );
+        spans.add(TextSpan(text: text.substring(cursor, matchStart)));
       }
       spans.add(
         TextSpan(
@@ -2148,10 +2193,7 @@ class _LinkedMessageText extends StatelessWidget {
 }
 
 class _SharedMediaPage extends StatefulWidget {
-  const _SharedMediaPage({
-    required this.messages,
-    required this.chatName,
-  });
+  const _SharedMediaPage({required this.messages, required this.chatName});
 
   final List<ChatMessage> messages;
   final String chatName;
@@ -2246,11 +2288,7 @@ class _SharedMediaPageState extends State<_SharedMediaPage>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _buildMediaTab(),
-          _buildDocsTab(),
-          _buildLinksTab(),
-        ],
+        children: [_buildMediaTab(), _buildDocsTab(), _buildLinksTab()],
       ),
     );
   }
@@ -2330,11 +2368,8 @@ class _SharedMediaPageState extends State<_SharedMediaPage>
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: _docMessages.length,
-      separatorBuilder: (_, _) => Divider(
-        height: 1,
-        indent: 72,
-        color: _separatorFor(context),
-      ),
+      separatorBuilder: (_, _) =>
+          Divider(height: 1, indent: 72, color: _separatorFor(context)),
       itemBuilder: (context, index) {
         final msg = _docMessages[index];
         final att = msg.attachment!;
@@ -2358,11 +2393,8 @@ class _SharedMediaPageState extends State<_SharedMediaPage>
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: _linkItems.length,
-      separatorBuilder: (_, _) => Divider(
-        height: 1,
-        indent: 72,
-        color: _separatorFor(context),
-      ),
+      separatorBuilder: (_, _) =>
+          Divider(height: 1, indent: 72, color: _separatorFor(context)),
       itemBuilder: (context, index) {
         final item = _linkItems[index];
         return _FileListTile(
@@ -2382,10 +2414,7 @@ class _SharedMediaPageState extends State<_SharedMediaPage>
     return Center(
       child: Text(
         text,
-        style: TextStyle(
-          color: _secondaryTextFor(context),
-          fontSize: 15,
-        ),
+        style: TextStyle(color: _secondaryTextFor(context), fontSize: 15),
       ),
     );
   }
@@ -2774,76 +2803,73 @@ class _HikeDetailSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            ...chat.participantPhones.map(
-              (phone) {
-                final phoneKey = phone.replaceAll(RegExp(r'[^0-9]'), '');
-                final name = chat.participantNames[phoneKey]?.trim() ??
-                    phone;
-                final isHost = phone == hike.creatorPhone;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: _greenSoft,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.person_rounded,
-                          size: 16,
-                          color: _green,
-                        ),
+            ...chat.participantPhones.map((phone) {
+              final phoneKey = phone.replaceAll(RegExp(r'[^0-9]'), '');
+              final name = chat.participantNames[phoneKey]?.trim() ?? phone;
+              final isHost = phone == hike.creatorPhone;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: _greenSoft,
+                        shape: BoxShape.circle,
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    name,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: _textFor(context),
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
+                      child: const Icon(
+                        Icons.person_rounded,
+                        size: 16,
+                        color: _green,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  name,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: _textFor(context),
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (isHost) ...[
+                                const SizedBox(width: 6),
+                                Text(
+                                  '(Host)',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: _green,
                                   ),
                                 ),
-                                if (isHost) ...[
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '(Host)',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: _green,
-                                    ),
-                                  ),
-                                ],
                               ],
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            phone,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: _secondaryTextFor(context),
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              phone,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: _secondaryTextFor(context),
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ],
         ),
       ),
@@ -2991,10 +3017,7 @@ PopupMenuItem<_ChatMenuAction> _menuItem(
         const SizedBox(width: 14),
         Text(
           title,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w500,
-          ),
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
         ),
       ],
     ),
@@ -3002,10 +3025,7 @@ PopupMenuItem<_ChatMenuAction> _menuItem(
 }
 
 class _ChatMoreSheet extends StatelessWidget {
-  const _ChatMoreSheet({
-    required this.isHost,
-    required this.onOption,
-  });
+  const _ChatMoreSheet({required this.isHost, required this.onOption});
 
   final bool isHost;
   final ValueChanged<String> onOption;
@@ -3035,8 +3055,18 @@ class _ChatMoreSheet extends StatelessWidget {
                   ),
                 ),
               ),
-              _moreOption(context, Icons.exit_to_app_rounded, 'Leave Group', 'leave'),
-              _moreOption(context, Icons.add_rounded, 'Add Shortcut', 'shortcut'),
+              _moreOption(
+                context,
+                Icons.exit_to_app_rounded,
+                'Leave Group',
+                'leave',
+              ),
+              _moreOption(
+                context,
+                Icons.add_rounded,
+                'Add Shortcut',
+                'shortcut',
+              ),
               _moreOption(context, Icons.flag_rounded, 'Report', 'report'),
               if (isHost)
                 _moreOption(
@@ -3055,7 +3085,13 @@ class _ChatMoreSheet extends StatelessWidget {
     );
   }
 
-  Widget _moreOption(BuildContext context, IconData icon, String label, String value, {bool isDestructive = false}) {
+  Widget _moreOption(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value, {
+    bool isDestructive = false,
+  }) {
     return Column(
       children: [
         const Divider(height: 1),
@@ -3065,7 +3101,11 @@ class _ChatMoreSheet extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             child: Row(
               children: [
-                Icon(icon, color: isDestructive ? Colors.red : _green, size: 22),
+                Icon(
+                  icon,
+                  color: isDestructive ? Colors.red : _green,
+                  size: 22,
+                ),
                 const SizedBox(width: 14),
                 Text(
                   label,

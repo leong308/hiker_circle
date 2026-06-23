@@ -12,6 +12,8 @@ import '../../core/widgets/route_preview_map.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 
+enum _StartHikeWizardStep { type, timing, buddies, trail, safety }
+
 class StartHikeWizardPage extends StatefulWidget {
   const StartHikeWizardPage({
     super.key,
@@ -31,55 +33,55 @@ class StartHikeWizardPage extends StatefulWidget {
 }
 
 class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
-  static const List<String> _checklistItems = [
-    'Drinking water',
-    'Charged phone',
-    'Power bank',
-    'Torch',
-    'First-aid kit',
-    'Rain protection',
-  ];
   static const List<TeamHikeBuddy> _teamBuddyOptions = [
     TeamHikeBuddy(
-      name: 'Aina',
-      handle: '@ainatrails',
+      name: 'Trail Buddy',
+      handle: 'Saved contact',
       phoneNumber: '+60123001001',
       role: 'Weather watcher',
       avatarColorValue: 0xFF34A853,
     ),
     TeamHikeBuddy(
-      name: 'Jason',
-      handle: '@jasonridge',
+      name: 'Route Partner',
+      handle: 'Saved contact',
       phoneNumber: '+60123001002',
       role: 'Ridge navigator',
       avatarColorValue: 0xFF2563EB,
     ),
     TeamHikeBuddy(
-      name: 'Mei Lin',
-      handle: '@meiclimbs',
+      name: 'Safety Contact',
+      handle: 'Saved contact',
       phoneNumber: '+60123001003',
       role: 'Checkpoint planner',
       avatarColorValue: 0xFFF59E0B,
     ),
     TeamHikeBuddy(
-      name: 'Farid',
-      handle: '@faridforest',
+      name: 'Team Sweep',
+      handle: 'Saved contact',
       phoneNumber: '+60123001004',
       role: 'Sweep and camera',
       avatarColorValue: 0xFF7C3AED,
     ),
   ];
 
-  static const int _soloFirstStep = 1;
-
   late final List<Trail> _trails;
   late HikeSessionDraft _draft;
-  int _stepIndex = _soloFirstStep;
+  int _stepIndex = 0;
+  bool _startNow = true;
 
-  int get _lastStep => _draft.hikeType == HikeType.team ? 5 : 3;
-  int get _firstStep => _draft.hikeType == HikeType.team ? 0 : _soloFirstStep;
-  int get _stepCount => _lastStep - _firstStep + 1;
-  int get _visibleStepIndex => _stepIndex - _firstStep;
+  bool get _isUpcomingHike => !_startNow;
+
+  List<_StartHikeWizardStep> get _steps => [
+    _StartHikeWizardStep.type,
+    _StartHikeWizardStep.timing,
+    if (_draft.hikeType == HikeType.team) _StartHikeWizardStep.buddies,
+    _StartHikeWizardStep.trail,
+    if (!_isUpcomingHike) _StartHikeWizardStep.safety,
+  ];
+
+  int get _lastStep => _steps.length - 1;
+  int get _stepCount => _steps.length;
+  int get _visibleStepIndex => _stepIndex;
   bool get _isFinalStep => _stepIndex == _lastStep;
 
   @override
@@ -101,8 +103,25 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   void _next() {
-    if (_draft.hikeType == HikeType.team &&
-        _stepIndex == 1 &&
+    final currentStep = _steps[_stepIndex];
+
+    if (currentStep == _StartHikeWizardStep.timing &&
+        _isUpcomingHike &&
+        _draft.departureTime.isBefore(_minimumScheduledDepartureTime())) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Scheduled hikes must start at least 10 minutes from now.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    if (currentStep == _StartHikeWizardStep.buddies &&
         _draft.teamBuddies.isEmpty) {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -115,8 +134,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       return;
     }
 
-    final checkpointStep = _draft.hikeType == HikeType.team ? 2 : 1;
-    if (_stepIndex == checkpointStep &&
+    if (currentStep == _StartHikeWizardStep.trail &&
         (_draft.effectiveCheckpoints.length < 3 ||
             _draft.effectiveCheckpoints.length > 12)) {
       ScaffoldMessenger.of(context)
@@ -133,11 +151,11 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     }
 
     if (_isFinalStep) {
-      if (_draft.departureTime.isAfter(DateTime.now())) {
+      if (_isUpcomingHike) {
         unawaited(_scheduleAndFinish());
         return;
       }
-      Navigator.of(context).pop(ActiveHikeSession.fromDraft(_draft));
+      Navigator.of(context).pop(ActiveHikeSession.fromDraft(_draftForNow()));
       return;
     }
 
@@ -169,7 +187,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   void _back() {
-    if (_stepIndex <= _firstStep) {
+    if (_stepIndex <= 0) {
       Navigator.of(context).pop();
       return;
     }
@@ -182,13 +200,35 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   void _updateDraft(HikeSessionDraft draft) {
     setState(() {
       _draft = draft;
-      if (_stepIndex < _firstStep) {
-        _stepIndex = _firstStep;
-      }
-      if (_stepIndex > _lastStep) {
-        _stepIndex = _lastStep;
-      }
+      _clampStepIndex();
     });
+  }
+
+  void _updateStartNow(bool startNow) {
+    setState(() {
+      _startNow = startNow;
+      _clampStepIndex();
+    });
+  }
+
+  void _clampStepIndex() {
+    if (_stepIndex < 0) {
+      _stepIndex = 0;
+    }
+    if (_stepIndex > _lastStep) {
+      _stepIndex = _lastStep;
+    }
+  }
+
+  HikeSessionDraft _draftForNow() {
+    final now = DateTime.now();
+    final hikeDuration = _safePlannedHikeDuration(_draft);
+    final expectedArrival = now.add(hikeDuration);
+    return _draft.copyWith(
+      departureTime: now,
+      expectedArrivalTime: expectedArrival,
+      expectedReturnTime: expectedArrival.add(const Duration(hours: 2)),
+    );
   }
 
   @override
@@ -221,9 +261,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                         flex: 2,
                         child: OutlinedButton(
                           onPressed: _back,
-                          child: Text(
-                            _stepIndex <= _firstStep ? 'Cancel' : 'Back',
-                          ),
+                          child: Text(_stepIndex <= 0 ? 'Cancel' : 'Back'),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -233,11 +271,17 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                           onPressed: _next,
                           icon: Icon(
                             _isFinalStep
-                                ? Icons.play_arrow_rounded
+                                ? _isUpcomingHike
+                                      ? Icons.event_available_rounded
+                                      : Icons.play_arrow_rounded
                                 : Icons.arrow_forward_rounded,
                           ),
                           label: Text(
-                            _isFinalStep ? 'Start Hiking Session' : 'Continue',
+                            _isFinalStep
+                                ? _isUpcomingHike
+                                      ? 'Schedule Hike'
+                                      : 'Start Hiking Session'
+                                : 'Continue',
                           ),
                         ),
                       ),
@@ -253,54 +297,30 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   Widget _stepForIndex(int index) {
-    if (_draft.hikeType == HikeType.team) {
-      switch (index) {
-        case 0:
-          return _HikeTypeStep(draft: _draft, onChanged: _updateDraft);
-        case 1:
-          return _TeamBuddySelectionStep(
-            draft: _draft,
-            buddyOptions: _teamBuddyOptions,
-            onChanged: _updateDraft,
-          );
-        case 2:
-          return _TrailSelectionStep(
-            draft: _draft,
-            trails: _trails,
-            onChanged: _updateDraft,
-          );
-        case 3:
-          return _TimingStep(draft: _draft, onChanged: _updateDraft);
-        case 4:
-          return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);
-        default:
-          return _PreparationStep(
-            draft: _draft,
-            checklistItems: _checklistItems,
-            onChanged: _updateDraft,
-          );
-      }
-    }
-
-    switch (index) {
-      case 0:
+    switch (_steps[index]) {
+      case _StartHikeWizardStep.type:
         return _HikeTypeStep(draft: _draft, onChanged: _updateDraft);
-      case 1:
+      case _StartHikeWizardStep.timing:
+        return _TimingStep(
+          draft: _draft,
+          startNow: _startNow,
+          onStartNowChanged: _updateStartNow,
+          onChanged: _updateDraft,
+        );
+      case _StartHikeWizardStep.buddies:
+        return _TeamBuddySelectionStep(
+          draft: _draft,
+          buddyOptions: _teamBuddyOptions,
+          onChanged: _updateDraft,
+        );
+      case _StartHikeWizardStep.trail:
         return _TrailSelectionStep(
           draft: _draft,
           trails: _trails,
           onChanged: _updateDraft,
         );
-      case 2:
-        return _TimingStep(draft: _draft, onChanged: _updateDraft);
-      case 3:
+      case _StartHikeWizardStep.safety:
         return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);
-      default:
-        return _PreparationStep(
-          draft: _draft,
-          checklistItems: _checklistItems,
-          onChanged: _updateDraft,
-        );
     }
   }
 }
@@ -449,7 +469,7 @@ class _TeamBuddySelectionStep extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    '${draft.teamBuddies.length} buddy${draft.teamBuddies.length == 1 ? '' : 'ies'} selected. HikerCircle will queue FCM invites and sync readiness in Firestore.',
+                    '${draft.teamBuddies.length} buddy${draft.teamBuddies.length == 1 ? '' : 'ies'} selected. Invites and readiness updates will be sent to your team.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: _WizardColors.textFor(context),
                       fontWeight: FontWeight.w600,
@@ -1056,9 +1076,16 @@ class _CheckpointStepState extends State<_CheckpointStep> {
 }
 
 class _TimingStep extends StatelessWidget {
-  const _TimingStep({required this.draft, required this.onChanged});
+  const _TimingStep({
+    required this.draft,
+    required this.startNow,
+    required this.onStartNowChanged,
+    required this.onChanged,
+  });
 
   final HikeSessionDraft draft;
+  final bool startNow;
+  final ValueChanged<bool> onStartNowChanged;
   final ValueChanged<HikeSessionDraft> onChanged;
 
   static const List<Duration> _checkInOptions = [
@@ -1079,22 +1106,52 @@ class _TimingStep extends StatelessWidget {
     Duration(minutes: 15),
   ];
 
-  Future<void> _pickDepartureDate(BuildContext context) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: draft.departureTime,
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+  void _selectStartNow() {
+    onStartNowChanged(true);
+    final now = DateTime.now();
+    final hikeDuration = _safePlannedHikeDuration(draft);
+    final expectedArrival = now.add(hikeDuration);
+    onChanged(
+      draft.copyWith(
+        departureTime: now,
+        expectedArrivalTime: expectedArrival,
+        expectedReturnTime: expectedArrival.add(const Duration(hours: 2)),
+      ),
     );
-    if (picked == null) return;
-    final updated = DateTime(
-      picked.year,
-      picked.month,
-      picked.day,
-      draft.departureTime.hour,
-      draft.departureTime.minute,
-    );
-    final diff = draft.expectedArrivalTime.difference(draft.departureTime);
+  }
+
+  void _selectScheduledStart(BuildContext context) {
+    onStartNowChanged(false);
+    final departure =
+        draft.departureTime.isBefore(_minimumScheduledDepartureTime())
+        ? _minimumScheduledDepartureTime()
+        : draft.departureTime;
+    _updateDeparture(context, departure, notifyIfAdjusted: false);
+  }
+
+  void _updateDeparture(
+    BuildContext context,
+    DateTime candidate, {
+    bool notifyIfAdjusted = true,
+  }) {
+    var updated = candidate;
+    final minimum = _minimumScheduledDepartureTime();
+    if (updated.isBefore(minimum)) {
+      updated = minimum;
+      if (notifyIfAdjusted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Scheduled hikes must start at least 10 minutes from now.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
+    }
+    final diff = _safePlannedHikeDuration(draft);
     onChanged(
       draft.copyWith(
         departureTime: updated,
@@ -1104,12 +1161,39 @@ class _TimingStep extends StatelessWidget {
     );
   }
 
-  Future<void> _pickDepartureTime(BuildContext context) async {
-    final picked = await showTimePicker(
+  Future<void> _pickDepartureDate(BuildContext context) async {
+    final minimum = _minimumScheduledDepartureTime();
+    final picked = await showDatePicker(
       context: context,
-      initialTime: TimeOfDay.fromDateTime(draft.departureTime),
+      initialDate: draft.departureTime.isBefore(minimum)
+          ? minimum
+          : draft.departureTime,
+      firstDate: DateTime(minimum.year, minimum.month, minimum.day),
+      lastDate: minimum.add(const Duration(days: 365)),
     );
     if (picked == null) return;
+    if (!context.mounted) return;
+    final updated = DateTime(
+      picked.year,
+      picked.month,
+      picked.day,
+      draft.departureTime.hour,
+      draft.departureTime.minute,
+    );
+    _updateDeparture(context, updated);
+  }
+
+  Future<void> _pickDepartureTime(BuildContext context) async {
+    final minimum = _minimumScheduledDepartureTime();
+    final initial = draft.departureTime.isBefore(minimum)
+        ? minimum
+        : draft.departureTime;
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (picked == null) return;
+    if (!context.mounted) return;
     final updated = DateTime(
       draft.departureTime.year,
       draft.departureTime.month,
@@ -1117,14 +1201,7 @@ class _TimingStep extends StatelessWidget {
       picked.hour,
       picked.minute,
     );
-    final diff = draft.expectedArrivalTime.difference(draft.departureTime);
-    onChanged(
-      draft.copyWith(
-        departureTime: updated,
-        expectedArrivalTime: updated.add(diff),
-        expectedReturnTime: updated.add(diff).add(const Duration(hours: 2)),
-      ),
-    );
+    _updateDeparture(context, updated);
   }
 
   @override
@@ -1133,19 +1210,45 @@ class _TimingStep extends StatelessWidget {
       title: 'Timing and Tracking',
       subtitle: 'Check-ins ask for confirmation; GPS recording runs quietly.',
       children: [
-        _TappableField(
-          label: 'Departure Date',
-          value: _formatDate(draft.departureTime),
-          icon: Icons.calendar_today_rounded,
-          onTap: () => _pickDepartureDate(context),
+        _ChoiceTile(
+          selected: startNow,
+          icon: Icons.play_circle_fill_rounded,
+          title: 'Start Now',
+          subtitle:
+              'Continue through safety settings and start the active hike immediately.',
+          onTap: _selectStartNow,
         ),
-        const SizedBox(height: 12),
-        _TappableField(
-          label: 'Departure Time',
-          value: _formatTime(draft.departureTime),
-          icon: Icons.schedule_rounded,
-          onTap: () => _pickDepartureTime(context),
+        const SizedBox(height: 10),
+        _ChoiceTile(
+          selected: !startNow,
+          icon: Icons.event_available_rounded,
+          title: 'Schedule Time',
+          subtitle:
+              'Create an upcoming hike. Safety settings are chosen when it starts.',
+          onTap: () => _selectScheduledStart(context),
         ),
+        if (!startNow) ...[
+          const SizedBox(height: 12),
+          _TappableField(
+            label: 'Departure Date',
+            value: _formatDate(draft.departureTime),
+            icon: Icons.calendar_today_rounded,
+            onTap: () => _pickDepartureDate(context),
+          ),
+          const SizedBox(height: 12),
+          _TappableField(
+            label: 'Departure Time',
+            value: _formatTime(draft.departureTime),
+            icon: Icons.schedule_rounded,
+            onTap: () => _pickDepartureTime(context),
+          ),
+          const SizedBox(height: 8),
+          _InlineHint(
+            icon: Icons.info_outline_rounded,
+            text:
+                'Earliest scheduled start: ${_formatDate(_minimumScheduledDepartureTime())} at ${_formatTime(_minimumScheduledDepartureTime())}.',
+          ),
+        ],
         const SizedBox(height: 12),
         _DurationPickerField(
           label: 'Expected Hours and Minutes Needed',
@@ -1513,56 +1616,6 @@ class _SensorSensitivitySlider extends StatelessWidget {
   }
 }
 
-class _PreparationStep extends StatelessWidget {
-  const _PreparationStep({
-    required this.draft,
-    required this.checklistItems,
-    required this.onChanged,
-  });
-
-  final HikeSessionDraft draft;
-  final List<String> checklistItems;
-  final ValueChanged<HikeSessionDraft> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _StepCard(
-      title: 'Before You Start',
-      subtitle: 'Confirm offline preparation and equipment before tracking.',
-      children: [
-        const _PreparationStatusList(),
-        const SizedBox(height: 14),
-        Text(
-          'Equipment Checklist',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: _WizardColors.textFor(context),
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0,
-          ),
-        ),
-        const SizedBox(height: 8),
-        _ChecklistGroup(
-          items: checklistItems,
-          completedItems: draft.completedChecklistItems,
-          onChanged: (item, selected) {
-            final nextItems = Set<String>.of(draft.completedChecklistItems);
-            if (selected == true) {
-              nextItems.add(item);
-            } else {
-              nextItems.remove(item);
-            }
-            onChanged(draft.copyWith(completedChecklistItems: nextItems));
-          },
-        ),
-        const SizedBox(height: 14),
-        _ForecastCard(trail: draft.trail),
-        const SizedBox(height: 14),
-        const _StartupActionsCard(),
-      ],
-    );
-  }
-}
-
 class _StepCard extends StatelessWidget {
   const _StepCard({
     required this.title,
@@ -1682,6 +1735,33 @@ class _ChoiceTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _InlineHint extends StatelessWidget {
+  const _InlineHint({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: _WizardColors.secondaryTextFor(context)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _WizardColors.secondaryTextFor(context),
+              letterSpacing: 0,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2156,176 +2236,6 @@ class _WizardAnimatedToggle extends StatelessWidget {
   }
 }
 
-class _PreparationStatusList extends StatelessWidget {
-  const _PreparationStatusList();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separatorFor(context)),
-      ),
-      child: const Column(
-        children: [
-          _StatusRow(label: 'Offline trail map', value: 'Downloaded'),
-          _HorizontalSeparator(),
-          _StatusRow(label: 'Weather forecast', value: 'Cached'),
-          _HorizontalSeparator(),
-          _StatusRow(label: 'Emergency numbers', value: 'Stored Offline'),
-        ],
-      ),
-    );
-  }
-}
-
-class _ChecklistGroup extends StatelessWidget {
-  const _ChecklistGroup({
-    required this.items,
-    required this.completedItems,
-    required this.onChanged,
-  });
-
-  final List<String> items;
-  final Set<String> completedItems;
-  final void Function(String item, bool? selected) onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separatorFor(context)),
-      ),
-      child: Column(
-        children: [
-          for (var index = 0; index < items.length; index++) ...[
-            Material(
-              color: Colors.transparent,
-              child: CheckboxListTile(
-                value: completedItems.contains(items[index]),
-                onChanged: (value) => onChanged(items[index], value),
-                dense: true,
-                activeColor: _WizardColors.green,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: Text(
-                  items[index],
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _WizardColors.textFor(context),
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ),
-            ),
-            if (index != items.length - 1) const _HorizontalSeparator(),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ForecastCard extends StatelessWidget {
-  const _ForecastCard({required this.trail});
-
-  final Trail trail;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _WizardColors.greenSoftFor(context),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Current Forecast',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _WizardColors.textFor(context),
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              trail.weather.summary,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _WizardColors.secondaryTextFor(context),
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Temperature: ${trail.weather.temperatureRange}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _WizardColors.secondaryTextFor(context),
-                letterSpacing: 0,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StartupActionsCard extends StatelessWidget {
-  const _StartupActionsCard();
-
-  @override
-  Widget build(BuildContext context) {
-    const actions = [
-      'Create hike session document',
-      'Create local session record',
-      'Load offline map file',
-      'Begin periodic GPS recording',
-      'Enable fall-and-stillness listener',
-      'Enable check-in timer',
-      'Start live location sharing when available',
-    ];
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _WizardColors.separatorFor(context)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'When session starts',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _WizardColors.textFor(context),
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 8),
-            for (final action in actions)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  '- $action',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _WizardColors.secondaryTextFor(context),
-                    letterSpacing: 0,
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _StatusRow extends StatelessWidget {
   const _StatusRow({required this.label, required this.value});
 
@@ -2635,6 +2545,31 @@ class _WizardCheckpointTimeline extends StatelessWidget {
       ),
     );
   }
+}
+
+DateTime _minimumScheduledDepartureTime() {
+  final minimum = DateTime.now().add(const Duration(minutes: 10));
+  final minutePrecision = DateTime(
+    minimum.year,
+    minimum.month,
+    minimum.day,
+    minimum.hour,
+    minimum.minute,
+  );
+  if (minimum.second == 0 &&
+      minimum.millisecond == 0 &&
+      minimum.microsecond == 0) {
+    return minutePrecision;
+  }
+  return minutePrecision.add(const Duration(minutes: 1));
+}
+
+Duration _safePlannedHikeDuration(HikeSessionDraft draft) {
+  final duration = draft.expectedArrivalTime.difference(draft.departureTime);
+  if (!duration.isNegative && duration > Duration.zero) {
+    return duration;
+  }
+  return Duration(minutes: math.max(1, draft.trail.estimatedDurationMinutes));
 }
 
 String _formatDate(DateTime dateTime) {

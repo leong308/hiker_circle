@@ -22,21 +22,30 @@ final _teamColors = <Color>[
   const Color(0xFFF43F5E),
 ];
 
-Color _colorForParticipant(int index) =>
-    _teamColors[index % _teamColors.length];
+const _selfTeamColor = Color(0xFF34A853);
 
-const _dummyNames = [
-  'Alice',
-  'Bob',
-  'Charlie',
-  'Diana',
-  'Eve',
-  'Frank',
-  'Grace',
-  'Henry',
-  'Ivy',
-  'Jack',
-];
+Color _fallbackTeamColor(int index) => _teamColors[index % _teamColors.length];
+
+bool _samePhoneNumber(String first, String second) {
+  final firstKey = first.replaceAll(RegExp(r'[^0-9]'), '');
+  final secondKey = second.replaceAll(RegExp(r'[^0-9]'), '');
+  return firstKey.isNotEmpty && firstKey == secondKey;
+}
+
+Color _displayColorForParticipant(
+  TeamHikeParticipant participant,
+  int index,
+  String currentPhoneNumber,
+) {
+  if (_samePhoneNumber(participant.phoneNumber, currentPhoneNumber)) {
+    return _selfTeamColor;
+  }
+  final storedColor = Color(participant.buddy.avatarColorValue);
+  if (storedColor == _selfTeamColor) {
+    return _fallbackTeamColor(index);
+  }
+  return storedColor;
+}
 
 class ActiveTrackingMapView extends StatefulWidget {
   const ActiveTrackingMapView({
@@ -46,6 +55,7 @@ class ActiveTrackingMapView extends StatefulWidget {
     this.weatherSamples = const [],
     this.interactive = true,
     this.showLegend = false,
+    this.currentPhoneNumber = '',
     this.onStyleChanged,
   });
 
@@ -54,6 +64,7 @@ class ActiveTrackingMapView extends StatefulWidget {
   final List<ActiveHikeWeatherSample> weatherSamples;
   final bool interactive;
   final bool showLegend;
+  final String currentPhoneNumber;
   final ValueChanged<int>? onStyleChanged;
 
   @override
@@ -66,7 +77,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
   List<Offset?> _weatherScreenPositions = const [];
+  List<Offset?> _teamScreenPositions = const [];
   var _weatherProjectionScheduled = false;
+  var _teamProjectionScheduled = false;
   var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
@@ -87,8 +100,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     _buildPoints();
     _initialCamera = _computeInitialCamera();
     _currentZoom = _initialCamera?.zoom ?? 13.5;
-    _scaleLatitude =
-        _initialCamera?.center?.coordinates[1]?.toDouble() ?? 0;
+    _scaleLatitude = _initialCamera?.center?.coordinates[1]?.toDouble() ?? 0;
   }
 
   @override
@@ -211,43 +223,21 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         (widget.teamHikeSession ?? widget.activeHike.teamHikeSession)
             ?.participants ??
         const <TeamHikeParticipant>[];
-    if (realParticipants.isNotEmpty) return realParticipants;
+    return realParticipants;
+  }
 
-    final cp = _checkpointPoints;
-    if (cp.isEmpty) return const [];
+  List<TeamHikeParticipant> get _locatedTeamParticipants {
+    return _effectiveParticipants
+        .where((participant) => participant.latestLocation != null)
+        .toList();
+  }
 
-    final startLat = cp.first.coordinates[1]!.toDouble();
-    final startLon = cp.first.coordinates[0]!.toDouble();
-    final endLat = cp.last.coordinates[1]!.toDouble();
-    final endLon = cp.last.coordinates[0]!.toDouble();
-
-    return List.generate(_dummyNames.length, (i) {
-      final t = (i + 1) / (_dummyNames.length + 1);
-      final baseLat = startLat + (endLat - startLat) * t;
-      final baseLon = startLon + (endLon - startLon) * t;
-      final lat = baseLat + (math.Random(i).nextDouble() - 0.5) * 0.004;
-      final lng = baseLon + (math.Random(i + 100).nextDouble() - 0.5) * 0.004;
-      final now = DateTime.now();
-      return TeamHikeParticipant(
-        buddy: TeamHikeBuddy(
-          name: _dummyNames[i],
-          handle: '@hiker${i + 1}',
-          phoneNumber: '+0000000${i + 1}',
-        ),
-        status: TeamHikeParticipantStatus.active,
-        isLeader: i == 0,
-        isHost: i == 0,
-        progressMeters: (500 + i * 200).toDouble(),
-        latestLocation: HikeCoordinate(
-          latitude: lat,
-          longitude: lng,
-          capturedAt: now.subtract(
-            Duration(minutes: math.Random(i + 200).nextInt(10)),
-          ),
-          accuracyMeters: (5 + math.Random(i + 300).nextInt(10)).toDouble(),
-        ),
-      );
-    });
+  Color _colorForParticipant(TeamHikeParticipant participant, int index) {
+    return _displayColorForParticipant(
+      participant,
+      index,
+      widget.currentPhoneNumber,
+    );
   }
 
   List<mapbox.Point> get _teamMatePoints {
@@ -346,9 +336,14 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _buildPoints();
       _routeRendered = false;
       unawaited(_renderRouteIfReady());
+      _scheduleTeamProjection();
     }
     if (!identical(oldWidget.weatherSamples, widget.weatherSamples)) {
       _scheduleWeatherProjection();
+    }
+    if (oldWidget.teamHikeSession != widget.teamHikeSession ||
+        oldWidget.currentPhoneNumber != widget.currentPhoneNumber) {
+      _scheduleTeamProjection();
     }
   }
 
@@ -376,6 +371,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     await _renderRouteIfReady();
     await _syncScaleFromCamera();
     _scheduleWeatherProjection();
+    _scheduleTeamProjection();
   }
 
   Future<void> _onStyleLoaded() async {
@@ -385,6 +381,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     _routeRendered = false;
     await _renderRouteIfReady();
     _scheduleWeatherProjection();
+    _scheduleTeamProjection();
   }
 
   Future<void> _renderRouteIfReady() async {
@@ -488,23 +485,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       created = true;
     }
 
-    final teamParticipants = _effectiveParticipants;
-
     final circleAnnotations = <mapbox.CircleAnnotationOptions>[
-      for (var i = 0; i < teamParticipants.length; i++)
-        if (teamParticipants[i].latestLocation != null)
-          mapbox.CircleAnnotationOptions(
-            geometry: mapbox.Point(
-              coordinates: mapbox.Position(
-                teamParticipants[i].latestLocation!.longitude,
-                teamParticipants[i].latestLocation!.latitude,
-              ),
-            ),
-            circleColor: _colorForParticipant(i).toARGB32(),
-            circleRadius: teamParticipants[i].isLeader ? 8.0 : 6.0,
-            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-            circleStrokeWidth: 2,
-          ),
       for (final point in _manualPinPoints)
         mapbox.CircleAnnotationOptions(
           geometry: point,
@@ -585,6 +566,19 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     });
   }
 
+  void _scheduleTeamProjection() {
+    if (_teamProjectionScheduled) {
+      return;
+    }
+    _teamProjectionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _teamProjectionScheduled = false;
+      if (mounted) {
+        unawaited(_projectTeamMarkers());
+      }
+    });
+  }
+
   Future<void> _projectWeatherMarkers() async {
     final map = _mapboxMap;
     if (map == null || !_styleLoaded || widget.weatherSamples.isEmpty) {
@@ -619,6 +613,46 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) {
           _scheduleWeatherProjection();
+        }
+      });
+    }
+  }
+
+  Future<void> _projectTeamMarkers() async {
+    final map = _mapboxMap;
+    final participants = _locatedTeamParticipants;
+    if (map == null || !_styleLoaded || participants.isEmpty) {
+      if (mounted && _teamScreenPositions.isNotEmpty) {
+        setState(() {
+          _teamScreenPositions = const [];
+        });
+      }
+      return;
+    }
+
+    try {
+      final pixels = await map.pixelsForCoordinates([
+        for (final participant in participants)
+          mapbox.Point(
+            coordinates: mapbox.Position(
+              participant.latestLocation!.longitude,
+              participant.latestLocation!.latitude,
+            ),
+          ),
+      ]);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _teamScreenPositions = pixels
+            .map((pixel) => pixel == null ? null : Offset(pixel.x, pixel.y))
+            .toList();
+      });
+    } catch (error) {
+      debugPrint('Unable to project team markers: $error');
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          _scheduleTeamProjection();
         }
       });
     }
@@ -718,6 +752,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   void _onCameraChange(mapbox.CameraChangedEventData data) {
     _updateScale(data);
     _scheduleWeatherProjection();
+    _scheduleTeamProjection();
   }
 
   Future<void> _syncScaleFromCamera() async {
@@ -732,6 +767,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _scaleLatitude = nextLatitude;
     });
     _scheduleWeatherProjection();
+    _scheduleTeamProjection();
   }
 
   void _updateScale(mapbox.CameraChangedEventData data) {
@@ -757,6 +793,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         child: Center(child: Text('Waiting for trail coordinates')),
       );
     }
+    final locatedParticipants = _locatedTeamParticipants;
 
     return Stack(
       fit: StackFit.expand,
@@ -772,8 +809,33 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
           onMapIdleListener: (_) {
             unawaited(_syncScaleFromCamera());
             _scheduleWeatherProjection();
+            _scheduleTeamProjection();
           },
         ),
+        for (
+          var index = 0;
+          index < locatedParticipants.length &&
+              index < _teamScreenPositions.length;
+          index++
+        )
+          if (_teamScreenPositions[index] != null)
+            Positioned(
+              left: _teamScreenPositions[index]!.dx - 24,
+              top: _teamScreenPositions[index]!.dy - 50,
+              child: IgnorePointer(
+                child: _ProjectedTeamMarker(
+                  participant: locatedParticipants[index],
+                  color: _colorForParticipant(
+                    locatedParticipants[index],
+                    index,
+                  ),
+                  isSelf: _samePhoneNumber(
+                    locatedParticipants[index].phoneNumber,
+                    widget.currentPhoneNumber,
+                  ),
+                ),
+              ),
+            ),
         for (
           var index = 0;
           index < widget.weatherSamples.length &&
@@ -822,7 +884,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
           Positioned(
             right: 10,
             top: 56,
-            child: _TeamParticipantPanel(participants: _effectiveParticipants),
+            child: _TeamParticipantPanel(
+              participants: _effectiveParticipants,
+              currentPhoneNumber: widget.currentPhoneNumber,
+            ),
           ),
       ],
     );
@@ -863,10 +928,91 @@ class _ActiveTrackingLegend extends StatelessWidget {
             _LegendDot(color: Color(0xFF34A853), label: 'Recorded trail'),
             _LegendDot(color: Color(0xFFE11D48), label: 'Pinned location'),
             _LegendDot(color: Color(0xFF0A84FF), label: 'Latest GPS'),
-            _LegendDot(color: Color(0xFF7C3AED), label: 'Teammate'),
-            _LegendDot(color: Color(0xFFF59E0B), label: 'Leader'),
+            _LegendDot(color: Color(0xFF34A853), label: 'You'),
+            _LegendDot(color: Color(0xFF7C3AED), label: 'Teammate border'),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ProjectedTeamMarker extends StatelessWidget {
+  const _ProjectedTeamMarker({
+    required this.participant,
+    required this.color,
+    required this.isSelf,
+  });
+
+  final TeamHikeParticipant participant;
+  final Color color;
+  final bool isSelf;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = participant.buddy.shortName;
+    final initial = name.isEmpty ? '?' : name.substring(0, 1).toUpperCase();
+    final photoURL = participant.buddy.photoURL.trim();
+    return SizedBox(
+      width: 48,
+      height: 54,
+      child: Stack(
+        alignment: Alignment.topCenter,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: color, width: isSelf ? 4 : 3),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 7,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            alignment: Alignment.center,
+            child: photoURL.isEmpty
+                ? Text(
+                    initial,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  )
+                : Image.network(
+                    photoURL,
+                    width: 42,
+                    height: 42,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Text(
+                      initial,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+          ),
+          Positioned(
+            top: 39,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1068,9 +1214,13 @@ class _WeatherMarkerConnectorPainter extends CustomPainter {
 }
 
 class _TeamParticipantPanel extends StatelessWidget {
-  const _TeamParticipantPanel({required this.participants});
+  const _TeamParticipantPanel({
+    required this.participants,
+    required this.currentPhoneNumber,
+  });
 
   final List<TeamHikeParticipant> participants;
+  final String currentPhoneNumber;
 
   @override
   Widget build(BuildContext context) {
@@ -1101,8 +1251,13 @@ class _TeamParticipantPanel extends StatelessWidget {
               const Divider(height: 1, thickness: 1),
               for (var i = 0; i < participants.length; i++)
                 _ParticipantRow(
-                  color: _colorForParticipant(i),
+                  color: _displayColorForParticipant(
+                    participants[i],
+                    i,
+                    currentPhoneNumber,
+                  ),
                   name: participants[i].buddy.shortName,
+                  photoURL: participants[i].buddy.photoURL,
                   isLeader: participants[i].isLeader,
                   hasLocation: participants[i].latestLocation != null,
                   status: participants[i].status,
@@ -1119,6 +1274,7 @@ class _ParticipantRow extends StatelessWidget {
   const _ParticipantRow({
     required this.color,
     required this.name,
+    required this.photoURL,
     required this.isLeader,
     required this.hasLocation,
     required this.status,
@@ -1126,6 +1282,7 @@ class _ParticipantRow extends StatelessWidget {
 
   final Color color;
   final String name;
+  final String photoURL;
   final bool isLeader;
   final bool hasLocation;
   final TeamHikeParticipantStatus status;
@@ -1140,12 +1297,38 @@ class _ParticipantRow extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 10,
-            height: 10,
+            width: 22,
+            height: 22,
             decoration: BoxDecoration(
               color: isEnded ? const Color(0xFF6E6E73) : color,
               shape: BoxShape.circle,
+              border: Border.all(color: color, width: 2),
             ),
+            clipBehavior: Clip.antiAlias,
+            alignment: Alignment.center,
+            child: photoURL.trim().isEmpty
+                ? Text(
+                    name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  )
+                : Image.network(
+                    photoURL.trim(),
+                    width: 22,
+                    height: 22,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Text(
+                      name.isEmpty ? '?' : name.substring(0, 1).toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: 8),
           Text(

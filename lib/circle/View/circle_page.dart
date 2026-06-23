@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
@@ -36,6 +37,8 @@ class _CirclePageState extends State<CirclePage> {
 
   bool get _isAdmin => widget.session.isAdmin;
   final Set<String> _buddyPhones = {};
+  final Set<String> _outgoingBuddyRequestPhones = {};
+  List<_BuddyRequest> _buddyRequests = const [];
   List<_CommunityPerson> _people = const [];
   late List<_CommunityPost> _posts = const [];
   late final List<_TeamPlan> _teams = _seedTeams();
@@ -44,15 +47,31 @@ class _CirclePageState extends State<CirclePage> {
   bool _isLoadingChats = false;
   Set<String> _pinnedChatIds = {};
   Map<String, DateTime> _localLastReadAt = const {};
+  String _currentUserPhotoURL = '';
   StreamSubscription<List<GroupChat>>? _chatsSubscription;
 
   @override
   void initState() {
     super.initState();
+    _currentUserPhotoURL = widget.session.photoURL ?? '';
     unawaited(_loadCommunityPosts());
     unawaited(_loadCommunityPeople());
+    unawaited(_loadBuddyRequests());
+    unawaited(_loadCurrentUserPhoto());
     unawaited(_loadPinnedChats());
     _listenToGroupChats();
+  }
+
+  Future<void> _loadCurrentUserPhoto() async {
+    final profile = await widget.hikerCircleRepository.loadCommunityProfile(
+      phoneNumber: widget.session.phoneNumber,
+    );
+    if (!mounted || profile == null) return;
+    final photoURL = _stringFrom(profile['photoURL']).trim();
+    if (photoURL.isEmpty || photoURL == _currentUserPhotoURL) return;
+    setState(() {
+      _currentUserPhotoURL = photoURL;
+    });
   }
 
   Future<void> _loadCommunityPeople() async {
@@ -63,6 +82,9 @@ class _CirclePageState extends State<CirclePage> {
       widget.hikerCircleRepository.loadBuddyPhoneNumbers(
         session: widget.session,
       ),
+      widget.hikerCircleRepository.loadOutgoingBuddyRequestPhoneNumbers(
+        session: widget.session,
+      ),
     ]);
     if (!mounted) return;
     final profiles = results[0] as List<Map<String, dynamic>>;
@@ -71,7 +93,22 @@ class _CirclePageState extends State<CirclePage> {
       _buddyPhones
         ..clear()
         ..addAll(results[1] as Set<String>);
+      _outgoingBuddyRequestPhones
+        ..clear()
+        ..addAll(results[2] as Set<String>);
     });
+  }
+
+  Future<void> _loadBuddyRequests() async {
+    try {
+      final requests = await widget.hikerCircleRepository.loadBuddyRequests(
+        session: widget.session,
+      );
+      if (!mounted) return;
+      setState(() {
+        _buddyRequests = requests.map(_buddyRequestFromFirestore).toList();
+      });
+    } catch (_) {}
   }
 
   @override
@@ -92,8 +129,8 @@ class _CirclePageState extends State<CirclePage> {
                 phoneNumber: phone,
               ),
             );
-            final local =
-                await widget.hikerCircleRepository.loadAllLocalLastReadAt();
+            final local = await widget.hikerCircleRepository
+                .loadAllLocalLastReadAt();
             if (!mounted) return;
             setState(() {
               _groupChats = chats;
@@ -265,26 +302,72 @@ class _CirclePageState extends State<CirclePage> {
   Future<void> _addBuddy(_CommunityPerson person) async {
     if (person.phoneNumber == widget.session.phoneNumber) return;
     if (_buddyPhones.contains(person.phoneNumber) ||
+        _outgoingBuddyRequestPhones.contains(
+          _phoneKeyFor(person.phoneNumber),
+        ) ||
         person.phoneNumber.isEmpty) {
       return;
     }
 
-    await widget.hikerCircleRepository.addBuddy(
+    await widget.hikerCircleRepository.sendBuddyRequest(
       session: widget.session,
       buddyPhoneNumber: person.phoneNumber,
     );
     if (!mounted) return;
     setState(() {
-      _buddyPhones.add(person.phoneNumber);
+      _outgoingBuddyRequestPhones.add(_phoneKeyFor(person.phoneNumber));
     });
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text('${person.name} added as a buddy.'),
+          content: Text('Friend request sent to ${person.name}.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
+  }
+
+  Future<void> _acceptBuddyRequest(_BuddyRequest request) async {
+    await widget.hikerCircleRepository.acceptBuddyRequest(
+      session: widget.session,
+      requesterPhoneNumber: request.phoneNumber,
+    );
+    if (!mounted) return;
+    setState(() {
+      _buddyRequests = _buddyRequests
+          .where((item) => item.phoneNumber != request.phoneNumber)
+          .toList();
+      _buddyPhones.add(request.phoneNumber);
+    });
+    unawaited(_loadCommunityPeople());
+  }
+
+  Future<void> _declineBuddyRequest(_BuddyRequest request) async {
+    await widget.hikerCircleRepository.declineBuddyRequest(
+      session: widget.session,
+      requesterPhoneNumber: request.phoneNumber,
+    );
+    if (!mounted) return;
+    setState(() {
+      _buddyRequests = _buddyRequests
+          .where((item) => item.phoneNumber != request.phoneNumber)
+          .toList();
+    });
+  }
+
+  Future<void> _openBuddyRequests() async {
+    await _loadBuddyRequests();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _BuddyRequestsSheet(
+        requests: _buddyRequests,
+        onAccept: (request) => unawaited(_acceptBuddyRequest(request)),
+        onDecline: (request) => unawaited(_declineBuddyRequest(request)),
+      ),
+    );
   }
 
   Future<void> _openDirectChat(_CommunityPerson person) async {
@@ -312,6 +395,9 @@ class _CirclePageState extends State<CirclePage> {
       builder: (context) => _CommunityProfileSheet(
         person: person,
         isBuddy: _buddyPhones.contains(person.phoneNumber),
+        isRequested: _outgoingBuddyRequestPhones.contains(
+          _phoneKeyFor(person.phoneNumber),
+        ),
         isOwnProfile: person.phoneNumber == widget.session.phoneNumber,
         onAddBuddy: () {
           Navigator.of(context).pop();
@@ -456,6 +542,11 @@ class _CirclePageState extends State<CirclePage> {
             session: widget.session,
             repository: widget.hikerCircleRepository,
             post: post,
+            currentUserPhotoURL: _currentUserPhotoURL,
+            currentUserPhotoBytes:
+                _currentUserPhotoURL == (widget.session.photoURL ?? '')
+                ? widget.session.photoBytes
+                : null,
             onOpenProfile: () => _showCommunityProfile(post),
             onShare: () => _sharePostToGroupChat(post),
           );
@@ -501,8 +592,8 @@ class _CirclePageState extends State<CirclePage> {
     await repo.markGroupChatAsRead(chatId: chat.id, phoneNumber: phone);
     if (!mounted) return;
     setState(() {
-      _localLastReadAt =
-          Map<String, DateTime>.from(_localLastReadAt)..[chat.id] = now;
+      _localLastReadAt = Map<String, DateTime>.from(_localLastReadAt)
+        ..[chat.id] = now;
     });
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -589,7 +680,11 @@ class _CirclePageState extends State<CirclePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _Header(onOpenSettings: _openSettings),
+                  _Header(
+                    requestCount: _buddyRequests.length,
+                    onOpenFriendRequests: _openBuddyRequests,
+                    onOpenSettings: _openSettings,
+                  ),
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(4),
@@ -627,7 +722,15 @@ class _CirclePageState extends State<CirclePage> {
                               posts: _posts,
                               isLoadingPosts: _isLoadingPosts,
                               buddyPhones: _buddyPhones,
+                              outgoingBuddyRequestPhones:
+                                  _outgoingBuddyRequestPhones,
                               currentUserPhone: widget.session.phoneNumber,
+                              currentUserPhotoURL: _currentUserPhotoURL,
+                              currentUserPhotoBytes:
+                                  _currentUserPhotoURL ==
+                                      (widget.session.photoURL ?? '')
+                                  ? widget.session.photoBytes
+                                  : null,
                               onAddBuddy: (person) =>
                                   unawaited(_addBuddy(person)),
                               onMessageBuddy: (person) =>
@@ -644,7 +747,7 @@ class _CirclePageState extends State<CirclePage> {
                               teams: _teams,
                               onCreateTeam: _createTeam,
                             )
-                           : _ChatsSection(
+                          : _ChatsSection(
                               chats: _groupChats,
                               isLoading: _isLoadingChats,
                               phoneNumber: widget.session.phoneNumber,
@@ -680,6 +783,7 @@ class _CommunityPerson {
     this.level = 1,
     this.levelName = 'Trailhead',
     this.gender = '',
+    this.photoURL = '',
   });
 
   final String userId;
@@ -692,6 +796,23 @@ class _CommunityPerson {
   final int level;
   final String levelName;
   final String gender;
+  final String photoURL;
+}
+
+class _BuddyRequest {
+  const _BuddyRequest({
+    required this.phoneNumber,
+    required this.name,
+    required this.handle,
+    required this.photoURL,
+    required this.createdAtLabel,
+  });
+
+  final String phoneNumber;
+  final String name;
+  final String handle;
+  final String photoURL;
+  final String createdAtLabel;
 }
 
 class _CommunityPost {
@@ -712,6 +833,7 @@ class _CommunityPost {
     this.routeCaptureId = '',
     this.routePointCount = 0,
     this.routePreviewPoints = const [],
+    this.authorPhotoURL = '',
   });
 
   final String? postId;
@@ -730,6 +852,7 @@ class _CommunityPost {
   final String routeCaptureId;
   final int routePointCount;
   final List<HikeCoordinate> routePreviewPoints;
+  final String authorPhotoURL;
 
   bool get hasRouteMap => routePreviewPoints.length >= 2;
 }
@@ -742,6 +865,7 @@ class _CommunityComment {
     required this.level,
     required this.body,
     required this.timeLabel,
+    this.authorPhotoURL = '',
   });
 
   final String author;
@@ -750,6 +874,7 @@ class _CommunityComment {
   final int level;
   final String body;
   final String timeLabel;
+  final String authorPhotoURL;
 }
 
 class _TeamPlan {
@@ -771,8 +896,14 @@ class _TeamPlan {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onOpenSettings});
+  const _Header({
+    required this.requestCount,
+    required this.onOpenFriendRequests,
+    required this.onOpenSettings,
+  });
 
+  final int requestCount;
+  final VoidCallback onOpenFriendRequests;
   final VoidCallback onOpenSettings;
 
   @override
@@ -796,7 +927,7 @@ class _Header extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Community posts, buddies, and hiking teams',
+                  'Community, buddies, teams',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -808,6 +939,27 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
+          Tooltip(
+            message: 'Friend requests',
+            child: CupertinoButton(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size.square(36),
+              onPressed: onOpenFriendRequests,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const _CircleIcon(icon: Icons.person_add_alt_1_rounded),
+                  if (requestCount > 0)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: _RequestBadge(count: requestCount),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           Tooltip(
             message: 'Circle settings',
             child: CupertinoButton(
@@ -830,7 +982,10 @@ class _CommunitySection extends StatelessWidget {
     required this.posts,
     required this.isLoadingPosts,
     required this.buddyPhones,
+    required this.outgoingBuddyRequestPhones,
     required this.currentUserPhone,
+    required this.currentUserPhotoURL,
+    required this.currentUserPhotoBytes,
     required this.onAddBuddy,
     required this.onMessageBuddy,
     required this.onOpenProfile,
@@ -845,7 +1000,10 @@ class _CommunitySection extends StatelessWidget {
   final List<_CommunityPost> posts;
   final bool isLoadingPosts;
   final Set<String> buddyPhones;
+  final Set<String> outgoingBuddyRequestPhones;
   final String currentUserPhone;
+  final String currentUserPhotoURL;
+  final Uint8List? currentUserPhotoBytes;
   final ValueChanged<_CommunityPerson> onAddBuddy;
   final ValueChanged<_CommunityPerson> onMessageBuddy;
   final ValueChanged<_CommunityPost> onOpenProfile;
@@ -868,6 +1026,8 @@ class _CommunitySection extends StatelessWidget {
       children: [
         _ComposerCard(
           activeHike: activeHike,
+          currentUserPhotoURL: currentUserPhotoURL,
+          currentUserPhotoBytes: currentUserPhotoBytes,
           onCreatePost: onCreatePost,
           onShareHike: onShareHike,
         ),
@@ -915,6 +1075,9 @@ class _CommunitySection extends StatelessWidget {
                 return _BuddySuggestionCard(
                   person: person,
                   isBuddy: false,
+                  isRequested: outgoingBuddyRequestPhones.contains(
+                    _phoneKeyFor(person.phoneNumber),
+                  ),
                   onAddBuddy: () => onAddBuddy(person),
                   onMessage: () => onMessageBuddy(person),
                 );
@@ -956,11 +1119,15 @@ class _CommunitySection extends StatelessWidget {
 class _ComposerCard extends StatelessWidget {
   const _ComposerCard({
     required this.activeHike,
+    required this.currentUserPhotoURL,
+    required this.currentUserPhotoBytes,
     required this.onCreatePost,
     required this.onShareHike,
   });
 
   final ActiveHikeSession? activeHike;
+  final String currentUserPhotoURL;
+  final Uint8List? currentUserPhotoBytes;
   final Future<void> Function(String caption) onCreatePost;
   final Future<void> Function() onShareHike;
 
@@ -987,7 +1154,12 @@ class _ComposerCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const _Avatar(label: 'Y', color: _CircleColors.green),
+                _Avatar(
+                  label: 'Y',
+                  color: _CircleColors.green,
+                  imageUrl: currentUserPhotoURL,
+                  imageBytes: currentUserPhotoBytes,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: InkWell(
@@ -1090,10 +1262,12 @@ class _ComposerCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  const _Avatar(
+                  _Avatar(
                     label: 'Y',
                     color: _CircleColors.green,
                     size: 36,
+                    imageUrl: currentUserPhotoURL,
+                    imageBytes: currentUserPhotoBytes,
                   ),
                   const SizedBox(width: 10),
                   Text(
@@ -1170,12 +1344,14 @@ class _BuddySuggestionCard extends StatelessWidget {
   const _BuddySuggestionCard({
     required this.person,
     required this.isBuddy,
+    this.isRequested = false,
     required this.onAddBuddy,
     required this.onMessage,
   });
 
   final _CommunityPerson person;
   final bool isBuddy;
+  final bool isRequested;
   final VoidCallback onAddBuddy;
   final VoidCallback onMessage;
 
@@ -1208,6 +1384,7 @@ class _BuddySuggestionCard extends StatelessWidget {
                   _Avatar(
                     label: person.name.substring(0, 1),
                     color: person.color,
+                    imageUrl: person.photoURL,
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -1290,6 +1467,14 @@ class _BuddySuggestionCard extends StatelessWidget {
                     ),
                   ],
                 )
+              else if (isRequested)
+                const SizedBox(
+                  width: double.infinity,
+                  child: _StatusPill(
+                    label: 'Requested',
+                    color: _CircleColors.orange,
+                  ),
+                )
               else
                 SizedBox(
                   width: double.infinity,
@@ -1368,6 +1553,7 @@ class _CommunityPostCard extends StatelessWidget {
                       child: _Avatar(
                         label: post.author.substring(0, 1),
                         color: post.color,
+                        imageUrl: post.authorPhotoURL,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -1482,6 +1668,8 @@ class _CommunityPostDetailPage extends StatefulWidget {
     required this.session,
     required this.repository,
     required this.post,
+    required this.currentUserPhotoURL,
+    required this.currentUserPhotoBytes,
     required this.onOpenProfile,
     required this.onShare,
   });
@@ -1489,6 +1677,8 @@ class _CommunityPostDetailPage extends StatefulWidget {
   final AppSession session;
   final HikerCircleFirebaseRepository repository;
   final _CommunityPost post;
+  final String currentUserPhotoURL;
+  final Uint8List? currentUserPhotoBytes;
   final VoidCallback onOpenProfile;
   final VoidCallback onShare;
 
@@ -1628,10 +1818,12 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                       padding: const EdgeInsets.all(12),
                       child: Row(
                         children: [
-                          const _Avatar(
+                          _Avatar(
                             label: 'Y',
                             color: _CircleColors.green,
                             size: 36,
+                            imageUrl: widget.currentUserPhotoURL,
+                            imageBytes: widget.currentUserPhotoBytes,
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -1773,6 +1965,7 @@ class _CommentRow extends StatelessWidget {
                 ? '?'
                 : comment.author.substring(0, 1),
             color: _CircleColors.green,
+            imageUrl: comment.authorPhotoURL,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2460,6 +2653,7 @@ class _CommunityProfileSheet extends StatelessWidget {
   const _CommunityProfileSheet({
     required this.person,
     required this.isBuddy,
+    required this.isRequested,
     required this.isOwnProfile,
     required this.onAddBuddy,
     required this.onMessage,
@@ -2467,6 +2661,7 @@ class _CommunityProfileSheet extends StatelessWidget {
 
   final _CommunityPerson person;
   final bool isBuddy;
+  final bool isRequested;
   final bool isOwnProfile;
   final VoidCallback onAddBuddy;
   final VoidCallback onMessage;
@@ -2490,6 +2685,7 @@ class _CommunityProfileSheet extends StatelessWidget {
                       label: person.name.substring(0, 1),
                       color: person.color,
                       size: 58,
+                      imageUrl: person.photoURL,
                     ),
                     const SizedBox(width: 14),
                     Expanded(
@@ -2531,9 +2727,14 @@ class _CommunityProfileSheet extends StatelessWidget {
                         label: 'You',
                         color: _CircleColors.green,
                       )
+                    else if (isRequested)
+                      const _StatusPill(
+                        label: 'Requested',
+                        color: _CircleColors.orange,
+                      )
                     else if (!isBuddy)
                       IconButton.filled(
-                        tooltip: 'Add buddy',
+                        tooltip: 'Send friend request',
                         onPressed: onAddBuddy,
                         icon: const Icon(Icons.person_add_rounded),
                       )
@@ -3259,6 +3460,156 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
+class _BuddyRequestsSheet extends StatelessWidget {
+  const _BuddyRequestsSheet({
+    required this.requests,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final List<_BuddyRequest> requests;
+  final ValueChanged<_BuddyRequest> onAccept;
+  final ValueChanged<_BuddyRequest> onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
+        child: _InsetGroup(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Friend Requests',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: _CircleColors.textFor(context),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Accept hikers before they become buddies.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _CircleColors.secondaryTextFor(context),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                if (requests.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Text(
+                      'No pending friend requests.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: _CircleColors.secondaryTextFor(context),
+                      ),
+                    ),
+                  )
+                else
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 420),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: requests.length,
+                      separatorBuilder: (_, __) => const _HorizontalSeparator(),
+                      itemBuilder: (context, index) {
+                        final request = requests[index];
+                        return _BuddyRequestRow(
+                          request: request,
+                          onAccept: () {
+                            Navigator.of(context).pop();
+                            onAccept(request);
+                          },
+                          onDecline: () {
+                            Navigator.of(context).pop();
+                            onDecline(request);
+                          },
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BuddyRequestRow extends StatelessWidget {
+  const _BuddyRequestRow({
+    required this.request,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final _BuddyRequest request;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          _Avatar(
+            label: request.name.isEmpty ? '?' : request.name.substring(0, 1),
+            color: _colorForPost(request.phoneNumber),
+            imageUrl: request.photoURL,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  request.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: _CircleColors.textFor(context),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  [
+                    request.handle,
+                    if (request.createdAtLabel.isNotEmpty)
+                      request.createdAtLabel,
+                  ].where((item) => item.isNotEmpty).join(' • '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _CircleColors.secondaryTextFor(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.outlined(
+            tooltip: 'Decline',
+            onPressed: onDecline,
+            icon: const Icon(Icons.close_rounded, size: 18),
+          ),
+          const SizedBox(width: 6),
+          IconButton.filled(
+            tooltip: 'Accept',
+            onPressed: onAccept,
+            icon: const Icon(Icons.check_rounded, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DetailHeader extends StatelessWidget {
   const _DetailHeader({
     required this.title,
@@ -3329,14 +3680,23 @@ class _DetailHeader extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({required this.label, required this.color, this.size = 42});
+  const _Avatar({
+    required this.label,
+    required this.color,
+    this.size = 42,
+    this.imageUrl = '',
+    this.imageBytes,
+  });
 
   final String label;
   final Color color;
   final double size;
+  final String imageUrl;
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {
+    final trimmedImageUrl = imageUrl.trim();
     return Container(
       width: size,
       height: size,
@@ -3352,15 +3712,41 @@ class _Avatar extends StatelessWidget {
           ),
         ],
       ),
-      child: Text(
-        label.toUpperCase(),
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-          color: Colors.white,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0,
-          fontSize: size * 0.42,
-        ),
-      ),
+      clipBehavior: Clip.antiAlias,
+      child: imageBytes != null && imageBytes!.isNotEmpty
+          ? Image.memory(
+              imageBytes!,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+            )
+          : trimmedImageUrl.isEmpty
+          ? Text(
+              label.toUpperCase(),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+                fontSize: size * 0.42,
+              ),
+            )
+          : Image.network(
+              trimmedImageUrl,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Center(
+                child: Text(
+                  label.toUpperCase(),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                    fontSize: size * 0.42,
+                  ),
+                ),
+              ),
+            ),
     );
   }
 }
@@ -3380,6 +3766,35 @@ class _CircleIcon extends StatelessWidget {
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: _CircleColors.green, size: 19),
+    );
+  }
+}
+
+class _RequestBadge extends StatelessWidget {
+  const _RequestBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: _CircleColors.red,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _CircleColors.surfaceFor(context), width: 1),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        count > 9 ? '9+' : '$count',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0,
+        ),
+      ),
     );
   }
 }
@@ -3823,7 +4238,7 @@ List<_TeamPlan> _seedTeams() {
       trail: 'Bukit Gasing Trail',
       dateLabel: 'Sunday, 7:00 AM',
       status: 'Ready',
-      members: ['You', 'Aina', 'Jason', 'Farid'],
+      members: ['You', 'Trail Lead', 'Navigator', 'Sweep'],
       readiness: 92,
     ),
     _TeamPlan(
@@ -3831,7 +4246,7 @@ List<_TeamPlan> _seedTeams() {
       trail: 'Penang Hill Heritage Trail',
       dateLabel: 'Next Friday, 6:45 AM',
       status: 'Inviting',
-      members: ['You', 'Mei Lin', 'Farid'],
+      members: ['You', 'Route Partner', 'Safety Contact'],
       readiness: 74,
     ),
   ];
@@ -3876,6 +4291,7 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
     routeCaptureId: _stringFrom(data['routeCaptureId']),
     routePointCount: _intFrom(data['routePointCount']),
     routePreviewPoints: routePreviewPoints,
+    authorPhotoURL: _stringFrom(data['authorPhotoURL']),
   );
 }
 
@@ -3898,6 +4314,7 @@ _CommunityComment _communityCommentFromFirestore(Map<String, dynamic> data) {
         : _intFrom(data['authorLevel']),
     body: _stringFrom(data['body']),
     timeLabel: _relativeTimeLabel(data['createdAtLocal']),
+    authorPhotoURL: _stringFrom(data['authorPhotoURL']),
   );
 }
 
@@ -3925,6 +4342,23 @@ _CommunityPerson _communityPersonFromProfile(Map<String, dynamic> data) {
         ? 'Trailhead'
         : _stringFrom(data['levelName']),
     gender: _stringFrom(data['gender']),
+    photoURL: _stringFrom(data['photoURL']),
+  );
+}
+
+_BuddyRequest _buddyRequestFromFirestore(Map<String, dynamic> data) {
+  final phoneNumber = _stringFrom(data['phoneNumber']);
+  final name = _stringFrom(data['displayName']).isEmpty
+      ? 'Hiker ${phoneNumber.length >= 4 ? phoneNumber.substring(phoneNumber.length - 4) : ''}'
+      : _stringFrom(data['displayName']);
+  return _BuddyRequest(
+    phoneNumber: phoneNumber,
+    name: name,
+    handle: _stringFrom(data['handle']).isEmpty
+        ? _handleForPhone(phoneNumber)
+        : _stringFrom(data['handle']),
+    photoURL: _stringFrom(data['photoURL']),
+    createdAtLabel: _relativeTimeLabel(data['createdAtLocal']),
   );
 }
 
@@ -3944,6 +4378,10 @@ String _relativeTimeLabel(Object? rawValue) {
     return '${elapsed.inHours}h ago';
   }
   return '${elapsed.inDays}d ago';
+}
+
+String _phoneKeyFor(String phoneNumber) {
+  return phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
 }
 
 String _handleForPhone(String phoneNumber) {
@@ -4137,9 +4575,10 @@ class _GroupChatTileState extends State<_GroupChatTile>
       vsync: this,
       duration: const Duration(seconds: 2),
     );
-    _borderAnim = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.linear),
-    );
+    _borderAnim = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _animController, curve: Curves.linear));
     _animController.addListener(() => setState(() {}));
     if (_hasUnread) {
       _animController.repeat();
@@ -4150,7 +4589,10 @@ class _GroupChatTileState extends State<_GroupChatTile>
   void didUpdateWidget(_GroupChatTile oldWidget) {
     super.didUpdateWidget(oldWidget);
     final wasUnread = _computeUnread(
-        oldWidget.chat, widget.phoneNumber, oldWidget.localLastReadAt);
+      oldWidget.chat,
+      widget.phoneNumber,
+      oldWidget.localLastReadAt,
+    );
     if (_hasUnread != wasUnread) {
       if (_hasUnread) {
         _animController.repeat();
@@ -4167,11 +4609,10 @@ class _GroupChatTileState extends State<_GroupChatTile>
     return a.isAfter(b) ? a : b;
   }
 
-  bool _computeUnread(
-    GroupChat chat, String myPhone, DateTime? localReadAt) {
+  bool _computeUnread(GroupChat chat, String myPhone, DateTime? localReadAt) {
     if (chat.lastMessageAt == null) return false;
     if (chat.lastMessageSenderPhone == myPhone) return false;
-    final cutoff = _latestOf(chat.lastReadAt[myPhone], localReadAt);
+    final cutoff = _latestOf(chat.lastReadAtFor(myPhone), localReadAt);
     if (cutoff != null && chat.lastMessageAt!.isBefore(cutoff)) return false;
     return true;
   }
@@ -4187,14 +4628,17 @@ class _GroupChatTileState extends State<_GroupChatTile>
     final chat = widget.chat;
     if (chat.lastMessageAt == null) return false;
     if (chat.lastMessageSenderPhone == myPhone) return false;
-    final cutoff = _latestOf(chat.lastReadAt[myPhone], widget.localLastReadAt);
+    final cutoff = _latestOf(
+      chat.lastReadAtFor(myPhone),
+      widget.localLastReadAt,
+    );
     if (cutoff != null && chat.lastMessageAt!.isBefore(cutoff)) return false;
     return true;
   }
 
   int get _unreadCount {
     if (!_hasUnread) return 0;
-    final serverCount = widget.chat.unreadCount[widget.phoneNumber] ?? 0;
+    final serverCount = widget.chat.unreadCountFor(widget.phoneNumber);
     return serverCount > 0 ? serverCount : 1;
   }
 
@@ -4211,13 +4655,23 @@ class _GroupChatTileState extends State<_GroupChatTile>
         : 'Just you';
 
     final displayName = widget.chat.displayNameFor(widget.phoneNumber);
+    final ownPhoneKey = widget.phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+    final otherPhone = widget.chat.participantPhones.firstWhere(
+      (phone) => phone.replaceAll(RegExp(r'[^0-9]'), '') != ownPhoneKey,
+      orElse: () => '',
+    );
+    final directPhotoURL = widget.chat.isDirect
+        ? widget.chat.photoURLFor(otherPhone)
+        : '';
 
     Future<void> showActionSheet() async {
       final action = await showModalBottomSheet<String>(
         context: context,
         backgroundColor: Colors.transparent,
-        builder: (ctx) =>
-            _ChatActionSheet(displayName: displayName, isPinned: widget.isPinned),
+        builder: (ctx) => _ChatActionSheet(
+          displayName: displayName,
+          isPinned: widget.isPinned,
+        ),
       );
       if (action == null) return;
       switch (action) {
@@ -4239,14 +4693,35 @@ class _GroupChatTileState extends State<_GroupChatTile>
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              CircleAvatar(
-                backgroundColor: _CircleColors.greenSoftFor(context),
-                radius: 26,
-                child: Icon(
-                  widget.chat.isDirect ? Icons.person_rounded : Icons.groups_rounded,
-                  color: _CircleColors.green,
-                  size: 24,
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: _CircleColors.greenSoftFor(context),
+                  shape: BoxShape.circle,
                 ),
+                clipBehavior: Clip.antiAlias,
+                child: directPhotoURL.isEmpty
+                    ? Icon(
+                        widget.chat.isDirect
+                            ? Icons.person_rounded
+                            : Icons.groups_rounded,
+                        color: _CircleColors.green,
+                        size: 24,
+                      )
+                    : Image.network(
+                        directPhotoURL,
+                        width: 52,
+                        height: 52,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => Icon(
+                          widget.chat.isDirect
+                              ? Icons.person_rounded
+                              : Icons.groups_rounded,
+                          color: _CircleColors.green,
+                          size: 24,
+                        ),
+                      ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -4271,7 +4746,9 @@ class _GroupChatTileState extends State<_GroupChatTile>
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
-                        fontWeight: _hasUnread ? FontWeight.w700 : FontWeight.w400,
+                        fontWeight: _hasUnread
+                            ? FontWeight.w700
+                            : FontWeight.w400,
                         color: _CircleColors.secondaryTextFor(context),
                       ),
                     ),
@@ -4288,7 +4765,9 @@ class _GroupChatTileState extends State<_GroupChatTile>
                       style: TextStyle(
                         color: _CircleColors.secondaryTextFor(context),
                         fontSize: 11,
-                        fontWeight: _hasUnread ? FontWeight.w700 : FontWeight.w600,
+                        fontWeight: _hasUnread
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                       ),
                     ),
                   const SizedBox(height: 6),
@@ -4332,7 +4811,9 @@ class _GroupChatTileState extends State<_GroupChatTile>
         border: _hasUnread
             ? null
             : Border.all(
-                color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+                color: _CircleColors.separatorFor(
+                  context,
+                ).withValues(alpha: 0.5),
               ),
         boxShadow: [
           BoxShadow(
@@ -4365,43 +4846,40 @@ class _GroupChatTileState extends State<_GroupChatTile>
     );
 
     return Dismissible(
-          key: ValueKey('chat_tile_${widget.chat.id}'),
-          direction: DismissDirection.endToStart,
-          dismissThresholds: const {DismissDirection.endToStart: 0.35},
-          background: Container(
-            decoration: BoxDecoration(
-              color: _CircleColors.surfaceFor(context),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
-              ),
-            ),
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 16),
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: _CircleColors.greenSoftFor(context),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.more_horiz_rounded, color: _CircleColors.green),
-            ),
+      key: ValueKey('chat_tile_${widget.chat.id}'),
+      direction: DismissDirection.endToStart,
+      dismissThresholds: const {DismissDirection.endToStart: 0.35},
+      background: Container(
+        decoration: BoxDecoration(
+          color: _CircleColors.surfaceFor(context),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
           ),
-          confirmDismiss: (_) async {
-            await showActionSheet();
-            return false;
-          },
-          child: tile,
-      );
+        ),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: _CircleColors.greenSoftFor(context),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(Icons.more_horiz_rounded, color: _CircleColors.green),
+        ),
+      ),
+      confirmDismiss: (_) async {
+        await showActionSheet();
+        return false;
+      },
+      child: tile,
+    );
   }
 }
 
 class _BorderTravelPainter extends CustomPainter {
-  _BorderTravelPainter({
-    required this.progress,
-    required this.color,
-  });
+  _BorderTravelPainter({required this.progress, required this.color});
 
   final double progress;
   final Color color;

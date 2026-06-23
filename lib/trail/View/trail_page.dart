@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
@@ -2437,15 +2436,9 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
 }
 
 class _SinglePinPickerSheet extends StatefulWidget {
-  const _SinglePinPickerSheet({
-    required this.title,
-    this.initialLatitude,
-    this.initialLongitude,
-  });
+  const _SinglePinPickerSheet({required this.title});
 
   final String title;
-  final double? initialLatitude;
-  final double? initialLongitude;
 
   @override
   State<_SinglePinPickerSheet> createState() => _SinglePinPickerSheetState();
@@ -2453,10 +2446,7 @@ class _SinglePinPickerSheet extends StatefulWidget {
 
 class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
   late mapbox.Point _selected = mapbox.Point(
-    coordinates: mapbox.Position(
-      widget.initialLongitude ?? 101.6869,
-      widget.initialLatitude ?? 3.1390,
-    ),
+    coordinates: mapbox.Position(101.6869, 3.1390),
   );
   mapbox.MapboxMap? _mapboxMap;
   mapbox.CircleAnnotationManager? _circleManager;
@@ -3421,7 +3411,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       .toList();
 
   HikingRouteResult? _refreshedRoute;
+  String? _refreshedRouteCheckpointsHash;
   bool _isRefreshing = false;
+  String? _routeRefreshError;
 
   @override
   void dispose() {
@@ -3514,13 +3506,21 @@ class _EditTrailPageState extends State<_EditTrailPage> {
           .toStringAsFixed(6);
       _checkpoints.add(draft);
     }
-    setState(() {});
+    setState(() {
+      _refreshedRoute = null;
+      _refreshedRouteCheckpointsHash = null;
+      _routeRefreshError = null;
+    });
+    unawaited(_refreshMetrics());
   }
 
   void _removeCheckpoint(int index) {
     if (_checkpoints.length <= 3) return;
     setState(() {
       _checkpoints.removeAt(index).dispose();
+      _refreshedRoute = null;
+      _refreshedRouteCheckpointsHash = null;
+      _routeRefreshError = null;
     });
   }
 
@@ -3575,6 +3575,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       _checkpoints[index].longitudeController.text = updated.coordinates[0]!
           .toDouble()
           .toStringAsFixed(6);
+      _refreshedRoute = null;
+      _refreshedRouteCheckpointsHash = null;
+      _routeRefreshError = null;
     });
     unawaited(_refreshMetrics());
   }
@@ -3582,45 +3585,89 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   Future<void> _refreshMetrics() async {
     final models = _buildCheckpointModels();
     if (models.length < 3 || models.length > 12) return;
+    final checkpointsHash = HikingRouteService.checkpointsHash(models);
 
-    setState(() => _isRefreshing = true);
+    setState(() {
+      _isRefreshing = true;
+      _routeRefreshError = null;
+    });
 
     try {
-      final trail = Trail(
-        trailId: widget.trail.trailId,
-        name: widget.trail.name,
-        area: widget.trail.area,
-        state: widget.trail.state,
-        latitude: models.first.latitude,
-        longitude: models.first.longitude,
-        distanceKm: 0,
-        difficulty: _difficulty,
-        estimatedDurationMinutes: 0,
-        elevationGainMeters: 0,
-        ratingAverage: widget.trail.ratingAverage,
-        offlineMapAvailable: widget.trail.offlineMapAvailable,
-        offlineMapDownloaded: widget.trail.offlineMapDownloaded,
-        isVerifiedTrail: widget.trail.isVerifiedTrail,
-        routeFilePath: widget.trail.routeFilePath,
-        coverColorValue: widget.trail.coverColorValue,
-        coverImageUrls: widget.trail.coverImageUrls,
-        checkpoints: models,
-        weather: widget.trail.weather,
-        hazards: widget.trail.hazards,
+      final route = await HikingRouteService().findHikingRouteForTrail(
+        _draftTrailForRoute(models),
       );
-
-      final route = await HikingRouteService().findHikingRouteForTrail(trail);
       if (mounted) {
         setState(() {
           _refreshedRoute = route;
+          _refreshedRouteCheckpointsHash = checkpointsHash;
           _isRefreshing = false;
         });
       }
     } catch (_) {
       if (mounted) {
-        setState(() => _isRefreshing = false);
+        setState(() {
+          _isRefreshing = false;
+          _routeRefreshError =
+              'Unable to refresh this route. Check the checkpoint locations and try again.';
+        });
       }
     }
+  }
+
+  Trail _draftTrailForRoute(List<TrailCheckpoint> checkpoints) {
+    return Trail(
+      trailId: widget.trail.trailId,
+      name: _nameController.text.trim().isEmpty
+          ? widget.trail.name
+          : _nameController.text.trim(),
+      area: _areaController.text.trim().isEmpty
+          ? widget.trail.area
+          : _areaController.text.trim(),
+      state: _stateController.text.trim().isEmpty
+          ? widget.trail.state
+          : _stateController.text.trim(),
+      latitude: checkpoints.first.latitude,
+      longitude: checkpoints.first.longitude,
+      distanceKm: 0,
+      difficulty: _difficulty,
+      estimatedDurationMinutes: 0,
+      elevationGainMeters: 0,
+      ratingAverage: widget.trail.ratingAverage,
+      offlineMapAvailable: widget.trail.offlineMapAvailable,
+      offlineMapDownloaded: widget.trail.offlineMapDownloaded,
+      isVerifiedTrail: widget.trail.isVerifiedTrail,
+      routeFilePath: widget.trail.routeFilePath,
+      coverColorValue: widget.trail.coverColorValue,
+      coverImageUrls: widget.trail.coverImageUrls,
+      checkpoints: checkpoints,
+      weather: widget.trail.weather,
+      hazards: widget.trail.hazards,
+    );
+  }
+
+  bool _routeInputsChanged(List<TrailCheckpoint> checkpoints) {
+    return HikingRouteService.checkpointsHash(checkpoints) !=
+        HikingRouteService.checkpointsHash(widget.trail.checkpoints);
+  }
+
+  Future<HikingRouteResult?> _freshRouteForSave(
+    List<TrailCheckpoint> checkpoints,
+  ) async {
+    final checkpointsHash = HikingRouteService.checkpointsHash(checkpoints);
+    if (_refreshedRoute != null &&
+        _refreshedRouteCheckpointsHash == checkpointsHash) {
+      return _refreshedRoute;
+    }
+    final route = await HikingRouteService().findHikingRouteForTrail(
+      _draftTrailForRoute(checkpoints),
+    );
+    if (mounted) {
+      setState(() {
+        _refreshedRoute = route;
+        _refreshedRouteCheckpointsHash = checkpointsHash;
+      });
+    }
+    return route;
   }
 
   List<TrailCheckpoint> _buildCheckpointModels() {
@@ -3644,8 +3691,39 @@ class _EditTrailPageState extends State<_EditTrailPage> {
     return models;
   }
 
-  void _save() {
+  Future<void> _save() async {
     final models = _buildCheckpointModels();
+    if (models.length < 3 || models.length > 12) {
+      setState(() {
+        _routeRefreshError = 'Add between 3 and 12 checkpoints before saving.';
+      });
+      return;
+    }
+
+    HikingRouteResult? routeForSave =
+        _refreshedRouteCheckpointsHash ==
+            HikingRouteService.checkpointsHash(models)
+        ? _refreshedRoute
+        : null;
+    if (_routeInputsChanged(models) || routeForSave == null) {
+      setState(() {
+        _isRefreshing = true;
+        _routeRefreshError = null;
+      });
+      try {
+        routeForSave = await _freshRouteForSave(models);
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _isRefreshing = false;
+          _routeRefreshError =
+              'Unable to refresh this route. Check the checkpoint locations and try again.';
+        });
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _isRefreshing = false);
+    }
 
     final updatedTrail = widget.trail.copyWith(
       name: _nameController.text.trim().isEmpty
@@ -3661,17 +3739,23 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       checkpoints: models.length >= 3 && models.length <= 12
           ? models
           : widget.trail.checkpoints,
-      distanceKm: _refreshedRoute != null
-          ? _refreshedRoute!.distanceMeters / 1000
+      latitude: models.first.latitude,
+      longitude: models.first.longitude,
+      distanceKm: routeForSave != null
+          ? routeForSave.distanceMeters / 1000
           : widget.trail.distanceKm,
-      estimatedDurationMinutes: _refreshedRoute != null
-          ? _refreshedRoute!.duration.inMinutes
+      estimatedDurationMinutes: routeForSave != null
+          ? routeForSave.duration.inMinutes
           : widget.trail.estimatedDurationMinutes,
-      elevationGainMeters: _refreshedRoute != null
-          ? (_refreshedRoute!.elevationGainMeters ??
+      elevationGainMeters: routeForSave != null
+          ? (routeForSave.elevationGainMeters ??
                     widget.trail.elevationGainMeters)
                 .round()
           : widget.trail.elevationGainMeters,
+      routeEncodedPolyline: routeForSave?.encodedPolyline,
+      routeCheckpointsHash: routeForSave == null
+          ? widget.trail.routeCheckpointsHash
+          : HikingRouteService.checkpointsHash(models),
     );
     Navigator.of(context).pop(updatedTrail);
   }
@@ -3688,9 +3772,14 @@ class _EditTrailPageState extends State<_EditTrailPage> {
         ),
         actions: [
           TextButton.icon(
-            onPressed: _save,
-            icon: const Icon(Icons.save_rounded),
-            label: const Text('Save'),
+            onPressed: _isRefreshing ? null : () => unawaited(_save()),
+            icon: _isRefreshing
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_rounded),
+            label: Text(_isRefreshing ? 'Refreshing route' : 'Save'),
           ),
         ],
       ),
@@ -3812,12 +3901,22 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Routes use 3–12 checkpoints. Mapbox keeps the first and '
-                      'last fixed and optimizes intermediate checkpoint order.',
+                      'Routes use 3-12 checkpoints. The first and last '
+                      'stay fixed while intermediate checkpoints are optimized.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: _TrailColors.secondaryTextFor(context),
                       ),
                     ),
+                    if (_routeRefreshError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _routeRefreshError!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _TrailColors.redFor(context),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -3840,6 +3939,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                 setState(() {
                   final draft = _checkpoints.removeAt(oldIndex);
                   _checkpoints.insert(newIndex, draft);
+                  _refreshedRoute = null;
+                  _refreshedRouteCheckpointsHash = null;
+                  _routeRefreshError = null;
                 });
               },
               itemBuilder: (context, index) {
@@ -4186,9 +4288,12 @@ class _TrailCoverImagesState extends State<_TrailCoverImages> {
 
   List<String> get _allUrls {
     final urls = widget.trail.coverImageUrls;
-    if (urls.isNotEmpty) return urls;
-    if (_autoImageUrl != null && _autoImageUrl!.isNotEmpty)
+    if (urls.isNotEmpty) {
+      return urls;
+    }
+    if (_autoImageUrl != null && _autoImageUrl!.isNotEmpty) {
       return [_autoImageUrl!];
+    }
     return const [];
   }
 
@@ -4499,7 +4604,6 @@ class _RoutePreviewState extends State<_RoutePreview> {
             trail: widget.trail,
             route: _route,
             highlightedCheckpointIndex: widget.highlightedCheckpointIndex,
-            animateRoute: false,
             isRouteLoading: _isLoadingRoute,
             loadingMessage: _loadingMessage,
           ),
@@ -5239,9 +5343,6 @@ abstract final class _TrailColors {
 
   static Color surfaceFor(BuildContext context) =>
       isDark(context) ? const Color(0xFF141C17) : Colors.white;
-
-  static Color elevatedSurfaceFor(BuildContext context) =>
-      isDark(context) ? const Color(0xFF1B261F) : Colors.white;
 
   static Color greenSoftFor(BuildContext context) =>
       isDark(context) ? const Color(0xFF183625) : greenSoft;

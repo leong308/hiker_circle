@@ -196,6 +196,108 @@ class LocalSessionDatabase {
     });
   }
 
+  Future<void> saveDeviceNotification({
+    required String ownerPhoneNumber,
+    String messageId = '',
+    required String title,
+    required String body,
+    String type = '',
+    String deepLink = '',
+    Map<String, dynamic> data = const {},
+    DateTime? receivedAt,
+    DateTime? openedAt,
+    String source = 'fcm',
+  }) async {
+    final database = await _openDatabase();
+    final now = DateTime.now().toUtc();
+    final effectiveMessageId = messageId.trim();
+    final received = (receivedAt ?? now).toUtc().toIso8601String();
+    final existingRows = effectiveMessageId.isEmpty
+        ? const <Map<String, Object?>>[]
+        : await database.query(
+            'device_notifications',
+            columns: ['id'],
+            where: 'owner_phone_number = ? AND message_id = ?',
+            whereArgs: [ownerPhoneNumber, effectiveMessageId],
+            limit: 1,
+          );
+    final row = {
+      'owner_phone_number': ownerPhoneNumber,
+      'message_id': effectiveMessageId,
+      'title': title.trim(),
+      'body': body.trim(),
+      'type': type.trim(),
+      'deep_link': deepLink.trim(),
+      'data_json': jsonEncode(data),
+      'received_at': received,
+      if (openedAt != null) 'opened_at': openedAt.toUtc().toIso8601String(),
+      'source': source.trim().isEmpty ? 'fcm' : source.trim(),
+    };
+
+    if (existingRows.isEmpty) {
+      await database.insert('device_notifications', row);
+    } else {
+      await database.update(
+        'device_notifications',
+        row,
+        where: 'id = ?',
+        whereArgs: [existingRows.first['id']],
+      );
+    }
+
+    await database.delete(
+      'device_notifications',
+      where: '''
+        owner_phone_number = ? AND id NOT IN (
+          SELECT id FROM device_notifications
+          WHERE owner_phone_number = ?
+          ORDER BY received_at DESC
+          LIMIT 200
+        )
+      ''',
+      whereArgs: [ownerPhoneNumber, ownerPhoneNumber],
+    );
+  }
+
+  Future<List<DeviceNotificationRecord>> loadDeviceNotifications({
+    required String ownerPhoneNumber,
+    int limit = 100,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'device_notifications',
+      where: 'owner_phone_number = ?',
+      whereArgs: [ownerPhoneNumber],
+      orderBy: 'received_at DESC',
+      limit: limit,
+    );
+    return rows.map(DeviceNotificationRecord.fromRow).toList();
+  }
+
+  Future<void> markDeviceNotificationOpened({
+    required String ownerPhoneNumber,
+    required int id,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'device_notifications',
+      {'opened_at': DateTime.now().toUtc().toIso8601String()},
+      where: 'owner_phone_number = ? AND id = ?',
+      whereArgs: [ownerPhoneNumber, id],
+    );
+  }
+
+  Future<void> clearDeviceNotifications({
+    required String ownerPhoneNumber,
+  }) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'device_notifications',
+      where: 'owner_phone_number = ?',
+      whereArgs: [ownerPhoneNumber],
+    );
+  }
+
   Future<Database> _openDatabase() async {
     final existingDatabase = _database;
     if (existingDatabase != null) {
@@ -209,7 +311,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 13,
+      version: 15,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -221,7 +323,8 @@ class LocalSessionDatabase {
             username TEXT NOT NULL DEFAULT '',
             requires_onboarding INTEGER NOT NULL DEFAULT 0,
             onboarding_profile_complete INTEGER NOT NULL DEFAULT 0,
-            photo_url TEXT
+            photo_url TEXT,
+            photo_bytes BLOB
           )
         ''');
         await _createSafetyTables(database);
@@ -231,6 +334,7 @@ class LocalSessionDatabase {
         await _createPendingMessagesTable(database);
         await _createActiveHikeSessionTable(database);
         await _createChatReadReceiptsTable(database);
+        await _createDeviceNotificationsTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -315,6 +419,17 @@ class LocalSessionDatabase {
             columnName: 'attachment_json',
             definition: "TEXT DEFAULT ''",
           );
+        }
+        if (oldVersion < 14) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'users',
+            columnName: 'photo_bytes',
+            definition: 'BLOB',
+          );
+        }
+        if (oldVersion < 15) {
+          await _createDeviceNotificationsTable(database);
         }
       },
     );
@@ -541,6 +656,28 @@ class LocalSessionDatabase {
         last_read_at TEXT NOT NULL,
         is_synced INTEGER NOT NULL DEFAULT 0
       )
+    ''');
+  }
+
+  Future<void> _createDeviceNotificationsTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS device_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_phone_number TEXT NOT NULL,
+        message_id TEXT,
+        title TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        type TEXT NOT NULL DEFAULT '',
+        deep_link TEXT NOT NULL DEFAULT '',
+        data_json TEXT NOT NULL DEFAULT '{}',
+        received_at TEXT NOT NULL,
+        opened_at TEXT,
+        source TEXT NOT NULL DEFAULT 'fcm'
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_device_notifications_owner_received
+      ON device_notifications(owner_phone_number, received_at DESC)
     ''');
   }
 
@@ -892,6 +1029,7 @@ class LocalSessionDatabase {
           ? 1
           : 0,
       'photo_url': session.photoURL,
+      'photo_bytes': session.photoBytes,
     };
   }
 
@@ -912,6 +1050,9 @@ class LocalSessionDatabase {
       requiresOnboarding: row['requires_onboarding'] == 1,
       isOnboardingProfileComplete: row['onboarding_profile_complete'] == 1,
       photoURL: row['photo_url'] as String?,
+      photoBytes: row['photo_bytes'] is Uint8List
+          ? row['photo_bytes'] as Uint8List
+          : null,
     );
   }
 
@@ -948,6 +1089,59 @@ class CacheUsageSummary {
     final sizeLabel = downloadedMapBytes <= 0
         ? '0 MB'
         : '${(downloadedMapBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    return '$sizeLabel map cache, $downloadedMapCount route packs, $networkObservationCount network samples';
+    return '$sizeLabel offline maps, $downloadedMapCount route packs, $networkObservationCount connection records';
   }
+}
+
+class DeviceNotificationRecord {
+  const DeviceNotificationRecord({
+    required this.id,
+    required this.messageId,
+    required this.title,
+    required this.body,
+    required this.type,
+    required this.deepLink,
+    required this.data,
+    required this.receivedAt,
+    required this.openedAt,
+    required this.source,
+  });
+
+  factory DeviceNotificationRecord.fromRow(Map<String, Object?> row) {
+    final rawData = row['data_json'] as String? ?? '{}';
+    Map<String, dynamic> data;
+    try {
+      final decoded = jsonDecode(rawData);
+      data = decoded is Map ? Map<String, dynamic>.from(decoded) : {};
+    } catch (_) {
+      data = {};
+    }
+    return DeviceNotificationRecord(
+      id: row['id'] is int ? row['id'] as int : 0,
+      messageId: row['message_id'] as String? ?? '',
+      title: row['title'] as String? ?? '',
+      body: row['body'] as String? ?? '',
+      type: row['type'] as String? ?? '',
+      deepLink: row['deep_link'] as String? ?? '',
+      data: data,
+      receivedAt:
+          DateTime.tryParse(row['received_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      openedAt: DateTime.tryParse(row['opened_at'] as String? ?? ''),
+      source: row['source'] as String? ?? 'fcm',
+    );
+  }
+
+  final int id;
+  final String messageId;
+  final String title;
+  final String body;
+  final String type;
+  final String deepLink;
+  final Map<String, dynamic> data;
+  final DateTime receivedAt;
+  final DateTime? openedAt;
+  final String source;
+
+  bool get isOpened => openedAt != null;
 }
