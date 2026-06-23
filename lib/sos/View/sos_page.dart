@@ -270,9 +270,7 @@ class _SosPageState extends State<SosPage> {
 
   void _openGearChecklist() {
     Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (context) => const GearChecklistPage(),
-      ),
+      MaterialPageRoute<void>(builder: (context) => const GearChecklistPage()),
     );
   }
 
@@ -497,16 +495,15 @@ class _SosPageState extends State<SosPage> {
                         );
                       },
                     ),
-                  ],
-                ),
+                ],
               ),
             ),
           ),
         ),
+      ),
     );
   }
 }
-
 
 class _Header extends StatelessWidget {
   const _Header({
@@ -1480,6 +1477,11 @@ class _EmergencySosControlCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 14),
+            _HiddenDuressIndicator(
+              isSending: isSending,
+              onLongPress: onDuressLongPress,
+            ),
+            const SizedBox(height: 12),
             Text(
               'Tap for the 10-second cancel window. Press and hold the button to view exactly what gets activated.',
               textAlign: TextAlign.center,
@@ -1495,7 +1497,6 @@ class _EmergencySosControlCard extends StatelessWidget {
     );
   }
 }
-
 
 class _HiddenDuressIndicator extends StatelessWidget {
   const _HiddenDuressIndicator({
@@ -1513,27 +1514,60 @@ class _HiddenDuressIndicator extends StatelessWidget {
       child: _TapSurface(
         onLongPress: isSending ? null : onLongPress,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: _SosColors.duress.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: _SosColors.duress.withValues(alpha: 0.22),
+            ),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.shield_outlined,
-                color: _SosColors.duress,
-                size: 16,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                'Silent shortcut: hold this shield',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: _SosColors.duress,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: _SosColors.duress.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
                 ),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  color: _SosColors.duress,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Duress SOS',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: _SosColors.duress,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Long press to send a silent emergency alert',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _SosColors.secondaryTextFor(context),
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.touch_app_rounded,
+                color: isSending
+                    ? _SosColors.secondaryTextFor(context)
+                    : _SosColors.duress,
+                size: 18,
               ),
             ],
           ),
