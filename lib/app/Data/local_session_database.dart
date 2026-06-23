@@ -739,6 +739,20 @@ class LocalSessionDatabase {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  Future<void> deleteChatData(String chatId) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'chat_read_receipts',
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+    );
+    await database.delete(
+      'pending_messages',
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+    );
+  }
+
   Future<void> _createRouteCacheTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS route_cache (

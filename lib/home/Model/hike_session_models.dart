@@ -1412,6 +1412,7 @@ class UpcomingHike {
     required this.hikeType,
     required this.participantCount,
     required this.creatorPhone,
+    required this.creatorName,
     required this.createdAt,
     this.participantPhones = const [],
   });
@@ -1434,6 +1435,7 @@ class UpcomingHike {
   final String hikeType;
   final int participantCount;
   final String creatorPhone;
+  final String creatorName;
   final DateTime createdAt;
   final List<String> participantPhones;
 
@@ -1455,6 +1457,7 @@ class UpcomingHike {
     'hikeType': hikeType,
     'participantCount': participantCount,
     'creatorPhone': creatorPhone,
+    'creatorName': creatorName,
     'createdAt': createdAt.toUtc().toIso8601String(),
     if (participantPhones.isNotEmpty) 'participantPhones': participantPhones,
   };
@@ -1489,6 +1492,7 @@ class UpcomingHike {
       hikeType: _modelStringFrom(data['hikeType']),
       participantCount: _modelIntFrom(data['participantCount']),
       creatorPhone: _modelStringFrom(data['creatorPhone']),
+      creatorName: _modelStringFrom(data['creatorName']),
       createdAt: _modelDateFromValue(data['createdAt']) ?? DateTime.now(),
       participantPhones: participantPhones,
     );
@@ -1528,6 +1532,7 @@ class GroupChat {
     this.hikeEndedAt,
     this.lastReadAt = const {},
     this.unreadCount = const {},
+    this.departureTime,
   });
 
   final String id;
@@ -1538,6 +1543,7 @@ class GroupChat {
   final DateTime createdAt;
   final String chatType;
   final Map<String, String> participantNames;
+  final DateTime? departureTime;
   final String? lastMessage;
   final DateTime? lastMessageAt;
   final String? lastMessageSenderPhone;
@@ -1549,6 +1555,9 @@ class GroupChat {
 
   String displayNameFor(String phoneNumber) {
     if (!isDirect) {
+      if (departureTime != null) {
+        return _formatGroupChatName(trailName, departureTime!);
+      }
       return trailName;
     }
     for (final phone in participantPhones) {
@@ -1561,6 +1570,28 @@ class GroupChat {
     return trailName.isEmpty ? 'Private chat' : trailName;
   }
 
+  static String _formatGroupChatName(String trailName, DateTime departureTime) {
+    final time = _formatTime(departureTime);
+    final date = _formatDate(departureTime);
+    return '[$time, $date] $trailName';
+  }
+
+  static String _formatTime(DateTime dt) {
+    final hour = dt.hour;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    return '$displayHour:$minute $period';
+  }
+
+  static String _formatDate(DateTime dt) {
+    final months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  }
+
   Map<String, dynamic> toFirestore() {
     return {
       'hikeSessionId': hikeSessionId,
@@ -1570,6 +1601,8 @@ class GroupChat {
       'chatType': chatType,
       if (participantNames.isNotEmpty) 'participantNames': participantNames,
       'createdAtLocal': createdAt.toUtc().toIso8601String(),
+      if (departureTime != null)
+        'departureTimeLocal': departureTime!.toUtc().toIso8601String(),
       if (lastMessage != null) 'lastMessage': lastMessage,
       if (lastMessageAt != null)
         'lastMessageAtLocal': lastMessageAt!.toUtc().toIso8601String(),
@@ -1617,6 +1650,7 @@ class GroupChat {
           ? data['lastMessageSenderPhone'] as String
           : null,
       hikeEndedAt: _modelDateFromValue(data['hikeEndedAt']),
+      departureTime: _modelDateFromValue(data['departureTimeLocal']),
       lastReadAt: data['lastReadAt'] is Map
           ? (data['lastReadAt'] as Map).map(
               (k, v) => MapEntry(

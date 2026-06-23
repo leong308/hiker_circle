@@ -370,6 +370,22 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
               'Destination',
               widget.hike.destinationName,
             ),
+            const SizedBox(height: 4),
+            _infoRow(
+              context,
+              Icons.person_rounded,
+              'Host',
+              widget.hike.creatorName.isNotEmpty
+                  ? widget.hike.creatorName
+                  : widget.hike.creatorPhone,
+            ),
+            const SizedBox(height: 4),
+            _infoRow(
+              context,
+              Icons.phone_rounded,
+              'Phone',
+              widget.hike.creatorPhone,
+            ),
             const SizedBox(height: 10),
             const _HorizontalSeparator(),
             const SizedBox(height: 10),

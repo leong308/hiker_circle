@@ -82,7 +82,7 @@ class _CirclePageState extends State<CirclePage> {
 
   void _listenToGroupChats() {
     final phone = widget.session.phoneNumber;
-    _chatsSubscription =       widget.hikerCircleRepository
+    _chatsSubscription = widget.hikerCircleRepository
         .userGroupChatsStream(phone)
         .listen(
           (chats) async {
@@ -95,24 +95,6 @@ class _CirclePageState extends State<CirclePage> {
             final local =
                 await widget.hikerCircleRepository.loadAllLocalLastReadAt();
             if (!mounted) return;
-            for (final chat in chats) {
-              if (chat.lastMessageAt == null) continue;
-              if (chat.lastMessageSenderPhone == phone) continue;
-              final localReadAt = local[chat.id] ?? chat.lastReadAt[phone];
-              if (localReadAt == null) continue;
-              if (chat.lastMessageAt!.isBefore(localReadAt)) {
-                final serverCount =
-                    chat.unreadCount[phone] ?? 0;
-                if (serverCount > 0) {
-                  unawaited(
-                    widget.hikerCircleRepository.markGroupChatAsRead(
-                      chatId: chat.id,
-                      phoneNumber: phone,
-                    ),
-                  );
-                }
-              }
-            }
             setState(() {
               _groupChats = chats;
               _localLastReadAt = local;
