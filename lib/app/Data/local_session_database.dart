@@ -209,7 +209,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 11,
+      version: 13,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -220,7 +220,8 @@ class LocalSessionDatabase {
             is_admin INTEGER NOT NULL DEFAULT 0,
             username TEXT NOT NULL DEFAULT '',
             requires_onboarding INTEGER NOT NULL DEFAULT 0,
-            onboarding_profile_complete INTEGER NOT NULL DEFAULT 0
+            onboarding_profile_complete INTEGER NOT NULL DEFAULT 0,
+            photo_url TEXT
           )
         ''');
         await _createSafetyTables(database);
@@ -298,6 +299,22 @@ class LocalSessionDatabase {
         }
         if (oldVersion < 11) {
           await _createChatReadReceiptsTable(database);
+        }
+        if (oldVersion < 12) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'users',
+            columnName: 'photo_url',
+            definition: 'TEXT',
+          );
+        }
+        if (oldVersion < 13) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'pending_messages',
+            columnName: 'attachment_json',
+            definition: "TEXT DEFAULT ''",
+          );
         }
       },
     );
@@ -500,7 +517,8 @@ class LocalSessionDatabase {
         created_at TEXT NOT NULL,
         send_status TEXT NOT NULL DEFAULT 'pending',
         retry_count INTEGER NOT NULL DEFAULT 0,
-        firestore_doc_id TEXT DEFAULT ''
+        firestore_doc_id TEXT DEFAULT '',
+        attachment_json TEXT DEFAULT ''
       )
     ''');
   }
@@ -526,18 +544,17 @@ class LocalSessionDatabase {
     ''');
   }
 
-  Future<void> saveChatReadReceipt(String chatId, DateTime lastReadAt,
-      {bool synced = false}) async {
+  Future<void> saveChatReadReceipt(
+    String chatId,
+    DateTime lastReadAt, {
+    bool synced = false,
+  }) async {
     final database = await _openDatabase();
-    await database.insert(
-      'chat_read_receipts',
-      {
-        'chat_id': chatId,
-        'last_read_at': lastReadAt.toUtc().toIso8601String(),
-        'is_synced': synced ? 1 : 0,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await database.insert('chat_read_receipts', {
+      'chat_id': chatId,
+      'last_read_at': lastReadAt.toUtc().toIso8601String(),
+      'is_synced': synced ? 1 : 0,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<DateTime?> loadChatReadReceipt(String chatId) async {
@@ -554,12 +571,10 @@ class LocalSessionDatabase {
 
   Future<Map<String, DateTime>> loadAllChatReadReceipts() async {
     final database = await _openDatabase();
-    final rows =
-        await database.query('chat_read_receipts');
+    final rows = await database.query('chat_read_receipts');
     final result = <String, DateTime>{};
     for (final row in rows) {
-      final ts =
-          DateTime.tryParse(row['last_read_at'] as String? ?? '');
+      final ts = DateTime.tryParse(row['last_read_at'] as String? ?? '');
       if (ts != null) {
         result[row['chat_id'] as String] = ts;
       }
@@ -862,6 +877,7 @@ class LocalSessionDatabase {
       'onboarding_profile_complete': session.isOnboardingProfileComplete
           ? 1
           : 0,
+      'photo_url': session.photoURL,
     };
   }
 
@@ -881,6 +897,7 @@ class LocalSessionDatabase {
       username: row['username'] as String? ?? '',
       requiresOnboarding: row['requires_onboarding'] == 1,
       isOnboardingProfileComplete: row['onboarding_profile_complete'] == 1,
+      photoURL: row['photo_url'] as String?,
     );
   }
 

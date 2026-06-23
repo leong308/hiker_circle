@@ -175,6 +175,7 @@ class FirebaseUserRepository {
         username: _username(data),
         requiresOnboarding: _requiresOnboarding(data),
         isOnboardingProfileComplete: _isProfileSetupComplete(data),
+        photoURL: _photoURL(data),
       );
     } on FirebaseUserRepositoryException {
       rethrow;
@@ -277,6 +278,21 @@ class FirebaseUserRepository {
     }
     final profile = data?['profile'];
     return profile is Map ? _stringFrom(profile['username']).trim() : '';
+  }
+
+  String? _photoURL(Map<String, dynamic>? data) {
+    final topLevel = _stringFrom(data?['photoURL']).trim();
+    if (topLevel.isNotEmpty) {
+      return topLevel;
+    }
+    final profile = data?['profile'];
+    if (profile is Map) {
+      final fromProfile = _stringFrom(profile['photoURL']).trim();
+      if (fromProfile.isNotEmpty) {
+        return fromProfile;
+      }
+    }
+    return null;
   }
 
   bool _isProfileSetupComplete(Map<String, dynamic>? data) {

@@ -6,12 +6,14 @@ class MeProfile {
     required this.handle,
     required this.phoneNumber,
     required this.status,
+    this.photoURL,
   });
 
   final String displayName;
   final String handle;
   final String phoneNumber;
   final String status;
+  final String? photoURL;
 }
 
 class MeStat {

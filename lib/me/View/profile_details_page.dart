@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
+import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../onboarding/Data/onboarding_repository.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
@@ -26,8 +31,10 @@ class ProfileDetailsPage extends StatefulWidget {
 
 class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
   late final OnboardingRepository _repository;
+  late final HikerCircleFirebaseRepository _firebaseRepository;
   late Future<OnboardingProfile> _profileFuture;
   bool _isSaving = false;
+  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
@@ -37,6 +44,9 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
         OnboardingRepository(
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
         );
+    _firebaseRepository = HikerCircleFirebaseRepository(
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+    );
     _profileFuture = _repository.loadProfile(widget.session);
   }
 
@@ -44,6 +54,42 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
     setState(() {
       _profileFuture = _repository.loadProfile(widget.session);
     });
+  }
+
+  Future<void> _changePhoto(OnboardingProfile profile) async {
+    final file = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1024,
+      maxHeight: 1024,
+    );
+    if (file == null || !mounted) return;
+    setState(() => _isSaving = true);
+    try {
+      final bytes = await file.readAsBytes();
+      final url = await _firebaseRepository.uploadProfilePhoto(
+        phoneNumber: widget.session.phoneNumber,
+        bytes: bytes,
+        fileName: file.name,
+      );
+      if (!mounted) return;
+      final updated = await _saveProfile(profile.copyWith(photoURL: url));
+      if (updated != null && mounted) {
+        setState(() => _profileFuture = Future.value(updated));
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.toString()),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   Future<void> _editExperience(OnboardingProfile profile) async {
@@ -142,9 +188,9 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
     );
   }
 
-  Future<void> _saveProfile(OnboardingProfile profile) async {
+  Future<OnboardingProfile?> _saveProfile(OnboardingProfile profile) async {
     if (_isSaving) {
-      return;
+      return null;
     }
     setState(() {
       _isSaving = true;
@@ -152,14 +198,15 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
     try {
       await _repository.saveProfile(session: widget.session, profile: profile);
       if (!mounted) {
-        return;
+        return null;
       }
       setState(() {
         _profileFuture = Future.value(profile);
       });
+      return profile;
     } catch (error) {
       if (!mounted) {
-        return;
+        return null;
       }
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -169,6 +216,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
             behavior: SnackBarBehavior.floating,
           ),
         );
+      return null;
     } finally {
       if (mounted) {
         setState(() {
@@ -208,7 +256,12 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
                     padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
                     sliver: SliverList.list(
                       children: [
-                        _IdentityCard(profile: profile),
+                        _IdentityCard(
+                          profile: profile,
+                          onChangePhoto: _isSaving
+                              ? null
+                              : () => _changePhoto(profile),
+                        ),
                         const SizedBox(height: 18),
                         const _SectionLabel('ABOUT YOU'),
                         const SizedBox(height: 8),
@@ -325,9 +378,10 @@ class _Header extends StatelessWidget {
 }
 
 class _IdentityCard extends StatelessWidget {
-  const _IdentityCard({required this.profile});
+  const _IdentityCard({required this.profile, this.onChangePhoto});
 
   final OnboardingProfile profile;
+  final VoidCallback? onChangePhoto;
 
   @override
   Widget build(BuildContext context) {
@@ -353,21 +407,66 @@ class _IdentityCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            width: 78,
-            height: 78,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.36),
-                width: 2,
-              ),
-            ),
-            child: const Icon(
-              CupertinoIcons.person_fill,
-              color: Colors.white,
-              size: 40,
+          GestureDetector(
+            onTap: onChangePhoto,
+            child: Stack(
+              children: [
+                Container(
+                  width: 78,
+                  height: 78,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.36),
+                      width: 2,
+                    ),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(39),
+                    child: profile.photoURL != null
+                        ? Image.network(
+                            profile.photoURL!,
+                            width: 78,
+                            height: 78,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(
+                                  CupertinoIcons.person_fill,
+                                  color: Colors.white,
+                                  size: 40,
+                                ),
+                          )
+                        : const Icon(
+                            CupertinoIcons.person_fill,
+                            color: Colors.white,
+                            size: 40,
+                          ),
+                  ),
+                ),
+                if (onChangePhoto != null)
+                  Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFF3F8F5E),
+                          width: 2,
+                        ),
+                      ),
+                      child: const Icon(
+                        CupertinoIcons.camera_fill,
+                        size: 13,
+                        color: Color(0xFF3F8F5E),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(width: 16),

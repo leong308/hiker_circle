@@ -67,6 +67,7 @@ class OnboardingRepository {
         'profileSetupCompleted': true,
         'profileUpdatedAt': FieldValue.serverTimestamp(),
         'profileUpdatedAtLocal': now.toIso8601String(),
+        if (profile.photoURL != null) 'photoURL': profile.photoURL,
       }, SetOptions(merge: true));
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));

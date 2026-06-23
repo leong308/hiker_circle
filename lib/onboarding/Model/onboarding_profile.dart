@@ -7,6 +7,7 @@ class OnboardingProfile {
     this.residentialLocation = '',
     this.residentialLatitude,
     this.residentialLongitude,
+    this.photoURL,
   });
 
   factory OnboardingProfile.fromFirestore(Map<String, dynamic>? data) {
@@ -18,6 +19,7 @@ class OnboardingProfile {
       residentialLocation: _stringFrom(data?['residentialLocation']),
       residentialLatitude: _doubleFrom(data?['residentialLatitude']),
       residentialLongitude: _doubleFrom(data?['residentialLongitude']),
+      photoURL: _stringFromOrNull(data?['photoURL']),
     );
   }
 
@@ -28,6 +30,7 @@ class OnboardingProfile {
   final String residentialLocation;
   final double? residentialLatitude;
   final double? residentialLongitude;
+  final String? photoURL;
 
   OnboardingProfile copyWith({
     String? username,
@@ -37,6 +40,7 @@ class OnboardingProfile {
     String? residentialLocation,
     double? residentialLatitude,
     double? residentialLongitude,
+    String? photoURL,
   }) {
     return OnboardingProfile(
       username: username ?? this.username,
@@ -46,6 +50,7 @@ class OnboardingProfile {
       residentialLocation: residentialLocation ?? this.residentialLocation,
       residentialLatitude: residentialLatitude ?? this.residentialLatitude,
       residentialLongitude: residentialLongitude ?? this.residentialLongitude,
+      photoURL: photoURL ?? this.photoURL,
     );
   }
 
@@ -67,11 +72,16 @@ class OnboardingProfile {
       'residentialLocation': residentialLocation.trim(),
       'residentialLatitude': residentialLatitude,
       'residentialLongitude': residentialLongitude,
+      if (photoURL != null) 'photoURL': photoURL,
     };
   }
 
   static String _stringFrom(Object? value) {
     return value is String ? value.trim() : '';
+  }
+
+  static String? _stringFromOrNull(Object? value) {
+    return value is String ? value.trim() : null;
   }
 
   static double? _doubleFrom(Object? value) {

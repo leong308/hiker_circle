@@ -8,6 +8,7 @@ class AppSession {
     this.username = '',
     this.requiresOnboarding = false,
     this.isOnboardingProfileComplete = false,
+    this.photoURL,
   }) : createdAt = createdAt ?? signedInAt;
 
   final String phoneNumber;
@@ -18,6 +19,7 @@ class AppSession {
   final String username;
   final bool requiresOnboarding;
   final bool isOnboardingProfileComplete;
+  final String? photoURL;
 
   AppSession copyWith({
     String? phoneNumber,
@@ -28,6 +30,7 @@ class AppSession {
     String? username,
     bool? requiresOnboarding,
     bool? isOnboardingProfileComplete,
+    String? photoURL,
   }) {
     return AppSession(
       phoneNumber: phoneNumber ?? this.phoneNumber,
@@ -39,6 +42,7 @@ class AppSession {
       requiresOnboarding: requiresOnboarding ?? this.requiresOnboarding,
       isOnboardingProfileComplete:
           isOnboardingProfileComplete ?? this.isOnboardingProfileComplete,
+      photoURL: photoURL ?? this.photoURL,
     );
   }
 }

@@ -90,9 +90,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
-  Future<void> removeFcmToken({
-    required AppSession session,
-  }) async {
+  Future<void> removeFcmToken({required AppSession session}) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
     }
@@ -100,15 +98,17 @@ class HikerCircleFirebaseRepository {
     if (appInstanceId.isEmpty) {
       return;
     }
-    final userDoc =
-        _resolvedFirestore.collection('users').doc(_userIdFor(session));
+    final userDoc = _resolvedFirestore
+        .collection('users')
+        .doc(_userIdFor(session));
     final snapshot = await userDoc.get();
     if (!snapshot.exists) {
       return;
     }
     final data = snapshot.data()!;
-    final token = (data['fcmTokenByAppId'] as Map<String, dynamic>?)
-        ?[appInstanceId] as String?;
+    final token =
+        (data['fcmTokenByAppId'] as Map<String, dynamic>?)?[appInstanceId]
+            as String?;
 
     final updates = <String, dynamic>{
       'fcmTokenByAppId.$appInstanceId': FieldValue.delete(),
@@ -900,8 +900,9 @@ class HikerCircleFirebaseRepository {
     await _users.doc(_userIdFor(session)).set({
       'teamSafetyPreferences': preferences,
       'teamSafetyPreferencesUpdatedAt': FieldValue.serverTimestamp(),
-      'teamSafetyPreferencesUpdatedAtLocal':
-          DateTime.now().toUtc().toIso8601String(),
+      'teamSafetyPreferencesUpdatedAtLocal': DateTime.now()
+          .toUtc()
+          .toIso8601String(),
     }, SetOptions(merge: true));
   }
 
@@ -1008,8 +1009,9 @@ class HikerCircleFirebaseRepository {
     if (normalizedChatId.isEmpty) return;
     await _users.doc(_userIdFor(session)).set({
       'pinnedChats': {
-        normalizedChatId:
-            pinned ? FieldValue.serverTimestamp() : FieldValue.delete(),
+        normalizedChatId: pinned
+            ? FieldValue.serverTimestamp()
+            : FieldValue.delete(),
       },
     }, SetOptions(merge: true));
   }
@@ -1167,6 +1169,65 @@ class HikerCircleFirebaseRepository {
       }
       throw HikerCircleFirebaseRepositoryException(
         'Attachment upload failed: ${error.message ?? error.code}',
+      );
+    }
+  }
+
+  Future<String> uploadProfilePhoto({
+    required String phoneNumber,
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    if (bytes.isEmpty) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The selected image is empty.',
+      );
+    }
+    const maxBytes = 10 * 1024 * 1024;
+    if (bytes.length > maxBytes) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Profile photos must be 10 MB or smaller.',
+      );
+    }
+    final safeName = fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final userId = FirebaseUserRepository.documentIdForPhoneNumber(phoneNumber);
+    final objectName = '${DateTime.now().microsecondsSinceEpoch}_$safeName';
+    try {
+      final firebaseUser = FirebaseBootstrap.requireAuthenticatedUser();
+      if (firebaseUser.uid != userId) {
+        throw FirebaseAuthException(
+          code: 'firebase-session-mismatch',
+          message: 'The Firebase account does not match the phone number.',
+        );
+      }
+      final reference = _resolvedStorage.ref(
+        'profile_photos/$userId/$objectName',
+      );
+      await reference.putData(
+        bytes,
+        SettableMetadata(
+          contentType: 'image/jpeg',
+          customMetadata: {
+            'userId': userId,
+            'uploadedAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ),
+      );
+      return await reference.getDownloadURL();
+    } on FirebaseAuthException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ??
+            'Your login could not be validated. Sign in again and retry.',
+      );
+    } on FirebaseException catch (error) {
+      if (error.code == 'unauthorized') {
+        throw const HikerCircleFirebaseRepositoryException(
+          'Upload is blocked by Firebase Storage rules.',
+        );
+      }
+      throw HikerCircleFirebaseRepositoryException(
+        'Profile photo upload failed: ${error.message ?? error.code}',
       );
     }
   }
@@ -2234,7 +2295,8 @@ class HikerCircleFirebaseRepository {
         'hikeEndedAt': now.toIso8601String(),
       }, SetOptions(merge: true));
       final phoneData = chatDoc.data();
-      final chatPhones = (phoneData['participantPhones'] as Iterable?)
+      final chatPhones =
+          (phoneData['participantPhones'] as Iterable?)
               ?.map((e) => e is String ? e : '')
               .where((e) => e.isNotEmpty)
               .toList() ??

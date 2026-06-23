@@ -148,7 +148,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       context: context,
       position: RelativeRect.fromRect(
         Rect.fromLTWH(
-          screenSize.width - 220,
+          screenSize.width - 1,
           offset.dy + kToolbarHeight,
           1, 1,
         ),
@@ -274,14 +274,45 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   void _scrollToMatch() {
     if (_matchedIndices.isEmpty) return;
     final idx = _matchedIndices[_currentMatchIndex];
-    final key = _messageKeys[idx];
-    if (key?.currentContext != null) {
-      Scrollable.ensureVisible(
-        key!.currentContext!,
-        alignment: 0.3,
-        duration: const Duration(milliseconds: 200),
-      );
-    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      final key = _messageKeys[idx];
+      if (key?.currentContext != null) {
+        Scrollable.ensureVisible(
+          key!.currentContext!,
+          alignment: 0.3,
+          duration: const Duration(milliseconds: 200),
+        );
+      } else if (_scrollController.hasClients) {
+        final estimatedOffset = _messages.isNotEmpty
+            ? (idx / _messages.length) *
+                _scrollController.position.maxScrollExtent
+            : 0.0;
+        _scrollController
+            .animateTo(
+              estimatedOffset.clamp(
+                0.0,
+                _scrollController.position.maxScrollExtent,
+              ),
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+            )
+            .then((_) {
+              if (!context.mounted) return;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                final retryKey = _messageKeys[idx];
+                if (retryKey?.currentContext != null) {
+                  Scrollable.ensureVisible(
+                    retryKey!.currentContext!,
+                    alignment: 0.3,
+                    duration: const Duration(milliseconds: 200),
+                  );
+                }
+              });
+            });
+      }
+    });
   }
 
   Widget _searchArrowButton(IconData icon, VoidCallback onTap, {bool enabled = true}) {
@@ -1064,11 +1095,22 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
             ),
             color: _surfaceFor(context),
             surfaceTintColor: Colors.transparent,
-            position: PopupMenuPosition.under,
             onSelected: (action) async {
               if (action == _ChatMenuAction.search) {
                 if (!context.mounted) return;
                 _enterSearch();
+              } else if (action == _ChatMenuAction.media) {
+                if (!context.mounted) return;
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => _SharedMediaPage(
+                      messages: _messages,
+                      chatName: widget.chat.displayNameFor(
+                        widget.session.phoneNumber,
+                      ),
+                    ),
+                  ),
+                );
               } else if (action == _ChatMenuAction.mute) {
                 await _openChatSettings();
               } else if (action == _ChatMenuAction.more) {
@@ -1699,7 +1741,7 @@ class _MessageBubble extends StatelessWidget {
             ? _green
             : isDark
                 ? const Color(0xFF1B261F)
-                : const Color(0xFFEEF1EF));
+                : const Color(0xFFE0E4E0));
 
     final showUsername = !isMe && isGroupChat && isFirstInBlock;
     final showHead = isGroupChat && isLastInBlock;
@@ -2102,6 +2144,351 @@ class _LinkedMessageText extends StatelessWidget {
         style: TextStyle(color: textColor, fontSize: 15, height: 1.35),
       ),
     );
+  }
+}
+
+class _SharedMediaPage extends StatefulWidget {
+  const _SharedMediaPage({
+    required this.messages,
+    required this.chatName,
+  });
+
+  final List<ChatMessage> messages;
+  final String chatName;
+
+  @override
+  State<_SharedMediaPage> createState() => _SharedMediaPageState();
+}
+
+class _SharedMediaPageState extends State<_SharedMediaPage>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  late final List<ChatMessage> _mediaMessages;
+  late final List<ChatMessage> _docMessages;
+  late final List<_LinkItem> _linkItems;
+
+  static final _linkRegex = RegExp(
+    r'((?:https?://|www\.)[^\s<]+)',
+    caseSensitive: false,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+
+    _mediaMessages = [];
+    _docMessages = [];
+    final linkItems = <_LinkItem>[];
+
+    for (final msg in widget.messages) {
+      if (msg.isSystemMessage) continue;
+
+      final att = msg.attachment;
+      if (att != null) {
+        switch (att.type) {
+          case ChatAttachmentType.image:
+          case ChatAttachmentType.video:
+            _mediaMessages.add(msg);
+          case ChatAttachmentType.document:
+            _docMessages.add(msg);
+        }
+      }
+
+      if (msg.text.isNotEmpty) {
+        for (final m in _linkRegex.allMatches(msg.text)) {
+          var raw = m.group(0)!;
+          final trailing = RegExp(r'[.,!?;:)\]]+$').firstMatch(raw);
+          final clean = trailing != null
+              ? raw.substring(0, raw.length - trailing.group(0)!.length)
+              : raw;
+          linkItems.add(_LinkItem(message: msg, url: clean));
+        }
+      }
+    }
+
+    _linkItems = linkItems;
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Scaffold(
+      backgroundColor: isDark ? _darkBackground : _background,
+      appBar: AppBar(
+        backgroundColor: isDark ? _darkSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          'Media, links, docs',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: isDark ? const Color(0xFFEAF4EE) : const Color(0xFF111111),
+          ),
+        ),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: _green,
+          labelColor: _green,
+          unselectedLabelColor: _secondaryTextFor(context),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+          tabs: [
+            Tab(text: 'Media (${_mediaMessages.length})'),
+            Tab(text: 'Docs (${_docMessages.length})'),
+            Tab(text: 'Links (${_linkItems.length})'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildMediaTab(),
+          _buildDocsTab(),
+          _buildLinksTab(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMediaTab() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (_mediaMessages.isEmpty) {
+      return _emptyTab('No media shared yet');
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(4),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 4,
+        mainAxisSpacing: 4,
+      ),
+      itemCount: _mediaMessages.length,
+      itemBuilder: (context, index) {
+        final msg = _mediaMessages[index];
+        final att = msg.attachment!;
+        final isVideo = att.type == ChatAttachmentType.video;
+        return GestureDetector(
+          onTap: () => unawaited(_openExternalUrl(att.url)),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  att.url,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      color: isDark ? _darkSurface2 : const Color(0xFFE8ECE8),
+                      child: const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: isDark ? _darkSurface2 : const Color(0xFFE8ECE8),
+                    child: Icon(
+                      isVideo ? Icons.videocam_rounded : Icons.image_rounded,
+                      color: _secondaryTextFor(context),
+                    ),
+                  ),
+                ),
+              ),
+              if (isVideo)
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDocsTab() {
+    if (_docMessages.isEmpty) {
+      return _emptyTab('No documents shared yet');
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _docMessages.length,
+      separatorBuilder: (_, _) => Divider(
+        height: 1,
+        indent: 72,
+        color: _separatorFor(context),
+      ),
+      itemBuilder: (context, index) {
+        final msg = _docMessages[index];
+        final att = msg.attachment!;
+        return _FileListTile(
+          icon: Icons.description_rounded,
+          fileName: att.fileName,
+          subtitle: _fileSizeLabel(att.sizeBytes),
+          senderName: msg.senderName,
+          sentAt: msg.sentAt,
+          onTap: () => unawaited(_openExternalUrl(att.url)),
+          isDark: Theme.of(context).brightness == Brightness.dark,
+        );
+      },
+    );
+  }
+
+  Widget _buildLinksTab() {
+    if (_linkItems.isEmpty) {
+      return _emptyTab('No links shared yet');
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _linkItems.length,
+      separatorBuilder: (_, _) => Divider(
+        height: 1,
+        indent: 72,
+        color: _separatorFor(context),
+      ),
+      itemBuilder: (context, index) {
+        final item = _linkItems[index];
+        return _FileListTile(
+          icon: Icons.link_rounded,
+          fileName: item.url,
+          subtitle: item.message.senderName,
+          senderName: item.message.senderName,
+          sentAt: item.message.sentAt,
+          onTap: () => unawaited(_openExternalUrl(item.url)),
+          isDark: Theme.of(context).brightness == Brightness.dark,
+        );
+      },
+    );
+  }
+
+  Widget _emptyTab(String text) {
+    return Center(
+      child: Text(
+        text,
+        style: TextStyle(
+          color: _secondaryTextFor(context),
+          fontSize: 15,
+        ),
+      ),
+    );
+  }
+}
+
+class _LinkItem {
+  const _LinkItem({required this.message, required this.url});
+  final ChatMessage message;
+  final String url;
+}
+
+class _FileListTile extends StatelessWidget {
+  const _FileListTile({
+    required this.icon,
+    required this.fileName,
+    required this.subtitle,
+    required this.senderName,
+    required this.sentAt,
+    required this.onTap,
+    required this.isDark,
+  });
+
+  final IconData icon;
+  final String fileName;
+  final String subtitle;
+  final String senderName;
+  final DateTime sentAt;
+  final VoidCallback onTap;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _green.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: _green, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isDark
+                            ? const Color(0xFFEAF4EE)
+                            : const Color(0xFF111111),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _secondaryTextFor(context),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _formatTime(sentAt),
+                style: TextStyle(
+                  color: _secondaryTextFor(context),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatTime(DateTime dt) {
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inDays == 0) {
+      return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    }
+    if (diff.inDays == 1) return 'Yesterday';
+    if (diff.inDays < 7) return '${dt.day}/${dt.month}';
+    return '${dt.day}/${dt.month}/${dt.year}';
   }
 }
 

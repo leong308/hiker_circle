@@ -14,6 +14,7 @@ class MeRepository {
           '@${username.isEmpty ? _profileHandleForPhone(session.phoneNumber) : username}',
       phoneNumber: session.phoneNumber,
       status: 'Ready for the next hike',
+      photoURL: session.photoURL,
     );
   }
 

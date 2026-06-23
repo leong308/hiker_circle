@@ -497,10 +497,26 @@ class _ProfileCell extends StatelessWidget {
                   shape: BoxShape.circle,
                   color: _MeColors.greenSoftFor(context),
                 ),
-                child: const Icon(
-                  CupertinoIcons.person_fill,
-                  color: _MeColors.green,
-                  size: 31,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(29),
+                  child: profile.photoURL != null
+                      ? Image.network(
+                          profile.photoURL!,
+                          width: 58,
+                          height: 58,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Icon(
+                                CupertinoIcons.person_fill,
+                                color: _MeColors.green,
+                                size: 31,
+                              ),
+                        )
+                      : const Icon(
+                          CupertinoIcons.person_fill,
+                          color: _MeColors.green,
+                          size: 31,
+                        ),
                 ),
               ),
               const SizedBox(width: 14),
