@@ -209,7 +209,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 9,
+      version: 11,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -229,6 +229,7 @@ class LocalSessionDatabase {
         await _createRouteCacheTable(database);
         await _createPendingMessagesTable(database);
         await _createActiveHikeSessionTable(database);
+        await _createChatReadReceiptsTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -286,6 +287,17 @@ class LocalSessionDatabase {
         }
         if (oldVersion < 9) {
           await _createActiveHikeSessionTable(database);
+        }
+        if (oldVersion < 10) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'pending_messages',
+            columnName: 'attachment_json',
+            definition: "TEXT DEFAULT ''",
+          );
+        }
+        if (oldVersion < 11) {
+          await _createChatReadReceiptsTable(database);
         }
       },
     );
@@ -502,6 +514,77 @@ class LocalSessionDatabase {
         updated_at TEXT NOT NULL
       )
     ''');
+  }
+
+  Future<void> _createChatReadReceiptsTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS chat_read_receipts (
+        chat_id TEXT PRIMARY KEY,
+        last_read_at TEXT NOT NULL,
+        is_synced INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
+  Future<void> saveChatReadReceipt(String chatId, DateTime lastReadAt,
+      {bool synced = false}) async {
+    final database = await _openDatabase();
+    await database.insert(
+      'chat_read_receipts',
+      {
+        'chat_id': chatId,
+        'last_read_at': lastReadAt.toUtc().toIso8601String(),
+        'is_synced': synced ? 1 : 0,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<DateTime?> loadChatReadReceipt(String chatId) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'chat_read_receipts',
+      columns: ['last_read_at', 'is_synced'],
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+    );
+    if (rows.isEmpty) return null;
+    return DateTime.tryParse(rows.first['last_read_at'] as String? ?? '');
+  }
+
+  Future<Map<String, DateTime>> loadAllChatReadReceipts() async {
+    final database = await _openDatabase();
+    final rows =
+        await database.query('chat_read_receipts');
+    final result = <String, DateTime>{};
+    for (final row in rows) {
+      final ts =
+          DateTime.tryParse(row['last_read_at'] as String? ?? '');
+      if (ts != null) {
+        result[row['chat_id'] as String] = ts;
+      }
+    }
+    return result;
+  }
+
+  Future<List<String>> loadUnsyncedReadReceiptChatIds() async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'chat_read_receipts',
+      columns: ['chat_id'],
+      where: 'is_synced = 0',
+    );
+    return rows.map((r) => r['chat_id'] as String).toList();
+  }
+
+  Future<void> markChatReadReceiptSynced(String chatId) async {
+    final database = await _openDatabase();
+    await database.update(
+      'chat_read_receipts',
+      {'is_synced': 1},
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+    );
   }
 
   Future<void> insertPendingMessage({

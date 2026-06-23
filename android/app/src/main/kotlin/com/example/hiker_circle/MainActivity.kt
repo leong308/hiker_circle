@@ -16,6 +16,7 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -185,6 +186,7 @@ class MainActivity : FlutterActivity() {
                         stopSpokenPrompt()
                         result.success(null)
                     }
+                    "getBatteryLevel" -> getBatteryLevel(result)
                     "getOutputVolumeStatus" -> getOutputVolumeStatus(call, result)
                     "getCurrentTriggerLocation" -> getCurrentTriggerLocation(call, result)
                     "shareText" -> shareText(call, result)
@@ -442,6 +444,12 @@ class MainActivity : FlutterActivity() {
             addAction(icon, title, pendingIntent)
         }
         return this
+    }
+
+    private fun getBatteryLevel(result: MethodChannel.Result) {
+        val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        result.success(level.coerceIn(0, 100))
     }
 
     private fun getOutputVolumeStatus(

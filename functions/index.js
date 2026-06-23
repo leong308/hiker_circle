@@ -622,6 +622,84 @@ exports.verifyPasswordResetOtp = onCall(
   }
 );
 
+exports.checkSafetyAnswer = onCall(
+  { secrets: [] },
+  async (request) => {
+    const resetToken = String(request.data?.resetToken || '').trim();
+    const answer = String(request.data?.answer || '');
+
+    if (resetToken.length < 10) {
+      throw new HttpsError('invalid-argument', 'Invalid reset token.');
+    }
+    if (!answer || answer.length < 2) {
+      throw new HttpsError('invalid-argument', 'Please enter your safety answer.');
+    }
+
+    const sessionRef = admin
+      .firestore()
+      .collection('passwordResetSessions')
+      .doc(resetToken);
+    const result = await admin.firestore().runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(sessionRef);
+      const session = snapshot.data();
+      if (!snapshot.exists || !session) {
+        return { errorCode: 'not-found', errorMessage: 'Reset session not found. Start the password reset again.' };
+      }
+      if (session.used === true) {
+        return { errorCode: 'already-exists', errorMessage: 'This reset session has already been used.' };
+      }
+      if (Date.now() > Number(session.expiresAtMillis || 0)) {
+        return { errorCode: 'deadline-exceeded', errorMessage: 'The reset session has expired. Start again.' };
+      }
+      if (session.skipQuestion === true) {
+        return { valid: true };
+      }
+
+      const phoneNumber = String(session.phoneNumber || '');
+      const userId = userDocumentIdForPhone(phoneNumber);
+      const userSnapshot = await transaction.get(
+        admin.firestore().collection('users').doc(userId)
+      );
+      const user = userSnapshot.data() || {};
+      const questions = user.safetyQuestions;
+      if (!questions) {
+        return { errorCode: 'failed-precondition', errorMessage: 'Safety questions not found.' };
+      }
+
+      const questionField = String(session.safetyQuestionField || 'q1');
+      const answerField = questionField === 'q1' ? 'a1Hash' : 'a2Hash';
+      const storedHash = questions[answerField];
+
+      if (!storedHash) {
+        return { errorCode: 'failed-precondition', errorMessage: 'Safety question data is corrupted.' };
+      }
+
+      let answerValid;
+      try {
+        answerValid = await argon2.verify(storedHash, answer.toLowerCase());
+      } catch (_) {
+        return { errorCode: 'internal', errorMessage: 'Answer verification failed. Try again.' };
+      }
+      if (!answerValid) {
+        const remaining = Number(session.attemptsRemaining || 0) - 1;
+        if (remaining <= 0) {
+          transaction.update(sessionRef, { used: true, attemptsRemaining: 0 });
+          return { errorCode: 'permission-denied', errorMessage: 'Too many incorrect answers. Start the password reset again.' };
+        }
+        transaction.update(sessionRef, { attemptsRemaining: remaining });
+        return { errorCode: 'permission-denied', errorMessage: 'The answer is incorrect.' };
+      }
+
+      return { valid: true };
+    });
+
+    if (result.errorCode) {
+      throw new HttpsError(result.errorCode, result.errorMessage);
+    }
+    return { valid: true };
+  }
+);
+
 exports.resetPassword = onCall(
   { secrets: [] },
   async (request) => {
@@ -724,66 +802,92 @@ exports.loginWithPassword = onCall(async (request) => {
   }
 
   const userId = userDocumentIdForPhone(phoneNumber);
-  const userSnapshot = await admin
-    .firestore()
-    .collection('users')
-    .doc(userId)
-    .get();
-  if (!userSnapshot.exists) {
-    throw new HttpsError(
-      'not-found',
-      'No account found with this phone number. Please sign up first.'
-    );
-  }
-  const user = userSnapshot.data() || {};
-  const storedHash = user.passwordHash;
-  if (!storedHash) {
-    throw new HttpsError(
-      'unauthenticated',
-      'This account does not have a password set. Please sign up via GreenAPI.'
-    );
-  }
-  if (user.accountDisabled === true || user.status === 'disabled') {
-    throw new HttpsError(
-      'permission-denied',
-      'This HikerCircle account has been disabled.'
-    );
-  }
-
-  let passwordValid;
-  try {
-    passwordValid = await argon2.verify(storedHash, password);
-  } catch (_) {
-    throw new HttpsError(
-      'internal',
-      'Password verification failed. Please try again.'
-    );
-  }
-  if (!passwordValid) {
-    throw new HttpsError(
-      'permission-denied',
-      'The password is incorrect.'
-    );
-  }
+  const userRef = admin.firestore().collection('users').doc(userId);
 
   const now = new Date();
+  const cooldownResult = await admin.firestore().runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userRef);
+    if (!snapshot.exists) {
+      return { errorCode: 'not-found', errorMessage: 'No account found with this phone number. Please sign up first.' };
+    }
+    const user = snapshot.data() || {};
+
+    // Check cooldown
+    const cooldownUntil = user.loginCooldownUntil;
+    if (cooldownUntil) {
+      const cooldownMillis =
+        typeof cooldownUntil.toDate === 'function'
+          ? cooldownUntil.toDate().getTime()
+          : Date.parse(String(cooldownUntil));
+      if (Number.isFinite(cooldownMillis) && cooldownMillis > now.getTime()) {
+        const expiryDate = new Date(cooldownMillis);
+        const day = String(expiryDate.getDate()).padStart(2, '0');
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = months[expiryDate.getMonth()];
+        const year = expiryDate.getFullYear();
+        const hours = expiryDate.getHours();
+        const minutes = String(expiryDate.getMinutes()).padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const hour12 = hours % 12 || 12;
+        const formatted = `${day} ${month} ${year}, ${hour12}:${minutes} ${ampm}`;
+        return {
+          errorCode: 'resource-exhausted',
+          errorMessage: `Login is temporary disabled as there are too many attempts at ${formatted}. Please retry later.`,
+          cooldownExpiresAtMillis: cooldownMillis,
+        };
+      }
+    }
+
+    // Check account
+    if (user.accountDisabled === true || user.status === 'disabled') {
+      return { errorCode: 'permission-denied', errorMessage: 'This HikerCircle account has been disabled.' };
+    }
+
+    const storedHash = user.passwordHash;
+    if (!storedHash) {
+      return { errorCode: 'unauthenticated', errorMessage: 'This account does not have a password set. Please sign up via GreenAPI.' };
+    }
+
+    let passwordValid;
+    try {
+      passwordValid = await argon2.verify(storedHash, password);
+    } catch (_) {
+      return { errorCode: 'internal', errorMessage: 'Password verification failed. Please try again.' };
+    }
+
+    if (!passwordValid) {
+      const attempts = (user.loginFailedAttempts || 0) + 1;
+      const updates = { loginFailedAttempts: attempts };
+      if (attempts >= 5) {
+        const cooldownUntilDate = new Date(now.getTime() + 30 * 60 * 1000);
+        updates.loginCooldownUntil = cooldownUntilDate;
+        updates.loginFailedAttempts = 0;
+      }
+      transaction.update(userRef, updates);
+      return { errorCode: 'permission-denied', errorMessage: 'The password is incorrect.' };
+    }
+
+    // Success: reset attempts
+    transaction.update(userRef, {
+      loginFailedAttempts: 0,
+      loginCooldownUntil: admin.firestore.FieldValue.delete(),
+      lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSignedInAtLocal: now.toISOString(),
+    });
+    return { success: true, user };
+  });
+
+  if (cooldownResult.errorCode) {
+    throw new HttpsError(cooldownResult.errorCode, cooldownResult.errorMessage);
+  }
+
+  const user = cooldownResult.user;
   const isAdmin = isAdminUser(user);
   const customToken = await admin.auth().createCustomToken(userId, {
     phoneNumber,
     isAdmin,
     verificationProvider: 'password',
   });
-  await admin
-    .firestore()
-    .collection('users')
-    .doc(userId)
-    .set(
-      {
-        lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastSignedInAtLocal: now.toISOString(),
-      },
-      { merge: true }
-    );
   return { customToken, phoneNumber };
 });
 
@@ -1298,6 +1402,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
     const chatSnapshot = await chatReference.get();
     const chat = chatSnapshot.data() || {};
     const senderPhone = String(message.senderPhone || '');
+    const senderPhoneDigits = senderPhone.replace(/\D/g, '');
     const participantPhones = [
       ...new Set(
         (Array.isArray(chat.participantPhones)
@@ -1305,7 +1410,11 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
           : []
         )
           .map((phone) => String(phone || ''))
-          .filter((phone) => phone && phone !== senderPhone)
+          .filter((phone) => {
+            if (!phone) return false;
+            if (phone.replace(/\D/g, '') === senderPhoneDigits) return false;
+            return true;
+          })
       ),
     ];
     if (participantPhones.length === 0) {
@@ -1339,11 +1448,26 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
         continue;
       }
 
-      const userTokens = new Set(
-        Array.isArray(user.fcmTokens) ? user.fcmTokens : []
-      );
-      if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
-        userTokens.add(user.lastFcmToken);
+      const boundAppInstanceId = user.boundAppInstanceId ||
+        user.currentAppId || null;
+      const fcmTokenByAppId = user.fcmTokenByAppId || {};
+      const hasAppTokenMap = typeof user.fcmTokenByAppId === 'object' &&
+        user.fcmTokenByAppId !== null &&
+        Object.keys(user.fcmTokenByAppId).length > 0;
+      const userTokens = new Set();
+      if (hasAppTokenMap) {
+        if (boundAppInstanceId && fcmTokenByAppId[boundAppInstanceId]) {
+          userTokens.add(fcmTokenByAppId[boundAppInstanceId]);
+        }
+      } else {
+        if (Array.isArray(user.fcmTokens)) {
+          for (const t of user.fcmTokens) {
+            if (typeof t === 'string') userTokens.add(t);
+          }
+        }
+        if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
+          userTokens.add(user.lastFcmToken);
+        }
       }
       const validTokens = [...userTokens].filter(
         (token) => typeof token === 'string' && token.length > 20
@@ -1402,6 +1526,47 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       failureCount += response.failureCount;
     }
 
+    // Fallback: ensure chat document has lastMessage metadata so
+    // recipient circle page snapshot listeners fire with the update
+    // even if the sender's client-side .set(merge:true) failed.
+    await chatReference.set(
+      {
+        lastMessage: String(message.text || message.attachmentType || ''),
+        lastMessageAtLocal: String(
+          message.sentAtLocal || new Date().toISOString()
+        ),
+        lastMessageSenderPhone: String(message.senderPhone || ''),
+      },
+      { merge: true }
+    );
+
+    // Use a transaction to atomically read lastReadAt and increment unreadCount.
+    // This eliminates the race where markGroupChatAsRead (unreadCount = 0,
+    // lastReadAt = now) commits between the re-read and the update — the
+    // transaction retries with the latest data, ensuring we never increment
+    // for messages the user has already seen.
+    const messageTimeMs = new Date(
+      message.sentAtLocal || message.createdAt || new Date().toISOString()
+    ).getTime();
+    await db.runTransaction(async (transaction) => {
+      const freshChatSnapshot = await transaction.get(chatReference);
+      const freshChat = freshChatSnapshot.data() || {};
+      const unreadUpdates = {};
+      for (const phone of participantPhones) {
+        const lastReadAt = freshChat.lastReadAt && freshChat.lastReadAt[phone];
+        const lastReadAtMs = lastReadAt
+          ? new Date(lastReadAt).getTime()
+          : 0;
+        if (messageTimeMs > lastReadAtMs) {
+          unreadUpdates[`unreadCount.${phone}`] =
+            admin.firestore.FieldValue.increment(1);
+        }
+      }
+      if (Object.keys(unreadUpdates).length > 0) {
+        transaction.update(chatReference, unreadUpdates);
+      }
+    });
+
     await event.data.ref.set(
       {
         notificationEligibleUsers: eligibleUsers,
@@ -1441,13 +1606,28 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
       .doc(recipientPhone.replace(/\//g, '_'))
       .get();
     const user = userSnapshot.data() || {};
-    const tokens = new Set(
-      Array.isArray(user.fcmTokens) ? user.fcmTokens : []
-    );
-    if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
-      tokens.add(user.lastFcmToken);
+    const boundAppInstanceId = user.boundAppInstanceId ||
+      user.currentAppId || null;
+    const fcmTokenByAppId = user.fcmTokenByAppId || {};
+    const hasAppTokenMap = typeof user.fcmTokenByAppId === 'object' &&
+      user.fcmTokenByAppId !== null &&
+      Object.keys(user.fcmTokenByAppId).length > 0;
+    const userTokens = new Set();
+    if (hasAppTokenMap) {
+      if (boundAppInstanceId && fcmTokenByAppId[boundAppInstanceId]) {
+        userTokens.add(fcmTokenByAppId[boundAppInstanceId]);
+      }
+    } else {
+      if (Array.isArray(user.fcmTokens)) {
+        for (const t of user.fcmTokens) {
+          if (typeof t === 'string') userTokens.add(t);
+        }
+      }
+      if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
+        userTokens.add(user.lastFcmToken);
+      }
     }
-    const tokenList = [...tokens].filter(
+    const tokenList = [...userTokens].filter(
       (token) => typeof token === 'string' && token.length > 20
     );
     if (tokenList.length === 0) {
@@ -1545,11 +1725,26 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
         continue;
       }
 
-      const userTokens = new Set(
-        Array.isArray(user.fcmTokens) ? user.fcmTokens : []
-      );
-      if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
-        userTokens.add(user.lastFcmToken);
+      const boundAppInstanceId = user.boundAppInstanceId ||
+        user.currentAppId || null;
+      const fcmTokenByAppId = user.fcmTokenByAppId || {};
+      const hasAppTokenMap = typeof user.fcmTokenByAppId === 'object' &&
+        user.fcmTokenByAppId !== null &&
+        Object.keys(user.fcmTokenByAppId).length > 0;
+      const userTokens = new Set();
+      if (hasAppTokenMap) {
+        if (boundAppInstanceId && fcmTokenByAppId[boundAppInstanceId]) {
+          userTokens.add(fcmTokenByAppId[boundAppInstanceId]);
+        }
+      } else {
+        if (Array.isArray(user.fcmTokens)) {
+          for (const t of user.fcmTokens) {
+            if (typeof t === 'string') userTokens.add(t);
+          }
+        }
+        if (typeof user.lastFcmToken === 'string' && user.lastFcmToken) {
+          userTokens.add(user.lastFcmToken);
+        }
       }
       const validTokens = [...userTokens].filter(
         (token) => typeof token === 'string' && token.length > 20
@@ -1661,6 +1856,35 @@ exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
       if (data.monitoringExpected !== true) {
         continue;
       }
+
+      // Only send reminders for apps that were supposed to be actively monitoring.
+      // If lifecycleState is 'background', the app intentionally paused monitoring.
+      if (data.monitoringLifecycleState === 'background') {
+        continue;
+      }
+
+      // Skip sessions that started more than 24 hours ago — likely a stale/abandoned session.
+      const startedAt = data.startedAt;
+      const startedAtMillis =
+        startedAt && typeof startedAt.toDate === 'function'
+          ? startedAt.toDate().getTime()
+          : Date.parse(data.startedAtLocal || data.createdAtLocal || '');
+      if (
+        Number.isFinite(startedAtMillis) &&
+        Date.now() - startedAtMillis > 24 * 60 * 60 * 1000
+      ) {
+        // Clean up: mark as abandoned so it stops being checked.
+        await document.ref.set(
+          {
+            status: 'abandoned',
+            monitoringExpected: false,
+            monitoringLifecycleState: 'abandoned',
+          },
+          { merge: true }
+        );
+        continue;
+      }
+
       const heartbeat = data.monitoringHeartbeatAt;
       const heartbeatMillis =
         heartbeat && typeof heartbeat.toDate === 'function'
@@ -1669,10 +1893,18 @@ exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
       if (!Number.isFinite(heartbeatMillis) || heartbeatMillis >= staleBefore) {
         continue;
       }
+
+      // Re-read the document to verify the hike is still active and not completed.
+      const freshSnapshot = await document.ref.get();
+      const freshData = freshSnapshot.data();
+      if (!freshData || freshData.status !== 'active') {
+        continue;
+      }
+
       if (
         await sendActiveHikeReopenReminder(
           document.ref,
-          data,
+          freshData,
           'heartbeat_stale'
         )
       ) {
@@ -1682,3 +1914,61 @@ exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
     logger.log(`Sent ${reminderCount} stale hike monitoring reminders.`);
   }
 );
+
+// ─── Stale Hike Session Cleaner ──────────────────────────────────
+// Runs every 15 minutes to find and clean up hike sessions that are stuck
+// in 'active' status but no longer have an active monitoring loop.
+
+exports.cleanStaleHikeSessions = onSchedule('every 15 minutes', async () => {
+  const snapshot = await admin
+    .firestore()
+    .collection('hikeSessions')
+    .where('status', '==', 'active')
+    .get();
+
+  let cleanedCount = 0;
+  const now = Date.now();
+  const staleThreshold = now - 12 * 60 * 60 * 1000; // 12 hours
+
+  for (const document of snapshot.docs) {
+    const data = document.data();
+
+    // Skip if monitoring is still expected and heartbeat is recent.
+    if (data.monitoringExpected === true) {
+      const heartbeat = data.monitoringHeartbeatAt;
+      const heartbeatMillis =
+        heartbeat && typeof heartbeat.toDate === 'function'
+          ? heartbeat.toDate().getTime()
+          : Date.parse(data.monitoringHeartbeatAtLocal || '');
+      if (Number.isFinite(heartbeatMillis) && heartbeatMillis > now - 6 * 60 * 1000) {
+        continue;
+      }
+    }
+
+    // Check startedAt or createdAt age.
+    const startedAt = data.startedAt;
+    const startedAtMillis =
+      startedAt && typeof startedAt.toDate === 'function'
+        ? startedAt.toDate().getTime()
+        : Date.parse(data.startedAtLocal || data.createdAtLocal || '');
+    if (!Number.isFinite(startedAtMillis) || startedAtMillis > staleThreshold) {
+      continue;
+    }
+
+    await document.ref.set(
+      {
+        status: 'abandoned',
+        monitoringExpected: false,
+        monitoringLifecycleState: 'abandoned',
+      },
+      { merge: true }
+    );
+    cleanedCount++;
+
+    logger.log(
+      `Cleaned stale hike session ${document.id} (started ${new Date(startedAtMillis).toISOString()}).`
+    );
+  }
+
+  logger.log(`Cleaned ${cleanedCount} stale hike sessions.`);
+});

@@ -51,6 +51,8 @@ Color _separatorFor(BuildContext context) =>
 
 enum _ChatMuteAction { unmute, oneHour, eightHours, oneDay, oneWeek }
 
+enum _ChatMenuAction { search, media, mute, more }
+
 class GroupChatDetailPage extends StatefulWidget {
   const GroupChatDetailPage({
     super.key,
@@ -82,6 +84,23 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   bool _isSavingNotificationSettings = false;
   final ImagePicker _imagePicker = ImagePicker();
 
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  String _searchQuery = '';
+  List<int> _matchedIndices = const [];
+  int _currentMatchIndex = 0;
+  final Map<int, GlobalKey> _messageKeys = {};
+  bool _isSendingMessage = false;
+
+  DateTime? _unreadCutoffTime;
+  int? _firstUnreadIndex;
+  int _unreadMessagesCount = 0;
+  bool _hasScrolledToInitialPosition = false;
+
+  int get _totalSearchableMessages =>
+      _messages.where((m) => !m.isSystemMessage).length;
+
   bool get _isChatMuted =>
       _mutedUntil != null && _mutedUntil!.isAfter(DateTime.now());
 
@@ -90,9 +109,11 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     super.initState();
     _loadUpcomingHike();
     _listenToMessages();
+    _markChatAsRead();
     _monitorConnectivity();
     _loadPending();
     unawaited(_loadNotificationSettings());
+    _loadInitialCutoff();
     _timeRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
@@ -115,6 +136,166 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       _groupChatNotificationsEnabled = results[0] as bool;
       _mutedUntil = results[1] as DateTime?;
     });
+  }
+
+  Future<void> _showMoreMenu(BuildContext context) async {
+    final isHost =
+        widget.chat.creatorPhone == widget.session.phoneNumber;
+    final renderBox = context.findRenderObject() as RenderBox;
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final screenSize = MediaQuery.of(context).size;
+    await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(
+          screenSize.width - 220,
+          offset.dy + kToolbarHeight,
+          1, 1,
+        ),
+        Offset.zero & screenSize,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      color: _surfaceFor(context),
+      surfaceTintColor: Colors.transparent,
+      items: [
+        if (!isHost)
+          PopupMenuItem(
+            value: 'leave',
+            child: _moreRow(Icons.exit_to_app_rounded, 'Leave Group'),
+          ),
+        PopupMenuItem(
+          value: 'shortcut',
+          child: _moreRow(Icons.add_rounded, 'Add Shortcut'),
+        ),
+        PopupMenuItem(
+          value: 'report',
+          child: _moreRow(Icons.flag_rounded, 'Report'),
+        ),
+        if (isHost)
+          PopupMenuItem(
+            value: 'delete_all',
+            child: _moreRow(Icons.delete_forever_rounded, 'Delete Chat & Hike Session',
+                isDestructive: true),
+          ),
+      ],
+    );
+  }
+
+  Widget _moreRow(IconData icon, String label, {bool isDestructive = false}) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: isDestructive ? Colors.red : _green),
+        const SizedBox(width: 12),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: isDestructive ? Colors.red : _textFor(context),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _enterSearch() {
+    _messageKeys.clear();
+    setState(() {
+      _isSearching = true;
+      _searchQuery = '';
+      _matchedIndices = const [];
+      _currentMatchIndex = 0;
+      _searchController.clear();
+    });
+    _searchFocusNode.requestFocus();
+  }
+
+  void _exitSearch() {
+    _searchFocusNode.unfocus();
+    _messageKeys.clear();
+    setState(() {
+      _isSearching = false;
+      _searchQuery = '';
+      _matchedIndices = const [];
+      _currentMatchIndex = 0;
+      _searchController.clear();
+    });
+  }
+
+  void _onSearchChanged(String query) {
+    setState(() {
+      _searchQuery = query;
+    });
+    _performSearch();
+  }
+
+  void _performSearch() {
+    if (_searchQuery.isEmpty) {
+      setState(() {
+        _matchedIndices = const [];
+        _currentMatchIndex = 0;
+      });
+      return;
+    }
+    final lowerQuery = _searchQuery.toLowerCase();
+    final indices = <int>[];
+    for (var i = 0; i < _messages.length; i++) {
+      if (_messages[i].isSystemMessage) continue;
+      final text = _messages[i].text.toLowerCase();
+      if (text.contains(lowerQuery)) {
+        indices.add(i);
+      }
+    }
+    setState(() {
+      _matchedIndices = indices;
+      _currentMatchIndex = 0;
+    });
+    if (indices.isNotEmpty) {
+      _scrollToMatch();
+    }
+  }
+
+  void _nextMatch() {
+    if (_matchedIndices.isEmpty) return;
+    setState(() {
+      _currentMatchIndex = (_currentMatchIndex + 1) % _matchedIndices.length;
+    });
+    _scrollToMatch();
+  }
+
+  void _previousMatch() {
+    if (_matchedIndices.isEmpty) return;
+    setState(() {
+      _currentMatchIndex = (_currentMatchIndex - 1 + _matchedIndices.length) % _matchedIndices.length;
+    });
+    _scrollToMatch();
+  }
+
+  void _scrollToMatch() {
+    if (_matchedIndices.isEmpty) return;
+    final idx = _matchedIndices[_currentMatchIndex];
+    final key = _messageKeys[idx];
+    if (key?.currentContext != null) {
+      Scrollable.ensureVisible(
+        key!.currentContext!,
+        alignment: 0.3,
+        duration: const Duration(milliseconds: 200),
+      );
+    }
+  }
+
+  Widget _searchArrowButton(IconData icon, VoidCallback onTap, {bool enabled = true}) {
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        icon: Icon(icon, size: 20),
+        color: enabled ? _green : _secondaryTextFor(context).withValues(alpha: 0.4),
+        onPressed: enabled ? onTap : null,
+        padding: EdgeInsets.zero,
+        splashRadius: 16,
+      ),
+    );
   }
 
   Future<void> _openChatSettings() async {
@@ -226,6 +407,8 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     _messagesSubscription?.cancel();
     _connectivitySubscription?.cancel();
     _messageController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -237,6 +420,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       final online = results.any((r) => r != ConnectivityResult.none);
       if (online && !_isOnline) {
         widget.repository.flushPendingMessages();
+        widget.repository.syncPendingReadReceipts(
+          phoneNumber: widget.session.phoneNumber,
+        );
       }
       if (mounted) {
         setState(() => _isOnline = online);
@@ -264,35 +450,26 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
 
   Future<void> _onMessagesUpdated(List<ChatMessage> firestoreMessages) async {
     if (!mounted) return;
-    final local = await widget.repository.loadAllLocalMessagesForChat(
-      widget.chat.id,
-    );
-    if (!mounted) return;
 
-    final combined = <ChatMessage>[...firestoreMessages];
-    for (final lm in local) {
-      final exists = combined.any((m) => m.id == lm.id);
-      final matchingIndex = combined.indexWhere(
-        (m) =>
-            m.senderPhone == lm.senderPhone &&
-            m.text == lm.text &&
-            m.sentAt.difference(lm.sentAt).inSeconds.abs() < 5,
-      );
-      if (exists) {
-        continue;
-      }
-      if (matchingIndex >= 0 && lm.sendStatus != SendStatus.sent) {
-        combined[matchingIndex] = lm;
-      } else if (matchingIndex < 0) {
-        combined.add(lm);
-      }
-    }
-    combined.sort((a, b) => a.sentAt.compareTo(b.sentAt));
-
-    setState(() => _messages = combined);
-    widget.repository.cacheChatMessages(firestoreMessages, widget.chat.id);
+    final prevLen = _messages.length;
+    setState(() {
+      _messages = firestoreMessages;
+      _computeUnreadPosition();
+    });
     _markUnseenMessages(firestoreMessages);
-    _scrollToBottom();
+    await _markChatAsRead();
+
+    if (!_hasScrolledToInitialPosition) {
+      _scrollToInitialPosition();
+      _hasScrolledToInitialPosition = true;
+    } else if (firestoreMessages.length > prevLen &&
+        firestoreMessages.last.senderPhone == widget.session.phoneNumber) {
+      _scrollToBottom();
+    }
+
+    if (!_isSendingMessage) {
+      widget.repository.cacheChatMessages(firestoreMessages, widget.chat.id);
+    }
   }
 
   void _markUnseenMessages(List<ChatMessage> messages) {
@@ -310,6 +487,104 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     }
   }
 
+  Future<void> _markChatAsRead() async {
+    final myPhone = widget.session.phoneNumber;
+    await widget.repository.markGroupChatAsRead(
+      chatId: widget.chat.id,
+      phoneNumber: myPhone,
+    );
+  }
+
+  void _loadInitialCutoff() {
+    final myPhone = widget.session.phoneNumber;
+    final fromWidget = widget.chat.lastReadAt[myPhone];
+    if (fromWidget != null) {
+      setState(() {
+        _unreadCutoffTime = fromWidget;
+        _computeUnreadPosition();
+      });
+      return;
+    }
+    unawaited(_loadLocalReadReceipt());
+  }
+
+  Future<void> _loadLocalReadReceipt() async {
+    final local = await widget.repository.localDatabase
+        .loadChatReadReceipt(widget.chat.id);
+    if (local != null && mounted) {
+      setState(() {
+        _unreadCutoffTime = local;
+        _computeUnreadPosition();
+      });
+    }
+  }
+
+  void _computeUnreadPosition() {
+    final myPhone = widget.session.phoneNumber;
+    final cutoff = _unreadCutoffTime ?? widget.chat.lastReadAt[myPhone];
+    if (cutoff == null) {
+      _firstUnreadIndex = null;
+      _unreadMessagesCount = 0;
+      return;
+    }
+    int? firstIdx;
+    int count = 0;
+    for (int i = 0; i < _messages.length; i++) {
+      final msg = _messages[i];
+      if (msg.senderPhone == myPhone || msg.isSystemMessage) continue;
+      if (msg.sentAt.isAfter(cutoff)) {
+        firstIdx ??= i;
+        count++;
+      }
+    }
+    _firstUnreadIndex = firstIdx;
+    _unreadMessagesCount = count;
+  }
+
+  Widget _buildUnreadDivider() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(thickness: 1, color: _green)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              'Unread Messages ($_unreadMessagesCount)',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _green,
+              ),
+            ),
+          ),
+          const Expanded(child: Divider(thickness: 1, color: _green)),
+        ],
+      ),
+    );
+  }
+
+  void _scrollToInitialPosition() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients || _messages.isEmpty) return;
+      if (_firstUnreadIndex != null) {
+        final target = (_firstUnreadIndex! / _messages.length) *
+            _scrollController.position.maxScrollExtent;
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -324,9 +599,10 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isSendingMessage) return;
 
     _messageController.clear();
+    _isSendingMessage = true;
 
     final sentAt = DateTime.now();
     final localId =
@@ -345,7 +621,6 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       _messages = [..._messages, localMsg]
         ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
     });
-    _scrollToBottom();
 
     await widget.repository.sendGroupChatMessage(
       chatId: widget.chat.id,
@@ -358,7 +633,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
 
     final connectivityResult = await Connectivity().checkConnectivity();
     if (connectivityResult.any((r) => r != ConnectivityResult.none)) {
-      await widget.repository.flushPendingMessages();
+      unawaited(widget.repository.flushPendingMessages());
     }
     _refreshPendingMessages();
   }
@@ -574,9 +849,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
 
   Future<void> _refreshPendingMessages() async {
     if (!mounted) return;
-    await _onMessagesUpdated(
-      _messages.where((m) => m.sendStatus == SendStatus.sent).toList(),
-    );
+    _isSendingMessage = false;
+    // Reload to pick up any pending messages that haven't reached Firestore yet.
+    await _loadPending();
   }
 
   void _showReadReceipts(ChatMessage msg) {
@@ -697,30 +972,136 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         elevation: 0,
         scrolledUnderElevation: 0.5,
         surfaceTintColor: Colors.transparent,
-        title: Text(
-          widget.chat.displayNameFor(widget.session.phoneNumber),
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: isDark ? const Color(0xFFEAF4EE) : const Color(0xFF111111),
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'Chat settings',
-            onPressed: _isSavingNotificationSettings
-                ? null
-                : () => unawaited(_openChatSettings()),
-            icon: _isSavingNotificationSettings
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(
-                    _isChatMuted
-                        ? Icons.notifications_off_rounded
-                        : Icons.notifications_active_rounded,
-                    color: _isChatMuted ? Colors.orange : _green,
+        title: _isSearching
+            ? Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      focusNode: _searchFocusNode,
+                      autofocus: true,
+                      onChanged: _onSearchChanged,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: isDark ? const Color(0xFFEAF4EE) : const Color(0xFF111111),
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Search…',
+                        hintStyle: TextStyle(
+                          color: isDark ? const Color(0xFFA8B8AE) : const Color(0xFF6E6E73),
+                          fontSize: 15,
+                        ),
+                        filled: true,
+                        fillColor: _surface2For(context),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 9,
+                        ),
+                      ),
+                    ),
                   ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF2B3A31) : const Color(0xFFE8EDEA),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _searchQuery.isEmpty
+                          ? '0 of $_totalSearchableMessages'
+                          : _matchedIndices.isEmpty
+                              ? '0 of $_totalSearchableMessages'
+                              : '${_currentMatchIndex + 1} of ${_matchedIndices.length}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _secondaryTextFor(context),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  _searchArrowButton(
+                    Icons.keyboard_arrow_up_rounded,
+                    _previousMatch,
+                    enabled: _matchedIndices.isNotEmpty,
+                  ),
+                  _searchArrowButton(
+                    Icons.keyboard_arrow_down_rounded,
+                    _nextMatch,
+                    enabled: _matchedIndices.isNotEmpty,
+                  ),
+                ],
+              )
+            : Text(
+                widget.chat.displayNameFor(widget.session.phoneNumber),
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? const Color(0xFFEAF4EE) : const Color(0xFF111111),
+                ),
+              ),
+        leading: _isSearching
+            ? IconButton(
+                icon: Icon(Icons.close_rounded, color: _green),
+                onPressed: _exitSearch,
+              )
+            : null,
+        automaticallyImplyLeading: !_isSearching,
+        actions: [
+          if (!_isSearching)
+            PopupMenuButton<_ChatMenuAction>(
+            icon: const Icon(
+              Icons.more_vert_rounded,
+              color: _green,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            color: _surfaceFor(context),
+            surfaceTintColor: Colors.transparent,
+            position: PopupMenuPosition.under,
+            onSelected: (action) async {
+              if (action == _ChatMenuAction.search) {
+                if (!context.mounted) return;
+                _enterSearch();
+              } else if (action == _ChatMenuAction.mute) {
+                await _openChatSettings();
+              } else if (action == _ChatMenuAction.more) {
+                if (!context.mounted) return;
+                await _showMoreMenu(context);
+              }
+            },
+            itemBuilder: (context) => [
+              _menuItem(
+                Icons.search_rounded,
+                'Search',
+                _ChatMenuAction.search,
+              ),
+              _menuItem(
+                Icons.perm_media_rounded,
+                'Media, links, docs',
+                _ChatMenuAction.media,
+              ),
+              PopupMenuDivider(height: 1),
+              _menuItem(
+                _isChatMuted
+                    ? Icons.notifications_off_rounded
+                    : Icons.notifications_active_rounded,
+                _isChatMuted ? 'Unmute notifications' : 'Mute notifications',
+                _ChatMenuAction.mute,
+              ),
+              PopupMenuDivider(height: 1),
+              _menuItem(
+                Icons.more_horiz_rounded,
+                'More',
+                _ChatMenuAction.more,
+              ),
+            ],
           ),
           const SizedBox(width: 6),
         ],
@@ -769,19 +1150,61 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                       final isMe =
                           msg.senderPhone == widget.session.phoneNumber;
 
+                      Widget item;
                       if (msg.isSystemMessage) {
-                        return _SystemMessagePill(message: msg, isDark: isDark);
+                        item = _SystemMessagePill(message: msg, isDark: isDark);
+                      } else {
+                        final isPending = msg.sendStatus == SendStatus.sending;
+                        final matchIndex = _matchedIndices.indexOf(index);
+                        final isHighlighted = matchIndex >= 0 &&
+                            matchIndex == _currentMatchIndex;
+
+                        final isGroupChat = !widget.chat.isDirect;
+                        final prevSender = index > 0 &&
+                                !_messages[index - 1].isSystemMessage
+                            ? _messages[index - 1].senderPhone
+                            : null;
+                        final nextSender = index < _messages.length - 1 &&
+                                !_messages[index + 1].isSystemMessage
+                            ? _messages[index + 1].senderPhone
+                            : null;
+                        final isFirstInBlock =
+                            prevSender == null || prevSender != msg.senderPhone;
+                        final isLastInBlock =
+                            nextSender == null || nextSender != msg.senderPhone;
+
+                        item = _MessageBubble(
+                          message: msg,
+                          isMe: isMe,
+                          isPending: isPending,
+                          totalParticipants:
+                              widget.chat.participantPhones.length,
+                          searchQuery: _isSearching ? _searchQuery : null,
+                          isHighlighted: isHighlighted,
+                          isGroupChat: isGroupChat,
+                          isFirstInBlock: isFirstInBlock,
+                          isLastInBlock: isLastInBlock,
+                          onTickTap: isMe && !isPending
+                              ? () => _showReadReceipts(msg)
+                              : null,
+                        );
                       }
 
-                      final isPending = msg.sendStatus == SendStatus.sending;
-                      return _MessageBubble(
-                        message: msg,
-                        isMe: isMe,
-                        isPending: isPending,
-                        totalParticipants: widget.chat.participantPhones.length,
-                        onTickTap: isMe && !isPending
-                            ? () => _showReadReceipts(msg)
-                            : null,
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (index == _firstUnreadIndex)
+                            _buildUnreadDivider(),
+                          if (_isSearching && _searchQuery.isNotEmpty &&
+                              _matchedIndices.contains(index))
+                            Container(
+                              key: _messageKeys.putIfAbsent(
+                                  index, () => GlobalKey()),
+                              child: item,
+                            )
+                          else
+                            item,
+                        ],
                       );
                     },
                   ),
@@ -792,6 +1215,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
             onAttach: _showAttachmentPicker,
             isUploadingAttachment: _isUploadingAttachment,
             isDark: isDark,
+            isSearching: _isSearching,
           ),
         ],
       ),
@@ -1206,6 +1630,11 @@ class _MessageBubble extends StatelessWidget {
     required this.isMe,
     required this.isPending,
     required this.totalParticipants,
+    this.searchQuery,
+    this.isHighlighted = false,
+    this.isGroupChat = false,
+    this.isFirstInBlock = true,
+    this.isLastInBlock = true,
     this.onTickTap,
   });
 
@@ -1213,6 +1642,11 @@ class _MessageBubble extends StatelessWidget {
   final bool isMe;
   final bool isPending;
   final int totalParticipants;
+  final String? searchQuery;
+  final bool isHighlighted;
+  final bool isGroupChat;
+  final bool isFirstInBlock;
+  final bool isLastInBlock;
   final VoidCallback? onTickTap;
 
   @override
@@ -1236,14 +1670,13 @@ class _MessageBubble extends StatelessWidget {
       );
     } else if (isMe) {
       final tickColor = Colors.white.withValues(alpha: 0.7);
-      final seenColor = Colors.white.withValues(alpha: 0.85);
       if (othersSeen == 0) {
         statusIndicator = Icon(Icons.done_rounded, size: 14, color: tickColor);
       } else if (allSeen) {
         statusIndicator = Icon(
           Icons.done_all_rounded,
           size: 14,
-          color: seenColor,
+          color: Colors.black,
         );
       } else {
         statusIndicator = Icon(
@@ -1256,8 +1689,28 @@ class _MessageBubble extends StatelessWidget {
       statusIndicator = const SizedBox.shrink();
     }
 
+    final bubbleColor = isHighlighted
+        ? (isMe
+            ? const Color(0xFF2E7D32)
+            : isDark
+                ? const Color(0xFF2B3A31)
+                : const Color(0xFFE0EED8))
+        : (isMe
+            ? _green
+            : isDark
+                ? const Color(0xFF1B261F)
+                : const Color(0xFFEEF1EF));
+
+    final showUsername = !isMe && isGroupChat && isFirstInBlock;
+    final showHead = isGroupChat && isLastInBlock;
+    final bubbleLeftPadding = isGroupChat ? 40.0 : 8.0;
+    final bubbleRightPadding = isGroupChat ? 40.0 : 8.0;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: EdgeInsets.only(
+        top: 3,
+        bottom: showHead ? 3 : 1,
+      ),
       child: GestureDetector(
         onTap: onTickTap,
         child: Column(
@@ -1265,9 +1718,9 @@ class _MessageBubble extends StatelessWidget {
               ? CrossAxisAlignment.end
               : CrossAxisAlignment.start,
           children: [
-            if (!isMe)
+            if (showUsername)
               Padding(
-                padding: const EdgeInsets.only(left: 6, bottom: 3),
+                padding: EdgeInsets.only(left: bubbleLeftPadding, bottom: 3),
                 child: Text(
                   message.senderName,
                   style: TextStyle(
@@ -1281,8 +1734,11 @@ class _MessageBubble extends StatelessWidget {
               mainAxisAlignment: isMe
                   ? MainAxisAlignment.end
                   : MainAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (!isMe) const SizedBox(width: 8),
+                if (!isMe && showHead)
+                  _ChatHead(name: message.senderName),
+                if (!isMe) SizedBox(width: showHead ? 8 : bubbleLeftPadding),
                 Flexible(
                   child: Container(
                     constraints: BoxConstraints(
@@ -1290,11 +1746,7 @@ class _MessageBubble extends StatelessWidget {
                     ),
                     padding: const EdgeInsets.fromLTRB(16, 11, 10, 8),
                     decoration: BoxDecoration(
-                      color: isMe
-                          ? _green
-                          : isDark
-                          ? const Color(0xFF1B261F)
-                          : const Color(0xFFEEF1EF),
+                      color: bubbleColor,
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(20),
                         topRight: const Radius.circular(20),
@@ -1326,6 +1778,7 @@ class _MessageBubble extends StatelessWidget {
                             linkColor: isMe
                                 ? const Color(0xFFD8F3E2)
                                 : const Color(0xFF0A66C2),
+                            highlightQuery: searchQuery,
                           ),
                         const SizedBox(height: 4),
                         Row(
@@ -1350,7 +1803,10 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (isMe) const SizedBox(width: 8),
+                if (isMe && showHead) const SizedBox(width: 8),
+                if (isMe && showHead)
+                  _ChatHead(name: message.senderName),
+                if (isMe) SizedBox(width: showHead ? 0 : bubbleRightPadding),
               ],
             ),
           ],
@@ -1368,6 +1824,47 @@ class _MessageBubble extends StatelessWidget {
       return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     }
     return '${dt.day}/${dt.month}';
+  }
+}
+
+class _ChatHead extends StatelessWidget {
+  const _ChatHead({required this.name});
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : '?';
+    final hash = name.hashCode;
+    final colors = [
+      const Color(0xFF34A853),
+      const Color(0xFF4285F4),
+      const Color(0xFFFBBC04),
+      const Color(0xFFEA4335),
+      const Color(0xFF9C27B0),
+      const Color(0xFF00BCD4),
+      const Color(0xFFFF5722),
+      const Color(0xFF795548),
+    ];
+    final color = colors[hash.abs() % colors.length];
+
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        initial,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
   }
 }
 
@@ -1505,6 +2002,7 @@ class _LinkedMessageText extends StatelessWidget {
     required this.text,
     required this.textColor,
     required this.linkColor,
+    this.highlightQuery,
   });
 
   static final RegExp _linkPattern = RegExp(
@@ -1515,9 +2013,17 @@ class _LinkedMessageText extends StatelessWidget {
   final String text;
   final Color textColor;
   final Color linkColor;
+  final String? highlightQuery;
 
   @override
   Widget build(BuildContext context) {
+    if (highlightQuery != null && highlightQuery!.isNotEmpty) {
+      return _buildHighlightedText();
+    }
+    return _buildLinkedText();
+  }
+
+  Widget _buildLinkedText() {
     final spans = <InlineSpan>[];
     var cursor = 0;
     for (final match in _linkPattern.allMatches(text)) {
@@ -1558,6 +2064,45 @@ class _LinkedMessageText extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildHighlightedText() {
+    final lowerText = text.toLowerCase();
+    final lowerQuery = highlightQuery!.toLowerCase();
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+
+    while (true) {
+      final matchStart = lowerText.indexOf(lowerQuery, cursor);
+      if (matchStart < 0) {
+        if (cursor < text.length) {
+          spans.add(TextSpan(text: text.substring(cursor)));
+        }
+        break;
+      }
+      if (matchStart > cursor) {
+        spans.add(
+          TextSpan(text: text.substring(cursor, matchStart)),
+        );
+      }
+      spans.add(
+        TextSpan(
+          text: text.substring(matchStart, matchStart + highlightQuery!.length),
+          style: TextStyle(
+            color: textColor,
+            backgroundColor: const Color(0xFFD4E157),
+          ),
+        ),
+      );
+      cursor = matchStart + highlightQuery!.length;
+    }
+
+    return RichText(
+      text: TextSpan(
+        children: spans,
+        style: TextStyle(color: textColor, fontSize: 15, height: 1.35),
+      ),
+    );
+  }
 }
 
 Future<void> _openExternalUrl(String rawUrl) async {
@@ -1586,6 +2131,7 @@ class _ChatInput extends StatelessWidget {
     required this.onAttach,
     required this.isUploadingAttachment,
     required this.isDark,
+    this.isSearching = false,
   });
 
   final TextEditingController controller;
@@ -1593,9 +2139,13 @@ class _ChatInput extends StatelessWidget {
   final VoidCallback onAttach;
   final bool isUploadingAttachment;
   final bool isDark;
+  final bool isSearching;
 
   @override
   Widget build(BuildContext context) {
+    if (isSearching) {
+      return const SizedBox.shrink();
+    }
     return Container(
       decoration: BoxDecoration(
         color: _surfaceFor(context),
@@ -1838,37 +2388,74 @@ class _HikeDetailSheet extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             ...chat.participantPhones.map(
-              (phone) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: _greenSoft,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.person_rounded,
-                        size: 16,
-                        color: _green,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        phone == hike.creatorPhone ? '$phone (Host)' : phone,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: _textFor(context),
+              (phone) {
+                final phoneKey = phone.replaceAll(RegExp(r'[^0-9]'), '');
+                final name = chat.participantNames[phoneKey]?.trim() ??
+                    phone;
+                final isHost = phone == hike.creatorPhone;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: _greenSoft,
+                          shape: BoxShape.circle,
                         ),
-                        overflow: TextOverflow.ellipsis,
+                        child: const Icon(
+                          Icons.person_rounded,
+                          size: 16,
+                          color: _green,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    name,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: _textFor(context),
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (isHost) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '(Host)',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: _green,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              phone,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: _secondaryTextFor(context),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -1996,6 +2583,113 @@ class _DetailRow extends StatelessWidget {
             fontSize: 13,
             fontWeight: FontWeight.w600,
             color: _textFor(context),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+PopupMenuItem<_ChatMenuAction> _menuItem(
+  IconData icon,
+  String title,
+  _ChatMenuAction action,
+) {
+  return PopupMenuItem<_ChatMenuAction>(
+    value: action,
+    height: 44,
+    child: Row(
+      children: [
+        Icon(icon, size: 20, color: _green),
+        const SizedBox(width: 14),
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ChatMoreSheet extends StatelessWidget {
+  const _ChatMoreSheet({
+    required this.isHost,
+    required this.onOption,
+  });
+
+  final bool isHost;
+  final ValueChanged<String> onOption;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: _surfaceFor(context),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: _separatorFor(context),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              _moreOption(context, Icons.exit_to_app_rounded, 'Leave Group', 'leave'),
+              _moreOption(context, Icons.add_rounded, 'Add Shortcut', 'shortcut'),
+              _moreOption(context, Icons.flag_rounded, 'Report', 'report'),
+              if (isHost)
+                _moreOption(
+                  context,
+                  Icons.delete_forever_rounded,
+                  'Delete Chat & Hike Session',
+                  'delete_all',
+                  isDestructive: true,
+                ),
+              _moreOption(context, Icons.close_rounded, 'Cancel', 'cancel'),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _moreOption(BuildContext context, IconData icon, String label, String value, {bool isDestructive = false}) {
+    return Column(
+      children: [
+        const Divider(height: 1),
+        InkWell(
+          onTap: () => onOption(value),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            child: Row(
+              children: [
+                Icon(icon, color: isDestructive ? Colors.red : _green, size: 22),
+                const SizedBox(width: 14),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: isDestructive ? Colors.red : _textFor(context),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],

@@ -286,6 +286,34 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  Future<bool> checkSafetyAnswer(String answer) async {
+    final token = _resetToken;
+    if (token == null || token.isEmpty) {
+      _error = 'Password reset session expired. Start again.';
+      notifyListeners();
+      return false;
+    }
+
+    _error = null;
+    _message = null;
+    notifyListeners();
+
+    try {
+      await _firebaseFunctions
+          .httpsCallable('checkSafetyAnswer')
+          .call(<String, Object?>{
+        'resetToken': token,
+        'answer': answer,
+      });
+      return true;
+    } catch (error) {
+      _message = null;
+      _error = _friendlyFunctionsError(error);
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<bool> resetPassword(String answer, String newPassword) async {
     final token = _resetToken;
     if (token == null || token.isEmpty) {

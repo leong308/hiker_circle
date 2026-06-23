@@ -240,7 +240,8 @@ enum TeamHikeParticipantStatus {
   joined,
   ready,
   active,
-  offline;
+  offline,
+  ended;
 
   String get label {
     switch (this) {
@@ -254,6 +255,8 @@ enum TeamHikeParticipantStatus {
         return 'Tracking';
       case TeamHikeParticipantStatus.offline:
         return 'Offline';
+      case TeamHikeParticipantStatus.ended:
+        return 'Ended';
     }
   }
 
@@ -1521,6 +1524,10 @@ class GroupChat {
     this.participantNames = const {},
     this.lastMessage,
     this.lastMessageAt,
+    this.lastMessageSenderPhone,
+    this.hikeEndedAt,
+    this.lastReadAt = const {},
+    this.unreadCount = const {},
   });
 
   final String id;
@@ -1533,6 +1540,10 @@ class GroupChat {
   final Map<String, String> participantNames;
   final String? lastMessage;
   final DateTime? lastMessageAt;
+  final String? lastMessageSenderPhone;
+  final DateTime? hikeEndedAt;
+  final Map<String, DateTime> lastReadAt;
+  final Map<String, int> unreadCount;
 
   bool get isDirect => chatType == 'direct';
 
@@ -1562,6 +1573,13 @@ class GroupChat {
       if (lastMessage != null) 'lastMessage': lastMessage,
       if (lastMessageAt != null)
         'lastMessageAtLocal': lastMessageAt!.toUtc().toIso8601String(),
+      if (lastMessageSenderPhone != null)
+        'lastMessageSenderPhone': lastMessageSenderPhone,
+      if (lastReadAt.isNotEmpty)
+        'lastReadAt': lastReadAt.map(
+          (k, v) => MapEntry(k, v.toUtc().toIso8601String()),
+        ),
+      if (unreadCount.isNotEmpty) 'unreadCount': unreadCount,
     };
   }
 
@@ -1595,6 +1613,23 @@ class GroupChat {
       lastMessageAt: data['lastMessageAtLocal'] != null
           ? _modelDateFromValue(data['lastMessageAtLocal'])
           : null,
+      lastMessageSenderPhone: data['lastMessageSenderPhone'] is String
+          ? data['lastMessageSenderPhone'] as String
+          : null,
+      hikeEndedAt: _modelDateFromValue(data['hikeEndedAt']),
+      lastReadAt: data['lastReadAt'] is Map
+          ? (data['lastReadAt'] as Map).map(
+              (k, v) => MapEntry(
+                k.toString(),
+                _modelDateFromValue(v) ?? DateTime.now(),
+              ),
+            )
+          : const {},
+      unreadCount: data['unreadCount'] is Map
+          ? (data['unreadCount'] as Map).map(
+              (k, v) => MapEntry(k.toString(), (v as num).toInt()),
+            )
+          : const {},
     );
   }
 }

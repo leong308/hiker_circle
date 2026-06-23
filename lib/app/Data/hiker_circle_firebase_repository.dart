@@ -77,12 +77,55 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable || token.isEmpty) {
       return;
     }
+    final appInstanceId = session.appInstanceId;
     await _resolvedFirestore.collection('users').doc(_userIdFor(session)).set({
+      if (appInstanceId.isNotEmpty) ...{
+        'fcmTokenByAppId.$appInstanceId': token,
+        'currentAppId': appInstanceId,
+      },
       'fcmTokens': FieldValue.arrayUnion([token]),
       'lastFcmToken': token,
       'lastFcmTokenUpdatedAt': FieldValue.serverTimestamp(),
       'lastFcmTokenUpdatedAtLocal': DateTime.now().toUtc().toIso8601String(),
     }, SetOptions(merge: true));
+  }
+
+  Future<void> removeFcmToken({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
+    final appInstanceId = session.appInstanceId;
+    if (appInstanceId.isEmpty) {
+      return;
+    }
+    final userDoc =
+        _resolvedFirestore.collection('users').doc(_userIdFor(session));
+    final snapshot = await userDoc.get();
+    if (!snapshot.exists) {
+      return;
+    }
+    final data = snapshot.data()!;
+    final token = (data['fcmTokenByAppId'] as Map<String, dynamic>?)
+        ?[appInstanceId] as String?;
+
+    final updates = <String, dynamic>{
+      'fcmTokenByAppId.$appInstanceId': FieldValue.delete(),
+    };
+    if (data['currentAppId'] == appInstanceId) {
+      updates['currentAppId'] = FieldValue.delete();
+    }
+    if (data['boundAppInstanceId'] == appInstanceId) {
+      updates['boundAppInstanceId'] = FieldValue.delete();
+    }
+    if (token != null && token.isNotEmpty) {
+      updates['fcmTokens'] = FieldValue.arrayRemove([token]);
+      if (data['lastFcmToken'] == token) {
+        updates['lastFcmToken'] = FieldValue.delete();
+      }
+    }
+    await userDoc.update(updates);
   }
 
   Future<void> updateActiveHikeMonitoringHeartbeat({
@@ -591,6 +634,7 @@ class HikerCircleFirebaseRepository {
     required String trailName,
     required List<String> participantPhones,
     required String creatorPhone,
+    Map<String, String> participantNames = const {},
   }) async {
     if (!_firebaseBootstrapResult.isAvailable) return;
     try {
@@ -603,6 +647,7 @@ class HikerCircleFirebaseRepository {
         creatorPhone: creatorPhone,
         createdAt: DateTime.now(),
         chatType: 'group',
+        participantNames: participantNames,
       );
       await doc.set(chat.toFirestore());
     } catch (_) {}
@@ -651,8 +696,15 @@ class HikerCircleFirebaseRepository {
         .orderBy('createdAtLocal', descending: true)
         .snapshots()
         .map((snapshot) {
+          final cutoff = DateTime.now().toUtc().subtract(
+            const Duration(hours: 2),
+          );
           final chats = snapshot.docs
               .map((doc) => GroupChat.fromFirestore(doc.id, doc.data()))
+              .where((chat) {
+                if (chat.hikeEndedAt == null) return true;
+                return chat.hikeEndedAt!.isAfter(cutoff);
+              })
               .toList();
           chats.sort(
             (a, b) => (b.lastMessageAt ?? b.createdAt).compareTo(
@@ -840,6 +892,37 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  Future<void> saveTeamSafetyPreferences({
+    required AppSession session,
+    required Map<String, dynamic> preferences,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    await _users.doc(_userIdFor(session)).set({
+      'teamSafetyPreferences': preferences,
+      'teamSafetyPreferencesUpdatedAt': FieldValue.serverTimestamp(),
+      'teamSafetyPreferencesUpdatedAtLocal':
+          DateTime.now().toUtc().toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<Map<String, dynamic>?> loadTeamSafetyPreferences({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return null;
+    }
+    try {
+      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final raw = snapshot.data()?['teamSafetyPreferences'];
+      if (raw is Map) {
+        return Map<String, dynamic>.from(raw);
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<DateTime?> loadGroupChatMutedUntil({
     required AppSession session,
     required String chatId,
@@ -983,10 +1066,11 @@ class HikerCircleFirebaseRepository {
       );
 
       await msgDoc.set(msg.toFirestore());
-      await _groupChats.doc(chatId).update({
+      await _groupChats.doc(chatId).set({
         'lastMessage': text.isNotEmpty ? text : _attachmentSummary(attachment),
         'lastMessageAtLocal': sentAt.toUtc().toIso8601String(),
-      });
+        'lastMessageSenderPhone': senderPhone,
+      }, SetOptions(merge: true));
 
       try {
         await msgDoc.get(const GetOptions(source: Source.server));
@@ -1133,6 +1217,47 @@ class HikerCircleFirebaseRepository {
     } catch (_) {}
   }
 
+  Future<void> markGroupChatAsRead({
+    required String chatId,
+    required String phoneNumber,
+  }) async {
+    final now = DateTime.now().toUtc();
+    await _localDatabase.saveChatReadReceipt(chatId, now, synced: false);
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    try {
+      await _groupChats.doc(chatId).set({
+        'lastReadAt.$phoneNumber': now.toIso8601String(),
+        'unreadCount.$phoneNumber': 0,
+      }, SetOptions(merge: true));
+      await _localDatabase.markChatReadReceiptSynced(chatId);
+    } catch (_) {}
+  }
+
+  Future<void> syncPendingReadReceipts({required String phoneNumber}) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    final chatIds = await _localDatabase.loadUnsyncedReadReceiptChatIds();
+    if (chatIds.isEmpty) return;
+    for (final chatId in chatIds) {
+      try {
+        final localReadAt = await _localDatabase.loadChatReadReceipt(chatId);
+        if (localReadAt == null) continue;
+        await _groupChats.doc(chatId).set({
+          'lastReadAt.$phoneNumber': localReadAt.toUtc().toIso8601String(),
+          'unreadCount.$phoneNumber': 0,
+        }, SetOptions(merge: true));
+        await _localDatabase.markChatReadReceiptSynced(chatId);
+      } catch (_) {}
+    }
+  }
+
+  Future<DateTime?> loadLocalLastReadAt(String chatId) async {
+    return _localDatabase.loadChatReadReceipt(chatId);
+  }
+
+  Future<Map<String, DateTime>> loadAllLocalLastReadAt() async {
+    return _localDatabase.loadAllChatReadReceipts();
+  }
+
   Future<List<ChatMessage>> loadPendingMessagesForChat(String chatId) async {
     final rows = await _localDatabase.loadPendingMessagesForChat(chatId);
     return rows
@@ -1240,10 +1365,11 @@ class HikerCircleFirebaseRepository {
           seenBy: [senderPhone],
         );
         await msgDoc.set(msg.toFirestore());
-        await _groupChats.doc(chatId).update({
+        await _groupChats.doc(chatId).set({
           'lastMessage': text,
           'lastMessageAtLocal': DateTime.now().toUtc().toIso8601String(),
-        });
+          'lastMessageSenderPhone': senderPhone,
+        }, SetOptions(merge: true));
 
         try {
           await msgDoc.get(const GetOptions(source: Source.server));
@@ -1342,11 +1468,21 @@ class HikerCircleFirebaseRepository {
       });
 
       if (participantPhones.length > 1) {
+        final names = <String, String>{
+          _phoneKeyFor(session.phoneNumber): session.username.trim().isEmpty
+              ? session.phoneNumber
+              : session.username.trim(),
+          for (final buddy in draft.teamBuddies)
+            _phoneKeyFor(buddy.phoneNumber): buddy.name.trim().isEmpty
+                ? buddy.phoneNumber
+                : buddy.name.trim(),
+        };
         await createGroupChat(
           hikeSessionId: upcomingDoc.id,
           trailName: draft.trail.name,
           participantPhones: participantPhones,
           creatorPhone: session.phoneNumber,
+          participantNames: names,
         );
       }
     } catch (_) {
@@ -1512,11 +1648,21 @@ class HikerCircleFirebaseRepository {
           ...draft.teamBuddies.map((b) => b.phoneNumber),
         ];
         if (participantPhones.length > 1) {
+          final names = <String, String>{
+            _phoneKeyFor(session.phoneNumber): session.username.trim().isEmpty
+                ? session.phoneNumber
+                : session.username.trim(),
+            for (final buddy in draft.teamBuddies)
+              _phoneKeyFor(buddy.phoneNumber): buddy.name.trim().isEmpty
+                  ? buddy.phoneNumber
+                  : buddy.name.trim(),
+          };
           await createGroupChat(
             hikeSessionId: document.id,
             trailName: draft.trail.name,
             participantPhones: participantPhones,
             creatorPhone: session.phoneNumber,
+            participantNames: names,
           );
         }
       } catch (_) {
@@ -2076,15 +2222,56 @@ class HikerCircleFirebaseRepository {
       summary: summary,
       capturedAt: now,
     );
+
+    final chatSnapshot = await _groupChats
+        .where('hikeSessionId', isEqualTo: activeHike.sessionId)
+        .limit(1)
+        .get();
+    if (chatSnapshot.docs.isNotEmpty) {
+      final chatDoc = chatSnapshot.docs.first;
+      final hideAt = now.add(const Duration(hours: 2));
+      await chatDoc.reference.set({
+        'hikeEndedAt': now.toIso8601String(),
+      }, SetOptions(merge: true));
+      final phoneData = chatDoc.data();
+      final chatPhones = (phoneData['participantPhones'] as Iterable?)
+              ?.map((e) => e is String ? e : '')
+              .where((e) => e.isNotEmpty)
+              .toList() ??
+          <String>[];
+      if (chatPhones.isNotEmpty) {
+        final rawHour = hideAt.hour % 12;
+        final hour12 = rawHour == 0 ? 12 : rawHour;
+        final ampm = hideAt.hour >= 12 ? 'PM' : 'AM';
+        final time =
+            '${hour12}:${hideAt.minute.toString().padLeft(2, '0')} $ampm';
+        await sendSystemMessage(
+          chatId: chatDoc.id,
+          text: 'This chat will end at $time.',
+          senderPhone: session.phoneNumber,
+          senderName: session.username,
+          participantPhones: chatPhones,
+        );
+      }
+    }
+
     final teamHikeSessionId = activeHike.teamHikeSessionId;
     if (teamHikeSessionId.isNotEmpty) {
-      await _teamHikeSessions.doc(teamHikeSessionId).set({
-        'phase': TeamHikePhase.completed.name,
-        'completedAt': FieldValue.serverTimestamp(),
-        'completedAtLocal': now.toIso8601String(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedAtLocal': now.toIso8601String(),
-      }, SetOptions(merge: true));
+      await _mutateTeamHikeSession(teamHikeSessionId, (current, mutationNow) {
+        final updatedParticipants = current.participants.map((participant) {
+          if (participant.phoneNumber == session.phoneNumber) {
+            return participant.copyWith(
+              status: TeamHikeParticipantStatus.ended,
+              updatedAt: mutationNow.toLocal(),
+            );
+          }
+          return participant;
+        }).toList();
+        return current.copyWith(
+          phase: TeamHikePhase.completed,
+          participants: updatedParticipants,
+        );
+      });
     }
     await recordAchievementMetric(
       session: session,

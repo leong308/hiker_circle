@@ -43,6 +43,7 @@ class _CirclePageState extends State<CirclePage> {
   List<GroupChat> _groupChats = const [];
   bool _isLoadingChats = false;
   Set<String> _pinnedChatIds = {};
+  Map<String, DateTime> _localLastReadAt = const {};
   StreamSubscription<List<GroupChat>>? _chatsSubscription;
 
   @override
@@ -81,13 +82,40 @@ class _CirclePageState extends State<CirclePage> {
 
   void _listenToGroupChats() {
     final phone = widget.session.phoneNumber;
-    _chatsSubscription = widget.hikerCircleRepository
+    _chatsSubscription =       widget.hikerCircleRepository
         .userGroupChatsStream(phone)
         .listen(
-          (chats) {
+          (chats) async {
             if (!mounted) return;
+            unawaited(
+              widget.hikerCircleRepository.syncPendingReadReceipts(
+                phoneNumber: phone,
+              ),
+            );
+            final local =
+                await widget.hikerCircleRepository.loadAllLocalLastReadAt();
+            if (!mounted) return;
+            for (final chat in chats) {
+              if (chat.lastMessageAt == null) continue;
+              if (chat.lastMessageSenderPhone == phone) continue;
+              final localReadAt = local[chat.id] ?? chat.lastReadAt[phone];
+              if (localReadAt == null) continue;
+              if (chat.lastMessageAt!.isBefore(localReadAt)) {
+                final serverCount =
+                    chat.unreadCount[phone] ?? 0;
+                if (serverCount > 0) {
+                  unawaited(
+                    widget.hikerCircleRepository.markGroupChatAsRead(
+                      chatId: chat.id,
+                      phoneNumber: phone,
+                    ),
+                  );
+                }
+              }
+            }
             setState(() {
               _groupChats = chats;
+              _localLastReadAt = local;
               _isLoadingChats = false;
             });
           },
@@ -484,16 +512,26 @@ class _CirclePageState extends State<CirclePage> {
       );
   }
 
-  void _openGroupChat(GroupChat chat) {
-    Navigator.of(context).push(
+  Future<void> _openGroupChat(GroupChat chat) async {
+    final repo = widget.hikerCircleRepository;
+    final phone = widget.session.phoneNumber;
+    final now = DateTime.now();
+    await repo.markGroupChatAsRead(chatId: chat.id, phoneNumber: phone);
+    if (!mounted) return;
+    setState(() {
+      _localLastReadAt =
+          Map<String, DateTime>.from(_localLastReadAt)..[chat.id] = now;
+    });
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => GroupChatDetailPage(
           chat: chat,
           session: widget.session,
-          repository: widget.hikerCircleRepository,
+          repository: repo,
         ),
       ),
     );
+    if (mounted) setState(() {});
   }
 
   void _openSettings() {
@@ -624,12 +662,13 @@ class _CirclePageState extends State<CirclePage> {
                               teams: _teams,
                               onCreateTeam: _createTeam,
                             )
-                          : _ChatsSection(
+                           : _ChatsSection(
                               chats: _groupChats,
                               isLoading: _isLoadingChats,
                               phoneNumber: widget.session.phoneNumber,
                               pinnedChatIds: _pinnedChatIds,
                               currentUserName: widget.session.username,
+                              localLastReadAt: _localLastReadAt,
                               onOpenChat: _openGroupChat,
                               onChatNotifications: _showChatNotifications,
                               onDeleteChat: _deleteChat,
@@ -3527,25 +3566,28 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   }
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    if (!mounted) return;
     _mapboxMap = mapboxMap;
-    await mapboxMap.compass.updateSettings(
-      mapbox.CompassSettings(enabled: false),
-    );
-    await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
-    await mapboxMap.gestures.updateSettings(
-      mapbox.GesturesSettings(
-        scrollEnabled: true,
-        pinchToZoomEnabled: true,
-        rotateEnabled: true,
-        pitchEnabled: true,
-      ),
-    );
-    _polylineManager = await mapboxMap.annotations
-        .createPolylineAnnotationManager();
-    _circleManager = await mapboxMap.annotations
-        .createCircleAnnotationManager();
-    await _renderRoute();
-    await _syncScaleFromCamera();
+    try {
+      await mapboxMap.compass.updateSettings(
+        mapbox.CompassSettings(enabled: false),
+      );
+      await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
+      await mapboxMap.gestures.updateSettings(
+        mapbox.GesturesSettings(
+          scrollEnabled: true,
+          pinchToZoomEnabled: true,
+          rotateEnabled: true,
+          pitchEnabled: true,
+        ),
+      );
+      _polylineManager = await mapboxMap.annotations
+          .createPolylineAnnotationManager();
+      _circleManager = await mapboxMap.annotations
+          .createCircleAnnotationManager();
+      await _renderRoute();
+      await _syncScaleFromCamera();
+    } catch (_) {}
   }
 
   Future<void> _onStyleLoaded() async {
@@ -3633,12 +3675,15 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   Future<void> _syncScaleFromCamera() async {
     final map = _mapboxMap;
     if (map == null) return;
-    final state = await map.getCameraState();
     if (!mounted) return;
-    setState(() {
-      _currentZoom = state.zoom;
-      _scaleLatitude = state.center.coordinates[1]!.toDouble();
-    });
+    try {
+      final state = await map.getCameraState();
+      if (!mounted) return;
+      setState(() {
+        _currentZoom = state.zoom;
+        _scaleLatitude = state.center.coordinates[1]!.toDouble();
+      });
+    } catch (_) {}
   }
 
   void _updateScale(mapbox.CameraChangedEventData data) {
@@ -3941,6 +3986,7 @@ class _ChatsSection extends StatelessWidget {
     required this.phoneNumber,
     required this.pinnedChatIds,
     required this.currentUserName,
+    this.localLastReadAt = const {},
     required this.onOpenChat,
     required this.onChatNotifications,
     required this.onDeleteChat,
@@ -3952,6 +3998,7 @@ class _ChatsSection extends StatelessWidget {
   final String phoneNumber;
   final Set<String> pinnedChatIds;
   final String currentUserName;
+  final Map<String, DateTime> localLastReadAt;
   final ValueChanged<GroupChat> onOpenChat;
   final ValueChanged<GroupChat> onChatNotifications;
   final ValueChanged<GroupChat> onDeleteChat;
@@ -4032,6 +4079,7 @@ class _ChatsSection extends StatelessWidget {
               chat: chat,
               phoneNumber: phoneNumber,
               isPinned: true,
+              localLastReadAt: localLastReadAt[chat.id],
               onTap: () => onOpenChat(chat),
               onChatNotifications: () => onChatNotifications(chat),
               onDeleteChat: () => onDeleteChat(chat),
@@ -4052,6 +4100,7 @@ class _ChatsSection extends StatelessWidget {
               chat: chat,
               phoneNumber: phoneNumber,
               isPinned: false,
+              localLastReadAt: localLastReadAt[chat.id],
               onTap: () => onOpenChat(chat),
               onChatNotifications: () => onChatNotifications(chat),
               onDeleteChat: () => onDeleteChat(chat),
@@ -4069,11 +4118,12 @@ class _ChatsSection extends StatelessWidget {
   }
 }
 
-class _GroupChatTile extends StatelessWidget {
+class _GroupChatTile extends StatefulWidget {
   const _GroupChatTile({
     required this.chat,
     required this.phoneNumber,
     required this.isPinned,
+    this.localLastReadAt,
     required this.onTap,
     required this.onChatNotifications,
     required this.onDeleteChat,
@@ -4083,45 +4133,225 @@ class _GroupChatTile extends StatelessWidget {
   final GroupChat chat;
   final String phoneNumber;
   final bool isPinned;
+  final DateTime? localLastReadAt;
   final VoidCallback onTap;
   final VoidCallback onChatNotifications;
   final VoidCallback onDeleteChat;
   final VoidCallback onPinChat;
 
   @override
+  State<_GroupChatTile> createState() => _GroupChatTileState();
+}
+
+class _GroupChatTileState extends State<_GroupChatTile>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  late Animation<double> _borderAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    );
+    _borderAnim = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.linear),
+    );
+    _animController.addListener(() => setState(() {}));
+    if (_hasUnread) {
+      _animController.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_GroupChatTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final wasUnread = _computeUnread(
+        oldWidget.chat, widget.phoneNumber, oldWidget.localLastReadAt);
+    if (_hasUnread != wasUnread) {
+      if (_hasUnread) {
+        _animController.repeat();
+      } else {
+        _animController.stop();
+        _animController.reset();
+      }
+    }
+  }
+
+  DateTime? _latestOf(DateTime? a, DateTime? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return a.isAfter(b) ? a : b;
+  }
+
+  bool _computeUnread(
+    GroupChat chat, String myPhone, DateTime? localReadAt) {
+    if (chat.lastMessageAt == null) return false;
+    if (chat.lastMessageSenderPhone == myPhone) return false;
+    final cutoff = _latestOf(chat.lastReadAt[myPhone], localReadAt);
+    if (cutoff != null && chat.lastMessageAt!.isBefore(cutoff)) return false;
+    return true;
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  bool get _hasUnread {
+    final myPhone = widget.phoneNumber;
+    final chat = widget.chat;
+    if (chat.lastMessageAt == null) return false;
+    if (chat.lastMessageSenderPhone == myPhone) return false;
+    final cutoff = _latestOf(chat.lastReadAt[myPhone], widget.localLastReadAt);
+    if (cutoff != null && chat.lastMessageAt!.isBefore(cutoff)) return false;
+    return true;
+  }
+
+  int get _unreadCount {
+    if (!_hasUnread) return 0;
+    final serverCount = widget.chat.unreadCount[widget.phoneNumber] ?? 0;
+    return serverCount > 0 ? serverCount : 1;
+  }
+
+  String _formatUnread(int count) {
+    if (count > 99) return '99+';
+    return count.toString();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final otherCount = chat.participantPhones.length - 1;
+    final otherCount = widget.chat.participantPhones.length - 1;
     final subtitle = otherCount > 0
         ? '$otherCount ${otherCount == 1 ? 'other' : 'others'}'
         : 'Just you';
 
-    final displayName = chat.displayNameFor(phoneNumber);
+    final displayName = widget.chat.displayNameFor(widget.phoneNumber);
 
     Future<void> showActionSheet() async {
       final action = await showModalBottomSheet<String>(
         context: context,
         backgroundColor: Colors.transparent,
         builder: (ctx) =>
-            _ChatActionSheet(displayName: displayName, isPinned: isPinned),
+            _ChatActionSheet(displayName: displayName, isPinned: widget.isPinned),
       );
       if (action == null) return;
       switch (action) {
         case 'notifications':
-          onChatNotifications();
+          widget.onChatNotifications();
         case 'delete':
-          onDeleteChat();
+          widget.onDeleteChat();
         case 'pin':
-          onPinChat();
+          widget.onPinChat();
       }
     }
+
+    final tileBody = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: widget.onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: _CircleColors.greenSoftFor(context),
+                radius: 26,
+                child: Icon(
+                  widget.chat.isDirect ? Icons.person_rounded : Icons.groups_rounded,
+                  color: _CircleColors.green,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: _CircleColors.textFor(context),
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      widget.chat.lastMessage ?? subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: _hasUnread ? FontWeight.w700 : FontWeight.w400,
+                        color: _CircleColors.secondaryTextFor(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  if (widget.chat.lastMessageAt != null)
+                    Text(
+                      _compactChatTime(widget.chat.lastMessageAt!),
+                      style: TextStyle(
+                        color: _CircleColors.secondaryTextFor(context),
+                        fontSize: 11,
+                        fontWeight: _hasUnread ? FontWeight.w700 : FontWeight.w600,
+                      ),
+                    ),
+                  const SizedBox(height: 6),
+                  if (_hasUnread)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _CircleColors.green,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        _formatUnread(_unreadCount),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    )
+                  else
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: _CircleColors.green,
+                      size: 20,
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
 
     final tile = Container(
       decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
-        ),
+        border: _hasUnread
+            ? null
+            : Border.all(
+                color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+              ),
         boxShadow: [
           BoxShadow(
             color: _CircleColors.shadowFor(context),
@@ -4130,112 +4360,146 @@ class _GroupChatTile extends StatelessWidget {
           ),
         ],
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: _CircleColors.greenSoftFor(context),
-                  radius: 26,
-                  child: Icon(
-                    chat.isDirect ? Icons.person_rounded : Icons.groups_rounded,
-                    color: _CircleColors.green,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: _CircleColors.textFor(context),
-                          letterSpacing: -0.2,
+      child: _hasUnread
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Stack(
+                children: [
+                  tileBody,
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _BorderTravelPainter(
+                          progress: _borderAnim.value,
+                          color: _CircleColors.green,
                         ),
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        chat.lastMessage ?? subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: _CircleColors.secondaryTextFor(context),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    if (chat.lastMessageAt != null)
-                      Text(
-                        _compactChatTime(chat.lastMessageAt!),
-                        style: TextStyle(
-                          color: _CircleColors.secondaryTextFor(context),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    const SizedBox(height: 6),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      color: _CircleColors.green,
-                      size: 20,
                     ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+                  ),
+                ],
+              ),
+            )
+          : tileBody,
     );
 
     return Dismissible(
-      key: ValueKey('chat_tile_${chat.id}'),
-      direction: DismissDirection.endToStart,
-      dismissThresholds: const {DismissDirection.endToStart: 0.35},
-      background: Container(
-        decoration: BoxDecoration(
-          color: _CircleColors.surfaceFor(context),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+          key: ValueKey('chat_tile_${widget.chat.id}'),
+          direction: DismissDirection.endToStart,
+          dismissThresholds: const {DismissDirection.endToStart: 0.35},
+          background: Container(
+            decoration: BoxDecoration(
+              color: _CircleColors.surfaceFor(context),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+              ),
+            ),
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 16),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: _CircleColors.greenSoftFor(context),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.more_horiz_rounded, color: _CircleColors.green),
+            ),
           ),
-        ),
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 16),
-        child: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: _CircleColors.greenSoftFor(context),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(Icons.more_horiz_rounded, color: _CircleColors.green),
-        ),
-      ),
-      confirmDismiss: (_) async {
-        await showActionSheet();
-        return false;
-      },
-      child: tile,
-    );
+          confirmDismiss: (_) async {
+            await showActionSheet();
+            return false;
+          },
+          child: tile,
+      );
   }
+}
+
+class _BorderTravelPainter extends CustomPainter {
+  _BorderTravelPainter({
+    required this.progress,
+    required this.color,
+  });
+
+  final double progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    const radius = 14.0;
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(radius));
+
+    final dimPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..color = color.withValues(alpha: 0.15);
+    canvas.drawRRect(rrect, dimPaint);
+
+    final path = Path()..addRRect(rrect);
+    final metrics = path.computeMetrics().toList();
+    if (metrics.isEmpty) return;
+    final totalLength = metrics.fold<double>(0.0, (s, m) => s + m.length);
+    if (totalLength <= 0) return;
+
+    const segmentFraction = 0.1;
+    final segmentLength = totalLength * segmentFraction;
+
+    final anticlockwisePos = 1.0 - progress;
+    final start = anticlockwisePos * totalLength;
+    final end = start + segmentLength;
+
+    final highlightPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..color = color;
+
+    double processed = 0;
+    for (final metric in metrics) {
+      final metricStart = processed;
+      final metricEnd = processed + metric.length;
+
+      if (end <= totalLength) {
+        final overlapStart = start.clamp(metricStart, metricEnd);
+        final overlapEnd = end.clamp(metricStart, metricEnd);
+        if (overlapEnd > overlapStart) {
+          final segment = metric.extractPath(
+            overlapStart - metricStart,
+            overlapEnd - metricStart,
+          );
+          canvas.drawPath(segment, highlightPaint);
+        }
+      } else {
+        final wrapStart = 0.0;
+        final wrapEnd = end - totalLength;
+        if (wrapEnd > 0) {
+          final overlapStart = wrapStart.clamp(metricStart, metricEnd);
+          final overlapEnd = wrapEnd.clamp(metricStart, metricEnd);
+          if (overlapEnd > overlapStart) {
+            final segment = metric.extractPath(
+              overlapStart - metricStart,
+              overlapEnd - metricStart,
+            );
+            canvas.drawPath(segment, highlightPaint);
+          }
+        }
+        final normalStart = start.clamp(metricStart, metricEnd);
+        final normalEnd = totalLength.clamp(metricStart, metricEnd);
+        if (normalEnd > normalStart) {
+          final segment = metric.extractPath(
+            normalStart - metricStart,
+            normalEnd - metricStart,
+          );
+          canvas.drawPath(segment, highlightPaint);
+        }
+      }
+      processed = metricEnd;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BorderTravelPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.color != color;
 }
 
 class _ChatActionSheet extends StatelessWidget {

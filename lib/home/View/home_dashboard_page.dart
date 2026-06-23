@@ -2237,7 +2237,9 @@ class _TeamParticipantRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isEnded = participant.status == TeamHikeParticipantStatus.ended;
     final color = participant.isLeader ? _HomeColors.orange : _HomeColors.green;
+    final avatarColor = Color(participant.buddy.avatarColorValue);
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       child: Row(
@@ -2250,19 +2252,23 @@ class _TeamParticipantRow extends StatelessWidget {
                 height: 42,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: Color(participant.buddy.avatarColorValue),
+                  color: isEnded
+                      ? avatarColor.withValues(alpha: 0.35)
+                      : avatarColor,
                   shape: BoxShape.circle,
                 ),
                 child: Text(
                   participant.buddy.shortName.substring(0, 1).toUpperCase(),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Colors.white,
+                    color: isEnded
+                        ? Colors.white.withValues(alpha: 0.45)
+                        : Colors.white,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 0,
                   ),
                 ),
               ),
-              if (participant.isLeader)
+              if (participant.isLeader && !isEnded)
                 Positioned(
                   right: -4,
                   bottom: -4,
@@ -2299,13 +2305,17 @@ class _TeamParticipantRow extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: _HomeColors.textFor(context),
+                          color: isEnded
+                              ? _HomeColors.secondaryTextFor(context)
+                              : _HomeColors.textFor(context),
                           fontWeight: FontWeight.w800,
                           letterSpacing: 0,
+                          decoration:
+                              isEnded ? TextDecoration.lineThrough : null,
                         ),
                       ),
                     ),
-                    if (participant.isLeader) ...[
+                    if (participant.isLeader && !isEnded) ...[
                       const SizedBox(width: 6),
                       _StatusPill(label: 'Leader', color: color),
                     ],
@@ -2317,8 +2327,13 @@ class _TeamParticipantRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _HomeColors.secondaryTextFor(context),
+                    color: isEnded
+                        ? _HomeColors.secondaryTextFor(context)
+                            .withValues(alpha: 0.5)
+                        : _HomeColors.secondaryTextFor(context),
                     letterSpacing: 0,
+                    decoration:
+                        isEnded ? TextDecoration.lineThrough : null,
                   ),
                 ),
               ],
@@ -2327,9 +2342,11 @@ class _TeamParticipantRow extends StatelessWidget {
           const SizedBox(width: 8),
           if (!isSelf)
             Tooltip(
-              message: participant.canBePinged
-                  ? 'Ping for OK response'
-                  : 'Buddy has not joined yet',
+              message: isEnded
+                  ? 'Buddy has ended their hike'
+                  : participant.canBePinged
+                      ? 'Ping for OK response'
+                      : 'Buddy has not joined yet',
               child: OutlinedButton(
                 onPressed: participant.canBePinged && !isPinging
                     ? onPing

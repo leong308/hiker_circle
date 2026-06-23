@@ -75,7 +75,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       return;
     }
     FocusScope.of(context).unfocus();
-    setState(() => _step = _ResetStep.newPassword);
+    setState(() => _isProcessing = true);
+    final ok = await _vm.checkSafetyAnswer(_answerController.text.trim());
+    if (!mounted) return;
+    setState(() => _isProcessing = false);
+    if (ok) {
+      setState(() => _step = _ResetStep.newPassword);
+    }
   }
 
   Future<void> _resetPassword() async {

@@ -60,7 +60,8 @@ class ActiveTrackingMapView extends StatefulWidget {
   State<ActiveTrackingMapView> createState() => _ActiveTrackingMapViewState();
 }
 
-class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
+class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
+    with WidgetsBindingObserver {
   mapbox.MapboxMap? _mapboxMap;
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
@@ -73,6 +74,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   var _renderPending = false;
   late double _currentZoom;
   late double _scaleLatitude;
+  mapbox.CameraOptions? _initialCamera;
 
   List<mapbox.Point> _routePoints = const [];
   late mapbox.Point _startPoint;
@@ -81,13 +83,64 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _buildPoints();
-    final pts = _visiblePoints;
-    final center = pts.isEmpty
-        ? mapbox.Point(coordinates: mapbox.Position(0, 0))
-        : centerFor(pts);
-    _currentZoom = pts.length == 1 ? 15 : 13.5;
-    _scaleLatitude = center.coordinates[1]!.toDouble();
+    _initialCamera = _computeInitialCamera();
+    _currentZoom = _initialCamera?.zoom ?? 13.5;
+    _scaleLatitude =
+        _initialCamera?.center?.coordinates[1]?.toDouble() ?? 0;
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refocusOnSelf());
+    }
+  }
+
+  Future<void> _refocusOnSelf() async {
+    final map = _mapboxMap;
+    final location = widget.activeHike.latestLocation;
+    if (map == null || location == null) return;
+    try {
+      await map.flyTo(
+        mapbox.CameraOptions(
+          center: mapbox.Point(
+            coordinates: mapbox.Position(location.longitude, location.latitude),
+          ),
+          zoom: 15,
+        ),
+        mapbox.MapAnimationOptions(duration: 500),
+      );
+      await _syncScaleFromCamera();
+    } catch (_) {}
+  }
+
+  mapbox.CameraOptions? _computeInitialCamera() {
+    final latest = widget.activeHike.latestLocation;
+    if (latest != null) {
+      return mapbox.CameraOptions(
+        center: mapbox.Point(
+          coordinates: mapbox.Position(latest.longitude, latest.latitude),
+        ),
+        zoom: 15,
+      );
+    }
+    return mapbox.CameraOptions(
+      center: mapbox.Point(
+        coordinates: mapbox.Position(
+          _startPoint.coordinates[0]!,
+          _startPoint.coordinates[1]!,
+        ),
+      ),
+      zoom: 13.5,
+    );
   }
 
   void _buildPoints() {
@@ -711,6 +764,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView> {
         mapbox.MapWidget(
           key: ValueKey(mapStyleUrls[_styleIndex]),
           styleUri: mapStyleUrls[_styleIndex],
+          cameraOptions: _initialCamera,
           gestureRecognizers: mapGestureRecognizers,
           onMapCreated: _onMapCreated,
           onStyleLoadedListener: (_) => _onStyleLoaded(),
@@ -1051,6 +1105,7 @@ class _TeamParticipantPanel extends StatelessWidget {
                   name: participants[i].buddy.shortName,
                   isLeader: participants[i].isLeader,
                   hasLocation: participants[i].latestLocation != null,
+                  status: participants[i].status,
                 ),
             ],
           ),
@@ -1066,15 +1121,19 @@ class _ParticipantRow extends StatelessWidget {
     required this.name,
     required this.isLeader,
     required this.hasLocation,
+    required this.status,
   });
 
   final Color color;
   final String name;
   final bool isLeader;
   final bool hasLocation;
+  final TeamHikeParticipantStatus status;
 
   @override
   Widget build(BuildContext context) {
+    final isEnded = status == TeamHikeParticipantStatus.ended;
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       child: Row(
@@ -1083,25 +1142,30 @@ class _ParticipantRow extends StatelessWidget {
           Container(
             width: 10,
             height: 10,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: isEnded ? const Color(0xFF6E6E73) : color,
+              shape: BoxShape.circle,
+            ),
           ),
           const SizedBox(width: 8),
           Text(
             name,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            style: theme.textTheme.labelMedium?.copyWith(
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
+              color: isEnded ? const Color(0xFF6E6E73) : null,
+              decoration: isEnded ? TextDecoration.lineThrough : null,
             ),
           ),
-          if (isLeader) ...[
+          if (isLeader && !isEnded) ...[
             const SizedBox(width: 4),
             Icon(Icons.star_rounded, size: 14, color: color),
           ],
-          if (!hasLocation) ...[
+          if (!hasLocation && !isEnded) ...[
             const SizedBox(width: 4),
             Text(
               'away',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              style: theme.textTheme.labelSmall?.copyWith(
                 color: const Color(0xFF6E6E73),
                 letterSpacing: 0,
               ),
