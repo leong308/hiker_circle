@@ -61,6 +61,9 @@ class HikerCircleFirebaseRepository {
   final FirebaseBootstrapResult _firebaseBootstrapResult;
   final OpenMeteoService _openMeteoService;
 
+  static const Duration _firebaseReadTimeout = Duration(seconds: 12);
+  static const Duration _firebaseWriteTimeout = Duration(seconds: 8);
+
   LocalSessionDatabase get localDatabase => _localDatabase;
 
   FirebaseFirestore get _resolvedFirestore =>
@@ -334,7 +337,8 @@ class HikerCircleFirebaseRepository {
       final snapshot = await _trails
           .orderBy('isVerifiedTrail', descending: true)
           .orderBy('ratingAverage', descending: true)
-          .get();
+          .get()
+          .timeout(_firebaseReadTimeout);
       var liveTrails = snapshot.docs
           .map(
             (document) => _trailFromFirestore({
@@ -479,7 +483,7 @@ class HikerCircleFirebaseRepository {
   Future<List<UpcomingHike>> loadUpcomingHikes() async {
     if (!_firebaseBootstrapResult.isAvailable) return const [];
     try {
-      final snapshot = await _upcomingHikes.get();
+      final snapshot = await _upcomingHikes.get().timeout(_firebaseReadTimeout);
       return snapshot.docs
           .map((doc) => UpcomingHike.fromFirestore(doc.id, doc.data()))
           .where(_shouldRenderUpcomingHike)
@@ -808,37 +812,46 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return const [];
     }
-    final snapshot = await _users.limit(80).get();
-    final ownId = _userIdFor(session);
-    return snapshot.docs
-        .where((document) => document.id != ownId)
-        .map((document) {
-          final data = document.data();
-          final profile = data['profile'] is Map
-              ? Map<String, dynamic>.from(data['profile'] as Map)
-              : const <String, dynamic>{};
-          final points = _intFrom(data['achievementPoints']);
-          final level = HikerLevel.fromPoints(points);
-          final username = _stringFrom(data['username']).trim().isNotEmpty
-              ? _stringFrom(data['username']).trim()
-              : _stringFrom(profile['username']).trim();
-          return <String, dynamic>{
-            'userId': document.id,
-            'phoneNumber': _stringFrom(data['phoneNumber']),
-            'displayName': username.isEmpty ? 'Hiker' : username,
-            'handle': _handleForPhone(_stringFrom(data['phoneNumber'])),
-            'photoURL': _photoURLFromUserData(data),
-            'gender': _stringFrom(profile['gender']),
-            'hikerExperience': _stringFrom(profile['hikerExperience']),
-            'hikeFrequency': _stringFrom(profile['hikeFrequency']),
-            'residentialLocation': _stringFrom(profile['residentialLocation']),
-            'achievementPoints': points,
-            'level': level.number,
-            'levelName': level.name,
-          };
-        })
-        .where((profile) => _stringFrom(profile['phoneNumber']).isNotEmpty)
-        .toList();
+    try {
+      final snapshot = await _users
+          .limit(80)
+          .get()
+          .timeout(_firebaseReadTimeout);
+      final ownId = _userIdFor(session);
+      return snapshot.docs
+          .where((document) => document.id != ownId)
+          .map((document) {
+            final data = document.data();
+            final profile = data['profile'] is Map
+                ? Map<String, dynamic>.from(data['profile'] as Map)
+                : const <String, dynamic>{};
+            final points = _intFrom(data['achievementPoints']);
+            final level = HikerLevel.fromPoints(points);
+            final username = _stringFrom(data['username']).trim().isNotEmpty
+                ? _stringFrom(data['username']).trim()
+                : _stringFrom(profile['username']).trim();
+            return <String, dynamic>{
+              'userId': document.id,
+              'phoneNumber': _stringFrom(data['phoneNumber']),
+              'displayName': username.isEmpty ? 'Hiker' : username,
+              'handle': _handleForPhone(_stringFrom(data['phoneNumber'])),
+              'photoURL': _photoURLFromUserData(data),
+              'gender': _stringFrom(profile['gender']),
+              'hikerExperience': _stringFrom(profile['hikerExperience']),
+              'hikeFrequency': _stringFrom(profile['hikeFrequency']),
+              'residentialLocation': _stringFrom(
+                profile['residentialLocation'],
+              ),
+              'achievementPoints': points,
+              'level': level.number,
+              'levelName': level.name,
+            };
+          })
+          .where((profile) => _stringFrom(profile['phoneNumber']).isNotEmpty)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<Map<String, dynamic>?> loadCommunityProfile({
@@ -849,13 +862,21 @@ class HikerCircleFirebaseRepository {
       return null;
     }
     DocumentSnapshot<Map<String, dynamic>> snapshot;
-    if (userId.trim().isNotEmpty) {
-      snapshot = await _users.doc(userId.trim()).get();
-    } else if (phoneNumber.trim().isNotEmpty) {
-      snapshot = await _users
-          .doc(FirebaseUserRepository.documentIdForPhoneNumber(phoneNumber))
-          .get();
-    } else {
+    try {
+      if (userId.trim().isNotEmpty) {
+        snapshot = await _users
+            .doc(userId.trim())
+            .get()
+            .timeout(_firebaseReadTimeout);
+      } else if (phoneNumber.trim().isNotEmpty) {
+        snapshot = await _users
+            .doc(FirebaseUserRepository.documentIdForPhoneNumber(phoneNumber))
+            .get()
+            .timeout(_firebaseReadTimeout);
+      } else {
+        return null;
+      }
+    } catch (_) {
       return null;
     }
     final data = snapshot.data();
@@ -892,9 +913,16 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return const {};
     }
-    final snapshot = await _users.doc(_userIdFor(session)).get();
-    final raw = snapshot.data()?['buddyPhoneNumbers'];
-    return raw is Iterable ? raw.whereType<String>().toSet() : <String>{};
+    try {
+      final snapshot = await _users
+          .doc(_userIdFor(session))
+          .get()
+          .timeout(_firebaseReadTimeout);
+      final raw = snapshot.data()?['buddyPhoneNumbers'];
+      return raw is Iterable ? raw.whereType<String>().toSet() : <String>{};
+    } catch (_) {
+      return const {};
+    }
   }
 
   Future<Set<String>> loadOutgoingBuddyRequestPhoneNumbers({
@@ -903,15 +931,22 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return const {};
     }
-    final snapshot = await _users.doc(_userIdFor(session)).get();
-    final raw = snapshot.data()?['buddyRequestsOutgoing'];
-    if (raw is! Map) {
+    try {
+      final snapshot = await _users
+          .doc(_userIdFor(session))
+          .get()
+          .timeout(_firebaseReadTimeout);
+      final raw = snapshot.data()?['buddyRequestsOutgoing'];
+      if (raw is! Map) {
+        return const {};
+      }
+      return raw.keys
+          .map((key) => key.toString())
+          .where((key) => key.isNotEmpty)
+          .toSet();
+    } catch (_) {
       return const {};
     }
-    return raw.keys
-        .map((key) => key.toString())
-        .where((key) => key.isNotEmpty)
-        .toSet();
   }
 
   Future<List<Map<String, dynamic>>> loadBuddyRequests({
@@ -920,7 +955,10 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return const [];
     }
-    final snapshot = await _users.doc(_userIdFor(session)).get();
+    final snapshot = await _users
+        .doc(_userIdFor(session))
+        .get()
+        .timeout(_firebaseReadTimeout);
     final raw = snapshot.data()?['buddyRequestsIncoming'];
     if (raw is! Map) {
       return const [];
@@ -1181,7 +1219,10 @@ class HikerCircleFirebaseRepository {
   Future<Set<String>> loadPinnedChats({required AppSession session}) async {
     if (!_firebaseBootstrapResult.isAvailable) return {};
     try {
-      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final snapshot = await _users
+          .doc(_userIdFor(session))
+          .get()
+          .timeout(_firebaseReadTimeout);
       final raw = snapshot.data()?['pinnedChats'];
       if (raw is Map) {
         return raw.keys
@@ -2905,7 +2946,8 @@ class HikerCircleFirebaseRepository {
       final snapshot = await _communityPosts
           .orderBy('createdAtLocal', descending: true)
           .limit(20)
-          .get();
+          .get()
+          .timeout(_firebaseReadTimeout);
       return _hydrateCommunityAuthorLevels(
         snapshot.docs.map((document) => document.data()).toList(),
       );
@@ -3457,12 +3499,15 @@ class HikerCircleFirebaseRepository {
     }
 
     try {
-      await ensureAchievementSeeds();
+      unawaited(ensureAchievementSeeds());
       final userId = _userIdFor(session);
       final results = await Future.wait([
-        _achievements.orderBy('sortOrder').get(),
-        _userAchievements.where('userId', isEqualTo: userId).get(),
-      ]);
+        _achievements.orderBy('sortOrder').get().timeout(_firebaseReadTimeout),
+        _userAchievements
+            .where('userId', isEqualTo: userId)
+            .get()
+            .timeout(_firebaseReadTimeout),
+      ]).timeout(_firebaseReadTimeout);
       final achievementSnapshot = results[0];
       final userAchievementSnapshot = results[1];
       final achievements = achievementSnapshot.docs.map((document) {
@@ -3502,34 +3547,40 @@ class HikerCircleFirebaseRepository {
       return;
     }
 
-    final snapshots = await Future.wait(
-      _achievementSeeds.keys.map((id) => _achievements.doc(id).get()),
-    );
-    final batch = _resolvedFirestore.batch();
-    for (var index = 0; index < snapshots.length; index++) {
-      final entry = _achievementSeeds.entries.elementAt(index);
-      final snapshot = snapshots[index];
-      final existing = snapshot.data() ?? const <String, dynamic>{};
-      final missingValues = <String, Object>{
-        for (final value in entry.value.entries)
-          if (!existing.containsKey(value.key)) value.key: value.value,
-      };
-      if (!snapshot.exists) {
-        batch.set(_achievements.doc(entry.key), {
-          'achievementId': entry.key,
-          ...entry.value,
-          'rewardsSafeBehaviour': true,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } else if (missingValues.isNotEmpty) {
-        batch.set(_achievements.doc(entry.key), {
-          ...missingValues,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+    try {
+      final snapshots = await Future.wait(
+        _achievementSeeds.keys.map(
+          (id) => _achievements.doc(id).get().timeout(_firebaseReadTimeout),
+        ),
+      ).timeout(_firebaseReadTimeout);
+      final batch = _resolvedFirestore.batch();
+      for (var index = 0; index < snapshots.length; index++) {
+        final entry = _achievementSeeds.entries.elementAt(index);
+        final snapshot = snapshots[index];
+        final existing = snapshot.data() ?? const <String, dynamic>{};
+        final missingValues = <String, Object>{
+          for (final value in entry.value.entries)
+            if (!existing.containsKey(value.key)) value.key: value.value,
+        };
+        if (!snapshot.exists) {
+          batch.set(_achievements.doc(entry.key), {
+            'achievementId': entry.key,
+            ...entry.value,
+            'rewardsSafeBehaviour': true,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        } else if (missingValues.isNotEmpty) {
+          batch.set(_achievements.doc(entry.key), {
+            ...missingValues,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
       }
+      await batch.commit().timeout(_firebaseWriteTimeout);
+    } catch (_) {
+      return;
     }
-    await batch.commit();
   }
 
   Future<List<Map<String, dynamic>>> loadAdminAchievements({
@@ -3792,8 +3843,10 @@ class HikerCircleFirebaseRepository {
     }
     try {
       final snapshots = await Future.wait(
-        authorIds.map((id) => _users.doc(id).get()),
-      );
+        authorIds.map(
+          (id) => _users.doc(id).get().timeout(_firebaseReadTimeout),
+        ),
+      ).timeout(_firebaseReadTimeout);
       final usersById = <String, Map<String, dynamic>>{
         for (final snapshot in snapshots)
           if (snapshot.data() != null) snapshot.id: snapshot.data()!,
