@@ -156,6 +156,7 @@ enum SosAlertStatus {
   sent,
   partial,
   failed,
+  queued,
   noContacts;
 
   String get firestoreValue {
@@ -166,6 +167,8 @@ enum SosAlertStatus {
         return 'partial';
       case SosAlertStatus.failed:
         return 'failed';
+      case SosAlertStatus.queued:
+        return 'queued';
       case SosAlertStatus.noContacts:
         return 'no_contacts';
     }
@@ -179,6 +182,8 @@ enum SosAlertStatus {
         return 'Partially sent';
       case SosAlertStatus.failed:
         return 'Failed';
+      case SosAlertStatus.queued:
+        return 'Queued';
       case SosAlertStatus.noContacts:
         return 'No contacts';
     }
@@ -611,9 +616,15 @@ class SosAlert {
 }
 
 class SosAlertResult {
-  const SosAlertResult({required this.alert});
+  const SosAlertResult({
+    required this.alert,
+    this.queuedForRetry = false,
+    this.queuedAlertCount = 0,
+  });
 
   final SosAlert alert;
+  final bool queuedForRetry;
+  final int queuedAlertCount;
 
   bool get hasSuccessfulDispatch => alert.sentCount > 0;
   bool get hasFailedDispatch => alert.failedCount > 0;

@@ -36,6 +36,8 @@ class SosViewModel extends ChangeNotifier {
   SosAlertResult? _latestSosAlertResult;
   Map<SosAlertMode, String> _customWhatsAppNotes = const {};
   List<SosAlert> _cloudAlertLogs = const [];
+  int _queuedAlertCount = 0;
+  bool _isFlushingQueuedAlerts = false;
   bool _isDisposed = false;
 
   List<EmergencyContact> get emergencyContacts {
@@ -53,6 +55,7 @@ class SosViewModel extends ChangeNotifier {
         label: 'Latest',
         value: _latestSosAlertResult?.alert.status.label ?? 'Ready',
       ),
+      SosMetric(label: 'Queued', value: _queuedAlertCount.toString()),
       ..._metrics.where(
         (metric) => metric.label != 'Contacts' && metric.label != 'Queued',
       ),
@@ -65,6 +68,8 @@ class SosViewModel extends ChangeNotifier {
   String? get sosAlertErrorMessage => _sosAlertErrorMessage;
   SosAlertResult? get latestSosAlertResult => _latestSosAlertResult;
   List<SosAlert> get cloudAlertLogs => List.unmodifiable(_cloudAlertLogs);
+  int get queuedAlertCount => _queuedAlertCount;
+  bool get isFlushingQueuedAlerts => _isFlushingQueuedAlerts;
   Map<SosAlertMode, String> get customWhatsAppNotes {
     return Map.unmodifiable(_customWhatsAppNotes);
   }
@@ -159,6 +164,49 @@ class SosViewModel extends ChangeNotifier {
     _notifyListenersIfActive();
   }
 
+  Future<void> loadQueuedAlertCount() async {
+    if (_isDisposed) {
+      return;
+    }
+    _queuedAlertCount = await _sosAlertRepository.countQueuedAlerts(
+      session: _session,
+    );
+    _notifyListenersIfActive();
+  }
+
+  Future<SosQueueFlushResult?> flushQueuedAlerts() async {
+    if (_isDisposed || _isFlushingQueuedAlerts) {
+      return null;
+    }
+
+    _isFlushingQueuedAlerts = true;
+    _notifyListenersIfActive();
+    try {
+      final result = await _sosAlertRepository.flushQueuedAlerts(
+        session: _session,
+        contacts: emergencyContacts,
+      );
+      if (_isDisposed) {
+        return result;
+      }
+      _queuedAlertCount = result.remaining;
+      if (result.didFlushAny) {
+        await loadCloudAlertLogs();
+      }
+      return result;
+    } catch (_) {
+      if (!_isDisposed) {
+        await loadQueuedAlertCount();
+      }
+      return null;
+    } finally {
+      if (!_isDisposed) {
+        _isFlushingQueuedAlerts = false;
+        _notifyListenersIfActive();
+      }
+    }
+  }
+
   Future<SosAlertResult?> triggerAlert({
     required SosAlertMode mode,
     required DateTime triggeredAt,
@@ -195,6 +243,7 @@ class SosViewModel extends ChangeNotifier {
         return result;
       }
       _latestSosAlertResult = result;
+      _queuedAlertCount = result.queuedAlertCount;
       _cloudAlertLogs = [result.alert, ..._cloudAlertLogs].fold<List<SosAlert>>(
         <SosAlert>[],
         (logs, alert) {

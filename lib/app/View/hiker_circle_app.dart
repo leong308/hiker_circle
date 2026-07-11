@@ -90,6 +90,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   late final AppViewModel _appViewModel;
   final AppSettingsController _settingsController =
       AppSettingsController.instance;
+  String? _pendingPlatformDeepLink;
 
   @override
   void initState() {
@@ -116,6 +117,72 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
 
   void _refresh() {
     setState(() {});
+  }
+
+  Widget _buildRoot({String? initialDeepLink}) {
+    final platformDeepLink = initialDeepLink ?? _pendingPlatformDeepLink;
+    if (platformDeepLink != null &&
+        !_appViewModel.isInitializing &&
+        _appViewModel.session != null &&
+        !_appViewModel.session!.requiresOnboarding) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _pendingPlatformDeepLink == platformDeepLink) {
+          _pendingPlatformDeepLink = null;
+        }
+      });
+    }
+    return _appViewModel.isInitializing
+        ? const _StartupPage()
+        : _appViewModel.session == null
+        ? PhoneSignInPage(onSignedIn: _appViewModel.completeSignIn)
+        : _appViewModel.session!.requiresOnboarding
+        ? FirstTimeOnboardingFlow(
+            session: _appViewModel.session!,
+            onCompleted: _appViewModel.completeOnboarding,
+            firebaseBootstrapResult: widget.firebaseBootstrapResult,
+          )
+        : HikerHomePage(
+            session: _appViewModel.session!,
+            onSignOut: _appViewModel.signOut,
+            firebaseBootstrapResult: widget.firebaseBootstrapResult,
+            initialDeepLink: platformDeepLink,
+          );
+  }
+
+  String? _deepLinkFromPlatformRoute(String? routeName) {
+    if (routeName == null || routeName == Navigator.defaultRouteName) {
+      return null;
+    }
+    final uri = Uri.tryParse(routeName);
+    if (uri == null) {
+      return null;
+    }
+    if (uri.scheme == 'hikercircle') {
+      return uri.toString();
+    }
+    final path = uri.path.startsWith('/') ? uri.path : '/${uri.path}';
+    if (path == '/help' ||
+        path == '/manual' ||
+        path == '/instant' ||
+        path == '/medical' ||
+        path == '/duress') {
+      return Uri(
+        scheme: 'hikercircle',
+        host: 'sos',
+        path: path,
+        queryParameters: uri.queryParameters.isEmpty
+            ? null
+            : uri.queryParameters,
+      ).toString();
+    }
+    return null;
+  }
+
+  Route<void> _rootRoute({String? initialDeepLink, RouteSettings? settings}) {
+    return MaterialPageRoute<void>(
+      settings: settings,
+      builder: (context) => _buildRoot(initialDeepLink: initialDeepLink),
+    );
   }
 
   @override
@@ -213,21 +280,23 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           ),
         ),
       ),
-      home: _appViewModel.isInitializing
-          ? const _StartupPage()
-          : _appViewModel.session == null
-          ? PhoneSignInPage(onSignedIn: _appViewModel.completeSignIn)
-          : _appViewModel.session!.requiresOnboarding
-          ? FirstTimeOnboardingFlow(
-              session: _appViewModel.session!,
-              onCompleted: _appViewModel.completeOnboarding,
-              firebaseBootstrapResult: widget.firebaseBootstrapResult,
-            )
-          : HikerHomePage(
-              session: _appViewModel.session!,
-              onSignOut: _appViewModel.signOut,
-              firebaseBootstrapResult: widget.firebaseBootstrapResult,
-            ),
+      onGenerateInitialRoutes: (initialRouteName) {
+        final initialDeepLink = _deepLinkFromPlatformRoute(initialRouteName);
+        _pendingPlatformDeepLink = initialDeepLink;
+        return [
+          _rootRoute(
+            initialDeepLink: initialDeepLink,
+            settings: const RouteSettings(name: Navigator.defaultRouteName),
+          ),
+        ];
+      },
+      onGenerateRoute: (settings) {
+        final initialDeepLink = _deepLinkFromPlatformRoute(settings.name);
+        if (initialDeepLink == null) {
+          return null;
+        }
+        return _rootRoute(initialDeepLink: initialDeepLink, settings: settings);
+      },
     );
   }
 }

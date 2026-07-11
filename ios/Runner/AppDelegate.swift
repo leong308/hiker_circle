@@ -35,6 +35,7 @@ import ActivityKit
   private var deepLinkChannel: FlutterMethodChannel?
   private var pendingDeepLink: String?
   private var activeHikeLiveActivitySessionId: String?
+  private var hikerBleBridge: HikerBleBridge?
   private let sosTorchPattern: [(enabled: Bool, duration: TimeInterval)] = [
     (true, 0.22),
     (false, 0.18),
@@ -68,6 +69,7 @@ import ActivityKit
     configureSosDeviceAlertChannel()
     configureDeepLinkChannel()
     configureActiveHikeLiveStatusChannel()
+    configureHikerBleBridge()
     if let url = launchOptions?[.url] as? URL {
       pendingDeepLink = url.absoluteString
     }
@@ -327,6 +329,13 @@ import ActivityKit
         result(FlutterMethodNotImplemented)
       }
     }
+  }
+
+  private func configureHikerBleBridge() {
+    guard let controller = window?.rootViewController as? FlutterViewController else {
+      return
+    }
+    hikerBleBridge = HikerBleBridge(messenger: controller.binaryMessenger)
   }
 
   #if canImport(ActivityKit)

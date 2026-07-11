@@ -13,6 +13,8 @@ import '../../app/Model/app_session.dart';
 import '../../home/View/first_aid_guide_page.dart';
 import '../../home/View/gear_checklist_page.dart';
 import '../../me/View/location_sharing_page.dart';
+import '../../core/services/hiker_ble_service.dart';
+import '../../core/services/network_reachability_service.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Data/location_snapshot_service.dart';
 import '../Data/sos_alert_repository.dart';
@@ -53,6 +55,11 @@ class _SosPageState extends State<SosPage> {
   List<Map<String, dynamic>> _adminSosSystemLogs = const [];
   bool _isLoadingAdminSosSystemLogs = false;
   String? _adminSosSystemLogsError;
+  StreamSubscription<NetworkReachabilitySnapshot>? _networkSubscription;
+  NetworkReachabilitySnapshot _networkSnapshot =
+      const NetworkReachabilitySnapshot(
+        state: NetworkReachabilityState.checking,
+      );
 
   @override
   void initState() {
@@ -67,9 +74,14 @@ class _SosPageState extends State<SosPage> {
       ),
     );
     viewModel.addListener(_refresh);
-    unawaited(viewModel.loadEmergencyContacts());
+    _networkSubscription = NetworkReachabilityService.instance.snapshots.listen(
+      _handleNetworkReachabilityChanged,
+    );
+    unawaited(NetworkReachabilityService.instance.start());
+    unawaited(_loadEmergencyContactsAndFlushQueue());
     unawaited(_loadCustomWhatsAppNotes());
     unawaited(viewModel.loadCloudAlertLogs());
+    unawaited(viewModel.loadQueuedAlertCount());
     if (widget.session.isAdmin) {
       unawaited(_loadAdminSosSystemLogs());
     }
@@ -91,6 +103,8 @@ class _SosPageState extends State<SosPage> {
     if (_isManualSosPatternActive) {
       unawaited(_deviceAlertService.stopManualSosPattern());
     }
+    _networkSubscription?.cancel();
+    unawaited(NetworkReachabilityService.instance.stop());
     viewModel.removeListener(_refresh);
     viewModel.dispose();
     super.dispose();
@@ -121,6 +135,42 @@ class _SosPageState extends State<SosPage> {
         ...viewModel.customWhatsAppNotes,
       };
     });
+  }
+
+  Future<void> _loadEmergencyContactsAndFlushQueue() async {
+    await viewModel.loadEmergencyContacts();
+    final network = await NetworkReachabilityService.instance.refresh();
+    if (mounted) {
+      setState(() {
+        _networkSnapshot = network;
+      });
+    }
+    if (network.isOnline) {
+      await viewModel.flushQueuedAlerts();
+    }
+  }
+
+  void _handleNetworkReachabilityChanged(NetworkReachabilitySnapshot snapshot) {
+    final wasOnline = _networkSnapshot.isOnline;
+    if (!mounted) {
+      _networkSnapshot = snapshot;
+      return;
+    }
+    setState(() {
+      _networkSnapshot = snapshot;
+    });
+    if (!wasOnline && snapshot.isOnline) {
+      unawaited(_flushQueueAfterNetworkRestore());
+    }
+  }
+
+  Future<void> _flushQueueAfterNetworkRestore() async {
+    if (viewModel.queuedAlertCount == 0) {
+      await viewModel.loadQueuedAlertCount();
+    }
+    if (viewModel.queuedAlertCount > 0) {
+      await viewModel.flushQueuedAlerts();
+    }
   }
 
   String _customWhatsAppNoteFor(SosAlertMode mode) {
@@ -236,6 +286,7 @@ class _SosPageState extends State<SosPage> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => _SosTestSettingsPage(
+          phoneNumber: widget.session.phoneNumber,
           onSendWhatsAppTest: viewModel.sendWhatsAppTestMessage,
         ),
       ),
@@ -399,13 +450,20 @@ class _SosPageState extends State<SosPage> {
   String _messageForResult(SosAlertResult result) {
     final alert = result.alert;
     if (alert.status == SosAlertStatus.noContacts) {
-      return '${alert.mode.label} logged, but no emergency contacts are saved.';
+      return result.queuedForRetry
+          ? '${alert.mode.label} queued until emergency contacts are available.'
+          : '${alert.mode.label} logged, but no emergency contacts are saved.';
     }
     if (alert.status == SosAlertStatus.sent) {
-      return '${alert.mode.label} sent to ${alert.sentCount} contacts.';
+      return result.queuedForRetry
+          ? '${alert.mode.label} sent to ${alert.sentCount} contacts; cloud sync is queued.'
+          : '${alert.mode.label} sent to ${alert.sentCount} contacts.';
     }
     if (alert.status == SosAlertStatus.partial) {
-      return '${alert.mode.label} sent to ${alert.sentCount} contacts; ${alert.failedCount} failed.';
+      return '${alert.mode.label} sent to ${alert.sentCount} contacts; ${alert.failedCount} queued for retry.';
+    }
+    if (alert.status == SosAlertStatus.queued) {
+      return '${alert.mode.label} was saved offline and queued for retry.';
     }
     return '${alert.mode.label} could not be sent to your contacts.';
   }
@@ -435,8 +493,14 @@ class _SosPageState extends State<SosPage> {
                   const SizedBox(height: 16),
                   _NetworkSosStatusCard(
                     isNetworkAvailable:
-                        widget.firebaseBootstrapResult.isAvailable,
-                    errorMessage: widget.firebaseBootstrapResult.errorMessage,
+                        widget.firebaseBootstrapResult.isAvailable &&
+                        _networkSnapshot.isOnline,
+                    isCheckingNetwork:
+                        _networkSnapshot.state ==
+                        NetworkReachabilityState.checking,
+                    errorMessage:
+                        widget.firebaseBootstrapResult.errorMessage ??
+                        _networkSnapshot.message,
                   ),
                   const SizedBox(height: 14),
                   _MetricsGroup(
@@ -476,7 +540,8 @@ class _SosPageState extends State<SosPage> {
                   else
                     _SosTriggerLogPanel(
                       isNetworkAvailable:
-                          widget.firebaseBootstrapResult.isAvailable,
+                          widget.firebaseBootstrapResult.isAvailable &&
+                          _networkSnapshot.isOnline,
                       session: widget.session,
                       latestResult: viewModel.latestSosAlertResult,
                       customWhatsAppNotes: _customWhatsAppNotes,
@@ -724,19 +789,29 @@ class _ManualSosCountdownDialogState extends State<_ManualSosCountdownDialog> {
 class _NetworkSosStatusCard extends StatelessWidget {
   const _NetworkSosStatusCard({
     required this.isNetworkAvailable,
+    required this.isCheckingNetwork,
     required this.errorMessage,
   });
 
   final bool isNetworkAvailable;
+  final bool isCheckingNetwork;
   final String? errorMessage;
 
   @override
   Widget build(BuildContext context) {
-    final color = isNetworkAvailable ? _SosColors.green : _SosColors.orange;
-    final title = isNetworkAvailable
+    final color = isCheckingNetwork
+        ? _SosColors.orange
+        : isNetworkAvailable
+        ? _SosColors.green
+        : _SosColors.orange;
+    final title = isCheckingNetwork
+        ? 'Checking network SOS'
+        : isNetworkAvailable
         ? 'Network SOS available'
         : 'Cloud SOS unavailable';
-    final subtitle = isNetworkAvailable
+    final subtitle = isCheckingNetwork
+        ? 'Checking internet reachability before cloud SOS delivery.'
+        : isNetworkAvailable
         ? 'Alerts can use cloud logging and WhatsApp delivery when sent.'
         : 'No backend connection right now. WhatsApp dispatch and Firebase cloud logging may fail until connection is restored.';
 
@@ -747,7 +822,9 @@ class _NetworkSosStatusCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _Glyph(
-              icon: isNetworkAvailable
+              icon: isCheckingNetwork
+                  ? Icons.sync_rounded
+                  : isNetworkAvailable
                   ? Icons.cloud_done_rounded
                   : Icons.signal_wifi_connected_no_internet_4_rounded,
               color: color,
@@ -771,7 +848,11 @@ class _NetworkSosStatusCard extends StatelessWidget {
                         ),
                       ),
                       _StatusPill(
-                        label: isNetworkAvailable ? 'Online' : 'Offline',
+                        label: isCheckingNetwork
+                            ? 'Checking'
+                            : isNetworkAvailable
+                            ? 'Online'
+                            : 'Offline',
                         color: color,
                         surface: color.withValues(alpha: 0.12),
                       ),
@@ -880,8 +961,12 @@ class _SosAlertStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final latestAlert = latestResult?.alert;
-    final statusColor = latestAlert?.status == SosAlertStatus.failed
+    final statusColor =
+        latestAlert?.status == SosAlertStatus.failed ||
+            latestAlert?.status == SosAlertStatus.queued
         ? _SosColors.destructiveFor(context)
+        : latestAlert?.status == SosAlertStatus.partial
+        ? _SosColors.orange
         : _SosColors.green;
     final title = isSending
         ? 'Sending SOS alert'
@@ -962,7 +1047,10 @@ class _SosAlertStatusCard extends StatelessWidget {
       return 'Saved to Firebase and sent to ${alert.sentCount} contacts.';
     }
     if (alert.status == SosAlertStatus.partial) {
-      return 'Saved to Firebase. Sent to ${alert.sentCount}; ${alert.failedCount} failed.';
+      return 'Sent to ${alert.sentCount}; ${alert.failedCount} queued for retry.';
+    }
+    if (alert.status == SosAlertStatus.queued) {
+      return 'Saved offline and queued for retry when delivery is available.';
     }
     return 'Saved to Firebase, but contact delivery failed.';
   }
@@ -2418,8 +2506,12 @@ class _AlertDeliveryDetailPage extends StatelessWidget {
 }
 
 class _SosTestSettingsPage extends StatefulWidget {
-  const _SosTestSettingsPage({required this.onSendWhatsAppTest});
+  const _SosTestSettingsPage({
+    required this.phoneNumber,
+    required this.onSendWhatsAppTest,
+  });
 
+  final String phoneNumber;
   final Future<List<SosContactDispatch>> Function() onSendWhatsAppTest;
 
   @override
@@ -2427,14 +2519,18 @@ class _SosTestSettingsPage extends StatefulWidget {
 }
 
 class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
+  static const Duration _bleSosTestDuration = Duration(seconds: 5);
+
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
+  final HikerBleService _bleService = const HikerBleService();
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
   StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
   Timer? _testStopTimer;
   bool _isFlashlightActive = false;
   bool _isEmergencySirenActive = false;
   bool _isMedicalSirenActive = false;
+  bool _isBroadcastingBleSosTest = false;
   bool _isAccelerometerTestActive = false;
   bool _isGyroscopeTestActive = false;
   double _accelerometerTestProgress = 0;
@@ -2526,6 +2622,17 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                         ),
                         const _HorizontalSeparator(),
                         _SosTestRow(
+                          icon: Icons.bluetooth_searching_rounded,
+                          title: 'Physical SOS button broadcast',
+                          subtitle: _isBroadcastingBleSosTest
+                              ? 'Broadcasting a BLE help beacon for nearby phones.'
+                              : 'Pretend this phone is the ESP32 button and broadcast your GPS help beacon.',
+                          onTap: _isBroadcastingBleSosTest
+                              ? null
+                              : () => unawaited(_broadcastBleSosTest()),
+                        ),
+                        const _HorizontalSeparator(),
+                        _SosTestRow(
                           icon: Icons.flash_on_rounded,
                           title: 'SOS flashlight pattern',
                           subtitle: _isFlashlightActive
@@ -2610,6 +2717,44 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
       );
     } catch (_) {
       _showTestResult('Unable to send WhatsApp cloud test right now.');
+    }
+  }
+
+  Future<void> _broadcastBleSosTest() async {
+    if (_isBroadcastingBleSosTest) {
+      return;
+    }
+    setState(() {
+      _isBroadcastingBleSosTest = true;
+    });
+
+    try {
+      final snapshotService = LocationSnapshotService.instance;
+      final location =
+          await snapshotService.refresh() ?? snapshotService.latestLocation;
+      if (location == null) {
+        _showTestResult('Location unavailable. Turn on GPS and try again.');
+        return;
+      }
+      await _bleService.broadcastPhysicalSosTest(
+        phoneNumber: widget.phoneNumber,
+        location: location,
+        duration: _bleSosTestDuration,
+      );
+      _showTestResult(
+        'BLE SOS test broadcast for 5 seconds. Nearby HikerCircle phones should show a help popup.',
+      );
+      await Future<void>.delayed(_bleSosTestDuration);
+    } on HikerBleException catch (error) {
+      _showTestResult(error.message);
+    } catch (_) {
+      _showTestResult('Unable to broadcast the BLE SOS test right now.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBroadcastingBleSosTest = false;
+        });
+      }
     }
   }
 
@@ -2933,13 +3078,13 @@ class _SosTestRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
-    required this.onTap,
+    this.onTap,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

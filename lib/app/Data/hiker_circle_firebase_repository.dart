@@ -670,6 +670,7 @@ class HikerCircleFirebaseRepository {
     String teamHikeSessionId = '',
     Map<String, String> participantNames = const {},
     Map<String, String> participantPhotoURLs = const {},
+    DateTime? departureTime,
   }) async {
     if (!_firebaseBootstrapResult.isAvailable) return;
     try {
@@ -684,6 +685,7 @@ class HikerCircleFirebaseRepository {
         chatType: 'group',
         participantNames: participantNames,
         participantPhotoURLs: participantPhotoURLs,
+        departureTime: departureTime,
       );
       await doc.set({
         ...chat.toFirestore(),
@@ -1835,6 +1837,7 @@ class HikerCircleFirebaseRepository {
           creatorPhone: session.phoneNumber,
           participantNames: names,
           participantPhotoURLs: photoURLs,
+          departureTime: draft.departureTime,
         );
       }
     } catch (_) {
@@ -2046,6 +2049,7 @@ class HikerCircleFirebaseRepository {
             teamHikeSessionId: teamHikeSessionId,
             participantNames: names,
             participantPhotoURLs: photoURLs,
+            departureTime: draft.departureTime,
           );
         }
       } catch (_) {

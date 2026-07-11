@@ -311,7 +311,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 15,
+      version: 16,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -431,6 +431,26 @@ class LocalSessionDatabase {
         if (oldVersion < 15) {
           await _createDeviceNotificationsTable(database);
         }
+        if (oldVersion < 16) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'queued_alerts',
+            columnName: 'owner_phone_number',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'queued_alerts',
+            columnName: 'last_error',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'queued_alerts',
+            columnName: 'sent_at',
+            definition: 'TEXT',
+          );
+        }
       },
     );
 
@@ -462,6 +482,7 @@ class LocalSessionDatabase {
   }
 
   Future<int> insertQueuedAlert({
+    String ownerPhoneNumber = '',
     required String sessionId,
     required String alertType,
     required double triggerLatitude,
@@ -471,6 +492,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final now = DateTime.now().toUtc().toIso8601String();
     return database.insert('queued_alerts', {
+      'owner_phone_number': ownerPhoneNumber,
       'session_id': sessionId,
       'alert_type': alertType,
       'trigger_latitude': triggerLatitude,
@@ -480,7 +502,82 @@ class LocalSessionDatabase {
       'send_status': 'queued',
       'retry_count': 0,
       'created_at': now,
+      'last_error': '',
     });
+  }
+
+  Future<List<LocalQueuedAlert>> loadQueuedAlerts({
+    String ownerPhoneNumber = '',
+    int limit = 20,
+  }) async {
+    final database = await _openDatabase();
+    final owner = ownerPhoneNumber.trim();
+    final rows = await database.query(
+      'queued_alerts',
+      where: owner.isEmpty
+          ? 'send_status IN (?, ?)'
+          : 'owner_phone_number IN (?, ?) AND send_status IN (?, ?)',
+      whereArgs: owner.isEmpty
+          ? ['queued', 'retry']
+          : [owner, '', 'queued', 'retry'],
+      orderBy: 'created_at ASC',
+      limit: limit,
+    );
+    return rows.map(LocalQueuedAlert.fromRow).toList();
+  }
+
+  Future<int> countQueuedAlerts({String ownerPhoneNumber = ''}) async {
+    final database = await _openDatabase();
+    final owner = ownerPhoneNumber.trim();
+    final result = await database.rawQuery(
+      owner.isEmpty
+          ? '''
+            SELECT COUNT(*) AS total
+            FROM queued_alerts
+            WHERE send_status IN (?, ?)
+            '''
+          : '''
+            SELECT COUNT(*) AS total
+            FROM queued_alerts
+            WHERE owner_phone_number IN (?, ?)
+              AND send_status IN (?, ?)
+            ''',
+      owner.isEmpty ? ['queued', 'retry'] : [owner, '', 'queued', 'retry'],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<void> markQueuedAlertSent(int id) async {
+    final database = await _openDatabase();
+    await database.update(
+      'queued_alerts',
+      {
+        'send_status': 'sent',
+        'sent_at': DateTime.now().toUtc().toIso8601String(),
+        'last_error': '',
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateQueuedAlertRetry({
+    required int id,
+    required String payloadJson,
+    String lastError = '',
+  }) async {
+    final database = await _openDatabase();
+    await database.rawUpdate(
+      '''
+      UPDATE queued_alerts
+      SET send_status = ?,
+          payload_json = ?,
+          retry_count = retry_count + 1,
+          last_error = ?
+      WHERE id = ?
+      ''',
+      ['retry', payloadJson, lastError, id],
+    );
   }
 
   Future<int> insertDownloadedMap({
@@ -551,6 +648,7 @@ class LocalSessionDatabase {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS queued_alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_phone_number TEXT NOT NULL DEFAULT '',
         session_id TEXT NOT NULL,
         alert_type TEXT NOT NULL,
         trigger_latitude REAL,
@@ -563,7 +661,9 @@ class LocalSessionDatabase {
         payload_json TEXT NOT NULL,
         send_status TEXT NOT NULL,
         retry_count INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        last_error TEXT NOT NULL DEFAULT '',
+        sent_at TEXT
       )
     ''');
 
@@ -1144,4 +1244,59 @@ class DeviceNotificationRecord {
   final String source;
 
   bool get isOpened => openedAt != null;
+}
+
+class LocalQueuedAlert {
+  const LocalQueuedAlert({
+    required this.id,
+    required this.ownerPhoneNumber,
+    required this.sessionId,
+    required this.alertType,
+    required this.triggerLatitude,
+    required this.triggerLongitude,
+    required this.triggerTime,
+    required this.payloadJson,
+    required this.sendStatus,
+    required this.retryCount,
+    required this.createdAt,
+    required this.lastError,
+  });
+
+  factory LocalQueuedAlert.fromRow(Map<String, Object?> row) {
+    return LocalQueuedAlert(
+      id: row['id'] is int ? row['id'] as int : 0,
+      ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
+      sessionId: row['session_id'] as String? ?? '',
+      alertType: row['alert_type'] as String? ?? '',
+      triggerLatitude: row['trigger_latitude'] is num
+          ? (row['trigger_latitude'] as num).toDouble()
+          : 0,
+      triggerLongitude: row['trigger_longitude'] is num
+          ? (row['trigger_longitude'] as num).toDouble()
+          : 0,
+      triggerTime:
+          DateTime.tryParse(row['trigger_time'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      payloadJson: row['payload_json'] as String? ?? '{}',
+      sendStatus: row['send_status'] as String? ?? 'queued',
+      retryCount: row['retry_count'] is int ? row['retry_count'] as int : 0,
+      createdAt:
+          DateTime.tryParse(row['created_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      lastError: row['last_error'] as String? ?? '',
+    );
+  }
+
+  final int id;
+  final String ownerPhoneNumber;
+  final String sessionId;
+  final String alertType;
+  final double triggerLatitude;
+  final double triggerLongitude;
+  final DateTime triggerTime;
+  final String payloadJson;
+  final String sendStatus;
+  final int retryCount;
+  final DateTime createdAt;
+  final String lastError;
 }

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../admin/View/admin_page.dart';
 import '../../app/Data/firebase_bootstrap.dart';
@@ -18,7 +19,10 @@ import '../../me/Data/live_location_sharing_service.dart';
 import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
 import '../../core/services/device_notification_log_service.dart';
+import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/hiking_route_service.dart';
+import '../../core/services/network_reachability_service.dart';
+import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/location_snapshot_service.dart';
@@ -46,11 +50,13 @@ class HikerHomePage extends StatefulWidget {
     required this.session,
     required this.onSignOut,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
+    this.initialDeepLink,
   });
 
   final AppSession session;
   final VoidCallback onSignOut;
   final FirebaseBootstrapResult firebaseBootstrapResult;
+  final String? initialDeepLink;
 
   @override
   State<HikerHomePage> createState() => _HikerHomePageState();
@@ -76,8 +82,16 @@ class _HikerHomePageState extends State<HikerHomePage>
       const SosDeviceAlertService();
   final ActiveHikeLiveStatusService _activeHikeLiveStatusService =
       const ActiveHikeLiveStatusService();
+  final HikerBleService _bleService = const HikerBleService();
   StreamSubscription<List<UpcomingHike>>? _myUpcomingHikesSubscription;
   StreamSubscription<List<Trail>>? _trailsSubscription;
+  StreamSubscription<HikerBleEvent>? _bleEventSubscription;
+  StreamSubscription<NetworkReachabilitySnapshot>?
+  _networkReachabilitySubscription;
+  NetworkReachabilitySnapshot _networkReachabilitySnapshot =
+      const NetworkReachabilitySnapshot(
+        state: NetworkReachabilityState.checking,
+      );
   PlannedHike? plannedHike;
   List<UpcomingHike> myUpcomingHikes = const [];
   bool isLoadingLiveData = false;
@@ -116,6 +130,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   int manualSosRequestId = 0;
   int immediateSosRequestId = 0;
   SosAlertMode? immediateSosRequestMode;
+  String? _lastHandledDeepLink;
+  DateTime? _lastHandledDeepLinkAt;
   final List<DateTime> fallStillnessCancelTaps = <DateTime>[];
   List<EmergencyContact> emergencyContacts = const [];
 
@@ -158,7 +174,16 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
     unawaited(loadLiveData());
     unawaited(_loadInitialDeepLink());
+    if (widget.initialDeepLink != null) {
+      _handleDeepLinkAfterFirstFrame(widget.initialDeepLink!);
+    }
     unawaited(_initializeFirebaseMessaging());
+    unawaited(_initializeBleBridge());
+    _networkReachabilitySubscription = NetworkReachabilityService
+        .instance
+        .snapshots
+        .listen(_handleNetworkReachabilityChanged);
+    unawaited(NetworkReachabilityService.instance.start());
   }
 
   Future<void> _initializeFirebaseMessaging() async {
@@ -206,6 +231,47 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
     } catch (error) {
       debugPrint('Unable to initialize Firebase Messaging: $error');
+    }
+  }
+
+  Future<void> _initializeBleBridge() async {
+    _bleEventSubscription?.cancel();
+    _bleEventSubscription = _bleService.events.listen(
+      _handleBleEvent,
+      onError: (_) {},
+    );
+    await _bleService.startSosButtonMonitor();
+  }
+
+  void _handleBleEvent(HikerBleEvent event) {
+    switch (event) {
+      case HikerBleSosButtonEvent():
+        requestImmediateSos(SosAlertMode.manual);
+      case HikerBleSosHelpEvent():
+        _showBleSosHelpPopupForLocation(
+          latitude: event.location.latitude,
+          longitude: event.location.longitude,
+          accuracyMeters: event.location.accuracyMeters,
+          sentAt: event.location.capturedAt,
+          rssi: event.rssi,
+        );
+      case HikerBleTeamLocationEvent():
+        _handleBleTeamLocation(event);
+      case HikerBleStatusEvent():
+        break;
+    }
+  }
+
+  void _handleNetworkReachabilityChanged(NetworkReachabilitySnapshot snapshot) {
+    final wasOnline = _networkReachabilitySnapshot.isOnline;
+    _networkReachabilitySnapshot = snapshot;
+    if (!wasOnline && snapshot.isOnline) {
+      unawaited(
+        sosAlertRepository.flushQueuedAlerts(
+          session: widget.session,
+          contacts: const [],
+        ),
+      );
     }
   }
 
@@ -351,11 +417,20 @@ class _HikerHomePageState extends State<HikerHomePage>
         'consumeInitialDeepLink',
       );
       if (link != null) {
-        await _handleDeepLink(link);
+        _handleDeepLinkAfterFirstFrame(link);
       }
     } catch (_) {
       // Deep links are optional on platforms that do not expose a native hook.
     }
+  }
+
+  void _handleDeepLinkAfterFirstFrame(String link) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_handleDeepLink(link));
+    });
   }
 
   Future<void> _handleDeepLinkMethodCall(MethodCall call) async {
@@ -369,6 +444,16 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _handleDeepLink(String link) async {
+    final now = DateTime.now();
+    final lastHandledAt = _lastHandledDeepLinkAt;
+    if (_lastHandledDeepLink == link &&
+        lastHandledAt != null &&
+        now.difference(lastHandledAt) < const Duration(seconds: 2)) {
+      return;
+    }
+    _lastHandledDeepLink = link;
+    _lastHandledDeepLinkAt = now;
+
     final uri = Uri.tryParse(link);
     if (uri == null || uri.scheme != 'hikercircle') {
       return;
@@ -383,7 +468,12 @@ class _HikerHomePageState extends State<HikerHomePage>
       requestManualSos();
       return;
     }
+    if (uri.host == 'sos' && uri.path == '/help') {
+      _showBleSosHelpPopup(uri);
+      return;
+    }
     if (uri.host == 'sos' && uri.path == '/instant') {
+      _debugPrintPhysicalSosPackage(uri);
       requestImmediateSos(SosAlertMode.manual);
       return;
     }
@@ -471,6 +561,23 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
       _showAddBuddyPrompt(name: name, handle: handle, phoneNumber: phone);
     });
+  }
+
+  void _debugPrintPhysicalSosPackage(Uri uri) {
+    if (uri.queryParameters['source'] != 'ble_button') {
+      return;
+    }
+    debugPrint(
+      [
+        'HikerCircle physical SOS BLE package accepted',
+        'broadcastId: ${uri.queryParameters['broadcastId'] ?? 'none'}',
+        'rssi: ${uri.queryParameters['rssi'] ?? 'unknown'}',
+        'deviceAddress: ${uri.queryParameters['deviceAddress'] ?? 'unknown'}',
+        'manufacturerData: ${uri.queryParameters['manufacturerData'] ?? 'none'}',
+        'serviceUuids: ${uri.queryParameters['serviceUuids'] ?? 'none'}',
+        'receivedAt: ${uri.queryParameters['receivedAt'] ?? 'unknown'}',
+      ].join('\n'),
+    );
   }
 
   Future<void> _openUpcomingHikeFromDeepLink(String hikeId) async {
@@ -2029,6 +2136,105 @@ class _HikerHomePageState extends State<HikerHomePage>
     tabController.animateTo(1);
   }
 
+  void _showBleSosHelpPopup(Uri uri) {
+    final latitude = double.tryParse(uri.queryParameters['lat'] ?? '');
+    final longitude = double.tryParse(uri.queryParameters['lng'] ?? '');
+    if (!mounted || latitude == null || longitude == null) {
+      return;
+    }
+    final accuracy = double.tryParse(uri.queryParameters['accuracy'] ?? '');
+    final rssi = int.tryParse(uri.queryParameters['rssi'] ?? '');
+    final sentAtMillis = int.tryParse(uri.queryParameters['sentAt'] ?? '');
+    final sentAt = sentAtMillis == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(sentAtMillis, isUtc: true);
+    _showBleSosHelpPopupForLocation(
+      latitude: latitude,
+      longitude: longitude,
+      accuracyMeters: accuracy,
+      sentAt: sentAt,
+      rssi: rssi,
+    );
+  }
+
+  void _showBleSosHelpPopupForLocation({
+    required double latitude,
+    required double longitude,
+    double? accuracyMeters,
+    DateTime? sentAt,
+    int? rssi,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    final mapUri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude',
+    );
+
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          icon: const Icon(Icons.sos_rounded, color: Color(0xFFFF3B30)),
+          title: const Text('Nearby SOS Needs Help'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'A nearby HikerCircle BLE SOS test beacon was received.',
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 280,
+                    child: _BleSosHelpMap(
+                      targetLatitude: latitude,
+                      targetLongitude: longitude,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Location: ${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}',
+                  ),
+                  if (accuracyMeters != null)
+                    Text('GPS accuracy: ${accuracyMeters.round()} m'),
+                  if (rssi != null) Text('BLE signal: $rssi dBm'),
+                  if (sentAt != null)
+                    Text('Sent: ${_formatBleSosHelpTime(sentAt)}'),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Dismiss'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                unawaited(launchUrl(mapUri));
+              },
+              icon: const Icon(Icons.map_rounded),
+              label: const Text('Open Map'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _formatBleSosHelpTime(DateTime value) {
+    final local = value.toLocal();
+    final date =
+        '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    final time =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    return '$date $time';
+  }
+
   void _signOutAndClearActiveHike() {
     _persistActiveHikeSnapshot(null);
     unawaited(
@@ -2671,12 +2877,14 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (hike == null) {
       _stopActiveHikeMonitoringHeartbeat();
       _stopActiveHikeLocationRecording();
+      _syncBleTeamLocation(null);
       unawaited(_activeHikeLiveStatusService.stop());
       return;
     }
 
     _startActiveHikeMonitoringHeartbeat(hike);
     _startActiveHikeLocationRecording(hike);
+    _syncBleTeamLocation(hike);
     _syncActiveHikeLiveStatus(hike, force: forceLiveStatus);
   }
 
@@ -2971,6 +3179,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     ActiveHikeSession hike,
     SosTriggerLocation location,
   ) {
+    _syncBleTeamLocation(hike, location);
     if (hike.teamHikeSessionId.isEmpty) {
       return;
     }
@@ -2999,6 +3208,158 @@ class _HikerHomePageState extends State<HikerHomePage>
         // Team position sync should never stop the local tracking loop.
       }
     }());
+  }
+
+  void _syncBleTeamLocation(
+    ActiveHikeSession? hike, [
+    SosTriggerLocation? location,
+  ]) {
+    if (hike == null || hike.teamHikeSessionId.isEmpty) {
+      unawaited(_bleService.stopTeamLocationExchange());
+      return;
+    }
+
+    final locationForBle =
+        location ?? _triggerLocationFromCoordinate(hike.latestLocation);
+    if (locationForBle == null) {
+      return;
+    }
+
+    unawaited(
+      _bleService.updateTeamLocation(
+        teamHikeSessionId: hike.teamHikeSessionId,
+        phoneNumber: widget.session.phoneNumber,
+        location: locationForBle,
+      ),
+    );
+  }
+
+  SosTriggerLocation? _triggerLocationFromCoordinate(
+    HikeCoordinate? coordinate,
+  ) {
+    if (coordinate == null) {
+      return null;
+    }
+    return SosTriggerLocation(
+      latitude: coordinate.latitude,
+      longitude: coordinate.longitude,
+      accuracyMeters: coordinate.accuracyMeters,
+      capturedAt: coordinate.capturedAt,
+    );
+  }
+
+  void _handleBleTeamLocation(HikerBleTeamLocationEvent event) {
+    final hike = activeHike;
+    final teamSession = hike?.teamHikeSession;
+    if (hike == null ||
+        teamSession == null ||
+        hike.teamHikeSessionId.isEmpty ||
+        event.teamSessionHash != hikerBleHash(hike.teamHikeSessionId) ||
+        event.phoneNumberHash ==
+            hikerBlePhoneHash(widget.session.phoneNumber)) {
+      return;
+    }
+
+    final now = DateTime.now().toUtc();
+    final coordinate = HikeCoordinate.fromTriggerLocation(event.location);
+    var matchedParticipant = false;
+    var participants = teamSession.participants.map((participant) {
+      if (hikerBlePhoneHash(participant.phoneNumber) != event.phoneNumberHash) {
+        return participant;
+      }
+      matchedParticipant = true;
+      return participant.copyWith(
+        status: TeamHikeParticipantStatus.active,
+        latestLocation: coordinate,
+        updatedAt: now,
+      );
+    }).toList();
+
+    if (!matchedParticipant) {
+      return;
+    }
+
+    final newlyIsolated = <TeamHikeParticipant>[];
+    participants = _participantsWithLocalSeparationState(
+      participants: participants,
+      now: now,
+      newlyIsolated: newlyIsolated,
+    );
+    final updatedTeamSession = teamSession.copyWith(
+      phase: TeamHikePhase.active,
+      participants: participants,
+      updatedAt: now,
+    );
+    final updatedHike = hike.copyWith(teamHikeSession: updatedTeamSession);
+
+    setState(() {
+      activeHike = updatedHike;
+    });
+    _persistActiveHikeSnapshot(updatedHike);
+
+    if (newlyIsolated.isNotEmpty) {
+      final name = newlyIsolated.first.buddy.shortName;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              '$name may be separated from the team. BLE location is still updating locally.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  List<TeamHikeParticipant> _participantsWithLocalSeparationState({
+    required List<TeamHikeParticipant> participants,
+    required DateTime now,
+    required List<TeamHikeParticipant> newlyIsolated,
+  }) {
+    return participants.map((participant) {
+      final location = participant.latestLocation;
+      if (location == null || participants.length < 2) {
+        return participant;
+      }
+      final nearestDistance = participants
+          .where(
+            (other) =>
+                !_sameTeamPhone(other.phoneNumber, participant.phoneNumber) &&
+                other.latestLocation != null,
+          )
+          .map((other) => location.distanceTo(other.latestLocation!))
+          .fold<double>(
+            double.infinity,
+            (nearest, distance) => distance < nearest ? distance : nearest,
+          );
+      final threshold =
+          (participant.safetySettings['separationDistanceMeters'] as num?)
+              ?.toDouble() ??
+          150;
+      final graceSeconds =
+          (participant.safetySettings['isolationGraceSeconds'] as num?)
+              ?.toInt() ??
+          180;
+      if (!nearestDistance.isFinite || nearestDistance <= threshold) {
+        return participant.copyWith(
+          clearIsolatedSince: true,
+          separationAlertActive: false,
+        );
+      }
+      final isolatedSince = participant.isolatedSince ?? now;
+      final shouldAlert =
+          !participant.separationAlertActive &&
+          now.difference(isolatedSince).inSeconds >= graceSeconds;
+      final next = participant.copyWith(
+        isolatedSince: isolatedSince,
+        separationAlertActive: participant.separationAlertActive || shouldAlert,
+      );
+      if (shouldAlert) {
+        newlyIsolated.add(next);
+      }
+      return next;
+    }).toList();
   }
 
   void _recordFallStillnessCancelTap() {
@@ -3043,6 +3404,10 @@ class _HikerHomePageState extends State<HikerHomePage>
     fcmTokenSubscription?.cancel();
     fcmOpenSubscription?.cancel();
     fcmForegroundSubscription?.cancel();
+    _bleEventSubscription?.cancel();
+    _networkReachabilitySubscription?.cancel();
+    unawaited(_bleService.stopTeamLocationExchange());
+    unawaited(NetworkReachabilityService.instance.stop());
 
     unawaited(_sosDeviceAlertService.stopFallStillnessCountdownVibration());
     unawaited(_sosDeviceAlertService.stopSpokenPrompt());
@@ -3110,6 +3475,444 @@ class _HikerHomePageState extends State<HikerHomePage>
               onDestinationSelected: onTabTap,
               destinations: _visibleTabs(),
             ),
+    );
+  }
+}
+
+class _BleSosHelpMap extends StatefulWidget {
+  const _BleSosHelpMap({
+    required this.targetLatitude,
+    required this.targetLongitude,
+  });
+
+  final double targetLatitude;
+  final double targetLongitude;
+
+  @override
+  State<_BleSosHelpMap> createState() => _BleSosHelpMapState();
+}
+
+class _BleSosHelpMapState extends State<_BleSosHelpMap> {
+  static const Duration _locationRefreshInterval = Duration(seconds: 5);
+
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.CircleAnnotationManager? _circleManager;
+  mapbox.PointAnnotationManager? _pointManager;
+  mapbox.PolylineAnnotationManager? _polylineManager;
+  Timer? _locationTimer;
+  SosTriggerLocation? _currentLocation;
+  double? _distanceMeters;
+  double? _previousDistanceMeters;
+  bool _styleLoaded = false;
+  bool _isRefreshingLocation = false;
+  int _renderGeneration = 0;
+
+  mapbox.Point get _targetPoint => mapbox.Point(
+    coordinates: mapbox.Position(widget.targetLongitude, widget.targetLatitude),
+  );
+
+  mapbox.Point? get _currentPoint {
+    final location = _currentLocation;
+    if (location == null) {
+      return null;
+    }
+    return mapbox.Point(
+      coordinates: mapbox.Position(location.longitude, location.latitude),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _startLocationUpdates();
+  }
+
+  @override
+  void dispose() {
+    _locationTimer?.cancel();
+    _renderGeneration++;
+    super.dispose();
+  }
+
+  void _startLocationUpdates() {
+    unawaited(_refreshLocation());
+    _locationTimer = Timer.periodic(_locationRefreshInterval, (_) {
+      unawaited(_refreshLocation());
+    });
+  }
+
+  Future<void> _refreshLocation() async {
+    if (_isRefreshingLocation) {
+      return;
+    }
+    _isRefreshingLocation = true;
+    try {
+      final location = await LocationSnapshotService.instance.refresh();
+      if (!mounted || location == null) {
+        return;
+      }
+      final nextDistance = distanceMeters(
+        _targetPoint,
+        mapbox.Point(
+          coordinates: mapbox.Position(location.longitude, location.latitude),
+        ),
+      );
+      setState(() {
+        _previousDistanceMeters = _distanceMeters;
+        _currentLocation = location;
+        _distanceMeters = nextDistance;
+      });
+      await _renderMarkers();
+    } finally {
+      _isRefreshingLocation = false;
+    }
+  }
+
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    _mapboxMap = mapboxMap;
+    try {
+      await mapboxMap.compass.updateSettings(
+        mapbox.CompassSettings(enabled: false),
+      );
+      await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
+      await mapboxMap.gestures.updateSettings(
+        mapbox.GesturesSettings(
+          scrollEnabled: true,
+          pinchToZoomEnabled: true,
+          rotateEnabled: true,
+          pitchEnabled: false,
+        ),
+      );
+      await mapboxMap.setBounds(
+        mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
+      );
+    } catch (_) {}
+    await _fitMap();
+  }
+
+  Future<void> _onStyleReady() async {
+    _styleLoaded = true;
+    _circleManager = null;
+    _pointManager = null;
+    _polylineManager = null;
+    _renderGeneration++;
+    await _ensureAnnotationManagers();
+    await _renderMarkers();
+  }
+
+  Future<bool> _ensureAnnotationManagers() async {
+    final map = _mapboxMap;
+    if (map == null || !_styleLoaded) {
+      return false;
+    }
+    try {
+      _circleManager ??= await map.annotations.createCircleAnnotationManager();
+      _pointManager ??= await map.annotations.createPointAnnotationManager();
+      _polylineManager ??= await map.annotations
+          .createPolylineAnnotationManager();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _renderMarkers() async {
+    if (!await _ensureAnnotationManagers()) {
+      return;
+    }
+    final generation = ++_renderGeneration;
+    final target = _targetPoint;
+    final current = _currentPoint;
+    try {
+      await _circleManager?.deleteAll();
+      await _pointManager?.deleteAll();
+      await _polylineManager?.deleteAll();
+      if (!mounted || generation != _renderGeneration) {
+        return;
+      }
+
+      if (current != null) {
+        await _polylineManager?.create(
+          mapbox.PolylineAnnotationOptions(
+            geometry: mapbox.LineString(
+              coordinates: [
+                mapbox.Position(
+                  current.coordinates[0]!,
+                  current.coordinates[1]!,
+                ),
+                mapbox.Position(target.coordinates[0]!, target.coordinates[1]!),
+              ],
+            ),
+            lineColor: const Color(0xFFFF3B30).toARGB32(),
+            lineOpacity: 0.78,
+            lineWidth: 3,
+            lineJoin: mapbox.LineJoin.ROUND,
+          ),
+        );
+      }
+
+      final circles = <mapbox.CircleAnnotationOptions>[
+        if (current != null && _currentLocation?.accuracyMeters != null)
+          mapbox.CircleAnnotationOptions(
+            geometry: current,
+            circleColor: const Color(0xFF0A84FF).toARGB32(),
+            circleOpacity: 0.12,
+            circleRadius: (_currentLocation!.accuracyMeters! / 8).clamp(12, 42),
+            circleStrokeColor: const Color(0xFF0A84FF).toARGB32(),
+            circleStrokeWidth: 1,
+          ),
+        if (current != null)
+          mapbox.CircleAnnotationOptions(
+            geometry: current,
+            circleColor: const Color(0xFF0A84FF).toARGB32(),
+            circleRadius: 8,
+            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+            circleStrokeWidth: 2.5,
+          ),
+        mapbox.CircleAnnotationOptions(
+          geometry: target,
+          circleColor: const Color(0xFFFF3B30).toARGB32(),
+          circleRadius: 14,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 3,
+        ),
+      ];
+      await _circleManager?.createMulti(circles);
+      await _pointManager?.create(
+        mapbox.PointAnnotationOptions(
+          geometry: target,
+          textField: '!',
+          textColor: const Color(0xFFFFFFFF).toARGB32(),
+          textHaloColor: const Color(0xFF7A1010).toARGB32(),
+          textHaloWidth: 0.5,
+          textSize: 18,
+          textAnchor: mapbox.TextAnchor.CENTER,
+        ),
+      );
+      await _fitMap();
+    } catch (_) {}
+  }
+
+  Future<void> _fitMap() async {
+    final map = _mapboxMap;
+    if (map == null) {
+      return;
+    }
+    final points = [_targetPoint, if (_currentPoint != null) _currentPoint!];
+    try {
+      if (points.length == 1) {
+        await map.flyTo(
+          mapbox.CameraOptions(center: points.first, zoom: 16),
+          mapbox.MapAnimationOptions(duration: 250),
+        );
+        return;
+      }
+      final bounds = boundsFor(points);
+      final camera = await map.cameraForCoordinateBounds(
+        mapbox.CoordinateBounds(
+          southwest: mapbox.Point(
+            coordinates: mapbox.Position(bounds.minLon, bounds.minLat),
+          ),
+          northeast: mapbox.Point(
+            coordinates: mapbox.Position(bounds.maxLon, bounds.maxLat),
+          ),
+          infiniteBounds: false,
+        ),
+        mapbox.MbxEdgeInsets(top: 58, left: 42, bottom: 78, right: 42),
+        null,
+        null,
+        null,
+        null,
+      );
+      await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 300));
+    } catch (_) {
+      await map.flyTo(
+        mapbox.CameraOptions(center: centerFor(points), zoom: 15),
+        mapbox.MapAnimationOptions(duration: 250),
+      );
+    }
+  }
+
+  String get _distanceLabel {
+    final distance = _distanceMeters;
+    if (distance == null) {
+      return 'Getting your location...';
+    }
+    if (distance >= 1000) {
+      return '${(distance / 1000).toStringAsFixed(2)} km away';
+    }
+    return '${distance.round()} m away';
+  }
+
+  String get _approachLabel {
+    final current = _distanceMeters;
+    final previous = _previousDistanceMeters;
+    if (current == null) {
+      return 'Move toward the warning marker';
+    }
+    if (current <= 25) {
+      return 'You are very close to the SOS location';
+    }
+    if (previous == null || (previous - current).abs() < 3) {
+      return 'Distance will update as you move';
+    }
+    return current < previous
+        ? 'You are approaching the target'
+        : 'You are moving farther from the target';
+  }
+
+  Color _approachColor(BuildContext context) {
+    final current = _distanceMeters;
+    final previous = _previousDistanceMeters;
+    if (current != null && current <= 25) {
+      return const Color(0xFF34C759);
+    }
+    if (current != null && previous != null && current > previous + 3) {
+      return const Color(0xFFFF9500);
+    }
+    return Theme.of(context).colorScheme.primary;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final targetLabel =
+        '${widget.targetLatitude.toStringAsFixed(5)}, ${widget.targetLongitude.toStringAsFixed(5)}';
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          mapbox.MapWidget(
+            key: const ValueKey('ble-sos-help-map'),
+            styleUri: mapStyleUrls[1],
+            viewport: mapbox.CameraViewportState(
+              center: _targetPoint,
+              zoom: 15,
+            ),
+            gestureRecognizers: mapGestureRecognizers,
+            onMapCreated: _onMapCreated,
+            onStyleLoadedListener: (_) => _onStyleReady(),
+            onMapLoadedListener: (_) => _onStyleReady(),
+          ),
+          Positioned(
+            left: 10,
+            right: 10,
+            top: 10,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.surface.withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x22000000),
+                    blurRadius: 10,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: const Color(0xFFFF3B30),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        targetLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 10,
+            right: 10,
+            bottom: 10,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.surface.withValues(alpha: 0.96),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x22000000),
+                    blurRadius: 10,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 9,
+                ),
+                child: Row(
+                  children: [
+                    SizedBox.square(
+                      dimension: 34,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: _approachColor(
+                            context,
+                          ).withValues(alpha: 0.14),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.navigation_rounded,
+                          size: 18,
+                          color: _approachColor(context),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _distanceLabel,
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w900),
+                          ),
+                          Text(
+                            _approachLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: _approachColor(context)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isRefreshingLocation)
+                      const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

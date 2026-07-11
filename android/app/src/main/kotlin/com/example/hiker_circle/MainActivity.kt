@@ -68,6 +68,7 @@ class MainActivity : FlutterActivity() {
     private var pendingDeepLink: String? = null
     private var pendingActiveHikeLiveStatus: ActiveHikeLiveStatus? = null
     private var qrScannerFactory: QrScannerPlatformViewFactory? = null
+    private var hikerBleBridge: HikerBleBridge? = null
 
     private val sosTorchPattern = listOf(
         TorchStep(true, 220L),
@@ -128,6 +129,10 @@ class MainActivity : FlutterActivity() {
             .platformViewsController
             .registry
             .registerViewFactory("hiker_circle/qr_scanner", qrFactory)
+        hikerBleBridge = HikerBleBridge(
+            activity = this,
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+        )
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -271,6 +276,15 @@ class MainActivity : FlutterActivity() {
             return
         }
 
+        if (hikerBleBridge?.onRequestPermissionsResult(
+                requestCode,
+                permissions,
+                grantResults,
+            ) == true
+        ) {
+            return
+        }
+
         if (requestCode == LOCATION_REQUEST_CODE && pendingLocationResult != null) {
             if (grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
                 requestOneShotLocation()
@@ -303,6 +317,8 @@ class MainActivity : FlutterActivity() {
         textToSpeech?.shutdown()
         textToSpeech = null
         stopManualSosPattern()
+        hikerBleBridge?.dispose()
+        hikerBleBridge = null
         completePendingLocation(null)
         super.onDestroy()
     }
