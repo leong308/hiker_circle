@@ -1,5 +1,7 @@
 import CoreBluetooth
+import CryptoKit
 import Flutter
+import Security
 import UIKit
 
 final class HikerBleBridge: NSObject, FlutterStreamHandler {
@@ -13,6 +15,19 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     case sosHelp
     case teamLocation
   }
+
+  private struct PairedButtonRecord: Codable {
+    let deviceIdHex: String
+    let displayName: String
+    let pairedAtMillis: Int64
+    var lastSeenAtMillis: Int64?
+    var lastAcceptedEventId: UInt32?
+    let pairingSecret: Data
+    let peripheralIdentifier: UUID
+  }
+
+  private static let pairedButtonsKeychainService = "hiker_circle.paired_sos_buttons"
+  private static let pairedButtonsKeychainAccount = "registry.v1"
 
   private let methodChannel: FlutterMethodChannel
   private let eventChannel: FlutterEventChannel
@@ -48,6 +63,19 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private var connectedPeripherals: [UUID: CBPeripheral] = [:]
   private var pendingReadKinds: [UUID: PendingReadKind] = [:]
   private var pendingRssi: [UUID: Int] = [:]
+  private var pairedButtons: [PairedButtonRecord] = []
+  private var pairingSetupRequested = false
+  private var pairingPeripheral: CBPeripheral?
+  private var pairingDeviceId: Data?
+  private var pairingSecret: Data?
+  private var pairingDisplayName: String?
+  private var pairingResult: FlutterResult?
+  private var pairingTimeout: Timer?
+  private var pairingRequestCharacteristic: CBCharacteristic?
+  private var pairingStatusCharacteristic: CBCharacteristic?
+  private var locationPeripheral: CBPeripheral?
+  private var locationPayload: Data?
+  private var locationResult: FlutterResult?
 
   init(messenger: FlutterBinaryMessenger) {
     methodChannel = FlutterMethodChannel(
@@ -59,6 +87,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       binaryMessenger: messenger
     )
     super.init()
+    pairedButtons = loadPairedButtons()
     methodChannel.setMethodCallHandler(handleMethodCall)
     eventChannel.setStreamHandler(self)
     NotificationCenter.default.addObserver(
@@ -107,6 +136,41 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       isSosMonitorRequested = false
       stopScanIfIdle()
       result(nil)
+    case "startPairedButtonSetupScan":
+      pairingSetupRequested = true
+      _ = centralManager
+      startScanIfReady()
+      result(nil)
+    case "stopPairedButtonSetupScan":
+      pairingSetupRequested = false
+      stopScanIfIdle()
+      result(nil)
+    case "pairSosButton":
+      guard let arguments = call.arguments as? [String: Any],
+            let address = arguments["address"] as? String,
+            let displayName = arguments["displayName"] as? String else {
+        result(FlutterError(code: "paired_button_invalid_request", message: "A button address and display name are required.", details: nil))
+        return
+      }
+      beginPairing(address: address, displayName: displayName, result: result)
+    case "listPairedSosButtons":
+      result(pairedButtons.map { button in
+        [
+          "deviceId": button.deviceIdHex,
+          "displayName": button.displayName,
+          "pairedAtMillis": button.pairedAtMillis,
+          "lastSeenAtMillis": button.lastSeenAtMillis,
+          "lastAcceptedEventId": button.lastAcceptedEventId,
+        ]
+      })
+    case "unpairSosButton":
+      let deviceId = (call.arguments as? [String: Any])?["deviceId"] as? String ?? ""
+      let before = pairedButtons.count
+      pairedButtons.removeAll { $0.deviceIdHex == deviceId.uppercased() }
+      savePairedButtons()
+      result(before != pairedButtons.count)
+    case "sendPairedSosLocation":
+      sendPairedSosLocation(call: call, result: result)
     case "broadcastPhysicalSosTest":
       guard let payload = sosHelpPayload(from: call) else {
         result(FlutterError(
@@ -165,31 +229,27 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       emitStatus("ios_ble_scan_waiting", message: centralStateMessage)
       return
     }
-    guard isSosMonitorRequested || isTeamExchangeRequested else {
+    guard isSosMonitorRequested || isTeamExchangeRequested || pairingSetupRequested else {
       return
     }
     if centralManager.isScanning {
       centralManager.stopScan()
     }
-    let serviceFilter: [CBUUID]?
-    if UIApplication.shared.applicationState == .background {
-      serviceFilter = [
-        HikerBleProtocol.sosServiceUUID,
-        HikerBleProtocol.sosHelpServiceUUID,
-        HikerBleProtocol.teamLocationServiceUUID
-      ]
-    } else {
-      serviceFilter = nil
-    }
+    // The physical ESP32 button uses the compact manufacturer packet rather
+    // than a 128-bit service UUID, so filtering by service UUID here makes
+    // the button invisible whenever iOS applies the background scan path.
+    // Core Bluetooth throttles background scans itself; leave discovery
+    // unfiltered so handleAdvertisement can validate the manufacturer ID and
+    // packet signature safely.
     centralManager.scanForPeripherals(
-      withServices: serviceFilter,
+      withServices: nil,
       options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
     )
     emitStatus("ios_ble_scan_started")
   }
 
   private func stopScanIfIdle() {
-    guard !isSosMonitorRequested && !isTeamExchangeRequested else {
+    guard !isSosMonitorRequested && !isTeamExchangeRequested && !pairingSetupRequested else {
       return
     }
     if centralManager.isScanning {
@@ -319,6 +379,23 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
         emitTeamLocation(team)
         return
       }
+      if let paired = HikerBleProtocol.decodePairedSosRemote(payload, rssi: rssiValue) {
+        if let owner = pairedButtons.first(where: { $0.deviceIdHex == paired.deviceIdHex }),
+           verifyPairedTag(owner: owner, packet: paired),
+           !isReplay(owner: owner, eventId: paired.eventId) {
+          markAccepted(ownerDeviceId: paired.deviceIdHex, eventId: paired.eventId)
+          emitPairedSosButton(paired, displayName: owner.displayName)
+        } else if pairedButtons.contains(where: { $0.deviceIdHex == paired.deviceIdHex }) {
+          NSLog("HikerCircle rejected invalid paired SOS tag")
+        } else {
+          emitNearbySosButton(paired)
+        }
+        return
+      }
+      if let location = HikerBleProtocol.decodePairedSosLocationRelay(payload, rssi: rssiValue) {
+        emitNearbySosLocation(location)
+        return
+      }
       if HikerBleProtocol.isSosPacket(payload) {
         logPhysicalSosPackage(
           peripheral: peripheral,
@@ -338,6 +415,18 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     }
 
     let serviceUuids = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+    if pairingSetupRequested,
+       serviceUuids.contains(HikerBleProtocol.pairedButtonSetupServiceUUID) {
+      eventSink?([
+        "type": "pairedButtonSetupDevice",
+        "address": peripheral.identifier.uuidString,
+        "displayName": (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
+          ?? "HikerCircle Setup",
+        "rssi": rssiValue,
+        "receivedAtMillis": Self.currentTimeMillis(),
+      ])
+      return
+    }
     if serviceUuids.contains(HikerBleProtocol.sosHelpServiceUUID) {
       connectForRead(peripheral: peripheral, kind: .sosHelp, rssi: rssiValue)
       return
@@ -409,6 +498,83 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       event["broadcastId"] = counter
     }
     eventSink?(event)
+  }
+
+  private func emitNearbySosButton(_ packet: HikerBleProtocol.PairedSosRemotePacket) {
+    let fingerprint = "paired_sos:\(packet.deviceIdHex):\(packet.eventId)"
+    guard !hasHandledEvent(fingerprint) else {
+      return
+    }
+    rememberHandledEvent(fingerprint)
+    eventSink?([
+      "type": "nearbySosButton",
+      "source": "paired_ble_button",
+      "deviceId": packet.deviceIdHex,
+      "counter": Int(packet.eventId),
+      "rssi": packet.rssi,
+      "receivedAtMillis": Self.currentTimeMillis()
+    ])
+  }
+
+  private func emitPairedSosButton(
+    _ packet: HikerBleProtocol.PairedSosRemotePacket,
+    displayName: String
+  ) {
+    let fingerprint = "paired_sos_owner:\(packet.deviceIdHex):\(packet.eventId)"
+    guard !hasHandledEvent(fingerprint) else { return }
+    rememberHandledEvent(fingerprint)
+    eventSink?([
+      "type": "pairedSosButton",
+      "source": "paired_ble_button",
+      "deviceId": packet.deviceIdHex,
+      "displayName": displayName,
+      "counter": Int(packet.eventId),
+      "mode": packet.mode,
+      "rssi": packet.rssi,
+      "receivedAtMillis": Self.currentTimeMillis(),
+    ])
+  }
+
+  private func verifyPairedTag(
+    owner: PairedButtonRecord,
+    packet: HikerBleProtocol.PairedSosRemotePacket
+  ) -> Bool {
+    let key = SymmetricKey(data: owner.pairingSecret)
+    let digest = HMAC<SHA256>.authenticationCode(for: packet.signedPayload, using: key)
+    return Data(digest.prefix(8)) == packet.messageTag
+  }
+
+  private func isReplay(owner: PairedButtonRecord, eventId: UInt32) -> Bool {
+    guard let last = owner.lastAcceptedEventId else { return false }
+    return eventId <= last
+  }
+
+  private func markAccepted(ownerDeviceId: String, eventId: UInt32) {
+    guard let index = pairedButtons.firstIndex(where: { $0.deviceIdHex == ownerDeviceId }) else {
+      return
+    }
+    pairedButtons[index].lastSeenAtMillis = Self.currentTimeMillis()
+    pairedButtons[index].lastAcceptedEventId = eventId
+    savePairedButtons()
+  }
+
+  private func emitNearbySosLocation(_ packet: HikerBleProtocol.PairedSosLocationRelayPacket) {
+    let fingerprint = "paired_sos_location:\(packet.deviceIdHex):\(packet.eventId)"
+    guard !hasHandledEvent(fingerprint) else {
+      return
+    }
+    rememberHandledEvent(fingerprint)
+    eventSink?([
+      "type": "nearbySosLocation",
+      "source": "paired_ble_button_location",
+      "deviceId": packet.deviceIdHex,
+      "counter": Int(packet.eventId),
+      "latitude": packet.latitude,
+      "longitude": packet.longitude,
+      "accuracyMeters": packet.accuracyMeters,
+      "receivedAtMillis": Self.currentTimeMillis(),
+      "rssi": packet.rssi
+    ])
   }
 
   private func emitSosHelp(_ packet: HikerBleProtocol.SosHelpBeaconPacket) {
@@ -597,6 +763,173 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private static func currentTimeMillis() -> Int64 {
     Int64(Date().timeIntervalSince1970 * 1000)
   }
+
+  private func loadPairedButtons() -> [PairedButtonRecord] {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: Self.pairedButtonsKeychainService,
+      kSecAttrAccount as String: Self.pairedButtonsKeychainAccount,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var item: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+          let data = item as? Data else { return [] }
+    return (try? JSONDecoder().decode([PairedButtonRecord].self, from: data)) ?? []
+  }
+
+  private func savePairedButtons() {
+    guard let data = try? JSONEncoder().encode(pairedButtons) else { return }
+    let base: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: Self.pairedButtonsKeychainService,
+      kSecAttrAccount as String: Self.pairedButtonsKeychainAccount,
+    ]
+    SecItemDelete(base as CFDictionary)
+    var add = base
+    add[kSecValueData as String] = data
+    SecItemAdd(add as CFDictionary, nil)
+  }
+
+  private func randomBytes(_ count: Int) -> Data? {
+    var data = Data(repeating: 0, count: count)
+    let status = data.withUnsafeMutableBytes {
+      SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!)
+    }
+    return status == errSecSuccess ? data : nil
+  }
+
+  private func beginPairing(address: String, displayName: String, result: @escaping FlutterResult) {
+    guard let uuid = UUID(uuidString: address),
+          let deviceId = randomBytes(6),
+          let secret = randomBytes(32) else {
+      result(FlutterError(code: "paired_button_invalid_request", message: "The iOS peripheral identifier or random pairing material is invalid.", details: nil))
+      return
+    }
+    finishPairing(success: false)
+    pairingDeviceId = deviceId
+    pairingSecret = secret
+    pairingDisplayName = displayName
+    pairingResult = result
+    pairingPeripheral = centralManager.retrievePeripherals(withIdentifiers: [uuid]).first
+    guard let peripheral = pairingPeripheral else {
+      finishPairing(success: false, errorCode: "paired_button_not_found", errorMessage: "The setup button is no longer available.")
+      return
+    }
+    peripheral.delegate = self
+    centralManager.connect(peripheral, options: nil)
+    pairingTimeout = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+      self?.finishPairing(success: false, errorCode: "paired_button_timeout", errorMessage: "The button pairing window expired.")
+    }
+  }
+
+  private func finishPairing(success: Bool, errorCode: String? = nil, errorMessage: String? = nil) {
+    pairingTimeout?.invalidate()
+    pairingTimeout = nil
+    if let peripheral = pairingPeripheral {
+      centralManager.cancelPeripheralConnection(peripheral)
+    }
+    pairingPeripheral = nil
+    pairingRequestCharacteristic = nil
+    pairingStatusCharacteristic = nil
+    let result = pairingResult
+    pairingResult = nil
+    if success {
+      result?(nil)
+    } else if let errorCode {
+      result?(FlutterError(code: errorCode, message: errorMessage, details: nil))
+    }
+  }
+
+  private func handlePairingStatus(_ data: Data) {
+    guard data.count >= 10,
+          data[0] == 0x48,
+          data[1] == 0x43,
+          data[2] == 0x01,
+          let deviceId = pairingDeviceId else { return }
+    let status = data[3]
+    if status >= 0x03 && Data(data[4..<10]) != deviceId { return }
+    switch status {
+    case 0x01:
+      emitStatus("paired_button_ready")
+    case 0x02:
+      emitStatus("paired_button_awaiting_confirmation")
+    case 0x03:
+      guard let peripheral = pairingPeripheral,
+            let secret = pairingSecret,
+            let displayName = pairingDisplayName,
+            let deviceId = pairingDeviceId else { return }
+      pairedButtons.removeAll { $0.deviceIdHex == deviceId.map { String(format: "%02X", $0) }.joined() }
+      pairedButtons.append(
+        PairedButtonRecord(
+          deviceIdHex: deviceId.map { String(format: "%02X", $0) }.joined(),
+          displayName: displayName,
+          pairedAtMillis: Self.currentTimeMillis(),
+          lastSeenAtMillis: nil,
+          lastAcceptedEventId: nil,
+          pairingSecret: secret,
+          peripheralIdentifier: peripheral.identifier
+        )
+      )
+      savePairedButtons()
+      emitStatus("paired_button_paired")
+      finishPairing(success: true)
+    case 0x04:
+      finishPairing(success: false, errorCode: "paired_button_invalid_request", errorMessage: "The button rejected the pairing request.")
+    case 0x05:
+      finishPairing(success: false, errorCode: "paired_button_confirmation_expired", errorMessage: "The button confirmation window expired.")
+    default:
+      break
+    }
+  }
+
+  private func sendPairedSosLocation(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard let arguments = call.arguments as? [String: Any],
+          let deviceId = (arguments["deviceId"] as? String)?.uppercased(),
+          let eventId = Self.int64Value(arguments["eventId"]),
+          let latitude = (arguments["latitude"] as? NSNumber)?.doubleValue,
+          let longitude = (arguments["longitude"] as? NSNumber)?.doubleValue else {
+      result(FlutterError(code: "paired_button_location_invalid", message: "A button ID, event ID, latitude, and longitude are required.", details: nil))
+      return
+    }
+    guard let owner = pairedButtons.first(where: { $0.deviceIdHex == deviceId }) else {
+      result(FlutterError(code: "paired_button_not_found", message: "The button is not paired on this iPhone.", details: nil))
+      return
+    }
+    guard let peripheral = centralManager.retrievePeripherals(withIdentifiers: [owner.peripheralIdentifier]).first else {
+      result(FlutterError(code: "paired_button_not_found", message: "The paired button is not reachable.", details: nil))
+      return
+    }
+    let accuracy = (arguments["accuracyMeters"] as? NSNumber)?.doubleValue ?? 0
+    let capturedAt = Self.int64Value(arguments["capturedAtMillis"]) ?? Self.currentTimeMillis()
+    locationPayload = HikerBleProtocol.encodeSosLocationHandoff(
+      eventId: UInt32(truncatingIfNeeded: eventId),
+      latitude: latitude,
+      longitude: longitude,
+      accuracyMeters: accuracy,
+      capturedAtMillis: capturedAt,
+      pairingSecret: owner.pairingSecret
+    )
+    locationPeripheral = peripheral
+    locationResult = result
+    peripheral.delegate = self
+    centralManager.connect(peripheral, options: nil)
+  }
+
+  private func finishLocation(success: Bool, errorCode: String? = nil, errorMessage: String? = nil) {
+    if let peripheral = locationPeripheral {
+      centralManager.cancelPeripheralConnection(peripheral)
+    }
+    locationPeripheral = nil
+    locationPayload = nil
+    let result = locationResult
+    locationResult = nil
+    if success {
+      result?(nil)
+    } else if let errorCode {
+      result?(FlutterError(code: errorCode, message: errorMessage, details: nil))
+    }
+  }
 }
 
 extension HikerBleBridge: CBCentralManagerDelegate {
@@ -623,6 +956,14 @@ extension HikerBleBridge: CBCentralManagerDelegate {
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    if pairingPeripheral?.identifier == peripheral.identifier {
+      peripheral.discoverServices([HikerBleProtocol.pairedButtonSetupServiceUUID])
+      return
+    }
+    if locationPeripheral?.identifier == peripheral.identifier {
+      peripheral.discoverServices([HikerBleProtocol.activeSosServiceUUID])
+      return
+    }
     guard let kind = pendingReadKinds[peripheral.identifier] else {
       central.cancelPeripheralConnection(peripheral)
       return
@@ -640,6 +981,14 @@ extension HikerBleBridge: CBCentralManagerDelegate {
     didFailToConnect peripheral: CBPeripheral,
     error: Error?
   ) {
+    if pairingPeripheral?.identifier == peripheral.identifier {
+      finishPairing(success: false, errorCode: "paired_button_connect_failed", errorMessage: "Unable to connect to the setup button.")
+      return
+    }
+    if locationPeripheral?.identifier == peripheral.identifier {
+      finishLocation(success: false, errorCode: "paired_button_location_connect_failed", errorMessage: "Unable to connect to the SOS button.")
+      return
+    }
     connectedPeripherals.removeValue(forKey: peripheral.identifier)
     pendingReadKinds.removeValue(forKey: peripheral.identifier)
     pendingRssi.removeValue(forKey: peripheral.identifier)
@@ -650,6 +999,14 @@ extension HikerBleBridge: CBCentralManagerDelegate {
     didDisconnectPeripheral peripheral: CBPeripheral,
     error: Error?
   ) {
+    if pairingPeripheral?.identifier == peripheral.identifier {
+      finishPairing(success: false, errorCode: "paired_button_disconnected", errorMessage: "The setup button disconnected before pairing completed.")
+      return
+    }
+    if locationPeripheral?.identifier == peripheral.identifier {
+      finishLocation(success: false, errorCode: "paired_button_location_disconnected", errorMessage: "The SOS button disconnected before the location was sent.")
+      return
+    }
     connectedPeripherals.removeValue(forKey: peripheral.identifier)
     pendingReadKinds.removeValue(forKey: peripheral.identifier)
     pendingRssi.removeValue(forKey: peripheral.identifier)
@@ -663,7 +1020,18 @@ extension HikerBleBridge: CBPeripheralDelegate {
       return
     }
     for service in services {
-      if service.uuid == HikerBleProtocol.sosHelpServiceUUID {
+      if pairingPeripheral?.identifier == peripheral.identifier,
+         service.uuid == HikerBleProtocol.pairedButtonSetupServiceUUID {
+        peripheral.discoverCharacteristics([
+          HikerBleProtocol.pairedButtonPairRequestCharacteristicUUID,
+          HikerBleProtocol.pairedButtonStatusCharacteristicUUID,
+        ], for: service)
+      } else if locationPeripheral?.identifier == peripheral.identifier,
+                service.uuid == HikerBleProtocol.activeSosServiceUUID {
+        peripheral.discoverCharacteristics([
+          HikerBleProtocol.sosLocationCharacteristicUUID,
+        ], for: service)
+      } else if service.uuid == HikerBleProtocol.sosHelpServiceUUID {
         peripheral.discoverCharacteristics([HikerBleProtocol.sosHelpCharacteristicUUID], for: service)
       } else if service.uuid == HikerBleProtocol.teamLocationServiceUUID {
         peripheral.discoverCharacteristics([HikerBleProtocol.teamLocationCharacteristicUUID], for: service)
@@ -681,7 +1049,25 @@ extension HikerBleBridge: CBPeripheralDelegate {
       return
     }
     for characteristic in characteristics {
-      if characteristic.uuid == HikerBleProtocol.sosHelpCharacteristicUUID ||
+      if pairingPeripheral?.identifier == peripheral.identifier {
+        if characteristic.uuid == HikerBleProtocol.pairedButtonPairRequestCharacteristicUUID {
+          pairingRequestCharacteristic = characteristic
+        } else if characteristic.uuid == HikerBleProtocol.pairedButtonStatusCharacteristicUUID {
+          pairingStatusCharacteristic = characteristic
+          peripheral.setNotifyValue(true, for: characteristic)
+        }
+        if pairingRequestCharacteristic != nil && pairingStatusCharacteristic != nil {
+          let deviceId = pairingDeviceId ?? Data()
+          let secret = pairingSecret ?? Data()
+          let value = HikerBleProtocol.encodePairRequest(deviceId: deviceId, pairingSecret: secret)
+          peripheral.writeValue(value, for: pairingRequestCharacteristic!, type: .withResponse)
+          emitStatus("paired_button_pairing_written")
+        }
+      } else if locationPeripheral?.identifier == peripheral.identifier,
+                characteristic.uuid == HikerBleProtocol.sosLocationCharacteristicUUID,
+                let payload = locationPayload {
+        peripheral.writeValue(payload, for: characteristic, type: .withResponse)
+      } else if characteristic.uuid == HikerBleProtocol.sosHelpCharacteristicUUID ||
           characteristic.uuid == HikerBleProtocol.teamLocationCharacteristicUUID {
         peripheral.readValue(for: characteristic)
       }
@@ -693,6 +1079,12 @@ extension HikerBleBridge: CBPeripheralDelegate {
     didUpdateValueFor characteristic: CBCharacteristic,
     error: Error?
   ) {
+    if pairingPeripheral?.identifier == peripheral.identifier,
+       characteristic.uuid == HikerBleProtocol.pairedButtonStatusCharacteristicUUID {
+      guard error == nil, let data = characteristic.value else { return }
+      handlePairingStatus(data)
+      return
+    }
     defer {
       centralManager.cancelPeripheralConnection(peripheral)
     }
@@ -708,6 +1100,21 @@ extension HikerBleBridge: CBPeripheralDelegate {
     if characteristic.uuid == HikerBleProtocol.teamLocationCharacteristicUUID,
        let packet = HikerBleProtocol.decodeTeamLocation(data, rssi: rssi) {
       emitTeamLocation(packet)
+    }
+  }
+
+  func peripheral(
+    _ peripheral: CBPeripheral,
+    didWriteValueFor characteristic: CBCharacteristic,
+    error: Error?
+  ) {
+    if locationPeripheral?.identifier == peripheral.identifier,
+       characteristic.uuid == HikerBleProtocol.sosLocationCharacteristicUUID {
+      if error == nil {
+        finishLocation(success: true)
+      } else {
+        finishLocation(success: false, errorCode: "paired_button_location_write_failed", errorMessage: "The button rejected the location handoff.")
+      }
     }
   }
 }
@@ -773,14 +1180,22 @@ private enum HikerBleProtocol {
   static let sosHelpServiceUUID = CBUUID(string: "7e2a1d34-8b10-4f4d-9f78-0c6f1d65cba1")
   static let sosHelpCharacteristicUUID = CBUUID(string: "7e2a1d35-8b10-4f4d-9f78-0c6f1d65cba1")
   static let teamLocationCharacteristicUUID = CBUUID(string: "7e2a1d36-8b10-4f4d-9f78-0c6f1d65cba1")
+  static let pairedButtonSetupServiceUUID = CBUUID(string: "7e2a1d37-8b10-4f4d-9f78-0c6f1d65cba1")
+  static let pairedButtonPairRequestCharacteristicUUID = CBUUID(string: "7e2a1d38-8b10-4f4d-9f78-0c6f1d65cba1")
+  static let pairedButtonStatusCharacteristicUUID = CBUUID(string: "7e2a1d39-8b10-4f4d-9f78-0c6f1d65cba1")
+  static let activeSosServiceUUID = CBUUID(string: "7e2a1d3a-8b10-4f4d-9f78-0c6f1d65cba1")
+  static let sosLocationCharacteristicUUID = CBUUID(string: "7e2a1d3b-8b10-4f4d-9f78-0c6f1d65cba1")
   static let manufacturerId: UInt16 = 0x02E5
 
   private static let magicH: UInt8 = 0x48
   private static let magicC: UInt8 = 0x43
   private static let version: UInt8 = 0x01
+  private static let pairedVersion: UInt8 = 0x02
   private static let typeSos: UInt8 = 0x01
   private static let typeTeamLocation: UInt8 = 0x02
   private static let typeSosHelp: UInt8 = 0x03
+  private static let typePairedSosRemote: UInt8 = 0x04
+  private static let typePairedSosLocationRelay: UInt8 = 0x05
 
   struct SosHelpPayload {
     let phoneNumberHash: UInt32
@@ -820,6 +1235,32 @@ private enum HikerBleProtocol {
     let rssi: Int
   }
 
+  struct PairedSosRemotePacket {
+    let deviceId: Data
+    let eventId: UInt32
+    let mode: Int
+    let messageTag: Data
+    let signedPayload: Data
+    let rssi: Int
+
+    var deviceIdHex: String {
+      deviceId.map { String(format: "%02X", $0) }.joined()
+    }
+  }
+
+  struct PairedSosLocationRelayPacket {
+    let deviceId: Data
+    let eventId: UInt32
+    let latitude: Double
+    let longitude: Double
+    let accuracyMeters: Double
+    let rssi: Int
+
+    var deviceIdHex: String {
+      deviceId.map { String(format: "%02X", $0) }.joined()
+    }
+  }
+
   static func manufacturerPayload(from data: Data) -> Data? {
     guard data.count >= 2 else {
       return nil
@@ -837,6 +1278,78 @@ private enum HikerBleProtocol {
       data[1] == magicC &&
       data[2] == version &&
       data[3] == typeSos
+  }
+
+  static func decodePairedSosRemote(
+    _ data: Data,
+    rssi: Int
+  ) -> PairedSosRemotePacket? {
+    guard data.count >= 23,
+          data[0] == magicH,
+          data[1] == magicC,
+          data[2] == pairedVersion,
+          data[3] == typePairedSosRemote else {
+      return nil
+    }
+    return PairedSosRemotePacket(
+      deviceId: Data(data[5..<11]),
+      eventId: readUInt32(data, at: 11),
+      mode: Int(data[4]),
+      messageTag: Data(data[15..<23]),
+      signedPayload: Data(data[0..<15]),
+      rssi: rssi
+    )
+  }
+
+  static func decodePairedSosLocationRelay(
+    _ data: Data,
+    rssi: Int
+  ) -> PairedSosLocationRelayPacket? {
+    guard data.count >= 24,
+          data[0] == magicH,
+          data[1] == magicC,
+          data[2] == pairedVersion,
+          data[3] == typePairedSosLocationRelay else {
+      return nil
+    }
+    return PairedSosLocationRelayPacket(
+      deviceId: Data(data[4..<10]),
+      eventId: readUInt32(data, at: 10),
+      latitude: Double(readInt32(data, at: 14)) / 10_000_000.0,
+      longitude: Double(readInt32(data, at: 18)) / 10_000_000.0,
+      accuracyMeters: Double(readUInt16(data, at: 22)) / 10.0,
+      rssi: rssi
+    )
+  }
+
+  static func encodePairRequest(deviceId: Data, pairingSecret: Data) -> Data {
+    var data = Data([magicH, magicC, version, 0x01])
+    data.append(deviceId)
+    data.append(pairingSecret)
+    return data
+  }
+
+  static func encodeSosLocationHandoff(
+    eventId: UInt32,
+    latitude: Double,
+    longitude: Double,
+    accuracyMeters: Double,
+    capturedAtMillis: Int64,
+    pairingSecret: Data
+  ) -> Data {
+    var signed = Data([magicH, magicC, pairedVersion, typePairedSosLocationRelay])
+    appendUInt32(eventId, to: &signed)
+    appendInt32(Int32((latitude * 10_000_000).rounded()), to: &signed)
+    appendInt32(Int32((longitude * 10_000_000).rounded()), to: &signed)
+    let accuracyDecimeters = max(0, min(65535, Int((accuracyMeters * 10).rounded())))
+    appendUInt16(UInt16(accuracyDecimeters), to: &signed)
+    appendUInt32(UInt32(truncatingIfNeeded: capturedAtMillis / 1000), to: &signed)
+    let tag = HMAC<SHA256>.authenticationCode(
+      for: signed,
+      using: SymmetricKey(data: pairingSecret)
+    )
+    signed.append(contentsOf: tag.prefix(8))
+    return signed
   }
 
   static func sosCounter(from data: Data) -> Int? {

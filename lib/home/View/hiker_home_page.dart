@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
@@ -42,6 +43,7 @@ import 'active_tracking_map_view.dart';
 import '../ModelView/fall_stillness_monitor.dart';
 import 'active_hike_map_page.dart';
 import 'home_dashboard_page.dart';
+import 'first_aid_guide_page.dart';
 import 'start_hike_wizard_page.dart';
 
 class HikerHomePage extends StatefulWidget {
@@ -132,6 +134,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   SosAlertMode? immediateSosRequestMode;
   String? _lastHandledDeepLink;
   DateTime? _lastHandledDeepLinkAt;
+  String? _lastHandledPairedSosKey;
+  String? _lastHandledNearbySosKey;
   final List<DateTime> fallStillnessCancelTaps = <DateTime>[];
   List<EmergencyContact> emergencyContacts = const [];
 
@@ -245,8 +249,21 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   void _handleBleEvent(HikerBleEvent event) {
     switch (event) {
+      case HikerBlePairedButtonSetupEvent():
+        break;
       case HikerBleSosButtonEvent():
         requestImmediateSos(SosAlertMode.manual);
+      case HikerBlePairedSosButtonEvent():
+        _handlePairedSosButtonEvent(event);
+      case HikerBleNearbySosButtonEvent():
+        _handleNearbySosButtonEvent(
+          deviceId: event.deviceId,
+          counter: event.counter,
+          receivedAt: event.receivedAt,
+          rssi: event.rssi,
+        );
+      case HikerBleNearbySosLocationEvent():
+        _handleNearbySosLocationEvent(event);
       case HikerBleSosHelpEvent():
         _showBleSosHelpPopupForLocation(
           latitude: event.location.latitude,
@@ -475,6 +492,49 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (uri.host == 'sos' && uri.path == '/instant') {
       _debugPrintPhysicalSosPackage(uri);
       requestImmediateSos(SosAlertMode.manual);
+      return;
+    }
+    if (uri.host == 'sos' && uri.path == '/paired') {
+      _handlePairedSosButtonEvent(
+        HikerBlePairedSosButtonEvent(
+          deviceId: uri.queryParameters['deviceId'] ?? '',
+          counter: int.tryParse(uri.queryParameters['counter'] ?? ''),
+          mode: 1,
+          rssi: int.tryParse(uri.queryParameters['rssi'] ?? ''),
+          receivedAt: _dateFromDeepLink(uri.queryParameters['receivedAt']),
+        ),
+      );
+      return;
+    }
+    if (uri.host == 'sos' && uri.path == '/nearby-button') {
+      _handleNearbySosButtonEvent(
+        deviceId: uri.queryParameters['deviceId'] ?? '',
+        counter: int.tryParse(uri.queryParameters['counter'] ?? ''),
+        receivedAt: _dateFromDeepLink(uri.queryParameters['receivedAt']),
+        rssi: int.tryParse(uri.queryParameters['rssi'] ?? ''),
+      );
+      return;
+    }
+    if (uri.host == 'sos' && uri.path == '/nearby-button-location') {
+      final latitude = double.tryParse(uri.queryParameters['latitude'] ?? '');
+      final longitude = double.tryParse(uri.queryParameters['longitude'] ?? '');
+      if (latitude == null || longitude == null) return;
+      _handleNearbySosLocationEvent(
+        HikerBleNearbySosLocationEvent(
+          deviceId: uri.queryParameters['deviceId'] ?? '',
+          counter: int.tryParse(uri.queryParameters['counter'] ?? ''),
+          rssi: int.tryParse(uri.queryParameters['rssi'] ?? ''),
+          receivedAt: _dateFromDeepLink(uri.queryParameters['receivedAt']),
+          location: SosTriggerLocation(
+            latitude: latitude,
+            longitude: longitude,
+            accuracyMeters: double.tryParse(
+              uri.queryParameters['accuracy'] ?? '',
+            ),
+            capturedAt: _dateFromDeepLink(uri.queryParameters['receivedAt']),
+          ),
+        ),
+      );
       return;
     }
     if (uri.host == 'sos' && uri.path == '/medical') {
@@ -1378,8 +1438,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<void> _recordInitialActiveHikeLocation(ActiveHikeSession hike) async {
     try {
       final location =
-          LocationSnapshotService.instance.latestLocation ??
-          await LocationSnapshotService.instance.refresh();
+          await LocationSnapshotService.instance.refresh() ??
+          LocationSnapshotService.instance.latestLocation;
       if (location == null) {
         return;
       }
@@ -2226,6 +2286,168 @@ class _HikerHomePageState extends State<HikerHomePage>
     );
   }
 
+  void _handlePairedSosButtonEvent(HikerBlePairedSosButtonEvent event) {
+    if (event.mode != 1) {
+      return;
+    }
+    final key = '${event.deviceId}:${event.counter ?? 'unknown'}';
+    if (event.deviceId.isEmpty || _lastHandledPairedSosKey == key) {
+      return;
+    }
+    _lastHandledPairedSosKey = key;
+    requestImmediateSos(SosAlertMode.manual);
+    final eventId = event.counter;
+    if (eventId != null) {
+      unawaited(_sendPairedSosLocation(event.deviceId, eventId));
+    }
+  }
+
+  Future<void> _sendPairedSosLocation(String deviceId, int eventId) async {
+    try {
+      final location =
+          LocationSnapshotService.instance.latestLocation ??
+          await LocationSnapshotService.instance.refresh();
+      if (location == null) return;
+      await _bleService.sendPairedSosLocation(
+        deviceId: deviceId,
+        eventId: eventId,
+        location: location,
+      );
+    } catch (error) {
+      debugPrint('Unable to return SOS location to button: $error');
+    }
+  }
+
+  void _handleNearbySosButtonEvent({
+    required String deviceId,
+    int? counter,
+    required DateTime receivedAt,
+    int? rssi,
+  }) {
+    final key =
+        '$deviceId:${counter ?? receivedAt.millisecondsSinceEpoch ~/ 1000}';
+    if (_lastHandledNearbySosKey == key) return;
+    _lastHandledNearbySosKey = key;
+    _showNearbySosButtonPopup(
+      deviceId: deviceId,
+      receivedAt: receivedAt,
+      rssi: rssi,
+    );
+  }
+
+  void _handleNearbySosLocationEvent(HikerBleNearbySosLocationEvent event) {
+    final key =
+        '${event.deviceId}:${event.counter ?? event.receivedAt.millisecondsSinceEpoch ~/ 1000}:location';
+    if (_lastHandledNearbySosKey == key) return;
+    _lastHandledNearbySosKey = key;
+    _showNearbySosButtonPopup(
+      deviceId: event.deviceId,
+      receivedAt: event.receivedAt,
+      rssi: event.rssi,
+      location: event.location,
+    );
+  }
+
+  // Retained for the legacy map widget below; nearby paired-button alerts no
+  // longer display this estimate and use the relayed GPS coordinate instead.
+  static double _bleRangeMeters(int rssi) {
+    const referenceRssi = -59.0;
+    const pathLossExponent = 2.3;
+    final meters =
+        30 *
+        math
+            .pow(10, (referenceRssi - rssi) / (10 * pathLossExponent))
+            .toDouble();
+    return meters.clamp(20.0, 500.0);
+  }
+
+  void _showNearbySosButtonPopup({
+    required String deviceId,
+    required DateTime receivedAt,
+    int? rssi,
+    SosTriggerLocation? location,
+  }) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.sos_rounded, color: Color(0xFFFF9500)),
+        title: const Text('Nearby SOS button pressed'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'A nearby paired HikerCircle button sent an unverified proximity signal. It is not your SOS and no alert has been sent from this phone.',
+              ),
+              const SizedBox(height: 12),
+              if (location == null)
+                const Text(
+                  'Precise location has not been relayed yet. Keep Bluetooth enabled to receive it if the owner phone is nearby.',
+                )
+              else ...[
+                SizedBox(
+                  height: 280,
+                  child: _BleSosHelpMap(
+                    targetLatitude: location.latitude,
+                    targetLongitude: location.longitude,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Location: ${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}',
+                ),
+                if (location.accuracyMeters != null)
+                  Text(
+                    'Reported GPS accuracy: ${location.accuracyMeters!.round()} m',
+                  ),
+              ],
+              if (rssi != null)
+                Text(
+                  'BLE signal: $rssi dBm',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              Text('Received: ${_formatBleSosHelpTime(receivedAt)}'),
+              if (deviceId.isNotEmpty)
+                Text(
+                  'Button ID: ${deviceId.length > 4 ? deviceId.substring(deviceId.length - 4) : deviceId}',
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Dismiss'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(this.context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const FirstAidGuidePage(),
+                ),
+              );
+            },
+            child: const Text('First-aid guide'),
+          ),
+          FilledButton(
+            onPressed: () => unawaited(launchUrl(Uri.parse('tel:112'))),
+            child: const Text('Call emergency services'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  DateTime _dateFromDeepLink(String? value) {
+    final millis = int.tryParse(value ?? '');
+    return millis == null
+        ? DateTime.now().toUtc()
+        : DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+  }
+
   String _formatBleSosHelpTime(DateTime value) {
     final local = value.toLocal();
     final date =
@@ -2660,6 +2882,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     if (state == AppLifecycleState.resumed) {
+      unawaited(_bleService.startSosButtonMonitor());
       if (hike != null) {
         unawaited(
           _sendActiveHikeMonitoringHeartbeat(hike, lifecycleState: 'active'),
@@ -3475,6 +3698,215 @@ class _HikerHomePageState extends State<HikerHomePage>
               onDestinationSelected: onTabTap,
               destinations: _visibleTabs(),
             ),
+    );
+  }
+}
+
+class _BleNearbyProximityMap extends StatefulWidget {
+  const _BleNearbyProximityMap({this.rssi});
+
+  final int? rssi;
+
+  @override
+  State<_BleNearbyProximityMap> createState() => _BleNearbyProximityMapState();
+}
+
+class _BleNearbyProximityMapState extends State<_BleNearbyProximityMap> {
+  static const _refreshInterval = Duration(seconds: 5);
+
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.CircleAnnotationManager? _circleManager;
+  mapbox.PolygonAnnotationManager? _polygonManager;
+  Timer? _locationTimer;
+  SosTriggerLocation? _location;
+  bool _styleLoaded = false;
+  bool _refreshing = false;
+  bool _hasCentered = false;
+
+  double get _radiusMeters =>
+      _HikerHomePageState._bleRangeMeters(widget.rssi ?? -70);
+
+  mapbox.Point? get _point {
+    final location = _location;
+    if (location == null) return null;
+    return mapbox.Point(
+      coordinates: mapbox.Position(location.longitude, location.latitude),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshLocation());
+    _locationTimer = Timer.periodic(_refreshInterval, (_) {
+      unawaited(_refreshLocation());
+    });
+  }
+
+  @override
+  void dispose() {
+    _locationTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshLocation() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final location = await LocationSnapshotService.instance.refresh();
+      if (!mounted || location == null) return;
+      setState(() => _location = location);
+      await _render();
+      final point = _point;
+      if (!_hasCentered && point != null && _mapboxMap != null) {
+        _hasCentered = true;
+        await _mapboxMap!.flyTo(
+          mapbox.CameraOptions(
+            center: point,
+            zoom: (16 - math.log(_radiusMeters / 50) / math.ln2).clamp(11, 18),
+          ),
+          mapbox.MapAnimationOptions(duration: 300),
+        );
+      }
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _onMapCreated(mapbox.MapboxMap map) async {
+    _mapboxMap = map;
+    try {
+      await map.logo.updateSettings(mapbox.LogoSettings(enabled: false));
+      await map.compass.updateSettings(mapbox.CompassSettings(enabled: false));
+      await map.gestures.updateSettings(
+        mapbox.GesturesSettings(
+          scrollEnabled: true,
+          pinchToZoomEnabled: true,
+          rotateEnabled: true,
+          pitchEnabled: false,
+        ),
+      );
+      await map.setBounds(
+        mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
+      );
+    } catch (_) {}
+    await _ensureManagers();
+    await _render();
+  }
+
+  Future<void> _onStyleReady() async {
+    _styleLoaded = true;
+    _circleManager = null;
+    _polygonManager = null;
+    await _ensureManagers();
+    await _render();
+  }
+
+  Future<bool> _ensureManagers() async {
+    if (_mapboxMap == null || !_styleLoaded) return false;
+    try {
+      _circleManager ??= await _mapboxMap!.annotations
+          .createCircleAnnotationManager();
+      _polygonManager ??= await _mapboxMap!.annotations
+          .createPolygonAnnotationManager();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  List<mapbox.Position> _ring(double latitude, double longitude) {
+    final radius = _radiusMeters;
+    final latDelta = radius / 111320;
+    final lonDelta =
+        radius / (111320 * math.cos(latitude * math.pi / 180).clamp(0.2, 1.0));
+    return List<mapbox.Position>.generate(49, (index) {
+      final angle = 2 * math.pi * index / 48;
+      return mapbox.Position(
+        longitude + lonDelta * math.cos(angle),
+        latitude + latDelta * math.sin(angle),
+      );
+    });
+  }
+
+  Future<void> _render() async {
+    if (!await _ensureManagers()) return;
+    final point = _point;
+    if (point == null) return;
+    try {
+      await _circleManager?.deleteAll();
+      await _polygonManager?.deleteAll();
+      final latitude = point.coordinates[1]!.toDouble();
+      final longitude = point.coordinates[0]!.toDouble();
+      await _polygonManager?.create(
+        mapbox.PolygonAnnotationOptions(
+          geometry: mapbox.Polygon(coordinates: [_ring(latitude, longitude)]),
+          fillColor: const Color(0xFF0A84FF).toARGB32(),
+          fillOpacity: 0.14,
+          fillOutlineColor: const Color(0xFF0A84FF).toARGB32(),
+        ),
+      );
+      await _circleManager?.create(
+        mapbox.CircleAnnotationOptions(
+          geometry: point,
+          circleColor: const Color(0xFF0A84FF).toARGB32(),
+          circleRadius: 9,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 2.5,
+        ),
+      );
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final point = _point;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          mapbox.MapWidget(
+            key: const ValueKey('ble-nearby-proximity-map'),
+            styleUri: mapStyleUrls[1],
+            viewport: mapbox.CameraViewportState(
+              center: point ?? mapbox.Point(coordinates: mapbox.Position(0, 0)),
+              zoom: point == null ? 1 : 15,
+            ),
+            gestureRecognizers: mapGestureRecognizers,
+            onMapCreated: _onMapCreated,
+            onStyleLoadedListener: (_) => _onStyleReady(),
+            onMapLoadedListener: (_) => _onStyleReady(),
+          ),
+          Positioned(
+            left: 10,
+            right: 10,
+            top: 10,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.surface.withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Text(
+                  point == null
+                      ? 'Getting detector location…'
+                      : 'Detector location • possible range ${_radiusMeters.round()} m',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

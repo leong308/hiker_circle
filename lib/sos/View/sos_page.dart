@@ -23,6 +23,7 @@ import '../Model/sos_models.dart';
 import '../ModelView/sos_view_model.dart';
 import 'emergency_contacts_page.dart';
 import 'ios_sos_volume_guard.dart';
+import 'paired_sos_button_page.dart';
 
 class SosPage extends StatefulWidget {
   const SosPage({
@@ -293,6 +294,14 @@ class _SosPageState extends State<SosPage> {
     );
   }
 
+  void _openPairedSosButton() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const PairedSosButtonPage(),
+      ),
+    );
+  }
+
   void _showManualSosDetailsOverlay() {
     showModalBottomSheet<void>(
       context: context,
@@ -489,6 +498,7 @@ class _SosPageState extends State<SosPage> {
                     onEmergencyContactsChanged:
                         viewModel.replaceEmergencyContacts,
                     onOpenTestSettings: _openTestSettings,
+                    onOpenPairedButton: _openPairedSosButton,
                   ),
                   const SizedBox(height: 16),
                   _NetworkSosStatusCard(
@@ -577,6 +587,7 @@ class _Header extends StatelessWidget {
     required this.emergencyContactsRepository,
     required this.onEmergencyContactsChanged,
     required this.onOpenTestSettings,
+    required this.onOpenPairedButton,
   });
 
   final AppSession session;
@@ -584,6 +595,7 @@ class _Header extends StatelessWidget {
   final EmergencyContactsRepository emergencyContactsRepository;
   final ValueChanged<List<EmergencyContact>> onEmergencyContactsChanged;
   final VoidCallback onOpenTestSettings;
+  final VoidCallback onOpenPairedButton;
 
   @override
   Widget build(BuildContext context) {
@@ -623,6 +635,12 @@ class _Header extends StatelessWidget {
             tooltip: 'Emergency contacts',
             icon: Icons.contacts_rounded,
             onPressed: () => unawaited(_openEmergencyContacts(context)),
+          ),
+          const SizedBox(width: 8),
+          _HeaderAction(
+            tooltip: 'Paired SOS button',
+            icon: Icons.settings_remote_rounded,
+            onPressed: onOpenPairedButton,
           ),
           const SizedBox(width: 8),
           _HeaderAction(
@@ -2531,6 +2549,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   bool _isEmergencySirenActive = false;
   bool _isMedicalSirenActive = false;
   bool _isBroadcastingBleSosTest = false;
+  bool _legacyUnpairedButtonEnabled = false;
   bool _isAccelerometerTestActive = false;
   bool _isGyroscopeTestActive = false;
   double _accelerometerTestProgress = 0;
@@ -2543,6 +2562,7 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_loadLegacyButtonSetting());
     _accelerometerSubscription =
         accelerometerEventStream(
           samplingPeriod: const Duration(milliseconds: 200),
@@ -2579,6 +2599,21 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
             }
           },
         );
+  }
+
+  Future<void> _loadLegacyButtonSetting() async {
+    final enabled = await _bleService.isLegacyUnpairedSosButtonEnabled();
+    if (mounted) {
+      setState(() => _legacyUnpairedButtonEnabled = enabled);
+    }
+  }
+
+  Future<void> _toggleLegacyButtonSetting() async {
+    final enabled = !_legacyUnpairedButtonEnabled;
+    await _bleService.setLegacyUnpairedSosButtonEnabled(enabled);
+    if (mounted) {
+      setState(() => _legacyUnpairedButtonEnabled = enabled);
+    }
   }
 
   @override
@@ -2630,6 +2665,26 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                           onTap: _isBroadcastingBleSosTest
                               ? null
                               : () => unawaited(_broadcastBleSosTest()),
+                        ),
+                        const _HorizontalSeparator(),
+                        _SosTestRow(
+                          icon: Icons.settings_remote_rounded,
+                          title: 'Paired SOS button',
+                          subtitle: 'Add a button, wait for physical confirmation, or manage paired buttons.',
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const PairedSosButtonPage(),
+                            ),
+                          ),
+                        ),
+                        const _HorizontalSeparator(),
+                        _SosTestRow(
+                          icon: Icons.settings_remote_rounded,
+                          title: 'Legacy unpaired button (migration)',
+                          subtitle: _legacyUnpairedButtonEnabled
+                              ? 'Enabled: v1 buttons can trigger this phone. Turn off after upgrading to a paired v2 button.'
+                              : 'Disabled by default. Planned paired v2 buttons use authenticated type-4 packets.',
+                          onTap: () => unawaited(_toggleLegacyButtonSetting()),
                         ),
                         const _HorizontalSeparator(),
                         _SosTestRow(

@@ -1,0 +1,231 @@
+package com.leongziqi.hikercircle
+
+import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import org.json.JSONArray
+import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.Mac
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+/**
+ * Private, device-local ownership registry for paired SOS remotes.
+ *
+ * The pairing secret never crosses the Flutter channel or leaves this class
+ * after it has been written to the button. The stored JSON is encrypted with
+ * a non-exportable Android Keystore AES key.
+ */
+class PairedSosButtonRegistry(context: Context) {
+    companion object {
+        private const val PREFS = "hiker_circle_paired_sos_buttons"
+        private const val ENCRYPTED_ENTRIES = "encrypted_entries"
+        private const val LEGACY_UNPAIRED_ENABLED = "legacy_unpaired_enabled"
+        private const val DEFAULT_DISPLAY_NAME = "HikerCircle Button"
+        private const val KEYSTORE = "AndroidKeyStore"
+        private const val KEY_ALIAS = "hiker_circle_paired_sos_buttons_v1"
+        private const val GCM_IV_BYTES = 12
+        private const val GCM_TAG_BITS = 128
+        private val random = SecureRandom()
+    }
+
+    private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    data class Button(
+        val deviceIdHex: String,
+        val address: String?,
+        val displayName: String,
+        val pairedAtMillis: Long,
+        val lastSeenAtMillis: Long?,
+        val lastAcceptedEventId: Long?,
+        internal val pairingSecret: ByteArray,
+    )
+
+    data class NewPairing(
+        val deviceId: ByteArray,
+        val pairingSecret: ByteArray,
+    )
+
+    fun newPairingMaterial(): NewPairing {
+        return NewPairing(
+            deviceId = ByteArray(6).also(random::nextBytes),
+            pairingSecret = ByteArray(32).also(random::nextBytes),
+        )
+    }
+
+    fun buttons(): List<Button> = readButtons().map { it.copy(pairingSecret = ByteArray(0)) }
+
+    fun find(deviceId: ByteArray): Button? {
+        val deviceIdHex = deviceId.hex()
+        return readButtons().firstOrNull { it.deviceIdHex == deviceIdHex }
+    }
+
+    fun find(deviceIdHex: String): Button? {
+        return readButtons().firstOrNull { it.deviceIdHex == deviceIdHex.trim().uppercase() }
+    }
+
+    fun saveConfirmedPairing(
+        deviceId: ByteArray,
+        pairingSecret: ByteArray,
+        displayName: String,
+        address: String? = null,
+    ) {
+        require(deviceId.size == 6) { "Paired SOS device IDs must be six bytes." }
+        require(pairingSecret.size == 32) { "Paired SOS secrets must be 32 bytes." }
+        val current = readButtons().filterNot { it.deviceIdHex == deviceId.hex() }.toMutableList()
+        current += Button(
+            deviceIdHex = deviceId.hex(),
+            address = address?.trim()?.uppercase(),
+            displayName = displayName.trim().ifBlank { DEFAULT_DISPLAY_NAME },
+            pairedAtMillis = System.currentTimeMillis(),
+            lastSeenAtMillis = null,
+            lastAcceptedEventId = null,
+            pairingSecret = pairingSecret.copyOf(),
+        )
+        writeButtons(current)
+    }
+
+    fun remove(deviceIdHex: String): Boolean {
+        val current = readButtons()
+        val updated = current.filterNot { it.deviceIdHex == deviceIdHex.uppercase() }
+        if (updated.size == current.size) return false
+        writeButtons(updated)
+        return true
+    }
+
+    fun markSeen(deviceId: ByteArray, eventId: Long? = null, accepted: Boolean = false) {
+        val deviceIdHex = deviceId.hex()
+        val updated = readButtons().map { button ->
+            if (button.deviceIdHex != deviceIdHex) {
+                button
+            } else {
+                button.copy(
+                    lastSeenAtMillis = System.currentTimeMillis(),
+                    lastAcceptedEventId = if (accepted && eventId != null) eventId
+                        else button.lastAcceptedEventId,
+                )
+            }
+        }
+        writeButtons(updated)
+    }
+
+    fun isReplay(button: Button, eventId: Long): Boolean {
+        val last = button.lastAcceptedEventId ?: return false
+        // The firmware persists and increments the uint32 press counter. A
+        // phone must not accept an old packet after a restart or replay.
+        return eventId <= last
+    }
+
+    fun hasValidTag(button: Button, packet: HikerBleProtocol.PairedSosRemotePacket): Boolean {
+        if (button.pairingSecret.size != 32 || packet.messageTag.size != 8) return false
+        val tag = Mac.getInstance("HmacSHA256")
+            .apply { init(javax.crypto.spec.SecretKeySpec(button.pairingSecret, "HmacSHA256")) }
+            .doFinal(packet.signedPayload)
+            .copyOfRange(0, 8)
+        return MessageDigest.isEqual(tag, packet.messageTag)
+    }
+
+    fun isLegacyUnpairedEnabled(): Boolean =
+        preferences.getBoolean(LEGACY_UNPAIRED_ENABLED, false)
+
+    fun setLegacyUnpairedEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(LEGACY_UNPAIRED_ENABLED, enabled).apply()
+    }
+
+    private fun readButtons(): List<Button> {
+        val encrypted = preferences.getString(ENCRYPTED_ENTRIES, null) ?: return emptyList()
+        return runCatching {
+            val plain = decrypt(encrypted)
+            val array = JSONArray(plain)
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.getJSONObject(index)
+                    add(
+                        Button(
+                            deviceIdHex = item.getString("deviceId").uppercase(),
+                            address = item.optString("address", "").trim()
+                                .takeIf { it.isNotEmpty() },
+                            displayName = item.optString("displayName", DEFAULT_DISPLAY_NAME)
+                                .trim()
+                                .ifBlank { DEFAULT_DISPLAY_NAME },
+                            pairedAtMillis = item.optLong("pairedAtMillis", 0),
+                            lastSeenAtMillis = item.optLong("lastSeenAtMillis", 0).takeIf { it > 0 },
+                            lastAcceptedEventId = item.optLong("lastAcceptedEventId", -1)
+                                .takeIf { it >= 0 },
+                            pairingSecret = Base64.decode(item.getString("pairingSecret"), Base64.NO_WRAP),
+                        ),
+                    )
+                }
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    private fun writeButtons(buttons: List<Button>) {
+        val array = JSONArray()
+        buttons.forEach { button ->
+            array.put(
+                JSONObject()
+                    .put("deviceId", button.deviceIdHex)
+                    .put("address", button.address ?: "")
+                    .put("displayName", button.displayName)
+                    .put("pairedAtMillis", button.pairedAtMillis)
+                    .put("lastSeenAtMillis", button.lastSeenAtMillis ?: 0)
+                    .put("lastAcceptedEventId", button.lastAcceptedEventId ?: -1)
+                    .put("pairingSecret", Base64.encodeToString(button.pairingSecret, Base64.NO_WRAP)),
+            )
+        }
+        preferences.edit().putString(ENCRYPTED_ENTRIES, encrypt(array.toString())).apply()
+    }
+
+    private fun encrypt(value: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        // Let Android Keystore generate the randomized IV. Supplying our own
+        // IV is rejected on devices enforcing randomized-encryption keys.
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        val iv = cipher.iv
+        val combined = ByteBuffer.allocate(iv.size + cipher.getOutputSize(value.toByteArray().size))
+            .put(iv)
+            .put(cipher.doFinal(value.toByteArray(Charsets.UTF_8)))
+            .array()
+        return Base64.encodeToString(combined, Base64.NO_WRAP)
+    }
+
+    private fun decrypt(value: String): String {
+        val combined = Base64.decode(value, Base64.NO_WRAP)
+        require(combined.size > GCM_IV_BYTES) { "Invalid paired-button registry." }
+        val iv = combined.copyOfRange(0, GCM_IV_BYTES)
+        val encrypted = combined.copyOfRange(GCM_IV_BYTES, combined.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        return cipher.doFinal(encrypted).toString(Charsets.UTF_8)
+    }
+
+    private fun key(): SecretKey {
+        val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
+        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE).apply {
+            init(
+                KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setRandomizedEncryptionRequired(true)
+                    .build(),
+            )
+        }.generateKey()
+    }
+
+    private fun ByteArray.hex(): String = joinToString("") {
+        "%02X".format(it.toInt().and(0xff))
+    }
+}

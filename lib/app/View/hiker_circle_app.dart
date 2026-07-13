@@ -165,7 +165,10 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
         path == '/manual' ||
         path == '/instant' ||
         path == '/medical' ||
-        path == '/duress') {
+        path == '/duress' ||
+        path == '/paired' ||
+        path == '/nearby-button' ||
+        path == '/nearby-button-location') {
       return Uri(
         scheme: 'hikercircle',
         host: 'sos',

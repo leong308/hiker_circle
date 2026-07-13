@@ -5,6 +5,8 @@ import android.os.ParcelUuid
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import kotlin.math.roundToInt
 
 object HikerBleProtocol {
@@ -16,6 +18,16 @@ object HikerBleProtocol {
         UUID.fromString("7e2a1d35-8b10-4f4d-9f78-0c6f1d65cba1")
     val TEAM_LOCATION_CHARACTERISTIC_UUID: UUID =
         UUID.fromString("7e2a1d36-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_SETUP_SERVICE_UUID: UUID =
+        UUID.fromString("7e2a1d37-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_PAIR_REQUEST_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d38-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_STATUS_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d39-8b10-4f4d-9f78-0c6f1d65cba1")
+    val ACTIVE_SOS_SERVICE_UUID: UUID =
+        UUID.fromString("7e2a1d3a-8b10-4f4d-9f78-0c6f1d65cba1")
+    val SOS_LOCATION_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d3b-8b10-4f4d-9f78-0c6f1d65cba1")
     const val MANUFACTURER_ID: Int = 0x02E5
 
     private const val MAGIC_H = 0x48.toByte()
@@ -24,20 +36,29 @@ object HikerBleProtocol {
     private const val TYPE_SOS = 1.toByte()
     private const val TYPE_TEAM_LOCATION = 2.toByte()
     private const val TYPE_SOS_HELP = 3.toByte()
+    const val TYPE_PAIRED_SOS_REMOTE = 4
+    const val TYPE_PAIRED_SOS_LOCATION_RELAY = 5
+    const val PAIRING_STATUS_READY = 1
+    const val PAIRING_STATUS_AWAITING_CONFIRMATION = 2
+    const val PAIRING_STATUS_PAIRED = 3
+    const val PAIRING_STATUS_INVALID_REQUEST = 4
+    const val PAIRING_STATUS_CONFIRMATION_EXPIRED = 5
 
     fun isSosAdvertisement(result: ScanResult): Boolean {
         val record = result.scanRecord ?: return false
         val hasService = record.serviceUuids
             ?.contains(ParcelUuid(SOS_SERVICE_UUID)) == true
         val manufacturerData = record.getManufacturerSpecificData(MANUFACTURER_ID)
-        val hasPacket = manufacturerData?.let(::isSosPacket) == true
+        // Type-4 paired packets have separate owner/non-owner handling. They
+        // must never fall through to the legacy SOS path.
+        val hasPacket = manufacturerData?.let(::isLegacySosPacket) == true
         return hasService || hasPacket
     }
 
     fun sosEventIdFrom(result: ScanResult): Long? {
         val data = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)
             ?: return null
-        if (!isSosPacket(data) || data.size < 9) {
+        if (!isLegacySosPacket(data) || data.size < 9) {
             return null
         }
         return ByteBuffer.wrap(data, 5, 4)
@@ -47,7 +68,135 @@ object HikerBleProtocol {
             .and(0xffffffffL)
     }
 
-    private fun isSosPacket(data: ByteArray): Boolean {
+    fun decodePairedSosRemote(result: ScanResult): PairedSosRemotePacket? {
+        val data = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)
+            ?: return null
+        return decodePairedSosRemote(data, result.rssi)
+    }
+
+    fun decodePairedSosRemote(data: ByteArray, rssi: Int): PairedSosRemotePacket? {
+        if (data.size < 23 ||
+            data[0] != MAGIC_H ||
+            data[1] != MAGIC_C ||
+            data[2].toInt() != 2 ||
+            data[3].toInt() != TYPE_PAIRED_SOS_REMOTE
+        ) {
+            return null
+        }
+        val eventId = ByteBuffer.wrap(data, 11, 4)
+            .order(ByteOrder.BIG_ENDIAN)
+            .int
+            .toLong()
+            .and(0xffffffffL)
+        return PairedSosRemotePacket(
+            deviceId = data.copyOfRange(5, 11),
+            eventId = eventId,
+            mode = data[4].toInt().and(0xff),
+            messageTag = data.copyOfRange(15, 23),
+            signedPayload = data.copyOfRange(0, 15),
+            rssi = rssi,
+        )
+    }
+
+    /**
+     * Type-5 is emitted by the button only after it has accepted an
+     * authenticated owner-phone location handoff. Nearby phones do not have
+     * the pairing secret, so this packet is a proximity/location signal and
+     * must not be treated as proof of ownership.
+     *
+     * Layout (24 bytes after the company ID): HC, v2, type, device ID (6),
+     * event ID (4), latitude/longitude E7 (4 each), accuracy decimetres (2).
+     * The captured-at timestamp is authenticated in the GATT handoff but is
+     * omitted here so the packet fits the legacy 31-byte advertisement limit.
+     */
+    fun decodePairedSosLocationRelay(result: ScanResult): PairedSosLocationRelayPacket? {
+        val data = result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID)
+            ?: return null
+        return decodePairedSosLocationRelay(data, result.rssi)
+    }
+
+    fun decodePairedSosLocationRelay(
+        data: ByteArray,
+        rssi: Int,
+    ): PairedSosLocationRelayPacket? {
+        if (data.size < 24 ||
+            data[0] != MAGIC_H ||
+            data[1] != MAGIC_C ||
+            data[2].toInt() != 2 ||
+            data[3].toInt() != TYPE_PAIRED_SOS_LOCATION_RELAY
+        ) {
+            return null
+        }
+        val buffer = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
+        return PairedSosLocationRelayPacket(
+            deviceId = data.copyOfRange(4, 10),
+            eventId = buffer.getInt(10).toLong().and(0xffffffffL),
+            latitude = buffer.getInt(14) / 10_000_000.0,
+            longitude = buffer.getInt(18) / 10_000_000.0,
+            accuracyMeters = buffer.getShort(22).toInt().and(0xFFFF) / 10.0,
+            rssi = rssi,
+        )
+    }
+
+    fun encodePairRequest(deviceId: ByteArray, pairingSecret: ByteArray): ByteArray {
+        require(deviceId.size == 6) { "Paired button device IDs must be six bytes." }
+        require(pairingSecret.size == 32) { "Paired button secrets must be 32 bytes." }
+        return ByteBuffer.allocate(42)
+            .put(MAGIC_H)
+            .put(MAGIC_C)
+            .put(VERSION)
+            .put(TYPE_SOS)
+            .put(deviceId)
+            .put(pairingSecret)
+            .array()
+    }
+
+    fun encodeSosLocationHandoff(
+        eventId: Long,
+        latitude: Double,
+        longitude: Double,
+        accuracyMeters: Double?,
+        capturedAtMillis: Long,
+        pairingSecret: ByteArray,
+    ): ByteArray {
+        require(pairingSecret.size == 32) { "Paired button secrets must be 32 bytes." }
+        val accuracyDecimeters = ((accuracyMeters ?: 0.0) * 10)
+            .roundToInt()
+            .coerceIn(0, 65535)
+        val signed = ByteBuffer.allocate(22)
+            .order(ByteOrder.BIG_ENDIAN)
+            .put(MAGIC_H)
+            .put(MAGIC_C)
+            .put(2.toByte())
+            .put(TYPE_PAIRED_SOS_LOCATION_RELAY.toByte())
+            .putInt(eventId.toInt())
+            .putInt((latitude * 10_000_000).roundToInt())
+            .putInt((longitude * 10_000_000).roundToInt())
+            .putShort(accuracyDecimeters.toShort())
+            .putInt((capturedAtMillis / 1000L).toInt())
+            .array()
+        val tag = Mac.getInstance("HmacSHA256")
+            .apply { init(SecretKeySpec(pairingSecret, "HmacSHA256")) }
+            .doFinal(signed)
+            .copyOfRange(0, 8)
+        return signed + tag
+    }
+
+    fun decodePairingStatus(data: ByteArray): PairingStatus? {
+        if (data.size < 10 ||
+            data[0] != MAGIC_H ||
+            data[1] != MAGIC_C ||
+            data[2] != VERSION
+        ) {
+            return null
+        }
+        return PairingStatus(
+            status = data[3].toInt().and(0xff),
+            deviceId = data.copyOfRange(4, 10),
+        )
+    }
+
+    private fun isLegacySosPacket(data: ByteArray): Boolean {
         return data.size >= 4 &&
             data[0] == MAGIC_H &&
             data[1] == MAGIC_C &&
@@ -201,5 +350,36 @@ object HikerBleProtocol {
         val accuracyMeters: Double,
         val capturedAtMillis: Long,
         val rssi: Int,
+    )
+
+    data class PairedSosRemotePacket(
+        val deviceId: ByteArray,
+        val eventId: Long,
+        val mode: Int,
+        val messageTag: ByteArray,
+        // Bytes 0-14 are the exact authenticated HMAC input. Do not log this
+        // alongside pairing data; it is retained only for verification.
+        val signedPayload: ByteArray,
+        val rssi: Int,
+    ) {
+        val deviceIdHex: String
+            get() = deviceId.joinToString("") { "%02X".format(it.toInt().and(0xff)) }
+    }
+
+    data class PairedSosLocationRelayPacket(
+        val deviceId: ByteArray,
+        val eventId: Long,
+        val latitude: Double,
+        val longitude: Double,
+        val accuracyMeters: Double,
+        val rssi: Int,
+    ) {
+        val deviceIdHex: String
+            get() = deviceId.joinToString("") { "%02X".format(it.toInt().and(0xff)) }
+    }
+
+    data class PairingStatus(
+        val status: Int,
+        val deviceId: ByteArray,
     )
 }
