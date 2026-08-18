@@ -18,6 +18,7 @@ const _background = Color(0xFFF2F2F7);
 const _darkBackground = Color(0xFF0C120F);
 const _darkSurface = Color(0xFF141C17);
 const _darkSurface2 = Color(0xFF1B261F);
+const _maxAttachmentBytes = 25 * 1024 * 1024;
 
 Color _surfaceFor(BuildContext context) =>
     Theme.of(context).brightness == Brightness.dark
@@ -120,30 +121,38 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   }
 
   Future<void> _loadNotificationSettings() async {
-    final results = await Future.wait<Object?>([
-      widget.repository.loadGroupChatNotificationsEnabled(
-        session: widget.session,
-      ),
-      widget.repository.loadGroupChatMutedUntil(
-        session: widget.session,
-        chatId: widget.chat.id,
-      ),
-    ]);
-    if (!mounted) {
-      return;
+    try {
+      final results = await Future.wait<Object?>([
+        widget.repository.loadGroupChatNotificationsEnabled(
+          session: widget.session,
+        ),
+        widget.repository.loadGroupChatMutedUntil(
+          session: widget.session,
+          chatId: widget.chat.id,
+        ),
+      ]);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _groupChatNotificationsEnabled = results[0] as bool;
+        _mutedUntil = results[1] as DateTime?;
+      });
+    } catch (_) {
+      // Keep safe notification defaults when settings cannot be loaded.
     }
-    setState(() {
-      _groupChatNotificationsEnabled = results[0] as bool;
-      _mutedUntil = results[1] as DateTime?;
-    });
   }
 
   Future<void> _showMoreMenu(BuildContext context) async {
-    final isHost = widget.chat.creatorPhone == widget.session.phoneNumber;
-    final renderBox = context.findRenderObject() as RenderBox;
+    if (!context.mounted) return;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) {
+      return;
+    }
+    final renderBox = renderObject;
     final offset = renderBox.localToGlobal(Offset.zero);
     final screenSize = MediaQuery.of(context).size;
-    await showMenu<String>(
+    final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
         Rect.fromLTWH(screenSize.width - 1, offset.dy + kToolbarHeight, 1, 1),
@@ -153,30 +162,56 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       color: _surfaceFor(context),
       surfaceTintColor: Colors.transparent,
       items: [
-        if (!isHost)
-          PopupMenuItem(
-            value: 'leave',
-            child: _moreRow(Icons.exit_to_app_rounded, 'Leave Group'),
-          ),
         PopupMenuItem(
-          value: 'shortcut',
-          child: _moreRow(Icons.add_rounded, 'Add Shortcut'),
-        ),
-        PopupMenuItem(
-          value: 'report',
-          child: _moreRow(Icons.flag_rounded, 'Report'),
-        ),
-        if (isHost)
-          PopupMenuItem(
-            value: 'delete_all',
-            child: _moreRow(
-              Icons.delete_forever_rounded,
-              'Delete Chat & Hike Session',
-              isDestructive: true,
-            ),
+          value: 'leave',
+          child: _moreRow(
+            Icons.exit_to_app_rounded,
+            widget.chat.isDirect ? 'Leave Conversation' : 'Leave Group',
+            isDestructive: true,
           ),
+        ),
       ],
     );
+    if (action == 'leave' && mounted) {
+      await _leaveConversation();
+    }
+  }
+
+  Future<void> _leaveConversation() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          widget.chat.isDirect ? 'Leave conversation?' : 'Leave group?',
+        ),
+        content: const Text(
+          'You will stop receiving new messages from this conversation.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.repository.deleteChatForUser(
+        session: widget.session,
+        chatId: widget.chat.id,
+        senderName: widget.session.username,
+        participantPhones: widget.chat.participantPhones,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } catch (_) {
+      _showAttachmentError('Unable to leave this conversation right now.');
+    }
   }
 
   Widget _moreRow(IconData icon, String label, {bool isDestructive = false}) {
@@ -405,9 +440,14 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   }
 
   Future<void> _loadPending() async {
-    final msgs = await widget.repository.loadAllLocalMessagesForChat(
-      widget.chat.id,
-    );
+    List<ChatMessage> msgs;
+    try {
+      msgs = await widget.repository.loadAllLocalMessagesForChat(
+        widget.chat.id,
+      );
+    } catch (_) {
+      return;
+    }
     if (!mounted || msgs.isEmpty) return;
     final toAdd = <ChatMessage>[];
     for (final m in msgs) {
@@ -451,26 +491,40 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   }
 
   void _monitorConnectivity() {
-    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
-      results,
-    ) {
-      final online = results.any((r) => r != ConnectivityResult.none);
-      if (online && !_isOnline) {
-        widget.repository.flushPendingMessages();
-        widget.repository.syncPendingReadReceipts(
-          phoneNumber: widget.session.phoneNumber,
-        );
-      }
-      if (mounted) {
-        setState(() => _isOnline = online);
-      }
-    });
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+      (results) {
+        final online = results.any((r) => r != ConnectivityResult.none);
+        if (online && !_isOnline) {
+          unawaited(_bestEffort(widget.repository.flushPendingMessages()));
+          unawaited(
+            _bestEffort(
+              widget.repository.syncPendingReadReceipts(
+                phoneNumber: widget.session.phoneNumber,
+              ),
+            ),
+          );
+        }
+        if (mounted) {
+          setState(() => _isOnline = online);
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (mounted) {
+          setState(() => _isOnline = false);
+        }
+      },
+    );
   }
 
   Future<void> _loadUpcomingHike() async {
-    final hike = await widget.repository.loadUpcomingHikeForChat(
-      widget.chat.hikeSessionId,
-    );
+    UpcomingHike? hike;
+    try {
+      hike = await widget.repository.loadUpcomingHikeForChat(
+        widget.chat.hikeSessionId,
+      );
+    } catch (_) {
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _upcomingHike = hike;
@@ -480,9 +534,12 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   void _listenToMessages() {
     _messagesSubscription = widget.repository
         .groupChatMessagesStream(widget.chat.id)
-        .listen((messages) {
-          _onMessagesUpdated(messages);
-        });
+        .listen(
+          (messages) => unawaited(_onMessagesUpdated(messages)),
+          onError: (_) => _showAttachmentError(
+            'Message updates are temporarily unavailable.',
+          ),
+        );
   }
 
   Future<void> _onMessagesUpdated(List<ChatMessage> firestoreMessages) async {
@@ -505,7 +562,14 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     }
 
     if (!_isSendingMessage) {
-      widget.repository.cacheChatMessages(firestoreMessages, widget.chat.id);
+      unawaited(
+        _bestEffort(
+          widget.repository.cacheChatMessages(
+            firestoreMessages,
+            widget.chat.id,
+          ),
+        ),
+      );
     }
   }
 
@@ -516,20 +580,28 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       if (msg.senderPhone == myPhone) continue;
       if (msg.isSystemMessage) continue;
       if (msg.seenBy.contains(myPhone)) continue;
-      widget.repository.markMessageAsSeen(
-        chatId: widget.chat.id,
-        messageId: msg.id,
-        phoneNumber: myPhone,
+      unawaited(
+        _bestEffort(
+          widget.repository.markMessageAsSeen(
+            chatId: widget.chat.id,
+            messageId: msg.id,
+            phoneNumber: myPhone,
+          ),
+        ),
       );
     }
   }
 
   Future<void> _markChatAsRead() async {
     final myPhone = widget.session.phoneNumber;
-    await widget.repository.markGroupChatAsRead(
-      chatId: widget.chat.id,
-      phoneNumber: myPhone,
-    );
+    try {
+      await widget.repository.markGroupChatAsRead(
+        chatId: widget.chat.id,
+        phoneNumber: myPhone,
+      );
+    } catch (_) {
+      // Read receipts will be retried by the repository when connectivity returns.
+    }
   }
 
   void _loadInitialCutoff() {
@@ -546,14 +618,27 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   }
 
   Future<void> _loadLocalReadReceipt() async {
-    final local = await widget.repository.localDatabase.loadChatReadReceipt(
-      widget.chat.id,
-    );
+    DateTime? local;
+    try {
+      local = await widget.repository.localDatabase.loadChatReadReceipt(
+        widget.chat.id,
+      );
+    } catch (_) {
+      return;
+    }
     if (local != null && mounted) {
       setState(() {
         _unreadCutoffTime = local;
         _computeUnreadPosition();
       });
+    }
+  }
+
+  Future<void> _bestEffort(Future<void> operation) async {
+    try {
+      await operation;
+    } catch (_) {
+      // Local cache and receipt synchronization retry on later updates.
     }
   }
 
@@ -662,20 +747,42 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         ..sort((a, b) => a.sentAt.compareTo(b.sentAt));
     });
 
-    await widget.repository.sendGroupChatMessage(
-      chatId: widget.chat.id,
-      senderPhone: widget.session.phoneNumber,
-      senderName: widget.session.username,
-      text: text,
-      localId: localId,
-      sentAt: sentAt,
-    );
+    try {
+      await widget.repository.sendGroupChatMessage(
+        chatId: widget.chat.id,
+        senderPhone: widget.session.phoneNumber,
+        senderName: widget.session.username,
+        text: text,
+        localId: localId,
+        sentAt: sentAt,
+      );
 
-    final connectivityResult = await Connectivity().checkConnectivity();
-    if (connectivityResult.any((r) => r != ConnectivityResult.none)) {
-      unawaited(widget.repository.flushPendingMessages());
+      try {
+        final connectivityResult = await Connectivity().checkConnectivity();
+        if (connectivityResult.any((r) => r != ConnectivityResult.none)) {
+          unawaited(_bestEffort(widget.repository.flushPendingMessages()));
+        }
+      } catch (_) {
+        // The message is already saved locally; connectivity can retry later.
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _messages = _messages
+              .where((message) => message.id != localId)
+              .toList();
+        });
+        if (_messageController.text.trim().isEmpty) {
+          _messageController.text = text;
+        }
+        _showAttachmentError('Unable to save this message. Please retry.');
+      }
+    } finally {
+      _isSendingMessage = false;
+      if (mounted) {
+        await _loadPending();
+      }
     }
-    _refreshPendingMessages();
   }
 
   Future<void> _showAttachmentPicker() async {
@@ -721,46 +828,77 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       return;
     }
 
-    switch (type) {
-      case ChatAttachmentType.image:
-        final file = await _imagePicker.pickImage(
-          source: ImageSource.gallery,
-          imageQuality: 88,
-        );
-        if (file != null) {
-          await _sendAttachment(
-            type: type,
-            bytes: await file.readAsBytes(),
-            fileName: file.name,
-            contentType: file.mimeType ?? _contentTypeFor(file.name, type),
+    try {
+      switch (type) {
+        case ChatAttachmentType.image:
+          final file = await _imagePicker.pickImage(
+            source: ImageSource.gallery,
+            imageQuality: 88,
+            maxWidth: 4096,
+            maxHeight: 4096,
           );
-        }
-      case ChatAttachmentType.video:
-        final file = await _imagePicker.pickVideo(source: ImageSource.gallery);
-        if (file != null) {
-          await _sendAttachment(
-            type: type,
-            bytes: await file.readAsBytes(),
-            fileName: file.name,
-            contentType: file.mimeType ?? _contentTypeFor(file.name, type),
+          if (file != null) {
+            await _sendXFileAttachment(type, file);
+          }
+        case ChatAttachmentType.video:
+          final file = await _imagePicker.pickVideo(
+            source: ImageSource.gallery,
           );
-        }
-      case ChatAttachmentType.document:
-        final result = await FilePicker.pickFiles(
-          allowMultiple: false,
-          withData: true,
-        );
-        final file = result?.files.singleOrNull;
-        if (file != null) {
-          final bytes = file.bytes ?? await file.xFile.readAsBytes();
-          await _sendAttachment(
-            type: type,
-            bytes: bytes,
-            fileName: file.name,
-            contentType: _contentTypeFor(file.name, type),
+          if (file != null) {
+            await _sendXFileAttachment(type, file);
+          }
+        case ChatAttachmentType.document:
+          final result = await FilePicker.pickFiles(
+            allowMultiple: false,
+            withData: false,
+            type: FileType.custom,
+            allowedExtensions: const [
+              'pdf',
+              'doc',
+              'docx',
+              'xls',
+              'xlsx',
+              'txt',
+            ],
           );
-        }
+          final file = result?.files.singleOrNull;
+          if (file != null) {
+            if (file.size > _maxAttachmentBytes) {
+              throw const HikerCircleFirebaseRepositoryException(
+                'Attachments must be 25 MB or smaller.',
+              );
+            }
+            final bytes = await file.xFile.readAsBytes();
+            if (!mounted) return;
+            await _sendAttachment(
+              type: type,
+              bytes: bytes,
+              fileName: file.name,
+              contentType: _contentTypeFor(file.name, type),
+            );
+          }
+      }
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      _showAttachmentError(error.message);
+    } catch (_) {
+      _showAttachmentError('Unable to open the selected attachment.');
     }
+  }
+
+  Future<void> _sendXFileAttachment(ChatAttachmentType type, XFile file) async {
+    if (await file.length() > _maxAttachmentBytes) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Attachments must be 25 MB or smaller.',
+      );
+    }
+    final bytes = await file.readAsBytes();
+    if (!mounted) return;
+    await _sendAttachment(
+      type: type,
+      bytes: bytes,
+      fileName: file.name,
+      contentType: file.mimeType ?? _contentTypeFor(file.name, type),
+    );
   }
 
   Future<void> _sendAttachment({
@@ -769,6 +907,13 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     required String fileName,
     required String contentType,
   }) async {
+    if (!mounted) {
+      return;
+    }
+    if (bytes.length > _maxAttachmentBytes) {
+      _showAttachmentError('Attachments must be 25 MB or smaller.');
+      return;
+    }
     if (!_isOnline) {
       _showAttachmentError(
         'Connect to the internet before sending an attachment.',
@@ -878,7 +1023,6 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       'xlsx':
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'txt': 'text/plain',
-      'zip': 'application/zip',
     };
     return known[extension] ??
         switch (type) {
@@ -886,13 +1030,6 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
           ChatAttachmentType.video => 'video/*',
           ChatAttachmentType.document => 'application/octet-stream',
         };
-  }
-
-  Future<void> _refreshPendingMessages() async {
-    if (!mounted) return;
-    _isSendingMessage = false;
-    // Reload to pick up any pending messages that haven't reached Firestore yet.
-    await _loadPending();
   }
 
   void _showReadReceipts(ChatMessage msg) {
@@ -1929,7 +2066,20 @@ class _ChatHead extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       alignment: Alignment.center,
       child: imageBytes != null && imageBytes!.isNotEmpty
-          ? Image.memory(imageBytes!, width: 32, height: 32, fit: BoxFit.cover)
+          ? Image.memory(
+              imageBytes!,
+              width: 32,
+              height: 32,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Text(
+                initial,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            )
           : trimmedImageUrl.isEmpty
           ? Text(
               initial,
@@ -2527,7 +2677,13 @@ Future<void> _openExternalUrl(String rawUrl) async {
   if (uri == null) {
     return;
   }
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
+  try {
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  } catch (_) {
+    // Unsupported or malformed URLs should not escape into Flutter's error zone.
+  }
 }
 
 String _fileSizeLabel(int bytes) {
@@ -3022,104 +3178,4 @@ PopupMenuItem<_ChatMenuAction> _menuItem(
       ],
     ),
   );
-}
-
-class _ChatMoreSheet extends StatelessWidget {
-  const _ChatMoreSheet({required this.isHost, required this.onOption});
-
-  final bool isHost;
-  final ValueChanged<String> onOption;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: _surfaceFor(context),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  width: 38,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: _separatorFor(context),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              _moreOption(
-                context,
-                Icons.exit_to_app_rounded,
-                'Leave Group',
-                'leave',
-              ),
-              _moreOption(
-                context,
-                Icons.add_rounded,
-                'Add Shortcut',
-                'shortcut',
-              ),
-              _moreOption(context, Icons.flag_rounded, 'Report', 'report'),
-              if (isHost)
-                _moreOption(
-                  context,
-                  Icons.delete_forever_rounded,
-                  'Delete Chat & Hike Session',
-                  'delete_all',
-                  isDestructive: true,
-                ),
-              _moreOption(context, Icons.close_rounded, 'Cancel', 'cancel'),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _moreOption(
-    BuildContext context,
-    IconData icon,
-    String label,
-    String value, {
-    bool isDestructive = false,
-  }) {
-    return Column(
-      children: [
-        const Divider(height: 1),
-        InkWell(
-          onTap: () => onOption(value),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  color: isDestructive ? Colors.red : _green,
-                  size: 22,
-                ),
-                const SizedBox(width: 14),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: isDestructive ? Colors.red : _textFor(context),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }

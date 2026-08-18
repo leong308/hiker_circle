@@ -40,11 +40,19 @@ class NetworkReachabilityService {
 
   Future<void> start() async {
     _startCount += 1;
-    _connectivitySubscription ??= _connectivity.onConnectivityChanged.listen((
-      _,
-    ) {
-      unawaited(refresh());
-    });
+    _connectivitySubscription ??= _connectivity.onConnectivityChanged.listen(
+      (_) {
+        unawaited(refresh());
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _emit(
+          const NetworkReachabilitySnapshot(
+            state: NetworkReachabilityState.offline,
+            message: 'Unable to monitor network changes.',
+          ),
+        );
+      },
+    );
     _refreshTimer ??= Timer.periodic(refreshInterval, (_) {
       unawaited(refresh());
     });

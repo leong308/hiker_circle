@@ -27,6 +27,7 @@ class HomeDashboardPage extends StatelessWidget {
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
     required this.onActiveHikeChanged,
+    this.onPlannedHikeChanged,
     required this.onCheckInRequested,
     required this.onPinLocationRequested,
     required this.onPingTeamMember,
@@ -50,6 +51,7 @@ class HomeDashboardPage extends StatelessWidget {
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
   final ValueChanged<ActiveHikeSession> onActiveHikeChanged;
+  final Future<void> Function(PlannedHike)? onPlannedHikeChanged;
   final Future<ActiveHikeSession> Function(ActiveHikeSession activeHike)
   onCheckInRequested;
   final Future<PinLocationResult> Function(ActiveHikeSession activeHike)
@@ -103,6 +105,7 @@ class HomeDashboardPage extends StatelessWidget {
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
                             onDeleteTrailByAdmin: onDeleteTrailByAdmin,
+                            onPlannedHikeChanged: onPlannedHikeChanged,
                           )
                   : _ActiveHikeDashboard(
                       currentPhoneNumber: phoneNumber,
@@ -140,7 +143,7 @@ class HomeDashboardPage extends StatelessWidget {
       return;
     }
 
-    await onStartHike(null);
+    await _requestStartHike(context, null);
   }
 
   Future<void> _confirmPreparationThenStart(
@@ -149,7 +152,7 @@ class HomeDashboardPage extends StatelessWidget {
   ) async {
     final missingItems = plannedHike.missingPreparationItems;
     if (missingItems.isEmpty) {
-      await onStartHike(plannedHike.trail);
+      await _requestStartHike(context, plannedHike.trail);
       return;
     }
 
@@ -180,46 +183,93 @@ class HomeDashboardPage extends StatelessWidget {
     );
 
     if (shouldStart == true && context.mounted) {
-      await onStartHike(plannedHike.trail);
+      await _requestStartHike(context, plannedHike.trail);
+    }
+  }
+
+  Future<void> _requestStartHike(BuildContext context, Trail? trail) async {
+    try {
+      await onStartHike(trail);
+    } catch (_) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to start this hike right now.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
     }
   }
 
   Future<void> _checkIn(BuildContext context, ActiveHikeSession active) async {
-    final updatedHike = await onCheckInRequested(active);
-    onActiveHikeChanged(updatedHike);
-    if (!context.mounted) {
-      return;
+    try {
+      final updatedHike = await onCheckInRequested(active);
+      onActiveHikeChanged(updatedHike);
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Check-in saved locally and queued for sync.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (_) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to save a check-in right now.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
     }
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Check-in saved locally and queued for sync.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
   }
 
   Future<void> _pinLocation(
     BuildContext context,
     ActiveHikeSession active,
   ) async {
-    final result = await onPinLocationRequested(active);
-    onActiveHikeChanged(result.hike);
-    if (!context.mounted) {
-      return;
+    try {
+      final result = await onPinLocationRequested(active);
+      onActiveHikeChanged(result.hike);
+      if (!context.mounted) {
+        return;
+      }
+      final message = switch (result.status) {
+        PinLocationStatus.pinned => 'Current GPS location pinned on the map.',
+        PinLocationStatus.duplicate =>
+          'This location is already pinned before.',
+        PinLocationStatus.unavailable =>
+          'GPS is unavailable, so no pin was added.',
+      };
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+        );
+    } catch (_) {
+      if (!context.mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to pin the current location right now.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
     }
-    final message = switch (result.status) {
-      PinLocationStatus.pinned => 'Current GPS location pinned on the map.',
-      PinLocationStatus.duplicate => 'This location is already pinned before.',
-      PinLocationStatus.unavailable =>
-        'GPS is unavailable, so no pin was added.',
-    };
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
   }
 
   Future<void> _confirmEndHike(BuildContext context) async {
@@ -266,6 +316,7 @@ class _PreparationDashboard extends StatelessWidget {
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
+    this.onPlannedHikeChanged,
   });
 
   final List<UpcomingHike> myUpcomingHikes;
@@ -280,6 +331,7 @@ class _PreparationDashboard extends StatelessWidget {
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
+  final Future<void> Function(PlannedHike)? onPlannedHikeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -297,11 +349,7 @@ class _PreparationDashboard extends StatelessWidget {
         const SizedBox(height: 18),
         _UpcomingHikeCard(
           plannedHike: plannedHike,
-          onContinuePreparation: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (context) => GearChecklistPage(plannedHike: plannedHike),
-            ),
-          ),
+          onContinuePreparation: () => unawaited(_openChecklist(context)),
           onOpenTrail: () => onOpenTrailDetail(plannedHike.trail),
         ),
         if (myUpcomingHikes.isNotEmpty) ...[
@@ -335,10 +383,12 @@ class _PreparationDashboard extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 22),
-        _SectionTitle(label: 'Recent Hazards Near Saved Trails'),
+        _SectionTitle(label: 'Recent Hazards on This Trail'),
         const SizedBox(height: 8),
         if (hazards.isEmpty)
-          const _EmptyState(message: 'No recent hazards near saved trails.')
+          const _EmptyState(
+            message: 'No recent hazards reported for this trail.',
+          )
         else
           for (final hazard in hazards) ...[
             _HazardRow(
@@ -356,6 +406,24 @@ class _PreparationDashboard extends StatelessWidget {
             const SizedBox(height: 8),
           ],
       ],
+    );
+  }
+
+  Future<void> _openChecklist(BuildContext context) async {
+    final completedItems = await Navigator.of(context).push<Set<String>>(
+      MaterialPageRoute<Set<String>>(
+        builder: (context) => GearChecklistPage(plannedHike: plannedHike),
+      ),
+    );
+    if (completedItems == null || !context.mounted) {
+      return;
+    }
+    await onPlannedHikeChanged?.call(
+      plannedHike.copyWith(
+        completedChecklistItems: completedItems,
+        checklistCompleted: completedItems.length,
+        checklistTotal: GearChecklistPage.checklistItemCount,
+      ),
     );
   }
 }
@@ -944,15 +1012,9 @@ class _UpcomingHikeCard extends StatelessWidget {
               value: plannedHike.trail.weather.summary,
             ),
             _InfoLine(
-              label: 'Offline Map',
-              value: plannedHike.offlineMapDownloaded
-                  ? 'Downloaded'
-                  : 'Not Downloaded',
-            ),
-            _InfoLine(
               label: 'Emergency Contacts',
               value: plannedHike.emergencyContactsSelected
-                  ? '2 Selected'
+                  ? 'Configured'
                   : 'None selected',
             ),
             _InfoLine(
@@ -1176,9 +1238,10 @@ class _PreparationReminderPage extends StatelessWidget {
     final missingItems = plannedHike.missingPreparationItems;
     final readyItems = [
       if (plannedHike.weatherCached) 'Weather forecast cached',
-      if (plannedHike.offlineMapDownloaded) 'Route files available',
       if (plannedHike.emergencyContactsSelected) 'SOS contact list ready',
-      if (plannedHike.phoneBatteryLevel >= 60) 'Battery above 60%',
+      if (plannedHike.hasKnownBatteryLevel &&
+          plannedHike.phoneBatteryLevel >= 60)
+        'Battery above 60%',
       if (plannedHike.liveLocationConfigured) 'Live sharing configured',
     ];
 
@@ -1252,7 +1315,9 @@ class _PreparationReminderPage extends StatelessWidget {
                           ),
                           _InfoLine(
                             label: 'Phone battery',
-                            value: '${plannedHike.phoneBatteryLevel}%',
+                            value: plannedHike.hasKnownBatteryLevel
+                                ? '${plannedHike.phoneBatteryLevel}%'
+                                : 'Unavailable',
                           ),
                         ],
                       ),
@@ -1566,6 +1631,7 @@ class _ActiveHikeDashboard extends StatelessWidget {
           isVisible: isVisible,
           expectedReturn: activeHike.draft.expectedReturnTime,
           batteryLevel: activeHike.batteryLevel,
+          batteryLevelKnown: activeHike.hasKnownBatteryLevel,
         ),
         const SizedBox(height: 14),
         OutlinedButton.icon(
@@ -1611,7 +1677,7 @@ class _ActiveHikeDashboard extends StatelessWidget {
         const SizedBox(height: 22),
         _SectionTitle(label: 'Shared With'),
         const SizedBox(height: 8),
-        const _SharedWithCard(),
+        _SharedWithCard(activeHike: activeHike),
         const SizedBox(height: 22),
         _SectionTitle(label: 'Team Snapshot'),
         const SizedBox(height: 8),
@@ -1672,38 +1738,48 @@ class _ActiveMetrics extends StatelessWidget {
     required this.isVisible,
     required this.expectedReturn,
     required this.batteryLevel,
+    required this.batteryLevelKnown,
   });
 
   final DateTime startedAt;
   final bool isVisible;
   final DateTime expectedReturn;
   final int batteryLevel;
+  final bool batteryLevelKnown;
 
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: SizedBox(
-        height: 74,
-        child: Row(
-          children: [
-            Expanded(
-              child: _ElapsedMetricCell(
-                startedAt: startedAt,
-                isVisible: isVisible,
-              ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 74),
+        child: IntrinsicHeight(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _ElapsedMetricCell(
+                    startedAt: startedAt,
+                    isVisible: isVisible,
+                  ),
+                ),
+                const _VerticalSeparator(),
+                Expanded(
+                  child: _MetricCell(
+                    label: 'Expected Return',
+                    value: _formatTime(expectedReturn),
+                  ),
+                ),
+                const _VerticalSeparator(),
+                Expanded(
+                  child: _MetricCell(
+                    label: 'Battery',
+                    value: batteryLevelKnown ? '$batteryLevel%' : 'Unknown',
+                  ),
+                ),
+              ],
             ),
-            const _VerticalSeparator(),
-            Expanded(
-              child: _MetricCell(
-                label: 'Expected Return',
-                value: _formatTime(expectedReturn),
-              ),
-            ),
-            const _VerticalSeparator(),
-            Expanded(
-              child: _MetricCell(label: 'Battery', value: '$batteryLevel%'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1719,6 +1795,7 @@ class _MetricCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(
@@ -1838,11 +1915,17 @@ class _ConnectionStatusCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const _Glyph(icon: Icons.cloud_off_rounded),
+            _Glyph(
+              icon: queuedUpdates > 0
+                  ? Icons.sync_problem_rounded
+                  : Icons.save_rounded,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Connection: Offline - Recording Locally. Your trail and emergency data are being stored on this phone. $queuedUpdates location updates are waiting to sync.',
+                queuedUpdates > 0
+                    ? '$queuedUpdates location update${queuedUpdates == 1 ? '' : 's'} are stored on this phone and waiting to sync. Keep HikerCircle active; mobile OS suspension can pause new samples.'
+                    : 'No location updates are waiting to sync. Keep HikerCircle active for continuous route and safety checks.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: _HomeColors.textFor(context),
                   letterSpacing: 0,
@@ -1931,29 +2014,41 @@ class _MonitoringCard extends StatelessWidget {
     final fallDetectionValue = activeHike.draft.fallDetectionEnabled
         ? fallStillnessSnapshot.status.label
         : 'Off';
+    final latestLocationAt = activeHike.latestLocation?.capturedAt.toUtc();
+    final latestLocationAge = latestLocationAt == null
+        ? null
+        : DateTime.now().toUtc().difference(latestLocationAt);
+    final sessionStatus = latestLocationAge == null
+        ? 'Waiting for GPS'
+        : latestLocationAge < const Duration(minutes: -1) ||
+              latestLocationAge > const Duration(minutes: 2)
+        ? 'GPS paused or stale'
+        : 'Recording (app active)';
 
     return _InsetGroup(
       child: Column(
         children: [
-          const _StatusRow(label: 'Route Status', value: 'On Route'),
+          _StatusRow(label: 'Session Status', value: sessionStatus),
           const _HorizontalSeparator(),
           _StatusRow(label: 'Fall Detection', value: fallDetectionValue),
-          const _HorizontalSeparator(),
-          _StatusRow(
-            label: 'Sensor Sensitivity',
-            value:
-                '${settings.sensitivityLabel} (${settings.sensorSensitivity.round()}/10)',
-          ),
-          const _HorizontalSeparator(),
-          _StatusRow(
-            label: 'Fall Response Time',
-            value: settings.responseCountdownDurationLabel,
-          ),
-          const _HorizontalSeparator(),
-          _StatusRow(
-            label: 'Longest Rest Time',
-            value: settings.longestRestDurationLabel,
-          ),
+          if (activeHike.draft.fallDetectionEnabled) ...[
+            const _HorizontalSeparator(),
+            _StatusRow(
+              label: 'Sensor Sensitivity',
+              value:
+                  '${settings.sensitivityLabel} (${settings.sensorSensitivity.round()}/10)',
+            ),
+            const _HorizontalSeparator(),
+            _StatusRow(
+              label: 'Fall Response Time',
+              value: settings.responseCountdownDurationLabel,
+            ),
+            const _HorizontalSeparator(),
+            _StatusRow(
+              label: 'Longest Rest Time',
+              value: settings.longestRestDurationLabel,
+            ),
+          ],
           if (fallStillnessSnapshot.status ==
               FallStillnessMonitorStatus.verifyingStillness) ...[
             const _HorizontalSeparator(),
@@ -1981,13 +2076,16 @@ class _MonitoringCard extends StatelessWidget {
           const _HorizontalSeparator(),
           _StatusRow(
             label: 'Location Recording',
-            value:
-                'Every ${activeHike.draft.locationRecordingInterval.inMinutes} min',
+            value: _recordingIntervalLabel(
+              activeHike.draft.locationRecordingInterval,
+            ),
           ),
           const _HorizontalSeparator(),
           _StatusRow(
             label: 'Queued Updates',
-            value: '${activeHike.queuedUpdates} waiting to sync',
+            value: activeHike.queuedUpdates == 0
+                ? 'None waiting'
+                : '${activeHike.queuedUpdates} waiting to sync',
           ),
           const _HorizontalSeparator(),
           _StatusRow(label: 'Check-Ins', value: '${activeHike.checkIns} saved'),
@@ -2003,6 +2101,23 @@ class _MonitoringCard extends StatelessWidget {
       return 'Verifying$suffix';
     }
     return '$seconds sec$suffix';
+  }
+
+  String _recordingIntervalLabel(Duration interval) {
+    final totalSeconds = interval.inSeconds;
+    if (totalSeconds <= 0) {
+      return 'Not configured';
+    }
+    if (totalSeconds < Duration.secondsPerMinute) {
+      return 'Every $totalSeconds sec';
+    }
+
+    final minutes = totalSeconds ~/ Duration.secondsPerMinute;
+    final seconds = totalSeconds % Duration.secondsPerMinute;
+    if (seconds == 0) {
+      return 'Every $minutes min';
+    }
+    return 'Every $minutes min $seconds sec';
   }
 }
 
@@ -2077,16 +2192,39 @@ class _FallStillnessCountdownRow extends StatelessWidget {
 }
 
 class _SharedWithCard extends StatelessWidget {
-  const _SharedWithCard();
+  const _SharedWithCard({required this.activeHike});
+
+  final ActiveHikeSession activeHike;
 
   @override
   Widget build(BuildContext context) {
-    return const _InsetGroup(
+    final contacts = {
+      for (final name in activeHike.draft.emergencyContactNames)
+        if (name.trim().isNotEmpty) name.trim(),
+    }.toList();
+    final teamParticipantCount =
+        activeHike.teamHikeSession?.participants.length;
+
+    return _InsetGroup(
       child: Column(
         children: [
-          _StatusRow(label: 'Mother', value: 'Last update: 8 minutes ago'),
-          _HorizontalSeparator(),
-          _StatusRow(label: 'Team Alpha', value: 'Offline updates pending'),
+          _StatusRow(
+            label: 'Live Location',
+            value: activeHike.draft.shareLiveLocation ? 'Enabled' : 'Off',
+          ),
+          const _HorizontalSeparator(),
+          _StatusRow(
+            label: 'Emergency Contacts',
+            value: contacts.isEmpty ? 'None selected' : contacts.join(', '),
+          ),
+          if (teamParticipantCount != null) ...[
+            const _HorizontalSeparator(),
+            _StatusRow(
+              label: 'Team Session',
+              value:
+                  '$teamParticipantCount participant${teamParticipantCount == 1 ? '' : 's'}',
+            ),
+          ],
         ],
       ),
     );
@@ -2208,15 +2346,32 @@ class _TeamSnapshotCardState extends State<_TeamSnapshotCard> {
       _pingingPhoneNumber = participant.phoneNumber;
     });
     try {
-      await widget.onPingTeamMember(participant.phoneNumber);
+      final updatedSession = await widget.onPingTeamMember(
+        participant.phoneNumber,
+      );
       if (!mounted) {
         return;
+      }
+      if (updatedSession == null) {
+        throw StateError('The team session did not accept the ping.');
       }
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
             content: Text('Ping sent to ${participant.buddy.shortName}.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to send the safety ping right now.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -2730,6 +2885,7 @@ class _VerticalSeparator extends StatelessWidget {
 }
 
 String _formatDate(DateTime dateTime) {
+  final local = dateTime.toLocal();
   const months = [
     'January',
     'February',
@@ -2744,13 +2900,14 @@ String _formatDate(DateTime dateTime) {
     'November',
     'December',
   ];
-  return '${dateTime.day} ${months[dateTime.month - 1]} ${dateTime.year}';
+  return '${local.day} ${months[local.month - 1]} ${local.year}';
 }
 
 String _formatTime(DateTime dateTime) {
-  final hour = dateTime.hour % 12 == 0 ? 12 : dateTime.hour % 12;
-  final minute = dateTime.minute.toString().padLeft(2, '0');
-  final period = dateTime.hour >= 12 ? 'PM' : 'AM';
+  final local = dateTime.toLocal();
+  final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+  final minute = local.minute.toString().padLeft(2, '0');
+  final period = local.hour >= 12 ? 'PM' : 'AM';
   return '$hour:$minute $period';
 }
 
@@ -2763,7 +2920,7 @@ String _formatElapsed(Duration elapsed) {
 
 String _formatRelativeDate(DateTime dateTime) {
   final now = DateTime.now();
-  final difference = now.difference(dateTime);
+  final difference = now.difference(dateTime.toLocal());
   if (difference.inDays <= 0) {
     return 'today';
   }

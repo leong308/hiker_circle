@@ -34,6 +34,7 @@ class SessionRepository {
   bool get isSignedIn => _session != null;
 
   Future<void> loadSavedSession() async {
+    AppSession? boundSession;
     try {
       final savedSession = await _localSessionDatabase.loadSession();
       if (savedSession == null) {
@@ -44,7 +45,11 @@ class SessionRepository {
       final appInstanceId = savedSession.appInstanceId.isEmpty
           ? await _localSessionDatabase.loadOrCreateAppInstanceId()
           : savedSession.appInstanceId;
-      final boundSession = savedSession.copyWith(appInstanceId: appInstanceId);
+      boundSession = savedSession.copyWith(appInstanceId: appInstanceId);
+      // Make the locally authenticated session available immediately. A cold
+      // start without connectivity must not erase the user's account or their
+      // in-progress hike merely because cloud revalidation cannot run.
+      _session = boundSession;
       final refreshedSession = await _firebaseUserRepository
           .refreshBoundSession(boundSession);
       final cachedSession = await _withCachedProfilePhoto(
@@ -53,10 +58,27 @@ class SessionRepository {
       );
       await _localSessionDatabase.saveSession(cachedSession);
       _session = cachedSession;
+    } on FirebaseUserRepositoryException catch (error) {
+      if (error.requiresSignIn) {
+        await _firebaseUserRepository.signOut();
+        await _localSessionDatabase.clearUserSessionOnly();
+        _session = null;
+        return;
+      }
+      // Transient Firebase/network failures retain the locally saved session.
+      // The next foreground/reconnect refresh will revalidate it.
+      _session = boundSession;
+      if (boundSession != null) {
+        try {
+          await _localSessionDatabase.saveSession(boundSession);
+        } catch (_) {
+          // The original cached row is still the best available source.
+        }
+      }
     } catch (_) {
-      await _firebaseUserRepository.signOut();
-      await _localSessionDatabase.clearSession();
-      _session = null;
+      // Local corruption or an unexpected startup error must not delete an
+      // active hike. Leave the recoverable session untouched on disk.
+      _session = boundSession;
     }
   }
 
@@ -111,8 +133,18 @@ class SessionRepository {
 
   void signOut() {
     _session = null;
-    unawaited(_firebaseUserRepository.signOut());
-    unawaited(_localSessionDatabase.clearSession());
+    unawaited(_ignoreSignOutFailure(_firebaseUserRepository.signOut()));
+    unawaited(
+      _ignoreSignOutFailure(_localSessionDatabase.clearUserSessionOnly()),
+    );
+  }
+
+  Future<void> _ignoreSignOutFailure(Future<void> operation) async {
+    try {
+      await operation;
+    } catch (_) {
+      // Local UI state is already signed out. Cleanup can be retried later.
+    }
   }
 
   Future<AppSession> _withCachedProfilePhoto(
@@ -141,21 +173,82 @@ class SessionRepository {
   }
 
   Future<Uint8List?> _downloadProfilePhoto(String url) async {
+    final client = http.Client();
     try {
       final uri = Uri.tryParse(url);
-      if (uri == null || !uri.hasScheme) {
+      if (uri == null ||
+          uri.scheme != 'https' ||
+          !_isTrustedProfilePhotoHost(uri.host)) {
         return null;
       }
-      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      final request = http.Request('GET', uri);
+      final response = await client
+          .send(request)
+          .timeout(const Duration(seconds: 8));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return null;
       }
-      if (response.bodyBytes.length > 10 * 1024 * 1024) {
+      final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+      if (!contentType.startsWith('image/')) {
         return null;
       }
-      return response.bodyBytes;
+      const maxBytes = 10 * 1024 * 1024;
+      final advertisedLength = response.contentLength;
+      if (advertisedLength != null && advertisedLength > maxBytes) {
+        return null;
+      }
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in response.stream) {
+        if (builder.length + chunk.length > maxBytes) {
+          return null;
+        }
+        builder.add(chunk);
+      }
+      final bytes = builder.takeBytes();
+      return _hasSupportedImageSignature(bytes) ? bytes : null;
     } catch (_) {
       return null;
+    } finally {
+      client.close();
     }
+  }
+
+  bool _isTrustedProfilePhotoHost(String host) {
+    final normalized = host.trim().toLowerCase();
+    return normalized == 'firebasestorage.googleapis.com' ||
+        normalized == 'storage.googleapis.com' ||
+        normalized.endsWith('.firebasestorage.app') ||
+        normalized.endsWith('.appspot.com');
+  }
+
+  bool _hasSupportedImageSignature(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    final isJpeg = bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
+    final isPng =
+        bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47 &&
+        bytes[4] == 0x0D &&
+        bytes[5] == 0x0A &&
+        bytes[6] == 0x1A &&
+        bytes[7] == 0x0A;
+    final isGif =
+        bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x38;
+    final isWebp =
+        bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50;
+    return isJpeg || isPng || isGif || isWebp;
   }
 }

@@ -114,28 +114,32 @@ class _FindHikePageState extends State<FindHikePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _AppColors.background,
+      backgroundColor: _AppColors.backgroundFor(context),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    title: 'Find a Hike',
-                    subtitle: _isLoading
-                        ? 'Loading...'
-                        : _error != null
-                        ? 'Something went wrong'
-                        : '${_hikes.length} hike${_hikes.length == 1 ? '' : 's'} near you',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildBody(),
-                ],
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _DetailHeader(
+                      title: 'Find a Hike',
+                      subtitle: _isLoading
+                          ? 'Loading...'
+                          : _error != null
+                          ? 'Something went wrong'
+                          : '${_hikes.length} hike${_hikes.length == 1 ? '' : 's'} near you',
+                      onBack: () => Navigator.of(context).pop(),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildBody(),
+                  ],
+                ),
               ),
             ),
           ),
@@ -159,7 +163,7 @@ class _FindHikePageState extends State<FindHikePage> {
               Text(
                 'Loading upcoming hikes...',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _AppColors.secondaryText,
+                  color: _AppColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -177,7 +181,7 @@ class _FindHikePageState extends State<FindHikePage> {
               Text(
                 _error!,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _AppColors.secondaryText,
+                  color: _AppColors.secondaryTextFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -197,23 +201,20 @@ class _FindHikePageState extends State<FindHikePage> {
         message: 'No upcoming hikes near you yet.\nBe the first to start one!',
       );
     }
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.separated(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        padding: EdgeInsets.zero,
-        itemCount: _hikes.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) => UpcomingHikeCard(
-          hike: _hikes[index],
-          userLat: _userLat,
-          userLng: _userLng,
-          phoneNumber: widget.session.phoneNumber,
-          userName: widget.session.username,
-          repository: widget.repository,
-          onJoin: () => unawaited(_load()),
-        ),
+    return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      itemCount: _hikes.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) => UpcomingHikeCard(
+        hike: _hikes[index],
+        userLat: _userLat,
+        userLng: _userLng,
+        phoneNumber: widget.session.phoneNumber,
+        userName: widget.session.username,
+        repository: widget.repository,
+        onJoin: () => unawaited(_load()),
       ),
     );
   }
@@ -260,31 +261,60 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
     final googleUrl =
         'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng';
     final wazeUrl = 'https://waze.com/ul?ll=$lat,$lng&navigate=yes';
-    final uri = Uri.parse(googleUrl);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      await launchUrl(Uri.parse(wazeUrl), mode: LaunchMode.externalApplication);
+    try {
+      final googleUri = Uri.parse(googleUrl);
+      final wazeUri = Uri.parse(wazeUrl);
+      var launched = false;
+      if (await canLaunchUrl(googleUri)) {
+        launched = await launchUrl(
+          googleUri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+      if (!launched && await canLaunchUrl(wazeUri)) {
+        launched = await launchUrl(
+          wazeUri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+      if (!launched) {
+        _showError('No maps application is available.');
+      }
+    } catch (_) {
+      _showError('Unable to open directions.');
     }
   }
 
   Future<void> _join() async {
     if (_joining) return;
     setState(() => _joining = true);
-    final ok = await widget.repository.joinUpcomingHike(
-      hikeId: widget.hike.id,
-      sessionId: widget.hike.sessionId,
-      trailName: widget.hike.trailName,
-      creatorPhone: widget.hike.creatorPhone,
-      phoneNumber: widget.phoneNumber,
-      userName: widget.userName,
-    );
-    if (!mounted) return;
-    setState(() => _joining = false);
-    if (ok) {
-      setState(() => _joinedLocally = true);
-      widget.onJoin();
+    try {
+      final ok = await widget.repository.joinUpcomingHike(
+        hikeId: widget.hike.id,
+      );
+      if (!mounted) return;
+      if (ok) {
+        setState(() => _joinedLocally = true);
+        widget.onJoin();
+      } else {
+        _showError('Unable to join this hike.');
+      }
+    } catch (_) {
+      _showError('Unable to join this hike.');
+    } finally {
+      if (mounted) {
+        setState(() => _joining = false);
+      }
     }
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
   }
 
   @override
@@ -326,7 +356,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
-                              color: _AppColors.text,
+                              color: _AppColors.textFor(context),
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0,
                             ),
@@ -337,7 +367,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _AppColors.secondaryText,
+                          color: _AppColors.secondaryTextFor(context),
                           letterSpacing: 0,
                         ),
                       ),
@@ -349,7 +379,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                   label: widget.hike.hikeType == 'team' ? 'Team' : 'Solo',
                   color: widget.hike.hikeType == 'team'
                       ? _AppColors.green
-                      : _AppColors.secondaryText,
+                      : _AppColors.secondaryTextFor(context),
                 ),
               ],
             ),
@@ -376,14 +406,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
               'Host',
               widget.hike.creatorName.isNotEmpty
                   ? widget.hike.creatorName
-                  : widget.hike.creatorPhone,
-            ),
-            const SizedBox(height: 4),
-            _infoRow(
-              context,
-              Icons.phone_rounded,
-              'Phone',
-              widget.hike.creatorPhone,
+                  : 'Hike host',
             ),
             const SizedBox(height: 10),
             const _HorizontalSeparator(),
@@ -407,13 +430,13 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                 Icon(
                   Icons.timeline_rounded,
                   size: 13,
-                  color: _AppColors.secondaryText,
+                  color: _AppColors.secondaryTextFor(context),
                 ),
                 const SizedBox(width: 4),
                 Text(
                   '${widget.hike.distanceKm.toStringAsFixed(1)} km \u00b7 ${widget.hike.durationMinutes} min \u00b7 ${widget.hike.difficulty}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _AppColors.secondaryText,
+                    color: _AppColors.secondaryTextFor(context),
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0,
                   ),
@@ -512,12 +535,12 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
   ) {
     return Row(
       children: [
-        Icon(icon, size: 15, color: _AppColors.secondaryText),
+        Icon(icon, size: 15, color: _AppColors.secondaryTextFor(context)),
         const SizedBox(width: 6),
         Text(
           '$label: ',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _AppColors.secondaryText,
+            color: _AppColors.secondaryTextFor(context),
             fontWeight: FontWeight.w500,
             letterSpacing: 0,
           ),
@@ -526,7 +549,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
           child: Text(
             value,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _AppColors.text,
+              color: _AppColors.textFor(context),
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
@@ -541,18 +564,18 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: _AppColors.chipBackground,
+        color: _AppColors.chipBackgroundFor(context),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: _AppColors.secondaryText),
+          Icon(icon, size: 13, color: _AppColors.secondaryTextFor(context)),
           const SizedBox(width: 4),
           Text(
             text,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _AppColors.text,
+              color: _AppColors.textFor(context),
               fontSize: 12,
               fontWeight: FontWeight.w600,
               letterSpacing: 0,
@@ -598,7 +621,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _AppColors.text,
+                  color: _AppColors.textFor(context),
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
@@ -609,7 +632,7 @@ class _DetailHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _AppColors.secondaryText,
+                  color: _AppColors.secondaryTextFor(context),
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0,
                 ),
@@ -633,7 +656,7 @@ class _CircleIcon extends StatelessWidget {
       width: 36,
       height: 36,
       decoration: BoxDecoration(
-        color: _AppColors.surface,
+        color: _AppColors.surfaceFor(context),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: _AppColors.green, size: 19),
@@ -671,7 +694,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: _AppColors.surface,
+          color: _AppColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -685,7 +708,11 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Divider(height: 1, thickness: 0.7, color: _AppColors.separator);
+    return Divider(
+      height: 1,
+      thickness: 0.7,
+      color: _AppColors.separatorFor(context),
+    );
   }
 }
 
@@ -730,7 +757,7 @@ class _EmptyState extends StatelessWidget {
             message,
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: _AppColors.secondaryText,
+              color: _AppColors.secondaryTextFor(context),
               letterSpacing: 0,
             ),
           ),
@@ -749,4 +776,25 @@ abstract final class _AppColors {
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
   static const Color chipBackground = Color(0xFFF2F2F7);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : surface;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color chipBackgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF1B261F) : chipBackground;
 }

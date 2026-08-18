@@ -20,6 +20,14 @@ class TrailCheckpoint {
   final double longitude;
   final int order;
 
+  bool get hasValidCoordinate =>
+      latitude.isFinite &&
+      longitude.isFinite &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180;
+
   Map<String, dynamic> toFirestore() {
     return {
       'name': name,
@@ -251,6 +259,12 @@ class Trail {
             .toList(),
       _ => <String>[],
     };
+    final checkpoints =
+        _trailListOfMaps(data['checkpoints'])
+            .where(_trailCheckpointMapHasValidCoordinate)
+            .map(TrailCheckpoint.fromPersistence)
+            .toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
     return Trail(
       trailId: _trailStringFrom(data['trailId']),
       name: _trailStringFrom(data['name']),
@@ -259,7 +273,7 @@ class Trail {
       latitude: _trailDoubleFrom(data['latitude']),
       longitude: _trailDoubleFrom(data['longitude']),
       distanceKm: _trailDoubleFrom(data['distanceKm']),
-      difficulty: _trailStringFrom(data['difficulty']),
+      difficulty: _trailDifficultyFrom(data['difficulty']),
       estimatedDurationMinutes: _trailIntFrom(data['estimatedDurationMinutes']),
       elevationGainMeters: _trailIntFrom(data['elevationGainMeters']),
       ratingAverage: _trailDoubleFrom(data['ratingAverage']),
@@ -269,9 +283,7 @@ class Trail {
       routeFilePath: _trailStringFrom(data['routeFilePath']),
       coverColorValue: _trailIntFrom(data['coverColorValue']),
       coverImageUrls: coverImageUrls,
-      checkpoints: _trailListOfMaps(
-        data['checkpoints'],
-      ).map(TrailCheckpoint.fromPersistence).toList(),
+      checkpoints: checkpoints,
       weather: TrailWeather.fromPersistence(_trailMapFrom(data['weather'])),
       hazards: _trailListOfMaps(
         data['hazards'],
@@ -331,6 +343,7 @@ class Trail {
       'coverColorValue': coverColorValue,
       'coverImageUrl': coverImageUrls,
       'checkpoints': checkpoints
+          .where((checkpoint) => checkpoint.hasValidCoordinate)
           .map((checkpoint) => checkpoint.toFirestore())
           .toList(),
       'weather': weather.toFirestore(),
@@ -436,15 +449,45 @@ String? _trailNullableStringFrom(Object? value) {
   return result.isEmpty ? null : result;
 }
 
-int _trailIntFrom(Object? value) => value is num ? value.toInt() : 0;
+int _trailIntFrom(Object? value) =>
+    value is num && value.isFinite ? value.toInt() : 0;
 
 int? _trailNullableIntFrom(Object? value) =>
-    value is num ? value.toInt() : null;
+    value is num && value.isFinite ? value.toInt() : null;
 
-double _trailDoubleFrom(Object? value) => value is num ? value.toDouble() : 0;
+double _trailDoubleFrom(Object? value) =>
+    value is num && value.isFinite ? value.toDouble() : 0;
 
 double? _trailNullableDoubleFrom(Object? value) =>
-    value is num ? value.toDouble() : null;
+    value is num && value.isFinite ? value.toDouble() : null;
+
+bool _trailCheckpointMapHasValidCoordinate(Map<String, dynamic> data) {
+  final latitude = data['latitude'];
+  final longitude = data['longitude'];
+  return latitude is num &&
+      longitude is num &&
+      latitude.isFinite &&
+      longitude.isFinite &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180;
+}
+
+String _trailDifficultyFrom(Object? value) {
+  switch (_trailStringFrom(value).trim().toLowerCase()) {
+    case 'easy':
+      return 'Easy';
+    case 'hard':
+      return 'Hard';
+    case 'expert':
+      return 'Expert';
+    case 'moderate':
+    case 'medium':
+    default:
+      return 'Moderate';
+  }
+}
 
 DateTime? _trailDateFrom(Object? value) {
   if (value is DateTime) {

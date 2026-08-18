@@ -39,6 +39,16 @@ Future<Trail?> showEditTrailSheet(BuildContext context, Trail trail) {
   );
 }
 
+String _normalizeTrailDifficulty(String raw) {
+  return switch (raw.trim().toLowerCase()) {
+    'easy' => 'Easy',
+    'moderate' || 'medium' => 'Moderate',
+    'hard' => 'Hard',
+    'expert' => 'Expert',
+    _ => 'Moderate',
+  };
+}
+
 class TrailPage extends StatefulWidget {
   const TrailPage({
     super.key,
@@ -59,7 +69,6 @@ class TrailPage extends StatefulWidget {
 
 class _TrailPageState extends State<TrailPage> {
   late List<Trail> _trails;
-  late final Set<String> _downloadedTrailIds;
   String _query = '';
   String _filter = 'Nearby';
   bool _isLoadingTrails = false;
@@ -68,10 +77,6 @@ class _TrailPageState extends State<TrailPage> {
   void initState() {
     super.initState();
     _trails = List.of(widget.initialTrails ?? const []);
-    _downloadedTrailIds = {
-      for (final trail in _trails)
-        if (trail.offlineMapDownloaded) trail.trailId,
-    };
     unawaited(_loadLiveTrails());
   }
 
@@ -80,29 +85,24 @@ class _TrailPageState extends State<TrailPage> {
       _isLoadingTrails = true;
     });
     try {
-      if (widget.session.isAdmin) {
-        try {
-          await widget.hikerCircleRepository.deleteLegacyFirebaseDummyData(
-            session: widget.session,
-          );
-        } catch (_) {
-          // Cleanup is best effort; trail loading should still continue.
-        }
-      }
       final liveTrails = await widget.hikerCircleRepository.loadTrails();
       if (!mounted) {
         return;
       }
       setState(() {
         _trails = liveTrails;
-        _downloadedTrailIds
-          ..clear()
-          ..addAll(
-            liveTrails
-                .where((trail) => trail.offlineMapDownloaded)
-                .map((trail) => trail.trailId),
-          );
       });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Unable to refresh trails right now.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -120,8 +120,7 @@ class _TrailPageState extends State<TrailPage> {
           trail.area.toLowerCase().contains(_query) ||
           trail.state.toLowerCase().contains(_query);
       final matchesFilter = switch (_filter) {
-        'Beginner' => trail.difficulty == 'Easy',
-        'Offline' => _downloadedTrailIds.contains(trail.trailId),
+        'Beginner' => _normalizeTrailDifficulty(trail.difficulty) == 'Easy',
         'Saved' => trail.isVerifiedTrail,
         'Popular' => trail.ratingAverage >= 4.5,
         _ => true,
@@ -177,6 +176,19 @@ class _TrailPageState extends State<TrailPage> {
             backgroundColor: _TrailColors.redFor(context),
           ),
         );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text('Unable to add this trail right now.'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _TrailColors.redFor(context),
+          ),
+        );
     } finally {
       if (mounted) {
         setState(() {
@@ -225,6 +237,19 @@ class _TrailPageState extends State<TrailPage> {
         ..showSnackBar(
           SnackBar(
             content: Text(error.message),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _TrailColors.redFor(context),
+          ),
+        );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text('Unable to update this trail right now.'),
             behavior: SnackBarBehavior.floating,
             backgroundColor: _TrailColors.redFor(context),
           ),
@@ -300,6 +325,19 @@ class _TrailPageState extends State<TrailPage> {
             backgroundColor: _TrailColors.redFor(context),
           ),
         );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text('Unable to delete this trail right now.'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: _TrailColors.redFor(context),
+          ),
+        );
     } finally {
       if (mounted) {
         setState(() {
@@ -324,10 +362,6 @@ class _TrailPageState extends State<TrailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final downloadedTrails = _trails
-        .where((trail) => _downloadedTrailIds.contains(trail.trailId))
-        .toList();
-
     return ColoredBox(
       color: _TrailColors.backgroundFor(context),
       child: SafeArea(
@@ -348,10 +382,7 @@ class _TrailPageState extends State<TrailPage> {
                     const LinearProgressIndicator(minHeight: 2),
                   ],
                   const SizedBox(height: 16),
-                  _DiscoverHero(
-                    trails: _trails,
-                    downloadedCount: downloadedTrails.length,
-                  ),
+                  _DiscoverHero(trails: _trails),
                   const SizedBox(height: 14),
                   TextField(
                     decoration: const InputDecoration(
@@ -376,10 +407,12 @@ class _TrailPageState extends State<TrailPage> {
                   const SizedBox(height: 18),
                   _TrailInsightStrip(
                     visibleCount: _visibleTrails.length,
-                    downloadedCount: downloadedTrails.length,
+                    verifiedCount: _visibleTrails
+                        .where((trail) => trail.isVerifiedTrail)
+                        .length,
                     hazardCount: _visibleTrails.fold<int>(
                       0,
-                      (count, trail) => count + trail.hazards.length,
+                      (total, trail) => total + trail.hazards.length,
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -394,10 +427,8 @@ class _TrailPageState extends State<TrailPage> {
                   else
                     for (final trail in _visibleTrails) ...[
                       _TrailCard(
+                        key: ObjectKey(trail),
                         trail: trail,
-                        isDownloaded: _downloadedTrailIds.contains(
-                          trail.trailId,
-                        ),
                         onOpenTrail: () => _openTrail(trail),
                         onEditTrail: widget.session.isAdmin
                             ? () => _editTrailFromCard(trail)
@@ -409,18 +440,12 @@ class _TrailPageState extends State<TrailPage> {
                       const SizedBox(height: 12),
                     ],
                   const SizedBox(height: 10),
-                  _SectionTitle(label: 'Offline Ready Routes'),
+                  const _SectionTitle(label: 'Offline Route Packs'),
                   const SizedBox(height: 8),
-                  if (downloadedTrails.isEmpty)
-                    const _EmptyState(
-                      message:
-                          'No routes are ready offline yet. Open a trail and download its route pack.',
-                    )
-                  else
-                    for (final trail in downloadedTrails) ...[
-                      _DownloadedMapCard(trail: trail),
-                      const SizedBox(height: 8),
-                    ],
+                  const _EmptyState(
+                    message:
+                        'Offline map downloads are not available in this mobile build yet. Keep a network connection for map tiles.',
+                  ),
                 ],
               ),
             ),
@@ -476,7 +501,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
           setState(() {
             _trail = _trail.copyWith(weather: weather);
           });
-        });
+        }, onError: (_) {});
     final weather = _trail.weather;
     if (weather.summary.isEmpty ||
         weather.summary == 'Weather unavailable' ||
@@ -492,12 +517,16 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
   }
 
   Future<void> _refreshWeather() async {
-    final updated = await widget.hikerCircleRepository
-        .refreshTrailWeatherViaCloud(_trail);
-    if (!mounted) return;
-    setState(() {
-      _trail = updated;
-    });
+    try {
+      final updated = await widget.hikerCircleRepository
+          .refreshTrailWeatherViaCloud(_trail);
+      if (!mounted) return;
+      setState(() {
+        _trail = updated;
+      });
+    } catch (_) {
+      // Existing weather remains visible when refresh is unavailable.
+    }
   }
 
   void _showCheckpointOnMap(int index) {
@@ -529,6 +558,23 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
     );
   }
 
+  void _startTrailHike(Trail trail) {
+    if (trail.checkpoints.length < 2) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This trail has no usable route checkpoints. Choose another trail or ask an admin to repair it.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+    unawaited(widget.onStartHike(trail));
+  }
+
   @override
   Widget build(BuildContext context) {
     final trail = _trail;
@@ -556,38 +602,39 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                   const SizedBox(height: 14),
                   _TrailPlanCard(
                     trail: trail,
-                    onStartHike: () => unawaited(widget.onStartHike(trail)),
-                    onSaveTrail: () => ScaffoldMessenger.of(context)
-                      ..hideCurrentSnackBar()
-                      ..showSnackBar(
-                        const SnackBar(
-                          content: Text('Trail saved to your profile.'),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      ),
+                    onStartHike: () => _startTrailHike(trail),
                   ),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Route Preview'),
                   const SizedBox(height: 8),
-                  _RoutePreview(
-                    key: _routePreviewKey,
-                    trail: trail,
-                    highlightedCheckpointIndex: _highlightedCheckpointIndex,
-                    onHighlightCleared: () {
-                      if (_highlightedCheckpointIndex != null) {
-                        setState(() => _highlightedCheckpointIndex = null);
-                      }
-                    },
-                    localDatabase: widget.hikerCircleRepository.localDatabase,
-                  ),
+                  if (trail.checkpoints.isEmpty)
+                    const _EmptyState(
+                      message:
+                          'Route preview is unavailable because this trail has no checkpoints.',
+                    )
+                  else
+                    _RoutePreview(
+                      key: _routePreviewKey,
+                      trail: trail,
+                      highlightedCheckpointIndex: _highlightedCheckpointIndex,
+                      onHighlightCleared: () {
+                        if (_highlightedCheckpointIndex != null) {
+                          setState(() => _highlightedCheckpointIndex = null);
+                        }
+                      },
+                      localDatabase: widget.hikerCircleRepository.localDatabase,
+                    ),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'Checkpoint Flow'),
                   const SizedBox(height: 8),
-                  _CheckpointTimeline(
-                    trail: trail,
-                    highlightedIndex: _highlightedCheckpointIndex,
-                    onShowOnMap: _showCheckpointOnMap,
-                  ),
+                  if (trail.checkpoints.isEmpty)
+                    const _EmptyState(message: 'No checkpoints available.')
+                  else
+                    _CheckpointTimeline(
+                      trail: trail,
+                      highlightedIndex: _highlightedCheckpointIndex,
+                      onShowOnMap: _showCheckpointOnMap,
+                    ),
                   const SizedBox(height: 22),
                   _SectionTitle(
                     label: 'Conditions and Safety',
@@ -633,14 +680,6 @@ class OfflineMapDownloadPage extends StatefulWidget {
 }
 
 class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
-  bool _isDownloaded = false;
-
-  void _download() {
-    setState(() {
-      _isDownloaded = true;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -687,7 +726,10 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
                                 ),
                           ),
                           const SizedBox(height: 14),
-                          _StatusRow(label: 'Map package', value: 'Prepared'),
+                          const _StatusRow(
+                            label: 'Map package',
+                            value: 'Not available',
+                          ),
                           const _HorizontalSeparator(),
                           _StatusRow(
                             label: 'Route file',
@@ -696,33 +738,12 @@ class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
                                 : widget.trail.routeFilePath,
                           ),
                           const _HorizontalSeparator(),
-                          const _StatusRow(
-                            label: 'Estimated size',
-                            value: '42 MB',
-                          ),
-                          const SizedBox(height: 14),
-                          LinearProgressIndicator(
-                            value: _isDownloaded ? 1 : 0,
-                            minHeight: 5,
-                            borderRadius: BorderRadius.circular(4),
-                            color: _TrailColors.green,
-                            backgroundColor: _TrailColors.greenSoftFor(context),
-                          ),
+                          const _StatusRow(label: 'Estimated size', value: '—'),
                           const SizedBox(height: 14),
                           FilledButton.icon(
-                            onPressed: _isDownloaded
-                                ? () => Navigator.of(context).pop(true)
-                                : _download,
-                            icon: Icon(
-                              _isDownloaded
-                                  ? Icons.check_rounded
-                                  : Icons.download_rounded,
-                            ),
-                            label: Text(
-                              _isDownloaded
-                                  ? 'Use Downloaded Map'
-                                  : 'Download Offline Trail Map',
-                            ),
+                            onPressed: null,
+                            icon: const Icon(Icons.download_rounded),
+                            label: const Text('Offline download unavailable'),
                           ),
                         ],
                       ),
@@ -897,14 +918,14 @@ class _HazardReportPageState extends State<HazardReportPage> {
                           const SizedBox(height: 12),
                           const _ReadOnlyField(
                             label: 'Detected Location',
-                            value: 'Current GPS location attached',
+                            value: 'Best available GPS attached on submit',
                             icon: Icons.my_location_rounded,
                           ),
                           const SizedBox(height: 12),
                           OutlinedButton.icon(
-                            onPressed: () {},
+                            onPressed: null,
                             icon: const Icon(Icons.photo_camera_rounded),
-                            label: const Text('Upload Photo'),
+                            label: const Text('Photo upload unavailable'),
                           ),
                           const SizedBox(height: 12),
                           TextField(
@@ -1165,6 +1186,11 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     final rejected = <String>[];
     for (final file in files.take(availableSlots)) {
       try {
+        final length = await file.length();
+        if (length > _maxImageBytes) {
+          rejected.add('${file.name} is larger than 10 MB');
+          continue;
+        }
         final bytes = await file.readAsBytes();
         if (bytes.isEmpty) {
           rejected.add('${file.name} is empty');
@@ -1200,7 +1226,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   }
 
   void _removePendingImage(int index) {
-    if (_isUploadingImages) {
+    if (_isUploadingImages || index < 0 || index >= _pendingImages.length) {
       return;
     }
     setState(() {
@@ -1223,13 +1249,18 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   }
 
   void _onPinsConfirmed(List<mapbox.Point> pins) {
+    final validPins = pins
+        .where((point) => mapPointCoordinatesOrNull(point) != null)
+        .toList(growable: false);
+    if (validPins.isEmpty) return;
     _trailPins
       ..clear()
-      ..addAll(pins);
+      ..addAll(validPins);
 
-    final pin = pins.first;
-    final lat = pin.coordinates[1]!.toDouble();
-    final lng = pin.coordinates[0]!.toDouble();
+    final coordinates = mapPointCoordinatesOrNull(validPins.first);
+    if (coordinates == null) return;
+    final lat = coordinates.latitude;
+    final lng = coordinates.longitude;
 
     _checkpoints.clear();
     final draft = _CheckpointDraft(order: 1, name: 'Trailhead');
@@ -1272,19 +1303,28 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       ),
     );
     if (confirmed == null || !mounted) return;
+    final validConfirmed = confirmed
+        .map(mapPointCoordinatesOrNull)
+        .whereType<({double longitude, double latitude})>()
+        .toList(growable: false);
+    if (validConfirmed.isEmpty) return;
+    for (final checkpoint in _checkpoints) {
+      checkpoint.dispose();
+    }
+    for (final checkpoint in _checkpoints) {
+      checkpoint.dispose();
+    }
     _checkpoints.clear();
-    for (var i = 0; i < confirmed.length; i++) {
+    for (var i = 0; i < validConfirmed.length; i++) {
       final name = i == 0
           ? 'Trailhead'
-          : i == confirmed.length - 1
+          : i == validConfirmed.length - 1
           ? 'End point'
           : 'Waypoint $i';
       final draft = _CheckpointDraft(order: i + 1, name: name);
-      draft.latitudeController.text = confirmed[i].coordinates[1]!
-          .toDouble()
+      draft.latitudeController.text = validConfirmed[i].latitude
           .toStringAsFixed(6);
-      draft.longitudeController.text = confirmed[i].coordinates[0]!
-          .toDouble()
+      draft.longitudeController.text = validConfirmed[i].longitude
           .toStringAsFixed(6);
       _checkpoints.add(draft);
     }
@@ -1584,7 +1624,15 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       final name = draft.nameController.text.trim();
       final latitude = double.tryParse(draft.latitudeController.text.trim());
       final longitude = double.tryParse(draft.longitudeController.text.trim());
-      if (name.isEmpty || latitude == null || longitude == null) {
+      if (name.isEmpty ||
+          latitude == null ||
+          longitude == null ||
+          !latitude.isFinite ||
+          !longitude.isFinite ||
+          latitude < -90 ||
+          latitude > 90 ||
+          longitude < -180 ||
+          longitude > 180) {
         continue;
       }
       checkpoints.add(
@@ -2117,24 +2165,44 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
   @override
   void initState() {
     super.initState();
-    _pins = List<mapbox.Point>.of(widget.pins);
+    _pins = _validPoints(widget.pins);
   }
 
   @override
   void didUpdateWidget(_MapBasedCheckpointPicker oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!listEquals(widget.pins, _pins)) {
-      _pins = List<mapbox.Point>.of(widget.pins);
+    final nextPins = _validPoints(widget.pins);
+    if (!listEquals(nextPins, _pins)) {
+      _pins = nextPins;
       unawaited(_syncPins());
     }
+  }
+
+  @override
+  void dispose() {
+    _mapboxMap = null;
+    _circleManager = null;
+    _pointManager = null;
+    _polylineManager = null;
+    super.dispose();
+  }
+
+  static List<mapbox.Point> _validPoints(Iterable<mapbox.Point> points) {
+    return points
+        .where((point) => mapPointCoordinatesOrNull(point) != null)
+        .toList(growable: false);
   }
 
   static bool listEquals(List<mapbox.Point>? a, List<mapbox.Point>? b) {
     if (a == null) return b == null;
     if (b == null || a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
-      if (a[i].coordinates[1] != b[i].coordinates[1] ||
-          a[i].coordinates[0] != b[i].coordinates[0]) {
+      final first = mapPointCoordinatesOrNull(a[i]);
+      final second = mapPointCoordinatesOrNull(b[i]);
+      if (first == null ||
+          second == null ||
+          first.latitude != second.latitude ||
+          first.longitude != second.longitude) {
         return false;
       }
     }
@@ -2146,133 +2214,177 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
       : mapbox.Point(coordinates: mapbox.Position(101.6869, 3.1390));
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    if (!mounted) return;
     _mapboxMap = mapboxMap;
-    await mapboxMap.compass.updateSettings(
-      mapbox.CompassSettings(enabled: false),
-    );
-    await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
-    await mapboxMap.gestures.updateSettings(
-      mapbox.GesturesSettings(
-        scrollEnabled: true,
-        pinchToZoomEnabled: true,
-        rotateEnabled: true,
-        pitchEnabled: true,
-      ),
-    );
-    await mapboxMap.setBounds(
-      mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 21),
-    );
-    _polylineManager = await mapboxMap.annotations
-        .createPolylineAnnotationManager();
-    _circleManager = await mapboxMap.annotations
-        .createCircleAnnotationManager();
-    _pointManager = await mapboxMap.annotations.createPointAnnotationManager();
     try {
-      await _mapboxMap?.flyTo(
+      mapboxMap.addInteraction(
+        mapbox.TapInteraction.onMap((context) => _onMapTap(context.point)),
+      );
+      await mapboxMap.compass.updateSettings(
+        mapbox.CompassSettings(enabled: false),
+      );
+      await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
+      await mapboxMap.gestures.updateSettings(
+        mapbox.GesturesSettings(
+          scrollEnabled: true,
+          pinchToZoomEnabled: true,
+          rotateEnabled: true,
+          pitchEnabled: true,
+        ),
+      );
+      await mapboxMap.setBounds(
+        mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 21),
+      );
+      final polylineManager = await mapboxMap.annotations
+          .createPolylineAnnotationManager();
+      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+      final circleManager = await mapboxMap.annotations
+          .createCircleAnnotationManager();
+      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+      final pointManager = await mapboxMap.annotations
+          .createPointAnnotationManager();
+      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+      _polylineManager = polylineManager;
+      _circleManager = circleManager;
+      _pointManager = pointManager;
+      await mapboxMap.flyTo(
         mapbox.CameraOptions(
           center: _initialCenter(),
           zoom: _pins.isNotEmpty ? 15 : 6,
         ),
         mapbox.MapAnimationOptions(duration: 0),
       );
-    } catch (_) {}
-    await _syncRoute();
-    await _syncPins();
+      await _syncRoute();
+      await _syncPins();
+    } catch (_) {
+      // The native map can be disposed or replaced during initialization.
+    }
   }
 
   Future<void> _onStyleLoaded() async {
-    await enableTerrain3D(_mapboxMap!);
-    schedulePitch(_mapboxMap!);
-    _styleLoaded = true;
-    await _syncRoute();
-    await _syncPins();
+    final map = _mapboxMap;
+    if (map == null || !mounted) return;
+    try {
+      await enableTerrain3D(map);
+      if (!mounted || !identical(map, _mapboxMap)) return;
+      schedulePitch(map);
+      _styleLoaded = true;
+      await _syncRoute();
+      await _syncPins();
+    } catch (_) {
+      // The style callback may outlive the native map instance.
+    }
   }
 
   Future<void> _syncRoute() async {
     if (!_styleLoaded) return;
-    await _polylineManager?.deleteAll();
-    final coords = widget.routeCoordinates;
-    if (coords != null && coords.length >= 2) {
-      await _polylineManager?.create(
-        mapbox.PolylineAnnotationOptions(
-          geometry: mapbox.LineString(coordinates: coords),
-          lineColor: const Color(0xFF4ADE80).toARGB32(),
-          lineOpacity: 0.4,
-          lineWidth: 4,
-          lineJoin: mapbox.LineJoin.ROUND,
-        ),
-      );
+    final manager = _polylineManager;
+    if (manager == null) return;
+    try {
+      await manager.deleteAll();
+      if (!mounted || !identical(manager, _polylineManager)) return;
+      final coords = widget.routeCoordinates;
+      if (coords != null && coords.length >= 2) {
+        await manager.create(
+          mapbox.PolylineAnnotationOptions(
+            geometry: mapbox.LineString(coordinates: coords),
+            lineColor: const Color(0xFF4ADE80).toARGB32(),
+            lineOpacity: 0.4,
+            lineWidth: 4,
+            lineJoin: mapbox.LineJoin.ROUND,
+          ),
+        );
+      }
+    } catch (_) {
+      // Style replacement invalidates its annotation managers.
     }
   }
 
   Future<void> _syncPins() async {
     if (!_styleLoaded) return;
-    await _circleManager?.deleteAll();
-    await _pointManager?.deleteAll();
+    final circleManager = _circleManager;
+    final pointManager = _pointManager;
+    if (circleManager == null || pointManager == null) return;
 
-    for (var i = 0; i < _pins.length; i++) {
-      final point = _pins[i];
-      final isEditable =
-          widget.editableIndex != null && i == widget.editableIndex;
-      if (isEditable) {
-        await _circleManager?.create(
-          mapbox.CircleAnnotationOptions(
+    try {
+      await circleManager.deleteAll();
+      await pointManager.deleteAll();
+      if (!mounted ||
+          !identical(circleManager, _circleManager) ||
+          !identical(pointManager, _pointManager)) {
+        return;
+      }
+
+      for (var i = 0; i < _pins.length; i++) {
+        final point = _pins[i];
+        final isEditable =
+            widget.editableIndex != null && i == widget.editableIndex;
+        if (isEditable) {
+          await circleManager.create(
+            mapbox.CircleAnnotationOptions(
+              geometry: point,
+              circleRadius: 14,
+              circleColor: const Color(0xFFF59E0B).toARGB32(),
+              circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+              circleStrokeWidth: 3.5,
+            ),
+          );
+          await circleManager.create(
+            mapbox.CircleAnnotationOptions(
+              geometry: point,
+              circleRadius: 22,
+              circleColor: const Color(0xFFF59E0B).toARGB32(),
+              circleStrokeColor: const Color(0xFFF59E0B).toARGB32(),
+              circleStrokeWidth: 0,
+              circleOpacity: 0.3,
+            ),
+          );
+        } else {
+          await circleManager.create(
+            mapbox.CircleAnnotationOptions(
+              geometry: point,
+              circleRadius: 10,
+              circleColor: const Color(0xFF34A853).toARGB32(),
+              circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+              circleStrokeWidth: 2.5,
+            ),
+          );
+        }
+        await pointManager.create(
+          mapbox.PointAnnotationOptions(
             geometry: point,
-            circleRadius: 14,
-            circleColor: const Color(0xFFF59E0B).toARGB32(),
-            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-            circleStrokeWidth: 3.5,
-          ),
-        );
-        await _circleManager?.create(
-          mapbox.CircleAnnotationOptions(
-            geometry: point,
-            circleRadius: 22,
-            circleColor: const Color(0xFFF59E0B).toARGB32(),
-            circleStrokeColor: const Color(0xFFF59E0B).toARGB32(),
-            circleStrokeWidth: 0,
-            circleOpacity: 0.3,
-          ),
-        );
-      } else {
-        await _circleManager?.create(
-          mapbox.CircleAnnotationOptions(
-            geometry: point,
-            circleRadius: 10,
-            circleColor: const Color(0xFF34A853).toARGB32(),
-            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-            circleStrokeWidth: 2.5,
+            textField: '${i + 1}',
+            textSize: 11,
+            textColor: 0xFFFFFFFF,
+            textHaloColor: 0xFF111111,
+            textHaloWidth: 0.7,
+            textAnchor: mapbox.TextAnchor.CENTER,
           ),
         );
       }
-      await _pointManager?.create(
-        mapbox.PointAnnotationOptions(
-          geometry: point,
-          textField: '${i + 1}',
-          textSize: 11,
-          textColor: 0xFFFFFFFF,
-          textHaloColor: 0xFF111111,
-          textHaloWidth: 0.7,
-          textAnchor: mapbox.TextAnchor.CENTER,
-        ),
-      );
+    } catch (_) {
+      // Style replacement invalidates its annotation managers.
     }
   }
 
   int? _tappedPinIndex(mapbox.Point tapped) {
+    final tappedCoordinates = mapPointCoordinatesOrNull(tapped);
+    if (tappedCoordinates == null) return null;
     for (var i = 0; i < _pins.length; i++) {
-      final dlat =
-          (tapped.coordinates[1] ?? 0) - (_pins[i].coordinates[1] ?? 0);
-      final dlng =
-          (tapped.coordinates[0] ?? 0) - (_pins[i].coordinates[0] ?? 0);
+      final pinCoordinates = mapPointCoordinatesOrNull(_pins[i]);
+      if (pinCoordinates == null) continue;
+      final dlat = tappedCoordinates.latitude - pinCoordinates.latitude;
+      final dlng = tappedCoordinates.longitude - pinCoordinates.longitude;
       if (dlat.abs() + dlng.abs() < 0.001) return i;
     }
     return null;
   }
 
   void _onMapTap(mapbox.Point coordinate) {
+    if (!mounted || mapPointCoordinatesOrNull(coordinate) == null) return;
     final editable = widget.editableIndex;
     if (editable != null) {
+      if (editable < 0 || editable >= _pins.length) return;
       setState(() {
         _pins[editable] = coordinate;
       });
@@ -2309,25 +2421,40 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
   Future<void> _zoomBy(double amount) async {
     final map = _mapboxMap;
     if (map == null) return;
-    final state = await map.getCameraState();
-    await map.flyTo(
-      mapbox.CameraOptions(zoom: state.zoom + amount),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+    try {
+      final state = await map.getCameraState();
+      if (!state.zoom.isFinite) return;
+      await map.flyTo(
+        mapbox.CameraOptions(
+          zoom: (state.zoom + amount)
+              .clamp(kMapMinZoom, kMapMaxZoom)
+              .toDouble(),
+        ),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {
+      // The native map may have been disposed before the camera update.
+    }
   }
 
   Future<void> _fitPins() async {
     if (_pins.isEmpty) return;
-    if (_pins.length == 1) {
-      await _mapboxMap?.flyTo(
-        mapbox.CameraOptions(center: _pins.first, zoom: 15),
-        mapbox.MapAnimationOptions(duration: 300),
-      );
-    } else {
-      await _mapboxMap?.flyTo(
-        mapbox.CameraOptions(center: centerFor(_pins), zoom: 13),
-        mapbox.MapAnimationOptions(duration: 300),
-      );
+    final map = _mapboxMap;
+    if (map == null) return;
+    try {
+      if (_pins.length == 1) {
+        await map.flyTo(
+          mapbox.CameraOptions(center: _pins.first, zoom: 15),
+          mapbox.MapAnimationOptions(duration: 300),
+        );
+      } else {
+        await map.flyTo(
+          mapbox.CameraOptions(center: centerFor(_pins), zoom: 13),
+          mapbox.MapAnimationOptions(duration: 300),
+        );
+      }
+    } catch (_) {
+      // The native map may have been disposed before the camera update.
     }
   }
 
@@ -2348,7 +2475,6 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                     gestureRecognizers: mapGestureRecognizers,
                     onMapCreated: _onMapCreated,
                     onStyleLoadedListener: (_) => _onStyleLoaded(),
-                    onTapListener: (context) => _onMapTap(context.point),
                   ),
                 ),
                 Align(
@@ -2369,7 +2495,9 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                       padding: const EdgeInsets.all(10),
                       child: MapScaleBar(
                         zoom: 13,
-                        latitude: (_pins.first.coordinates[1] ?? 0).toDouble(),
+                        latitude:
+                            mapPointCoordinatesOrNull(_pins.first)?.latitude ??
+                            0,
                       ),
                     ),
                   ),
@@ -2453,81 +2581,148 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
   mapbox.PointAnnotationManager? _pointManager;
   bool _styleLoaded = false;
 
+  @override
+  void dispose() {
+    _mapboxMap = null;
+    _circleManager = null;
+    _pointManager = null;
+    super.dispose();
+  }
+
   void _selectCoordinate(mapbox.Point coordinate) {
+    if (!mounted || mapPointCoordinatesOrNull(coordinate) == null) return;
     setState(() => _selected = coordinate);
     unawaited(_syncSelectedPin());
-    unawaited(
-      _mapboxMap?.flyTo(
-        mapbox.CameraOptions(center: coordinate),
+    unawaited(_centerOn(coordinate));
+  }
+
+  Future<void> _centerOn(mapbox.Point coordinate, {double? zoom}) async {
+    final map = _mapboxMap;
+    if (map == null) return;
+    try {
+      await map.flyTo(
+        mapbox.CameraOptions(center: coordinate, zoom: zoom),
         mapbox.MapAnimationOptions(duration: 300),
-      ),
-    );
+      );
+    } catch (_) {
+      // The native map may have been disposed while handling a tap.
+    }
+  }
+
+  Future<void> _fitSelectedPin() => _centerOn(_selected, zoom: 15);
+
+  Future<void> _onStyleLoaded() async {
+    final map = _mapboxMap;
+    if (map == null || !mounted) return;
+    try {
+      await enableTerrain3D(map);
+      if (!mounted || !identical(map, _mapboxMap)) return;
+      schedulePitch(map);
+      _styleLoaded = true;
+      await _syncSelectedPin();
+    } catch (_) {
+      // The style callback may outlive the native map instance.
+    }
   }
 
   Future<void> _syncSelectedPin() async {
     if (!_styleLoaded) return;
-    await _circleManager?.deleteAll();
-    await _pointManager?.deleteAll();
-    await _circleManager?.create(
-      mapbox.CircleAnnotationOptions(
-        geometry: _selected,
-        circleRadius: 10,
-        circleColor: const Color(0xFFE11D48).toARGB32(),
-        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-        circleStrokeWidth: 3,
-      ),
-    );
-    await _pointManager?.create(
-      mapbox.PointAnnotationOptions(
-        geometry: _selected,
-        textField: 'Pin',
-        textSize: 12,
-        textColor: 0xFFFFFFFF,
-        textHaloColor: 0xFF111111,
-        textHaloWidth: 0.8,
-        textOffset: const [0.0, 1.35],
-        textAnchor: mapbox.TextAnchor.TOP,
-      ),
-    );
+    final circleManager = _circleManager;
+    final pointManager = _pointManager;
+    if (circleManager == null || pointManager == null) return;
+    try {
+      await circleManager.deleteAll();
+      await pointManager.deleteAll();
+      if (!mounted ||
+          !identical(circleManager, _circleManager) ||
+          !identical(pointManager, _pointManager)) {
+        return;
+      }
+      await circleManager.create(
+        mapbox.CircleAnnotationOptions(
+          geometry: _selected,
+          circleRadius: 10,
+          circleColor: const Color(0xFFE11D48).toARGB32(),
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 3,
+        ),
+      );
+      await pointManager.create(
+        mapbox.PointAnnotationOptions(
+          geometry: _selected,
+          textField: 'Pin',
+          textSize: 12,
+          textColor: 0xFFFFFFFF,
+          textHaloColor: 0xFF111111,
+          textHaloWidth: 0.8,
+          textOffset: const [0.0, 1.35],
+          textAnchor: mapbox.TextAnchor.TOP,
+        ),
+      );
+    } catch (_) {
+      // Style replacement invalidates its annotation managers.
+    }
   }
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+    if (!mounted) return;
     _mapboxMap = mapboxMap;
-    await mapboxMap.compass.updateSettings(
-      mapbox.CompassSettings(enabled: false),
-    );
-    await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
-    await mapboxMap.gestures.updateSettings(
-      mapbox.GesturesSettings(
-        scrollEnabled: true,
-        pinchToZoomEnabled: true,
-        rotateEnabled: true,
-        pitchEnabled: true,
-      ),
-    );
-    await mapboxMap.setBounds(
-      mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 21),
-    );
-    _circleManager = await mapboxMap.annotations
-        .createCircleAnnotationManager();
-    _pointManager = await mapboxMap.annotations.createPointAnnotationManager();
     try {
+      mapboxMap.addInteraction(
+        mapbox.TapInteraction.onMap(
+          (context) => _selectCoordinate(context.point),
+        ),
+      );
+      await mapboxMap.compass.updateSettings(
+        mapbox.CompassSettings(enabled: false),
+      );
+      await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
+      await mapboxMap.gestures.updateSettings(
+        mapbox.GesturesSettings(
+          scrollEnabled: true,
+          pinchToZoomEnabled: true,
+          rotateEnabled: true,
+          pitchEnabled: true,
+        ),
+      );
+      await mapboxMap.setBounds(
+        mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 21),
+      );
+      final circleManager = await mapboxMap.annotations
+          .createCircleAnnotationManager();
+      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+      final pointManager = await mapboxMap.annotations
+          .createPointAnnotationManager();
+      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+      _circleManager = circleManager;
+      _pointManager = pointManager;
       await mapboxMap.flyTo(
         mapbox.CameraOptions(center: _selected, zoom: 15),
         mapbox.MapAnimationOptions(duration: 0),
       );
-    } catch (_) {}
-    await _syncSelectedPin();
+      await _syncSelectedPin();
+    } catch (_) {
+      // The native map can be disposed or replaced during initialization.
+    }
   }
 
   Future<void> _zoomBy(double amount) async {
     final map = _mapboxMap;
     if (map == null) return;
-    final state = await map.getCameraState();
-    await map.flyTo(
-      mapbox.CameraOptions(zoom: state.zoom + amount),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+    try {
+      final state = await map.getCameraState();
+      if (!state.zoom.isFinite) return;
+      await map.flyTo(
+        mapbox.CameraOptions(
+          zoom: (state.zoom + amount)
+              .clamp(kMapMinZoom, kMapMaxZoom)
+              .toDouble(),
+        ),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {
+      // The native map may have been disposed before the camera update.
+    }
   }
 
   @override
@@ -2574,15 +2769,7 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
                         styleUri: mapStyleUrls[0],
                         gestureRecognizers: mapGestureRecognizers,
                         onMapCreated: _onMapCreated,
-                        onStyleLoadedListener: (_) {
-                          unawaited(enableTerrain3D(_mapboxMap!));
-                          schedulePitch(_mapboxMap!);
-                          _styleLoaded = true;
-                          unawaited(_syncSelectedPin());
-                        },
-                        onTapListener: (context) {
-                          _selectCoordinate(context.point);
-                        },
+                        onStyleLoadedListener: (_) => _onStyleLoaded(),
                       ),
                     ),
                     Align(
@@ -2592,10 +2779,7 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
                         child: MapZoomControls(
                           onZoomIn: () => _zoomBy(1),
                           onZoomOut: () => _zoomBy(-1),
-                          onReset: () => _mapboxMap?.flyTo(
-                            mapbox.CameraOptions(center: _selected, zoom: 15),
-                            mapbox.MapAnimationOptions(duration: 300),
-                          ),
+                          onReset: _fitSelectedPin,
                         ),
                       ),
                     ),
@@ -2745,10 +2929,9 @@ class _TrailFormError extends StatelessWidget {
 }
 
 class _DiscoverHero extends StatelessWidget {
-  const _DiscoverHero({required this.trails, required this.downloadedCount});
+  const _DiscoverHero({required this.trails});
 
   final List<Trail> trails;
-  final int downloadedCount;
 
   @override
   Widget build(BuildContext context) {
@@ -2780,7 +2963,7 @@ class _DiscoverHero extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Compare difficulty, forecast, hazard reports, and offline readiness before you commit.',
+                    'Compare difficulty, forecast, and hazard reports before you commit.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: _TrailColors.secondaryTextFor(context),
                       fontWeight: FontWeight.w500,
@@ -2795,10 +2978,6 @@ class _DiscoverHero extends StatelessWidget {
                       _StatusPill(
                         label: '${trails.length} routes',
                         color: _TrailColors.green,
-                      ),
-                      _StatusPill(
-                        label: '$downloadedCount offline',
-                        color: _TrailColors.blue,
                       ),
                       const _StatusPill(
                         label: 'Firebase live',
@@ -2819,12 +2998,12 @@ class _DiscoverHero extends StatelessWidget {
 class _TrailInsightStrip extends StatelessWidget {
   const _TrailInsightStrip({
     required this.visibleCount,
-    required this.downloadedCount,
+    required this.verifiedCount,
     required this.hazardCount,
   });
 
   final int visibleCount;
-  final int downloadedCount;
+  final int verifiedCount;
   final int hazardCount;
 
   @override
@@ -2844,9 +3023,9 @@ class _TrailInsightStrip extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: _InsightTile(
-              label: 'Offline',
-              value: '$downloadedCount',
-              icon: Icons.download_done_rounded,
+              label: 'Verified',
+              value: '$verifiedCount',
+              icon: Icons.verified_rounded,
               color: _TrailColors.blue,
             ),
           ),
@@ -2995,7 +3174,7 @@ class _FilterChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const filters = ['Nearby', 'Popular', 'Beginner', 'Saved', 'Offline'];
+    const filters = ['Nearby', 'Popular', 'Beginner', 'Saved'];
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -3017,15 +3196,14 @@ class _FilterChips extends StatelessWidget {
 
 class _TrailCard extends StatelessWidget {
   const _TrailCard({
+    super.key,
     required this.trail,
-    required this.isDownloaded,
     required this.onOpenTrail,
     this.onEditTrail,
     this.onDeleteTrail,
   });
 
   final Trail trail;
-  final bool isDownloaded;
   final VoidCallback onOpenTrail;
   final Future<void> Function()? onEditTrail;
   final Future<void> Function()? onDeleteTrail;
@@ -3089,13 +3267,6 @@ class _TrailCard extends StatelessWidget {
                                 '${trail.ratingAverage.toStringAsFixed(1)} rating',
                             color: _TrailColors.green,
                           ),
-                          if (trail.offlineMapAvailable)
-                            _StatusPill(
-                              label: isDownloaded
-                                  ? 'Offline Ready'
-                                  : 'Offline Available',
-                              color: _TrailColors.blue,
-                            ),
                         ],
                       ),
                     ],
@@ -3180,41 +3351,6 @@ class _TrailSwipeActionBackground extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _DownloadedMapCard extends StatelessWidget {
-  const _DownloadedMapCard({required this.trail});
-
-  final Trail trail;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            const _Glyph(icon: Icons.offline_bolt_rounded),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                trail.name,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _TrailColors.textFor(context),
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-            ),
-            const _StatusPill(
-              label: 'Available Offline',
-              color: _TrailColors.green,
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -3312,15 +3448,10 @@ class _TrailDetailHero extends StatelessWidget {
 }
 
 class _TrailPlanCard extends StatelessWidget {
-  const _TrailPlanCard({
-    required this.trail,
-    required this.onStartHike,
-    required this.onSaveTrail,
-  });
+  const _TrailPlanCard({required this.trail, required this.onStartHike});
 
   final Trail trail;
   final VoidCallback onStartHike;
-  final VoidCallback onSaveTrail;
 
   @override
   Widget build(BuildContext context) {
@@ -3362,24 +3493,10 @@ class _TrailPlanCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: onStartHike,
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: const Text('Start'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onSaveTrail,
-                    icon: const Icon(Icons.bookmark_add_rounded),
-                    label: const Text('Save'),
-                  ),
-                ),
-              ],
+            FilledButton.icon(
+              onPressed: onStartHike,
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text('Start'),
             ),
           ],
         ),
@@ -3401,7 +3518,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   late final _nameController = TextEditingController(text: widget.trail.name);
   late final _areaController = TextEditingController(text: widget.trail.area);
   late final _stateController = TextEditingController(text: widget.trail.state);
-  late String _difficulty = widget.trail.difficulty;
+  late String _difficulty = _normalizeTrailDifficulty(widget.trail.difficulty);
   late final List<_CheckpointDraft> _checkpoints = widget.trail.checkpoints
       .map(
         (c) => _CheckpointDraft(order: c.order, name: c.name)
@@ -3431,29 +3548,32 @@ class _EditTrailPageState extends State<_EditTrailPage> {
     var index = 0;
     var latitude = 0;
     var longitude = 0;
-    while (index < encoded.length) {
+    int? readDelta() {
       var shift = 0;
       var result = 0;
-      int byte;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
+      while (true) {
+        if (index >= encoded.length) return null;
+        final byte = encoded.codeUnitAt(index++) - 63;
+        if (byte < 0 || byte > 0x3f || shift > 30) return null;
         result |= (byte & 0x1f) << shift;
+        if (byte < 0x20) {
+          return (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+        }
         shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      latitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-      shift = 0;
-      result = 0;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      longitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-      points.add(
-        mapbox.Point(
-          coordinates: mapbox.Position(longitude / 100000, latitude / 100000),
-        ),
+      }
+    }
+
+    while (index < encoded.length) {
+      final latitudeDelta = readDelta();
+      final longitudeDelta = readDelta();
+      if (latitudeDelta == null || longitudeDelta == null) return const [];
+      latitude += latitudeDelta;
+      longitude += longitudeDelta;
+      final point = mapbox.Point(
+        coordinates: mapbox.Position(longitude / 100000, latitude / 100000),
       );
+      if (mapPointCoordinatesOrNull(point) == null) return const [];
+      points.add(point);
     }
     return points;
   }
@@ -3487,22 +3607,25 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       ),
     );
     if (confirmed == null || !mounted) return;
+    final validConfirmed = confirmed
+        .map(mapPointCoordinatesOrNull)
+        .whereType<({double longitude, double latitude})>()
+        .toList(growable: false);
+    if (validConfirmed.isEmpty) return;
     for (final c in _checkpoints) {
       c.dispose();
     }
     _checkpoints.clear();
-    for (var i = 0; i < confirmed.length; i++) {
+    for (var i = 0; i < validConfirmed.length; i++) {
       final name = i == 0
           ? 'Trailhead'
-          : i == confirmed.length - 1
+          : i == validConfirmed.length - 1
           ? 'End point'
           : 'Waypoint $i';
       final draft = _CheckpointDraft(order: i + 1, name: name);
-      draft.latitudeController.text = confirmed[i].coordinates[1]!
-          .toDouble()
+      draft.latitudeController.text = validConfirmed[i].latitude
           .toStringAsFixed(6);
-      draft.longitudeController.text = confirmed[i].coordinates[0]!
-          .toDouble()
+      draft.longitudeController.text = validConfirmed[i].longitude
           .toStringAsFixed(6);
       _checkpoints.add(draft);
     }
@@ -3525,13 +3648,51 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   }
 
   Future<void> _editCheckpointOnMap(int index) async {
-    final models = _buildCheckpointModels();
-    if (index < 0 || index >= models.length) return;
+    final validEntries = <({int draftIndex, TrailCheckpoint checkpoint})>[];
+    for (var draftIndex = 0; draftIndex < _checkpoints.length; draftIndex++) {
+      final draft = _checkpoints[draftIndex];
+      final name = draft.nameController.text.trim();
+      final latitude = double.tryParse(draft.latitudeController.text.trim());
+      final longitude = double.tryParse(draft.longitudeController.text.trim());
+      if (name.isEmpty ||
+          latitude == null ||
+          longitude == null ||
+          !latitude.isFinite ||
+          !longitude.isFinite ||
+          latitude < -90 ||
+          latitude > 90 ||
+          longitude < -180 ||
+          longitude > 180) {
+        continue;
+      }
+      validEntries.add((
+        draftIndex: draftIndex,
+        checkpoint: TrailCheckpoint(
+          name: name,
+          latitude: latitude,
+          longitude: longitude,
+          order: draftIndex + 1,
+        ),
+      ));
+    }
+    final editablePinIndex = validEntries.indexWhere(
+      (entry) => entry.draftIndex == index,
+    );
+    if (editablePinIndex < 0) {
+      setState(() {
+        _routeRefreshError =
+            'Enter a valid name, latitude, and longitude before editing this checkpoint on the map.';
+      });
+      return;
+    }
 
-    final existingPins = models
+    final existingPins = validEntries
         .map(
-          (c) => mapbox.Point(
-            coordinates: mapbox.Position(c.longitude, c.latitude),
+          (entry) => mapbox.Point(
+            coordinates: mapbox.Position(
+              entry.checkpoint.longitude,
+              entry.checkpoint.latitude,
+            ),
           ),
         )
         .toList();
@@ -3541,7 +3702,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
         _refreshedRoute!.encodedPolyline.isNotEmpty) {
       final decoded = _decodePolyline(_refreshedRoute!.encodedPolyline);
       routeCoords = decoded
-          .map((p) => mapbox.Position(p.coordinates[0]!, p.coordinates[1]!))
+          .map(mapPointCoordinatesOrNull)
+          .whereType<({double longitude, double latitude})>()
+          .map((p) => mapbox.Position(p.longitude, p.latitude))
           .toList();
     }
 
@@ -3558,7 +3721,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
           body: _MapBasedCheckpointPicker(
             singlePinMode: false,
             pins: existingPins,
-            editableIndex: index,
+            editableIndex: editablePinIndex,
             routeCoordinates: routeCoords,
             onPinsChanged: (_) {},
             onConfirm: (pins) => Navigator.of(context).pop(pins),
@@ -3566,14 +3729,20 @@ class _EditTrailPageState extends State<_EditTrailPage> {
         ),
       ),
     );
-    if (confirmed == null || !mounted || index >= confirmed.length) return;
-    final updated = confirmed[index];
+    if (confirmed == null ||
+        !mounted ||
+        editablePinIndex >= confirmed.length ||
+        index >= _checkpoints.length) {
+      return;
+    }
+    final updated = confirmed[editablePinIndex];
+    final updatedCoordinates = mapPointCoordinatesOrNull(updated);
+    if (updatedCoordinates == null) return;
     setState(() {
-      _checkpoints[index].latitudeController.text = updated.coordinates[1]!
-          .toDouble()
+      _checkpoints[index].latitudeController.text = updatedCoordinates.latitude
           .toStringAsFixed(6);
-      _checkpoints[index].longitudeController.text = updated.coordinates[0]!
-          .toDouble()
+      _checkpoints[index].longitudeController.text = updatedCoordinates
+          .longitude
           .toStringAsFixed(6);
       _refreshedRoute = null;
       _refreshedRouteCheckpointsHash = null;
@@ -3677,7 +3846,15 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       final name = d.nameController.text.trim();
       final lat = double.tryParse(d.latitudeController.text.trim());
       final lng = double.tryParse(d.longitudeController.text.trim());
-      if (name.isNotEmpty && lat != null && lng != null) {
+      if (name.isNotEmpty &&
+          lat != null &&
+          lng != null &&
+          lat.isFinite &&
+          lng.isFinite &&
+          lat >= -90 &&
+          lat <= 90 &&
+          lng >= -180 &&
+          lng <= 180) {
         models.add(
           TrailCheckpoint(
             name: name,
@@ -4254,30 +4431,62 @@ class _TrailCoverImagesState extends State<_TrailCoverImages> {
   String? _autoImageUrl;
   bool _loadingAuto = false;
   int _currentPage = 0;
+  int _autoImageRequest = 0;
 
   @override
   void initState() {
     super.initState();
-    _fetchAutoImageIfNeeded();
+    unawaited(_fetchAutoImageIfNeeded());
   }
 
   @override
   void didUpdateWidget(_TrailCoverImages old) {
     super.didUpdateWidget(old);
-    if (old.trail != widget.trail) _fetchAutoImageIfNeeded();
+    final trailChanged =
+        old.trail.trailId != widget.trail.trailId ||
+        old.trail.name != widget.trail.name ||
+        old.trail.area != widget.trail.area ||
+        old.trail.state != widget.trail.state ||
+        old.trail.latitude != widget.trail.latitude ||
+        old.trail.longitude != widget.trail.longitude;
+    final imagesChanged = !listEquals(
+      old.trail.coverImageUrls,
+      widget.trail.coverImageUrls,
+    );
+    if (trailChanged || imagesChanged) {
+      _autoImageRequest++;
+      _autoImageUrl = null;
+      _loadingAuto = false;
+      _currentPage = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _pageController.hasClients) {
+          _pageController.jumpToPage(0);
+        }
+      });
+      unawaited(_fetchAutoImageIfNeeded());
+    }
   }
 
-  void _fetchAutoImageIfNeeded() {
+  Future<void> _fetchAutoImageIfNeeded() async {
     if (widget.trail.coverImageUrls.isNotEmpty) return;
     if (_loadingAuto || _autoImageUrl != null) return;
     _loadingAuto = true;
-    TrailCoverImageService.instance.imageUrlForTrail(widget.trail).then((url) {
-      if (!mounted) return;
+    final request = ++_autoImageRequest;
+    try {
+      final url = await TrailCoverImageService.instance.imageUrlForTrail(
+        widget.trail,
+      );
+      if (!mounted || request != _autoImageRequest) return;
       setState(() {
         _autoImageUrl = url;
         _loadingAuto = false;
       });
-    });
+    } catch (_) {
+      if (!mounted || request != _autoImageRequest) return;
+      setState(() {
+        _loadingAuto = false;
+      });
+    }
   }
 
   @override

@@ -67,6 +67,9 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
   }
 
   Future<SosTriggerLocation?> _refreshLocation() async {
+    if (!mounted) {
+      return _location;
+    }
     if (_isLoading && _location != null) {
       return _location;
     }
@@ -431,8 +434,13 @@ class _OpenStreetMap extends StatelessWidget {
     required double longitude,
     required int zoom,
   }) {
+    const maximumMercatorLatitude = 85.05112878;
     final scale = math.pow(2, zoom).toDouble();
-    final latitudeRadians = latitude * math.pi / 180;
+    final projectedLatitude = latitude.clamp(
+      -maximumMercatorLatitude,
+      maximumMercatorLatitude,
+    );
+    final latitudeRadians = projectedLatitude * math.pi / 180;
     final x = (longitude + 180) / 360 * scale;
     final y =
         (1 -

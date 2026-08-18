@@ -1,8 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission
+        android:name="com.leongziqi.hikercircle.permission.INTERNAL_BLE_SOS"
+        android:protectionLevel="signature"/>
+    <uses-permission android:name="com.leongziqi.hikercircle.permission.INTERNAL_BLE_SOS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Enables a fresh SOS/location handoff when a paired button wakes the
+         app from the background. Android 11+ users grant this separately in
+         system settings; foreground SOS remains available without it. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
     <uses-permission android:name="android.permission.BLUETOOTH"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
@@ -10,15 +18,28 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-feature android:name="android.hardware.camera.flash" android:required="false"/>
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
+    </queries>
 
     <application
         android:label="HikerCircle"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true">
         <meta-data
             android:name="com.google.android.geo.API_KEY"
@@ -41,6 +62,13 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- MainActivity forwards initial and runtime links through the
+                 hiker_circle/deeplinks MethodChannel. Disable Flutter's
+                 automatic route push so the same Android intent is not
+                 delivered to both navigation paths. -->
+            <meta-data
+                android:name="flutter_deeplinking_enabled"
+                android:value="false" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -71,6 +99,16 @@
                     android:host="hike"/>
             </intent-filter>
         </activity>
+        <activity
+            android:name=".SafetyAlertActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:noHistory="false"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
         <receiver
             android:name=".ManualSosWidgetProvider"
             android:exported="true"
@@ -97,8 +135,22 @@
             android:name=".BleSosMonitorService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"/>
+        <service
+            android:name=".HikeSafetyMonitorService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="location"/>
         <receiver
             android:name=".BleSosMonitorBootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".HikeSafetyMonitorBootReceiver"
             android:enabled="true"
             android:exported="false">
             <intent-filter>

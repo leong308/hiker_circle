@@ -24,6 +24,16 @@ object HikerBleProtocol {
         UUID.fromString("7e2a1d38-8b10-4f4d-9f78-0c6f1d65cba1")
     val PAIRED_BUTTON_STATUS_CHARACTERISTIC_UUID: UUID =
         UUID.fromString("7e2a1d39-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_LOG_CHALLENGE_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d3c-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_LOG_AUTH_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d3d-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_LOG_DATA_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d3e-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_LOG_PAGE_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d3f-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_MAINTENANCE_SERVICE_UUID: UUID =
+        UUID.fromString("7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1")
     val ACTIVE_SOS_SERVICE_UUID: UUID =
         UUID.fromString("7e2a1d3a-8b10-4f4d-9f78-0c6f1d65cba1")
     val SOS_LOCATION_CHARACTERISTIC_UUID: UUID =
@@ -38,11 +48,17 @@ object HikerBleProtocol {
     private const val TYPE_SOS_HELP = 3.toByte()
     const val TYPE_PAIRED_SOS_REMOTE = 4
     const val TYPE_PAIRED_SOS_LOCATION_RELAY = 5
+    const val TYPE_PAIRED_BUTTON_SETUP_STATUS = 6
+    const val SETUP_STATE_ADVERTISING = 1
     const val PAIRING_STATUS_READY = 1
     const val PAIRING_STATUS_AWAITING_CONFIRMATION = 2
     const val PAIRING_STATUS_PAIRED = 3
     const val PAIRING_STATUS_INVALID_REQUEST = 4
     const val PAIRING_STATUS_CONFIRMATION_EXPIRED = 5
+    private const val LOG_CHALLENGE_TYPE = 0x10
+    private const val LOG_DATA_TYPE = 0x12
+    private const val LOG_CHALLENGE_BYTES = 26
+    private const val LOG_RECORD_BYTES = 20
 
     fun isSosAdvertisement(result: ScanResult): Boolean {
         val record = result.scanRecord ?: return false
@@ -75,11 +91,12 @@ object HikerBleProtocol {
     }
 
     fun decodePairedSosRemote(data: ByteArray, rssi: Int): PairedSosRemotePacket? {
-        if (data.size < 23 ||
+        if (data.size != 23 ||
             data[0] != MAGIC_H ||
             data[1] != MAGIC_C ||
             data[2].toInt() != 2 ||
-            data[3].toInt() != TYPE_PAIRED_SOS_REMOTE
+            data[3].toInt() != TYPE_PAIRED_SOS_REMOTE ||
+            data[4].toInt().and(0xff) != 1
         ) {
             return null
         }
@@ -119,7 +136,7 @@ object HikerBleProtocol {
         data: ByteArray,
         rssi: Int,
     ): PairedSosLocationRelayPacket? {
-        if (data.size < 24 ||
+        if (data.size != 24 ||
             data[0] != MAGIC_H ||
             data[1] != MAGIC_C ||
             data[2].toInt() != 2 ||
@@ -128,11 +145,14 @@ object HikerBleProtocol {
             return null
         }
         val buffer = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
+        val latitude = buffer.getInt(14) / 10_000_000.0
+        val longitude = buffer.getInt(18) / 10_000_000.0
+        if (!isValidCoordinate(latitude, longitude)) return null
         return PairedSosLocationRelayPacket(
             deviceId = data.copyOfRange(4, 10),
             eventId = buffer.getInt(10).toLong().and(0xffffffffL),
-            latitude = buffer.getInt(14) / 10_000_000.0,
-            longitude = buffer.getInt(18) / 10_000_000.0,
+            latitude = latitude,
+            longitude = longitude,
             accuracyMeters = buffer.getShort(22).toInt().and(0xFFFF) / 10.0,
             rssi = rssi,
         )
@@ -160,9 +180,8 @@ object HikerBleProtocol {
         pairingSecret: ByteArray,
     ): ByteArray {
         require(pairingSecret.size == 32) { "Paired button secrets must be 32 bytes." }
-        val accuracyDecimeters = ((accuracyMeters ?: 0.0) * 10)
-            .roundToInt()
-            .coerceIn(0, 65535)
+        requireValidLocation(latitude, longitude, accuracyMeters)
+        val accuracyDecimeters = accuracyDecimeters(accuracyMeters)
         val signed = ByteBuffer.allocate(22)
             .order(ByteOrder.BIG_ENDIAN)
             .put(MAGIC_H)
@@ -183,7 +202,7 @@ object HikerBleProtocol {
     }
 
     fun decodePairingStatus(data: ByteArray): PairingStatus? {
-        if (data.size < 10 ||
+        if (data.size != 10 ||
             data[0] != MAGIC_H ||
             data[1] != MAGIC_C ||
             data[2] != VERSION
@@ -196,12 +215,104 @@ object HikerBleProtocol {
         )
     }
 
+    /**
+     * Optional setup-mode advertisement emitted alongside the setup service
+     * UUID. The six-byte payload is intentionally small enough to coexist
+     * with a 128-bit service UUID in a legacy 31-byte advertisement.
+     */
+    fun decodePairedButtonSetupStatus(data: ByteArray?): PairedButtonSetupStatus? {
+        if (data == null ||
+            data.size != 6 ||
+            data[0] != MAGIC_H ||
+            data[1] != MAGIC_C ||
+            data[2] != VERSION ||
+            data[3].toInt().and(0xff) != TYPE_PAIRED_BUTTON_SETUP_STATUS
+        ) {
+            return null
+        }
+        return PairedButtonSetupStatus(
+            state = data[4].toInt().and(0xff),
+            remainingSeconds = data[5].toInt().and(0xff),
+        )
+    }
+
+    fun encodeLogAuthentication(
+        challenge: ByteArray,
+        deviceId: ByteArray,
+        pairingSecret: ByteArray,
+    ): ByteArray {
+        require(challenge.size == LOG_CHALLENGE_BYTES) {
+            "The SOS button returned an invalid log challenge."
+        }
+        require(deviceId.size == 6) { "Paired button device IDs must be six bytes." }
+        require(pairingSecret.size == 32) { "Paired button secrets must be 32 bytes." }
+        require(
+            challenge[0] == MAGIC_H &&
+                challenge[1] == MAGIC_C &&
+                challenge[2] == VERSION &&
+                challenge[3].toInt().and(0xff) == LOG_CHALLENGE_TYPE &&
+                challenge.copyOfRange(4, 10).contentEquals(deviceId),
+        ) {
+            "The log challenge belongs to a different SOS button."
+        }
+        val tag = Mac.getInstance("HmacSHA256")
+            .apply { init(SecretKeySpec(pairingSecret, "HmacSHA256")) }
+            .doFinal(challenge)
+            .copyOfRange(0, 8)
+        return challenge + tag
+    }
+
+    fun decodeLogPage(data: ByteArray): LogPage? {
+        if (data.size < 8 ||
+            data[0] != MAGIC_H ||
+            data[1] != MAGIC_C ||
+            data[2] != VERSION ||
+            data[3].toInt().and(0xff) != LOG_DATA_TYPE ||
+            data[4].toInt().and(0xff) != LOG_RECORD_BYTES
+        ) {
+            return null
+        }
+        val totalCount = data[5].toInt().and(0xff)
+        val pageIndex = data[6].toInt().and(0xff)
+        val recordCount = data[7].toInt().and(0xff)
+        if (totalCount > 32 ||
+            recordCount > 8 ||
+            data.size != 8 + recordCount * LOG_RECORD_BYTES
+        ) {
+            return null
+        }
+        val buffer = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
+        val records = buildList {
+            repeat(recordCount) { index ->
+                val offset = 8 + index * LOG_RECORD_BYTES
+                add(
+                    LogRecord(
+                        sequence = buffer.getInt(offset).toLong().and(0xffffffffL),
+                        uptimeMillis = buffer.getInt(offset + 4).toLong().and(0xffffffffL),
+                        epochSeconds = buffer.getInt(offset + 8).toLong().and(0xffffffffL),
+                        eventId = buffer.getInt(offset + 12).toLong().and(0xffffffffL),
+                        type = data[offset + 16].toInt().and(0xff),
+                        resetReason = data[offset + 17].toInt().and(0xff),
+                        detail = buffer.getShort(offset + 18).toInt().and(0xffff),
+                    ),
+                )
+            }
+        }
+        return LogPage(
+            totalCount = totalCount,
+            pageIndex = pageIndex,
+            records = records,
+        )
+    }
+
+
     private fun isLegacySosPacket(data: ByteArray): Boolean {
-        return data.size >= 4 &&
+        return data.size == 9 &&
             data[0] == MAGIC_H &&
             data[1] == MAGIC_C &&
             data[2] == VERSION &&
-            data[3] == TYPE_SOS
+            data[3] == TYPE_SOS &&
+            data[4].toInt().and(0xff) == 1
     }
 
     fun encodeSosHelpBeacon(
@@ -211,9 +322,8 @@ object HikerBleProtocol {
         accuracyMeters: Double?,
         capturedAtMillis: Long,
     ): ByteArray {
-        val accuracyDecimeters = ((accuracyMeters ?: 0.0) * 10)
-            .roundToInt()
-            .coerceIn(0, 65535)
+        requireValidLocation(latitude, longitude, accuracyMeters)
+        val accuracyDecimeters = accuracyDecimeters(accuracyMeters)
         return ByteBuffer.allocate(22)
             .order(ByteOrder.BIG_ENDIAN)
             .put(MAGIC_H)
@@ -235,7 +345,7 @@ object HikerBleProtocol {
     }
 
     fun decodeSosHelpBeacon(data: ByteArray, rssi: Int): SosHelpBeaconPacket? {
-        if (data.size < 22 ||
+        if (data.size != 22 ||
             data[0] != MAGIC_H ||
             data[1] != MAGIC_C ||
             data[2] != VERSION ||
@@ -249,7 +359,8 @@ object HikerBleProtocol {
         val latitude = buffer.int / 10_000_000.0
         val longitude = buffer.int / 10_000_000.0
         val accuracy = buffer.short.toInt().and(0xFFFF) / 10.0
-        val capturedAtMillis = buffer.int.toLong() * 1000L
+        val capturedAtMillis = buffer.int.toLong().and(0xffffffffL) * 1000L
+        if (!isValidCoordinate(latitude, longitude)) return null
         return SosHelpBeaconPacket(
             phoneNumberHash = phoneHash,
             latitude = latitude,
@@ -268,9 +379,8 @@ object HikerBleProtocol {
         accuracyMeters: Double?,
         capturedAtMillis: Long,
     ): ByteArray {
-        val accuracyDecimeters = ((accuracyMeters ?: 0.0) * 10)
-            .roundToInt()
-            .coerceIn(0, 65535)
+        requireValidLocation(latitude, longitude, accuracyMeters)
+        val accuracyDecimeters = accuracyDecimeters(accuracyMeters)
         return ByteBuffer.allocate(26)
             .order(ByteOrder.BIG_ENDIAN)
             .put(MAGIC_H)
@@ -293,7 +403,7 @@ object HikerBleProtocol {
     }
 
     fun decodeTeamLocation(data: ByteArray, rssi: Int): TeamLocationPacket? {
-        if (data.size < 26 ||
+        if (data.size != 26 ||
             data[0] != MAGIC_H ||
             data[1] != MAGIC_C ||
             data[2] != VERSION ||
@@ -308,7 +418,8 @@ object HikerBleProtocol {
         val latitude = buffer.int / 10_000_000.0
         val longitude = buffer.int / 10_000_000.0
         val accuracy = buffer.short.toInt().and(0xFFFF) / 10.0
-        val capturedAtMillis = buffer.int.toLong() * 1000L
+        val capturedAtMillis = buffer.int.toLong().and(0xffffffffL) * 1000L
+        if (!isValidCoordinate(latitude, longitude)) return null
         return TeamLocationPacket(
             teamSessionHash = teamHash,
             phoneNumberHash = phoneHash,
@@ -332,6 +443,26 @@ object HikerBleProtocol {
     fun phoneHash(phoneNumber: String): Long {
         return hash(phoneNumber.filter { it.isDigit() })
     }
+
+    private fun requireValidLocation(
+        latitude: Double,
+        longitude: Double,
+        accuracyMeters: Double?,
+    ) {
+        require(isValidCoordinate(latitude, longitude)) {
+            "BLE location coordinates are invalid."
+        }
+        require(accuracyMeters == null || (accuracyMeters.isFinite() && accuracyMeters >= 0.0)) {
+            "BLE location accuracy is invalid."
+        }
+    }
+
+    private fun isValidCoordinate(latitude: Double, longitude: Double): Boolean =
+        latitude.isFinite() && longitude.isFinite() &&
+            latitude in -90.0..90.0 && longitude in -180.0..180.0
+
+    private fun accuracyDecimeters(accuracyMeters: Double?): Int =
+        ((accuracyMeters ?: 0.0) * 10).roundToInt().coerceIn(0, 65535)
 
     data class TeamLocationPacket(
         val teamSessionHash: Long,
@@ -382,4 +513,36 @@ object HikerBleProtocol {
         val status: Int,
         val deviceId: ByteArray,
     )
+
+    data class PairedButtonSetupStatus(
+        val state: Int,
+        val remainingSeconds: Int,
+    )
+
+    data class LogRecord(
+        val sequence: Long,
+        val uptimeMillis: Long,
+        val epochSeconds: Long,
+        val eventId: Long,
+        val type: Int,
+        val resetReason: Int,
+        val detail: Int,
+    ) {
+        fun toPlatformMap(): Map<String, Any> = mapOf(
+            "sequence" to sequence,
+            "uptimeMillis" to uptimeMillis,
+            "epochSeconds" to epochSeconds,
+            "eventId" to eventId,
+            "type" to type,
+            "resetReason" to resetReason,
+            "detail" to detail,
+        )
+    }
+
+    data class LogPage(
+        val totalCount: Int,
+        val pageIndex: Int,
+        val records: List<LogRecord>,
+    )
+
 }

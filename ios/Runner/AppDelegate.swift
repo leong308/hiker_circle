@@ -3,7 +3,11 @@ import UIKit
 import AVFoundation
 import AudioToolbox
 import CoreLocation
+import CoreMotion
 import Contacts
+import UserNotifications
+import FirebaseCore
+import FirebaseFirestore
 #if canImport(ActivityKit)
 import ActivityKit
 #endif
@@ -32,10 +36,39 @@ import ActivityKit
   private var pendingAllowLastKnownLocation = false
   private var isPreciseLocationEnabled = true
   private var locationTimeoutTimer: Timer?
+  private var motionAuthorizationManager: CMMotionActivityManager?
   private var deepLinkChannel: FlutterMethodChannel?
   private var pendingDeepLink: String?
   private var activeHikeLiveActivitySessionId: String?
+  private var activeHikeLiveStatusChannel: FlutterMethodChannel?
+  private var latestManualHikeStatus: ManualHikeLiveStatus?
   private var hikerBleBridge: HikerBleBridge?
+  private lazy var iosHikeSafetyMonitor = IOSHikeSafetyMonitor(
+    warningStarted: { [weak self] in
+      guard let self else { return }
+      self.startFallStillnessCountdownVibration()
+      self.speakFallStillnessPrompt(
+        "Are you okay? Tap I'm Safe on the notification or Live Activity within 15 seconds."
+      )
+      self.updateLiveActivitySafetyState()
+    },
+    escalationStarted: { [weak self] in
+      guard let self else { return }
+      self.stopSpokenPrompt()
+      try? self.startManualSosPattern()
+      self.updateLiveActivitySafetyState()
+      self.activeHikeLiveStatusChannel?.invokeMethod(
+        "onNativeSafetyEvent",
+        arguments: nil
+      )
+    },
+    monitoringReset: { [weak self] in
+      guard let self else { return }
+      self.stopSpokenPrompt()
+      self.stopManualSosPattern()
+      self.updateLiveActivitySafetyState()
+    }
+  )
   private let sosTorchPattern: [(enabled: Bool, duration: TimeInterval)] = [
     (true, 0.22),
     (false, 0.18),
@@ -68,7 +101,9 @@ import ActivityKit
     }
     configureSosDeviceAlertChannel()
     configureDeepLinkChannel()
+    configureSafetyNotifications()
     configureActiveHikeLiveStatusChannel()
+    iosHikeSafetyMonitor.restorePersistedSessionIfNeeded()
     configureHikerBleBridge()
     if let url = launchOptions?[.url] as? URL {
       pendingDeepLink = url.absoluteString
@@ -77,6 +112,11 @@ import ActivityKit
       _ = handleShortcutItem(shortcutItem, notifyFlutter: false)
     }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func applicationWillTerminate(_ application: UIApplication) {
+    iosHikeSafetyMonitor.handleAppWillTerminate()
+    super.applicationWillTerminate(application)
   }
 
   override func application(
@@ -251,6 +291,55 @@ import ActivityKit
     }
   }
 
+  private func configureSafetyNotifications() {
+    let center = UNUserNotificationCenter.current()
+    center.delegate = self
+    let safeAction = UNNotificationAction(
+      identifier: IOSHikeSafetyMonitor.safeActionIdentifier,
+      title: "I'm Safe",
+      options: []
+    )
+    let openAction = UNNotificationAction(
+      identifier: IOSHikeSafetyMonitor.openActionIdentifier,
+      title: "Open HikerCircle",
+      options: [.foreground]
+    )
+    center.setNotificationCategories([
+      UNNotificationCategory(
+        identifier: IOSHikeSafetyMonitor.warningCategoryIdentifier,
+        actions: [safeAction, openAction],
+        intentIdentifiers: [],
+        options: [.customDismissAction]
+      ),
+      UNNotificationCategory(
+        identifier: IOSHikeSafetyMonitor.monitoringStoppedCategoryIdentifier,
+        actions: [openAction],
+        intentIdentifiers: [],
+        options: []
+      ),
+    ])
+  }
+
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    if response.actionIdentifier == IOSHikeSafetyMonitor.safeActionIdentifier {
+      iosHikeSafetyMonitor.cancelAlert(reason: "Notification response received")
+      let deepLink = "hikercircle://hike/safety-safe?source=ios_notification"
+      pendingDeepLink = deepLink
+      deepLinkChannel?.invokeMethod("onDeepLink", arguments: deepLink)
+      completionHandler()
+      return
+    }
+    super.userNotificationCenter(
+      center,
+      didReceive: response,
+      withCompletionHandler: completionHandler
+    )
+  }
+
   private func configureActiveHikeLiveStatusChannel() {
     guard let controller = window?.rootViewController as? FlutterViewController else {
       return
@@ -260,6 +349,7 @@ import ActivityKit
       name: activeHikeLiveStatusChannelName,
       binaryMessenger: controller.binaryMessenger
     )
+    activeHikeLiveStatusChannel = channel
 
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else {
@@ -281,6 +371,8 @@ import ActivityKit
           ))
           return
         }
+        self.latestManualHikeStatus = status
+        self.iosHikeSafetyMonitor.startOrUpdate(arguments: call.arguments)
 
         #if canImport(ActivityKit)
         if #available(iOS 16.1, *) {
@@ -311,6 +403,8 @@ import ActivityKit
         ))
         #endif
       case "stopActiveHikeLiveStatus":
+        self.iosHikeSafetyMonitor.stop()
+        self.latestManualHikeStatus = nil
         #if canImport(ActivityKit)
         if #available(iOS 16.1, *) {
           Task { @MainActor in
@@ -325,6 +419,31 @@ import ActivityKit
         self.activeHikeLiveActivitySessionId = nil
         result(nil)
         #endif
+      case "consumePendingSafetyEvent":
+        result(self.iosHikeSafetyMonitor.pendingEvent())
+      case "acknowledgeSafetyEvent", "cancelNativeSafetyAlert":
+        self.iosHikeSafetyMonitor.cancelAlert(reason: "Safe response received")
+        result(nil)
+      case "markSafetyEventDispatched":
+        let arguments = call.arguments as? [String: Any]
+        self.iosHikeSafetyMonitor.markDispatched(
+          eventId: arguments?["eventId"] as? String,
+          message: arguments?["message"] as? String
+        )
+        result(nil)
+      case "getNativeSafetyStatus":
+        self.iosNativeSafetyStatus(result)
+      case "requestIosSafetyPermissions":
+        self.requestIosSafetyPermissions(result)
+      case "openBackgroundLocationSettings",
+           "openFullScreenIntentSettings",
+           "openOverlaySettings",
+           "openIosSafetySettings":
+        guard let settingsUrl = URL(string: UIApplication.openSettingsURLString) else {
+          result(nil)
+          return
+        }
+        UIApplication.shared.open(settingsUrl) { _ in result(nil) }
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -338,6 +457,118 @@ import ActivityKit
     hikerBleBridge = HikerBleBridge(messenger: controller.binaryMessenger)
   }
 
+  private func iosNativeSafetyStatus(_ result: @escaping FlutterResult) {
+    UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+      guard let self else {
+        result(["platform": "ios", "supported": false])
+        return
+      }
+      let locationStatus = CLLocationManager.authorizationStatus()
+      let notificationStatus: String
+      switch settings.authorizationStatus {
+      case .authorized: notificationStatus = "authorized"
+      case .provisional: notificationStatus = "provisional"
+      case .ephemeral: notificationStatus = "ephemeral"
+      case .denied: notificationStatus = "denied"
+      case .notDetermined: notificationStatus = "not_determined"
+      @unknown default: notificationStatus = "unknown"
+      }
+      let timeSensitiveGranted: Bool
+      if #available(iOS 15.0, *) {
+        timeSensitiveGranted = settings.timeSensitiveSetting == .enabled
+      } else {
+        timeSensitiveGranted = false
+      }
+      let liveActivitiesGranted: Bool
+      #if canImport(ActivityKit)
+      if #available(iOS 16.1, *) {
+        liveActivitiesGranted = ActivityAuthorizationInfo().areActivitiesEnabled
+      } else {
+        // Live Activities are not available, so they are not a blocking
+        // prerequisite for the otherwise supported iOS 15 safety monitor.
+        liveActivitiesGranted = true
+      }
+      #else
+      liveActivitiesGranted = true
+      #endif
+      let motionStatus: String
+      switch CMMotionActivityManager.authorizationStatus() {
+      case .authorized: motionStatus = "authorized"
+      case .denied: motionStatus = "denied"
+      case .restricted: motionStatus = "restricted"
+      case .notDetermined: motionStatus = "not_determined"
+      @unknown default: motionStatus = "unknown"
+      }
+      DispatchQueue.main.async {
+        result([
+          "platform": "ios",
+          "supported": true,
+          "configured": self.iosHikeSafetyMonitor.isActive,
+          "fineLocationGranted": locationStatus == .authorizedAlways
+            || locationStatus == .authorizedWhenInUse,
+          "backgroundLocationGranted": locationStatus == .authorizedAlways,
+          "fullScreenIntentGranted": true,
+          "overlayGranted": true,
+          "notificationAuthorizationStatus": notificationStatus,
+          "notificationsAuthorized": settings.authorizationStatus == .authorized,
+          "timeSensitiveGranted": timeSensitiveGranted,
+          "liveActivitiesGranted": liveActivitiesGranted,
+          "motionAuthorizationStatus": motionStatus,
+          "motionGranted": motionStatus == "authorized",
+        ])
+      }
+    }
+  }
+
+  private func requestIosSafetyPermissions(_ result: @escaping FlutterResult) {
+    let manager = locationManager ?? CLLocationManager()
+    locationManager = manager
+    manager.delegate = self
+    manager.requestAlwaysAuthorization()
+
+    if CMMotionActivityManager.isActivityAvailable() {
+      let motionManager = CMMotionActivityManager()
+      motionAuthorizationManager = motionManager
+      motionManager.startActivityUpdates(to: .main) { [weak self] _ in
+        motionManager.stopActivityUpdates()
+        self?.motionAuthorizationManager = nil
+      }
+    }
+
+    UNUserNotificationCenter.current().requestAuthorization(
+      options: [.alert, .sound, .badge]
+    ) { granted, error in
+      DispatchQueue.main.async {
+        if let error {
+          result(FlutterError(
+            code: "ios_safety_permission_failed",
+            message: error.localizedDescription,
+            details: nil
+          ))
+        } else {
+          result(granted)
+        }
+      }
+    }
+  }
+
+  private func updateLiveActivitySafetyState() {
+    guard let status = latestManualHikeStatus else { return }
+    #if canImport(ActivityKit)
+    if #available(iOS 16.1, *) {
+      Task { @MainActor in
+        guard let activity = Activity<ManualHikeAttributes>.activities.first(
+          where: { $0.attributes.sessionId == status.sessionId }
+        ) else { return }
+        await activity.update(using: status.toContentState(
+          safetyPhase: self.iosHikeSafetyMonitor.safetyPhase,
+          warningDeadline: self.iosHikeSafetyMonitor.warningDeadline
+        ))
+      }
+    }
+    #endif
+  }
+
   #if canImport(ActivityKit)
   @available(iOS 16.1, *)
   @MainActor
@@ -348,7 +579,10 @@ import ActivityKit
       throw ManualHikeLiveActivityError.activitiesDisabled
     }
 
-    let contentState = status.toContentState()
+    let contentState = status.toContentState(
+      safetyPhase: iosHikeSafetyMonitor.safetyPhase,
+      warningDeadline: iosHikeSafetyMonitor.warningDeadline
+    )
     if let activity = Activity<ManualHikeAttributes>.activities.first(
       where: { $0.attributes.sessionId == status.sessionId }
     ) {
@@ -547,8 +781,14 @@ import ActivityKit
 
     switch CLLocationManager.authorizationStatus() {
     case .notDetermined:
-      manager.requestWhenInUseAuthorization()
-    case .authorizedAlways, .authorizedWhenInUse:
+      manager.requestAlwaysAuthorization()
+    case .authorizedWhenInUse:
+      // Active hikes and paired-button handoffs need a fresh fix while the
+      // app is backgrounded. iOS may present this upgrade separately from the
+      // initial When In Use grant, so request it again on a later snapshot.
+      manager.requestAlwaysAuthorization()
+      requestOneShotLocation()
+    case .authorizedAlways:
       requestOneShotLocation()
     case .denied, .restricted:
       completePendingLocation(nil)
@@ -564,6 +804,9 @@ import ActivityKit
     }
 
     manager.desiredAccuracy = isPreciseLocationEnabled ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
+    manager.allowsBackgroundLocationUpdates =
+      CLLocationManager.authorizationStatus() == .authorizedAlways
+    manager.pausesLocationUpdatesAutomatically = false
     locationTimeoutTimer?.invalidate()
     locationTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) {
       [weak self] _ in
@@ -768,6 +1011,572 @@ import ActivityKit
   }
 }
 
+private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
+  static let warningCategoryIdentifier = "HIKER_SAFETY_WARNING"
+  static let monitoringStoppedCategoryIdentifier = "HIKER_MONITORING_STOPPED"
+  static let safeActionIdentifier = "HIKER_IM_SAFE"
+  static let openActionIdentifier = "HIKER_OPEN_APP"
+
+  private static let warningNotificationIdentifier = "hiker_safety_warning"
+  private static let escalationNotificationIdentifier = "hiker_safety_escalated"
+  private static let watchdogNotificationIdentifier = "hiker_monitoring_watchdog"
+  private static let defaultsPrefix = "ios_hike_safety_"
+  private static let warningDuration: TimeInterval = 15
+  private static let watchdogDuration: TimeInterval = 120
+  private static let firebasePublishInterval: TimeInterval = 30
+
+  private enum Phase: String {
+    case monitoring
+    case warning = "awaiting_response"
+    case readyForFlutterDispatch = "ready_for_flutter_dispatch"
+    case dispatched
+  }
+
+  private let motionManager = CMMotionManager()
+  private let locationManager = CLLocationManager()
+  private let motionQueue: OperationQueue = {
+    let queue = OperationQueue()
+    queue.name = "com.leongziqi.hikercircle.ios-hike-motion"
+    queue.qualityOfService = .userInitiated
+    queue.maxConcurrentOperationCount = 1
+    return queue
+  }()
+  private let warningStarted: () -> Void
+  private let escalationStarted: () -> Void
+  private let monitoringReset: () -> Void
+  private var timer: DispatchSourceTimer?
+  private var phase: Phase = .monitoring
+  private var sessionId = ""
+  private var trailName = "Active hike"
+  private var longestRestDuration: TimeInterval = 180
+  private var sensitivity = 5.0
+  private var lastMotionAt = Date()
+  private var referenceLocation: CLLocation?
+  private var latestLocation: CLLocation?
+  private var latestAccelerationMagnitude = 0.0
+  private var latestRotationMagnitude = 0.0
+  private var latestMotionCapturedAt = Date()
+  private var lastFirebasePublishAt: Date?
+  private var lastWatchdogRefreshAt: Date?
+  private var eventId: String?
+  private var eventKind = "prolonged_stillness"
+  private var detectedAt: Date?
+  private(set) var warningDeadline: Date?
+  private var triggeredAt: Date?
+  private var dispatchMessage: String?
+  private var fallImpactAt: Date?
+  private var fallQuietSince: Date?
+
+  private var defaults: UserDefaults { .standard }
+  private func key(_ suffix: String) -> String { Self.defaultsPrefix + suffix }
+
+  var isActive: Bool { defaults.bool(forKey: key("active")) && !sessionId.isEmpty }
+  var safetyPhase: String {
+    switch phase {
+    case .monitoring: return "monitoring"
+    case .warning: return "warning"
+    case .readyForFlutterDispatch, .dispatched: return "escalated"
+    }
+  }
+
+  init(
+    warningStarted: @escaping () -> Void,
+    escalationStarted: @escaping () -> Void,
+    monitoringReset: @escaping () -> Void
+  ) {
+    self.warningStarted = warningStarted
+    self.escalationStarted = escalationStarted
+    self.monitoringReset = monitoringReset
+    super.init()
+    locationManager.delegate = self
+  }
+
+  func startOrUpdate(arguments: Any?) {
+    guard let data = arguments as? [String: Any],
+          let incomingSessionId = data["sessionId"] as? String,
+          !incomingSessionId.isEmpty,
+          (data["fallDetectionEnabled"] as? Bool) == true else {
+      stop()
+      return
+    }
+    let previousSessionId = defaults.string(forKey: key("session_id"))
+    sessionId = incomingSessionId
+    trailName = (data["trailName"] as? String)?.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    ).nonEmpty ?? "Active hike"
+    longestRestDuration = max(
+      30,
+      Self.doubleValue(data["longestRestMillis"]) / 1000
+    )
+    sensitivity = min(10, max(1, Self.doubleValue(data["sensorSensitivity"], fallback: 5)))
+
+    if previousSessionId != incomingSessionId {
+      phase = .monitoring
+      lastMotionAt = Date()
+      clearEventState()
+    } else {
+      restoreState()
+    }
+    defaults.set(true, forKey: key("active"))
+    defaults.set(sessionId, forKey: key("session_id"))
+    defaults.set(trailName, forKey: key("trail_name"))
+    defaults.set(longestRestDuration, forKey: key("rest_seconds"))
+    defaults.set(sensitivity, forKey: key("sensitivity"))
+    persistMotionClock()
+    startLocationUpdates()
+    startMotionUpdates()
+    startTimer()
+    refreshTerminationWatchdog(force: true)
+    publishTelemetry(force: true)
+    if phase == .warning {
+      warningStarted()
+    } else if phase == .readyForFlutterDispatch || phase == .dispatched {
+      escalationStarted()
+    }
+  }
+
+  func restorePersistedSessionIfNeeded() {
+    guard defaults.bool(forKey: key("active")),
+          let savedSessionId = defaults.string(forKey: key("session_id")),
+          !savedSessionId.isEmpty else { return }
+    sessionId = savedSessionId
+    trailName = defaults.string(forKey: key("trail_name")) ?? "Active hike"
+    longestRestDuration = max(30, defaults.double(forKey: key("rest_seconds")))
+    sensitivity = min(10, max(1, defaults.double(forKey: key("sensitivity"))))
+    restoreState()
+    startLocationUpdates()
+    startMotionUpdates()
+    startTimer()
+    refreshTerminationWatchdog(force: true)
+    publishTelemetry(force: true)
+    if phase == .warning {
+      warningStarted()
+    } else if phase == .readyForFlutterDispatch || phase == .dispatched {
+      escalationStarted()
+    }
+  }
+
+  func stop() {
+    motionManager.stopDeviceMotionUpdates()
+    locationManager.stopUpdatingLocation()
+    if CLLocationManager.significantLocationChangeMonitoringAvailable() {
+      locationManager.stopMonitoringSignificantLocationChanges()
+    }
+    timer?.cancel()
+    timer = nil
+    UNUserNotificationCenter.current().removePendingNotificationRequests(
+      withIdentifiers: [
+        Self.warningNotificationIdentifier,
+        Self.escalationNotificationIdentifier,
+        Self.watchdogNotificationIdentifier,
+      ]
+    )
+    UNUserNotificationCenter.current().removeDeliveredNotifications(
+      withIdentifiers: [
+        Self.warningNotificationIdentifier,
+        Self.escalationNotificationIdentifier,
+        Self.watchdogNotificationIdentifier,
+      ]
+    )
+    defaults.set(false, forKey: key("active"))
+    clearEventState()
+    phase = .monitoring
+    sessionId = ""
+    monitoringReset()
+  }
+
+  func handleAppWillTerminate() {
+    guard isActive else { return }
+    scheduleMonitoringStoppedNotification(after: 1)
+  }
+
+  func pendingEvent() -> [String: Any]? {
+    guard let eventId else { return nil }
+    var value: [String: Any] = [
+      "eventId": eventId,
+      "sessionId": sessionId,
+      "kind": eventKind,
+      "phase": phase.rawValue,
+      "detectedAtMillis": Self.millis(detectedAt),
+      "deadlineAtMillis": Self.millis(warningDeadline),
+      "triggeredAtMillis": Self.millis(triggeredAt),
+    ]
+    if let dispatchMessage { value["dispatchMessage"] = dispatchMessage }
+    return value
+  }
+
+  func cancelAlert(reason: String) {
+    guard isActive else { return }
+    UNUserNotificationCenter.current().removePendingNotificationRequests(
+      withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
+    )
+    UNUserNotificationCenter.current().removeDeliveredNotifications(
+      withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
+    )
+    clearEventState()
+    phase = .monitoring
+    lastMotionAt = Date()
+    persistMotionClock()
+    refreshTerminationWatchdog(force: true)
+    monitoringReset()
+  }
+
+  func markDispatched(eventId requestedEventId: String?, message: String?) {
+    guard requestedEventId == eventId else { return }
+    phase = .dispatched
+    dispatchMessage = message
+    persistEventState()
+  }
+
+  private func startLocationUpdates() {
+    locationManager.desiredAccuracy = kCLLocationAccuracyBest
+    locationManager.distanceFilter = kCLDistanceFilterNone
+    locationManager.activityType = .fitness
+    locationManager.pausesLocationUpdatesAutomatically = false
+    locationManager.showsBackgroundLocationIndicator = true
+    locationManager.allowsBackgroundLocationUpdates =
+      CLLocationManager.authorizationStatus() == .authorizedAlways
+    locationManager.startUpdatingLocation()
+    if CLLocationManager.significantLocationChangeMonitoringAvailable() {
+      locationManager.startMonitoringSignificantLocationChanges()
+    }
+  }
+
+  private func startMotionUpdates() {
+    guard motionManager.isDeviceMotionAvailable else { return }
+    motionManager.deviceMotionUpdateInterval = 0.1
+    if motionManager.isDeviceMotionActive { return }
+    motionManager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, _ in
+      guard let self, let motion else { return }
+      self.handleMotion(motion)
+    }
+  }
+
+  private func startTimer() {
+    timer?.cancel()
+    let timer = DispatchSource.makeTimerSource(queue: .main)
+    timer.schedule(deadline: .now() + 1, repeating: 1)
+    timer.setEventHandler { [weak self] in self?.evaluateState() }
+    self.timer = timer
+    timer.resume()
+  }
+
+  private func handleMotion(_ motion: CMDeviceMotion) {
+    let accelerationMagnitude = sqrt(
+      pow(motion.userAcceleration.x, 2)
+        + pow(motion.userAcceleration.y, 2)
+        + pow(motion.userAcceleration.z, 2)
+    ) * 9.80665
+    let rotationMagnitude = sqrt(
+      pow(motion.rotationRate.x, 2)
+        + pow(motion.rotationRate.y, 2)
+        + pow(motion.rotationRate.z, 2)
+    )
+    let totalAcceleration = sqrt(
+      pow(motion.gravity.x + motion.userAcceleration.x, 2)
+        + pow(motion.gravity.y + motion.userAcceleration.y, 2)
+        + pow(motion.gravity.z + motion.userAcceleration.z, 2)
+    ) * 9.80665
+    latestAccelerationMagnitude = accelerationMagnitude
+    latestRotationMagnitude = rotationMagnitude
+    latestMotionCapturedAt = Date()
+
+    let normalizedSensitivity = (sensitivity - 1) / 9
+    let movementThreshold = 0.55 + (1.25 - 0.55) * normalizedSensitivity
+    let impactThreshold = (5.0 + (4.0 - 5.0) * normalizedSensitivity) * 9.80665
+    let meaningfulMovement = rotationMagnitude > 0.08
+      || accelerationMagnitude > movementThreshold
+
+    if totalAcceleration >= impactThreshold && phase == .monitoring {
+      fallImpactAt = Date()
+      fallQuietSince = nil
+    }
+    if let fallImpactAt {
+      let age = Date().timeIntervalSince(fallImpactAt)
+      if age > 60 {
+        self.fallImpactAt = nil
+        fallQuietSince = nil
+      } else if age >= 2 {
+        if rotationMagnitude <= 0.08 && accelerationMagnitude <= 0.22 {
+          fallQuietSince = fallQuietSince ?? Date()
+          if let quietSince = fallQuietSince,
+             Date().timeIntervalSince(quietSince) >= 10 {
+            self.fallImpactAt = nil
+            fallQuietSince = nil
+            DispatchQueue.main.async { [weak self] in
+              self?.beginWarning(kind: "fall_stillness")
+            }
+          }
+        } else {
+          fallQuietSince = nil
+        }
+      }
+    }
+
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      if meaningfulMovement && self.phase == .monitoring {
+        self.noteMeaningfulMotion()
+      }
+      self.publishTelemetry()
+    }
+  }
+
+  private func noteMeaningfulMotion() {
+    lastMotionAt = Date()
+    persistMotionClock()
+    refreshTerminationWatchdog()
+  }
+
+  private func evaluateState() {
+    guard isActive else { return }
+    refreshTerminationWatchdog()
+    publishTelemetry()
+    switch phase {
+    case .monitoring:
+      if Date().timeIntervalSince(lastMotionAt) >= longestRestDuration {
+        beginWarning(kind: "prolonged_stillness")
+      }
+    case .warning:
+      if let warningDeadline, Date() >= warningDeadline {
+        escalate()
+      }
+    case .readyForFlutterDispatch, .dispatched:
+      break
+    }
+  }
+
+  private func beginWarning(kind: String) {
+    guard phase == .monitoring, isActive else { return }
+    let now = Date()
+    eventKind = kind
+    eventId = "\(sessionId):\(kind):\(Int(now.timeIntervalSince1970 * 1000))"
+    detectedAt = now
+    warningDeadline = now.addingTimeInterval(Self.warningDuration)
+    triggeredAt = nil
+    dispatchMessage = nil
+    phase = .warning
+    persistEventState()
+    scheduleWarningNotification()
+    warningStarted()
+  }
+
+  private func escalate() {
+    guard phase == .warning else { return }
+    phase = .readyForFlutterDispatch
+    triggeredAt = Date()
+    persistEventState()
+    scheduleEscalationNotification()
+    escalationStarted()
+  }
+
+  func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    let status = CLLocationManager.authorizationStatus()
+    manager.allowsBackgroundLocationUpdates = status == .authorizedAlways
+    if status == .authorizedAlways || status == .authorizedWhenInUse {
+      manager.startUpdatingLocation()
+    }
+  }
+
+  func locationManager(
+    _ manager: CLLocationManager,
+    didUpdateLocations locations: [CLLocation]
+  ) {
+    guard let location = locations.last,
+          location.horizontalAccuracy >= 0,
+          location.horizontalAccuracy <= 500 else { return }
+    latestLocation = location
+    if let referenceLocation {
+      let threshold = max(
+        5,
+        min(100, max(referenceLocation.horizontalAccuracy, location.horizontalAccuracy) * 1.5)
+      )
+      if location.distance(from: referenceLocation) > threshold {
+        self.referenceLocation = location
+        if phase == .monitoring { noteMeaningfulMotion() }
+      } else if location.horizontalAccuracy < referenceLocation.horizontalAccuracy {
+        self.referenceLocation = location
+      }
+    } else {
+      referenceLocation = location
+    }
+    refreshTerminationWatchdog()
+    publishTelemetry()
+  }
+
+  func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    publishTelemetry()
+  }
+
+  private func publishTelemetry(force: Bool = false) {
+    guard isActive, FirebaseApp.app() != nil else { return }
+    let now = Date()
+    if !force, let lastFirebasePublishAt,
+       now.timeIntervalSince(lastFirebasePublishAt) < Self.firebasePublishInterval {
+      return
+    }
+    lastFirebasePublishAt = now
+    var data: [String: Any] = [
+      "monitoringHeartbeatAt": FieldValue.serverTimestamp(),
+      "monitoringHeartbeatAtLocal": ISO8601DateFormatter().string(from: now),
+      "monitoringLifecycleState": "ios_native_monitoring",
+      "monitoringExpected": true,
+      "latestMotion": [
+        "source": "ios_native_core_motion",
+        "accelerationMagnitude": latestAccelerationMagnitude,
+        "rotationRateMagnitude": latestRotationMagnitude,
+        "capturedAtLocal": ISO8601DateFormatter().string(from: latestMotionCapturedAt),
+      ],
+      "latestMotionUpdatedAt": FieldValue.serverTimestamp(),
+      "latestMotionUpdatedAtLocal": ISO8601DateFormatter().string(from: latestMotionCapturedAt),
+      "updatedAt": FieldValue.serverTimestamp(),
+      "updatedAtLocal": ISO8601DateFormatter().string(from: now),
+    ]
+    if let location = latestLocation {
+      data["latestLocation"] = [
+        "latitude": location.coordinate.latitude,
+        "longitude": location.coordinate.longitude,
+        "accuracyMeters": max(0, location.horizontalAccuracy),
+        "capturedAtLocal": ISO8601DateFormatter().string(from: location.timestamp),
+        "source": "ios_native_background_location",
+      ]
+      data["latestLocationUpdatedAt"] = FieldValue.serverTimestamp()
+      data["latestLocationUpdatedAtLocal"] = ISO8601DateFormatter().string(
+        from: location.timestamp
+      )
+    }
+    Firestore.firestore().collection("hikeSessions").document(sessionId).setData(
+      data,
+      merge: true
+    )
+  }
+
+  private func refreshTerminationWatchdog(force: Bool = false) {
+    let now = Date()
+    if !force, let lastWatchdogRefreshAt,
+       now.timeIntervalSince(lastWatchdogRefreshAt) < 45 {
+      return
+    }
+    lastWatchdogRefreshAt = now
+    scheduleMonitoringStoppedNotification(after: Self.watchdogDuration)
+  }
+
+  private func scheduleMonitoringStoppedNotification(after delay: TimeInterval) {
+    guard !sessionId.isEmpty else { return }
+    let content = UNMutableNotificationContent()
+    content.title = "Hike monitoring stopped"
+    content.body = "HikerCircle may have been terminated during your active hike. Reopen it now to restore wellbeing monitoring."
+    content.sound = .default
+    content.categoryIdentifier = Self.monitoringStoppedCategoryIdentifier
+    content.userInfo = [
+      "type": "active_hike_monitoring_stopped",
+      "sessionId": sessionId,
+      "deepLink": "hikercircle://hike/active?sessionId=\(sessionId)",
+    ]
+    if #available(iOS 15.0, *) { content.interruptionLevel = .timeSensitive }
+    let request = UNNotificationRequest(
+      identifier: Self.watchdogNotificationIdentifier,
+      content: content,
+      trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, delay), repeats: false)
+    )
+    let center = UNUserNotificationCenter.current()
+    center.removePendingNotificationRequests(withIdentifiers: [Self.watchdogNotificationIdentifier])
+    center.add(request)
+  }
+
+  private func scheduleWarningNotification() {
+    let content = UNMutableNotificationContent()
+    content.title = "Are you okay?"
+    content.body = "Tap I'm Safe within 15 seconds. No SOS has been sent yet."
+    content.sound = .default
+    content.categoryIdentifier = Self.warningCategoryIdentifier
+    content.userInfo = ["eventId": eventId ?? "", "sessionId": sessionId]
+    if #available(iOS 15.0, *) { content.interruptionLevel = .timeSensitive }
+    let request = UNNotificationRequest(
+      identifier: Self.warningNotificationIdentifier,
+      content: content,
+      trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+    )
+    UNUserNotificationCenter.current().add(request)
+  }
+
+  private func scheduleEscalationNotification() {
+    let content = UNMutableNotificationContent()
+    content.title = "SOS escalation started"
+    content.body = "HikerCircle is sending your emergency alert. Open the app or tap I'm Safe to stop the physical alarm."
+    content.sound = .default
+    content.categoryIdentifier = Self.warningCategoryIdentifier
+    content.userInfo = ["eventId": eventId ?? "", "sessionId": sessionId]
+    if #available(iOS 15.0, *) { content.interruptionLevel = .timeSensitive }
+    let request = UNNotificationRequest(
+      identifier: Self.escalationNotificationIdentifier,
+      content: content,
+      trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+    )
+    UNUserNotificationCenter.current().add(request)
+  }
+
+  private func restoreState() {
+    if let savedMotionAt = defaults.object(forKey: key("last_motion_at")) as? Date {
+      lastMotionAt = savedMotionAt
+    } else {
+      lastMotionAt = Date()
+    }
+    phase = Phase(rawValue: defaults.string(forKey: key("phase")) ?? "") ?? .monitoring
+    eventId = defaults.string(forKey: key("event_id"))
+    eventKind = defaults.string(forKey: key("event_kind")) ?? "prolonged_stillness"
+    detectedAt = defaults.object(forKey: key("detected_at")) as? Date
+    warningDeadline = defaults.object(forKey: key("warning_deadline")) as? Date
+    triggeredAt = defaults.object(forKey: key("triggered_at")) as? Date
+    dispatchMessage = defaults.string(forKey: key("dispatch_message"))
+  }
+
+  private func persistMotionClock() {
+    defaults.set(lastMotionAt, forKey: key("last_motion_at"))
+  }
+
+  private func persistEventState() {
+    defaults.set(phase.rawValue, forKey: key("phase"))
+    defaults.set(eventId, forKey: key("event_id"))
+    defaults.set(eventKind, forKey: key("event_kind"))
+    defaults.set(detectedAt, forKey: key("detected_at"))
+    defaults.set(warningDeadline, forKey: key("warning_deadline"))
+    defaults.set(triggeredAt, forKey: key("triggered_at"))
+    defaults.set(dispatchMessage, forKey: key("dispatch_message"))
+  }
+
+  private func clearEventState() {
+    eventId = nil
+    eventKind = "prolonged_stillness"
+    detectedAt = nil
+    warningDeadline = nil
+    triggeredAt = nil
+    dispatchMessage = nil
+    for suffix in [
+      "phase", "event_id", "event_kind", "detected_at",
+      "warning_deadline", "triggered_at", "dispatch_message",
+    ] {
+      defaults.removeObject(forKey: key(suffix))
+    }
+  }
+
+  private static func doubleValue(_ value: Any?, fallback: Double = 0) -> Double {
+    if let number = value as? NSNumber { return number.doubleValue }
+    if let value = value as? Double { return value }
+    if let value = value as? Int { return Double(value) }
+    return fallback
+  }
+
+  private static func millis(_ date: Date?) -> Int64 {
+    guard let date else { return 0 }
+    return Int64(date.timeIntervalSince1970 * 1000)
+  }
+}
+
+private extension String {
+  var nonEmpty: String? { isEmpty ? nil : self }
+}
+
 enum SosDeviceAlertError: LocalizedError {
   case alarmAssetMissing
   case alarmPlaybackFailed
@@ -860,7 +1669,10 @@ private struct ManualHikeLiveStatus {
 
   #if canImport(ActivityKit)
   @available(iOS 16.1, *)
-  func toContentState() -> ManualHikeAttributes.ContentState {
+  func toContentState(
+    safetyPhase: String = "monitoring",
+    warningDeadline: Date? = nil
+  ) -> ManualHikeAttributes.ContentState {
     let expectedReturnAt = expectedReturnAtMillis > 0
       ? Date(timeIntervalSince1970: expectedReturnAtMillis / 1000)
       : nil
@@ -874,7 +1686,9 @@ private struct ManualHikeLiveStatus {
       queuedUpdates: queuedUpdates,
       batteryLevel: batteryLevel,
       distanceKm: distanceKm,
-      routePointCount: routePointCount
+      routePointCount: routePointCount,
+      safetyPhase: safetyPhase,
+      warningDeadline: warningDeadline
     )
   }
   #endif
@@ -893,6 +1707,8 @@ struct ManualHikeAttributes: ActivityAttributes {
     var batteryLevel: Int
     var distanceKm: Double
     var routePointCount: Int
+    var safetyPhase: String
+    var warningDeadline: Date?
   }
 
   var sessionId: String

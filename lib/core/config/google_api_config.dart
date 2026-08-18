@@ -14,11 +14,9 @@ abstract final class GoogleApiConfig {
   );
 
   static String get mapboxAccessToken {
-    final env = _mapboxAccessToken.trim();
-    if (env.isNotEmpty) return env;
-    final dot = _dotenvValue('MAPBOX_ACCESS_TOKEN');
-    if (dot.isNotEmpty) return dot;
-    return '';
+    final buildValue = _mapboxAccessToken.trim();
+    if (buildValue.isNotEmpty) return buildValue;
+    return _dotenvValue('MAPBOX_ACCESS_TOKEN');
   }
 
   static bool get hasMapboxAccessToken => mapboxAccessToken.trim().isNotEmpty;
@@ -28,11 +26,9 @@ abstract final class GoogleApiConfig {
   );
 
   static String get routesApiKey {
-    final env = _routesApiKey.trim();
-    if (env.isNotEmpty) return env;
-    final dot = _dotenvValue('GOOGLE_ROUTES_API_KEY');
-    if (dot.isNotEmpty) return dot;
-    return '';
+    final buildValue = _routesApiKey.trim();
+    if (buildValue.isNotEmpty) return buildValue;
+    return _dotenvValue('GOOGLE_ROUTES_API_KEY');
   }
 
   static const String _geocodingApiKey = String.fromEnvironment(
@@ -40,10 +36,10 @@ abstract final class GoogleApiConfig {
   );
 
   static String get geocodingApiKey {
-    final env = _geocodingApiKey.trim();
-    if (env.isNotEmpty) return env;
-    final dot = _dotenvValue('GOOGLE_GEOCODING_API_KEY');
-    if (dot.isNotEmpty) return dot;
+    final buildValue = _geocodingApiKey.trim();
+    if (buildValue.isNotEmpty) return buildValue;
+    final dotenvValue = _dotenvValue('GOOGLE_GEOCODING_API_KEY');
+    if (dotenvValue.isNotEmpty) return dotenvValue;
     return routesApiKey;
   }
 
@@ -56,11 +52,9 @@ abstract final class GoogleApiConfig {
   );
 
   static String get geoapifyApiKey {
-    final env = _geoapifyApiKey.trim();
-    if (env.isNotEmpty) return env;
-    final dot = _dotenvValue('GEOAPIFY_API_KEY');
-    if (dot.isNotEmpty) return dot;
-    return '';
+    final buildValue = _geoapifyApiKey.trim();
+    if (buildValue.isNotEmpty) return buildValue;
+    return _dotenvValue('GEOAPIFY_API_KEY');
   }
 
   static bool get hasGeoapifyApiKey => geoapifyApiKey.trim().isNotEmpty;
@@ -70,11 +64,9 @@ abstract final class GoogleApiConfig {
   );
 
   static String get openRouteServiceApiKey {
-    final env = _openRouteServiceApiKey.trim();
-    if (env.isNotEmpty) return env;
-    final dot = _dotenvValue('OPENROUTESERVICE_API_KEY');
-    if (dot.isNotEmpty) return dot;
-    return '';
+    final buildValue = _openRouteServiceApiKey.trim();
+    if (buildValue.isNotEmpty) return buildValue;
+    return _dotenvValue('OPENROUTESERVICE_API_KEY');
   }
 
   static bool get hasOpenRouteServiceApiKey =>

@@ -96,6 +96,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   void initState() {
     super.initState();
     _appViewModel = AppViewModel(
+      firebaseAvailable: widget.firebaseBootstrapResult.isAvailable,
       sessionRepository: SessionRepository(
         firebaseUserRepository: FirebaseUserRepository(
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
@@ -116,7 +117,9 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   }
 
   void _refresh() {
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Widget _buildRoot({String? initialDeepLink}) {
@@ -299,6 +302,20 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           return null;
         }
         return _rootRoute(initialDeepLink: initialDeepLink, settings: settings);
+      },
+      onUnknownRoute: (settings) {
+        final routeName = settings.name;
+        final uri = routeName == null ? null : Uri.tryParse(routeName);
+        final routeLabel = uri == null
+            ? routeName
+            : '${uri.scheme.isEmpty ? '' : '${uri.scheme}://'}'
+                  '${uri.host}${uri.path}';
+        debugPrint(
+          'HikerCircle ignored unsupported navigation route: $routeLabel',
+        );
+        return _rootRoute(
+          settings: const RouteSettings(name: Navigator.defaultRouteName),
+        );
       },
     );
   }

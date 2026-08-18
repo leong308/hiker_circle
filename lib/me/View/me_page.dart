@@ -11,6 +11,7 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
+import '../../app/Model/preferred_time_zone.dart';
 import '../../core/models/hiker_level.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
@@ -358,7 +359,10 @@ class _MePageState extends State<MePage> {
   void _openAdvancedSettings() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => const _AdvancedAppSettingsPage(),
+        builder: (context) => _AdvancedAppSettingsPage(
+          session: widget.session,
+          firebaseRepository: firebaseRepository,
+        ),
       ),
     );
   }
@@ -544,6 +548,12 @@ class _ProfileCell extends StatelessWidget {
                           width: 58,
                           height: 58,
                           fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Icon(
+                                CupertinoIcons.person_fill,
+                                color: _MeColors.green,
+                                size: 31,
+                              ),
                         )
                       : profile.photoURL != null
                       ? Image.network(
@@ -1094,10 +1104,26 @@ class _MutableQr {
 }
 
 String _profileLink(MeProfile profile) {
-  final handle = Uri.encodeComponent(profile.handle.replaceFirst('@', ''));
-  final name = Uri.encodeComponent(profile.displayName);
-  final phone = Uri.encodeComponent(profile.phoneNumber);
-  return 'hikercircle://buddy/add?h=$handle&n=$name&p=$phone';
+  var handle = profile.handle.replaceFirst('@', '').trim();
+  if (handle.isEmpty) {
+    handle = 'hiker';
+  }
+  var normalizedPhone = profile.phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+  if (normalizedPhone.length > 18) {
+    normalizedPhone = normalizedPhone.substring(0, 18);
+  }
+  final phone = Uri.encodeComponent(normalizedPhone);
+  String buildLink() =>
+      'hikercircle://buddy/add?h=${Uri.encodeComponent(handle)}&p=$phone';
+
+  // The bundled encoder is QR version 4-L (73 byte payload). The phone number
+  // is the stable buddy identifier, so trim only the display handle for legacy
+  // profiles whose usernames predate the current length limit.
+  while (utf8.encode(buildLink()).length > 73 && handle.runes.length > 1) {
+    final runes = handle.runes.toList()..removeLast();
+    handle = String.fromCharCodes(runes);
+  }
+  return buildLink();
 }
 
 class _AchievementProfileItem {
@@ -1191,7 +1217,7 @@ String _mapString(Object? value) {
 }
 
 int _mapInt(Object? value) {
-  return value is num ? value.toInt() : 0;
+  return value is num && value.isFinite ? value.toInt() : 0;
 }
 
 String _formatAchievementDate(DateTime date) {
@@ -1244,89 +1270,12 @@ String? _countLabelForAction(String title) {
   };
 }
 
-const List<_ProfileHistoryItem> _postHistoryItems = [
-  _ProfileHistoryItem(
-    title: 'Broga sunrise note',
-    subtitle: 'Shared muddy fork warning and sunrise timing after a hike.',
-    meta: '42 likes - 8 replies',
-    icon: Icons.forum_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Gasing easy loop recap',
-    subtitle: 'Posted a beginner-friendly route recap with checkpoint advice.',
-    meta: '18 likes - 3 replies',
-    icon: Icons.photo_library_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Rain gear reminder',
-    subtitle: 'Community tip from a wet Penang Hill morning session.',
-    meta: 'Saved by 9 hikers',
-    icon: Icons.umbrella_rounded,
-  ),
-];
-
-const List<_ProfileHistoryItem> _circleHistoryItems = [
-  _ProfileHistoryItem(
-    title: 'Gasing Easy Loop',
-    subtitle: 'Team circle for a recent group hike.',
-    meta: '4 members - Ready',
-    icon: Icons.groups_2_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Morning Ridge Crew',
-    subtitle: 'Broga Hill team draft from QR-added buddies.',
-    meta: '5 members - Draft',
-    icon: Icons.flag_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Penang Mist Walk',
-    subtitle: 'Completed circle from a heritage trail hike.',
-    meta: '3 members - Completed',
-    icon: Icons.verified_rounded,
-  ),
-];
-
-const List<_ProfileHistoryItem> _buddyHistoryItems = [
-  _ProfileHistoryItem(
-    title: 'Trail Buddy',
-    subtitle: 'Added from Community after sharing safety notes.',
-    meta: 'Connected',
-    icon: Icons.person_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Route Partner',
-    subtitle: 'Joined two team hikes and helps with beginner loops.',
-    meta: 'Connected',
-    icon: Icons.person_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Safety Contact',
-    subtitle: 'Added from a QR scan after route planning.',
-    meta: 'Connected',
-    icon: Icons.qr_code_rounded,
-  ),
-];
-
-const List<_ProfileHistoryItem> _trailHistoryItems = [
-  _ProfileHistoryItem(
-    title: 'Broga Hill Trail',
-    subtitle: 'Completed sunrise hike with one hazard report reviewed.',
-    meta: '3.4 km - Moderate',
-    icon: Icons.terrain_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Bukit Gasing Trail',
-    subtitle: 'Saved offline and used for team training.',
-    meta: '5.1 km - Easy',
-    icon: Icons.map_rounded,
-  ),
-  _ProfileHistoryItem(
-    title: 'Penang Hill Heritage Trail',
-    subtitle: 'Completed in misty weather with team check-ins.',
-    meta: '4.8 km - Moderate',
-    icon: Icons.landscape_rounded,
-  ),
-];
+// History repositories are not implemented yet. Keep these lists empty instead
+// of presenting sample activity as if it belongs to the signed-in hiker.
+const List<_ProfileHistoryItem> _postHistoryItems = [];
+const List<_ProfileHistoryItem> _circleHistoryItems = [];
+const List<_ProfileHistoryItem> _buddyHistoryItems = [];
+const List<_ProfileHistoryItem> _trailHistoryItems = [];
 
 class _ProfileHistoryItem {
   const _ProfileHistoryItem({
@@ -1397,10 +1346,26 @@ class _ProfileHistoryPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  for (final item in items) ...[
-                    _ProfileHistoryCard(item: item),
-                    const SizedBox(height: 10),
-                  ],
+                  if (items.isEmpty)
+                    _InsetGroup(
+                      child: Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: Text(
+                          'No profile activity is available here yet.',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: _MeColors.secondaryTextFor(context),
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ),
+                    )
+                  else
+                    for (final item in items) ...[
+                      _ProfileHistoryCard(item: item),
+                      const SizedBox(height: 10),
+                    ],
                 ],
               ),
             ),
@@ -1419,54 +1384,39 @@ class _ProfileHistoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: _TapSurface(
-        onTap: () => ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('${item.title} detail opened.'),
-              behavior: SnackBarBehavior.floating,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Glyph(icon: item.icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: _MeColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _MeColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _MiniPill(label: item.meta),
+                ],
+              ),
             ),
-          ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _Glyph(icon: item.icon),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: _MeColors.textFor(context),
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      item.subtitle,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _MeColors.secondaryTextFor(context),
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _MiniPill(label: item.meta),
-                  ],
-                ),
-              ),
-              Icon(
-                CupertinoIcons.chevron_forward,
-                color: _MeColors.chevronFor(context),
-                size: 16,
-              ),
-            ],
-          ),
+          ],
         ),
       ),
     );
@@ -2024,8 +1974,8 @@ class _HelpCenterPage extends StatelessWidget {
                     item: _ProfileHistoryItem(
                       title: 'Report a problem',
                       subtitle:
-                          'Dummy support entry for account, map, or community issues.',
-                      meta: 'Support',
+                          'A support contact has not been configured in this mobile build.',
+                      meta: 'Unavailable',
                       icon: Icons.support_agent_rounded,
                     ),
                   ),
@@ -2040,7 +1990,13 @@ class _HelpCenterPage extends StatelessWidget {
 }
 
 class _AdvancedAppSettingsPage extends StatefulWidget {
-  const _AdvancedAppSettingsPage();
+  const _AdvancedAppSettingsPage({
+    required this.session,
+    required this.firebaseRepository,
+  });
+
+  final AppSession session;
+  final HikerCircleFirebaseRepository firebaseRepository;
 
   @override
   State<_AdvancedAppSettingsPage> createState() =>
@@ -2052,15 +2008,18 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
   final LocalSessionDatabase _localDatabase = LocalSessionDatabase();
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
-  String _language = 'English';
   CacheUsageSummary? _cacheUsageSummary;
   bool _isClearingCache = false;
+  bool _isLoadingTimeZone = true;
+  bool _isSavingTimeZone = false;
+  String _timeZoneStatus = 'Loading your saved SOS timezone…';
 
   @override
   void initState() {
     super.initState();
     _settings.addListener(_handleSettingsChanged);
     unawaited(_loadCacheUsage());
+    unawaited(_loadPreferredTimeZone());
   }
 
   @override
@@ -2076,13 +2035,112 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
   }
 
   Future<void> _loadCacheUsage() async {
-    final summary = await _localDatabase.loadCacheUsageSummary();
-    if (!mounted) {
+    try {
+      final summary = await _localDatabase.loadCacheUsageSummary();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _cacheUsageSummary = summary;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cacheUsageSummary = null;
+      });
+    }
+  }
+
+  Future<void> _loadPreferredTimeZone() async {
+    try {
+      final saved = await widget.firebaseRepository.loadPreferredTimeZone(
+        session: widget.session,
+      );
+      if (saved != null) {
+        _settings.setPreferredTimeZone(saved);
+      } else {
+        await widget.firebaseRepository.savePreferredTimeZone(
+          session: widget.session,
+          preferredTimeZone: _settings.preferredTimeZone,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _timeZoneStatus = 'Synced with Firebase for outgoing SOS messages.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _timeZoneStatus =
+            'Could not reach Firebase. SOS messages fall back to GMT+8.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingTimeZone = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _choosePreferredTimeZone() async {
+    if (_isLoadingTimeZone || _isSavingTimeZone) return;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: _MeColors.surfaceFor(context),
+      builder: (context) =>
+          _TimeZonePickerSheet(selectedTimeZone: _settings.preferredTimeZone),
+    );
+    if (selected == null ||
+        selected == _settings.preferredTimeZone ||
+        !mounted) {
       return;
     }
+
+    final previous = _settings.preferredTimeZone;
+    _settings.setPreferredTimeZone(selected);
     setState(() {
-      _cacheUsageSummary = summary;
+      _isSavingTimeZone = true;
+      _timeZoneStatus = 'Saving to Firebase…';
     });
+    try {
+      await widget.firebaseRepository.savePreferredTimeZone(
+        session: widget.session,
+        preferredTimeZone: selected,
+      );
+      if (!mounted) return;
+      setState(() {
+        _timeZoneStatus = 'Synced with Firebase for outgoing SOS messages.';
+      });
+    } catch (error) {
+      _settings.setPreferredTimeZone(previous);
+      if (!mounted) return;
+      setState(() {
+        _timeZoneStatus =
+            'Not saved. SOS messages continue using the previous timezone.';
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              error is HikerCircleFirebaseRepositoryException
+                  ? error.message
+                  : 'Unable to save the SOS timezone right now.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingTimeZone = false;
+        });
+      }
+    }
   }
 
   Future<void> _setPreciseLocation(bool enabled) async {
@@ -2114,8 +2172,20 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
       }
     }
 
-    _settings.setPreciseLocationEnabled(enabled);
-    await _deviceAlertService.setPreciseLocationEnabled(enabled);
+    try {
+      await _deviceAlertService.setPreciseLocationEnabled(enabled);
+      _settings.setPreciseLocationEnabled(enabled);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to update location accuracy right now.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
   Future<void> _clearCacheData() async {
@@ -2125,22 +2195,37 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
     setState(() {
       _isClearingCache = true;
     });
-    await _localDatabase.clearCacheData();
-    await _loadCacheUsage();
-    if (!mounted) {
-      return;
+    try {
+      await _localDatabase.clearCacheData();
+      await _loadCacheUsage();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Cached maps and connection history cleared.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to clear cached data right now.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isClearingCache = false;
+        });
+      }
     }
-    setState(() {
-      _isClearingCache = false;
-    });
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Offline maps and connection history cleared.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
   }
 
   @override
@@ -2167,9 +2252,28 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                   _ChoiceSettingCard(
                     icon: Icons.language_rounded,
                     title: 'App language',
-                    value: _language,
-                    options: const ['English', 'Malay', 'Chinese'],
-                    onSelected: (value) => setState(() => _language = value),
+                    value: _settings.language,
+                    options: const ['English'],
+                    onSelected: _settings.setLanguage,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Additional languages will appear after their translations are available.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _MeColors.secondaryTextFor(context),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _SectionTitle(label: 'Safety & Region'),
+                  const SizedBox(height: 8),
+                  _TimeZoneSettingCard(
+                    value: PreferredTimeZone.compactLabel(
+                      _settings.preferredTimeZone,
+                    ),
+                    timeZoneId: _settings.preferredTimeZone,
+                    status: _timeZoneStatus,
+                    isBusy: _isLoadingTimeZone || _isSavingTimeZone,
+                    onTap: () => unawaited(_choosePreferredTimeZone()),
                   ),
                   const SizedBox(height: 18),
                   _SectionTitle(label: 'Appearance & Theme'),
@@ -3088,6 +3192,217 @@ class _ChoiceSettingCard extends StatelessWidget {
                     onSelected: (_) => onSelected(option),
                   ),
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimeZoneSettingCard extends StatelessWidget {
+  const _TimeZoneSettingCard({
+    required this.value,
+    required this.timeZoneId,
+    required this.status,
+    required this.isBusy,
+    required this.onTap,
+  });
+
+  final String value;
+  final String timeZoneId;
+  final String status;
+  final bool isBusy;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: isBusy ? null : onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _Glyph(icon: Icons.schedule_rounded),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'SOS message timezone',
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: _MeColors.textFor(context),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        value,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: _MeColors.green,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      Text(
+                        timeZoneId,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _MeColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        status,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _MeColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                if (isBusy)
+                  const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2.2),
+                  )
+                else
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: _MeColors.chevronFor(context),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TimeZonePickerSheet extends StatefulWidget {
+  const _TimeZonePickerSheet({required this.selectedTimeZone});
+
+  final String selectedTimeZone;
+
+  @override
+  State<_TimeZonePickerSheet> createState() => _TimeZonePickerSheetState();
+}
+
+class _TimeZonePickerSheetState extends State<_TimeZonePickerSheet> {
+  String _query = '';
+
+  List<String> get _filteredTimeZones {
+    final query = _query.trim().toLowerCase();
+    if (query.isEmpty) return PreferredTimeZone.allIds;
+    return PreferredTimeZone.allIds
+        .where((timeZoneId) {
+          return timeZoneId.toLowerCase().contains(query) ||
+              PreferredTimeZone.fullLabel(
+                timeZoneId,
+              ).toLowerCase().contains(query);
+        })
+        .toList(growable: false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final timeZones = _filteredTimeZones;
+    return FractionallySizedBox(
+      heightFactor: 0.9,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 4, 18, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'SOS message timezone',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: _MeColors.textFor(context),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Alert times use this timezone even when the phone is elsewhere.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _MeColors.secondaryTextFor(context),
+                letterSpacing: 0,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              autofocus: true,
+              onChanged: (value) => setState(() => _query = value),
+              decoration: InputDecoration(
+                hintText: 'Search city or timezone',
+                prefixIcon: const Icon(Icons.search_rounded),
+                filled: true,
+                fillColor: _MeColors.backgroundFor(context),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: timeZones.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No matching timezone',
+                        style: TextStyle(
+                          color: _MeColors.secondaryTextFor(context),
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      itemCount: timeZones.length,
+                      separatorBuilder: (_, _) => Divider(
+                        height: 1,
+                        color: _MeColors.separatorFor(context),
+                      ),
+                      itemBuilder: (context, index) {
+                        final timeZoneId = timeZones[index];
+                        final isSelected =
+                            timeZoneId == widget.selectedTimeZone;
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          title: Text(
+                            PreferredTimeZone.fullLabel(timeZoneId),
+                            style: TextStyle(
+                              color: _MeColors.textFor(context),
+                              fontWeight: isSelected
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                            ),
+                          ),
+                          subtitle: Text(timeZoneId),
+                          trailing: isSelected
+                              ? const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: _MeColors.green,
+                                )
+                              : null,
+                          onTap: () => Navigator.of(context).pop(timeZoneId),
+                        );
+                      },
+                    ),
             ),
           ],
         ),

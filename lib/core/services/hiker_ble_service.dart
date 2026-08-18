@@ -8,7 +8,18 @@ import '../../sos/Model/sos_models.dart';
 class HikerBleService {
   const HikerBleService();
 
+  // Native pairing may spend up to 30 seconds connecting and then grant a
+  // fresh 15-second physical-confirmation window.
+  static const Duration _gattOperationTimeout = Duration(seconds: 50);
+  static const Duration _pairingOperationTimeout = Duration(seconds: 80);
+
   static const String defaultPairedButtonName = 'HikerCircle Button';
+
+  static bool isTerminalPairingCompatibilityError(String? code) =>
+      code == 'paired_button_firmware_incompatible' ||
+      code == 'paired_button_bluetooth_cache_stale' ||
+      code == 'paired_button_setup_service_invalid';
+
   static const String sosServiceUuid = '7e2a1d32-8b10-4f4d-9f78-0c6f1d65cba1';
   static const String teamLocationServiceUuid =
       '7e2a1d33-8b10-4f4d-9f78-0c6f1d65cba1';
@@ -20,6 +31,16 @@ class HikerBleService {
       '7e2a1d38-8b10-4f4d-9f78-0c6f1d65cba1';
   static const String pairedButtonStatusCharacteristicUuid =
       '7e2a1d39-8b10-4f4d-9f78-0c6f1d65cba1';
+  static const String pairedButtonLogChallengeCharacteristicUuid =
+      '7e2a1d3c-8b10-4f4d-9f78-0c6f1d65cba1';
+  static const String pairedButtonLogAuthCharacteristicUuid =
+      '7e2a1d3d-8b10-4f4d-9f78-0c6f1d65cba1';
+  static const String pairedButtonLogDataCharacteristicUuid =
+      '7e2a1d3e-8b10-4f4d-9f78-0c6f1d65cba1';
+  static const String pairedButtonLogPageCharacteristicUuid =
+      '7e2a1d3f-8b10-4f4d-9f78-0c6f1d65cba1';
+  static const String pairedButtonMaintenanceServiceUuid =
+      '7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1';
   static const int manufacturerId = 0x02e5;
   static const int pairedSosProtocolVersion = 2;
   static const int pairedSosPacketType = 4;
@@ -42,6 +63,23 @@ class HikerBleService {
 
   Stream<HikerBleEvent> get events => _events;
 
+  /// Limits paired-button ownership to the signed-in app account. Native
+  /// code hashes this identifier before persisting it; pairing secrets never
+  /// cross back into Dart.
+  Future<void> setActiveSosAccount(String? accountId) async {
+    try {
+      await _methodChannel.invokeMethod<void>('setActiveSosAccount', {
+        'accountId': accountId?.trim(),
+      });
+    } on MissingPluginException {
+      // Optional native BLE bridge.
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to secure the active SOS account.',
+      );
+    }
+  }
+
   Future<bool> isSupported() async {
     try {
       return await _methodChannel.invokeMethod<bool>('isSupported') ?? false;
@@ -49,6 +87,21 @@ class HikerBleService {
       return false;
     } on PlatformException {
       return false;
+    }
+  }
+
+  Future<void> openBluetoothSettings() async {
+    try {
+      await _methodChannel.invokeMethod<void>('openBluetoothSettings');
+    } on MissingPluginException {
+      throw const HikerBleException(
+        'Android Bluetooth settings are not available here.',
+      );
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to open Android Bluetooth settings.',
+        code: error.code,
+      );
     }
   }
 
@@ -102,16 +155,21 @@ class HikerBleService {
     required String displayName,
   }) async {
     try {
-      await _methodChannel.invokeMethod<void>('pairSosButton', {
-        'address': address,
-        'displayName': displayName,
-      });
+      await _methodChannel
+          .invokeMethod<void>('pairSosButton', {
+            'address': address,
+            'displayName': displayName,
+          })
+          .timeout(_pairingOperationTimeout);
     } on MissingPluginException {
       throw const HikerBleException('BLE pairing is not available here.');
     } on PlatformException catch (error) {
       throw HikerBleException(
         error.message ?? 'Unable to pair the SOS button.',
+        code: error.code,
       );
+    } on TimeoutException {
+      throw const HikerBleException('SOS button pairing timed out.');
     }
   }
 
@@ -131,8 +189,101 @@ class HikerBleService {
           const [];
     } on MissingPluginException {
       return const [];
-    } on PlatformException {
-      return const [];
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to securely read paired SOS buttons.',
+      );
+    }
+  }
+
+  Future<void> armPairedSosButtonTest(
+    String deviceId, {
+    Duration duration = const Duration(seconds: 30),
+  }) async {
+    final normalizedDeviceId = deviceId.trim().toUpperCase();
+    if (!RegExp(r'^[0-9A-F]{12}$').hasMatch(normalizedDeviceId)) {
+      throw const HikerBleException(
+        'The paired SOS button ID is invalid.',
+        code: 'paired_button_test_invalid',
+      );
+    }
+    try {
+      await _methodChannel.invokeMethod<void>('armPairedSosButtonTest', {
+        'deviceId': normalizedDeviceId,
+        'durationMillis': duration.inMilliseconds.clamp(5000, 30000).toInt(),
+      });
+    } on MissingPluginException {
+      throw const HikerBleException(
+        'SOS button testing is not available here.',
+        code: 'paired_button_test_unavailable',
+      );
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to start the SOS button test.',
+        code: error.code,
+      );
+    }
+  }
+
+  Future<void> cancelPairedSosButtonTest() async {
+    try {
+      await _methodChannel.invokeMethod<void>('cancelPairedSosButtonTest');
+    } on MissingPluginException {
+      // Optional native BLE bridge.
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to stop the SOS button test.',
+        code: error.code,
+      );
+    }
+  }
+
+  /// Clears unreadable device-local pairing data so the physical button can
+  /// be securely paired again. This intentionally does not clear the signed-in
+  /// account scope.
+  Future<void> resetPairedSosButtonRegistry() async {
+    try {
+      await _methodChannel.invokeMethod<void>('resetPairedSosButtonRegistry');
+    } on MissingPluginException {
+      throw const HikerBleException(
+        'SOS button pairing reset is not available here.',
+      );
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to reset SOS button pairing data.',
+      );
+    }
+  }
+
+  Future<List<HikerBleButtonLogRecord>> readPairedSosButtonLog(
+    String deviceId,
+  ) async {
+    try {
+      final raw = await _methodChannel
+          .invokeMethod<List<Object?>>('readPairedSosButtonLog', {
+            'deviceId': deviceId,
+          })
+          .timeout(_gattOperationTimeout);
+      return raw
+              ?.whereType<Map>()
+              .map(
+                (item) => HikerBleButtonLogRecord.fromPlatform(
+                  Map<Object?, Object?>.from(item),
+                ),
+              )
+              .toList(growable: false) ??
+          const [];
+    } on MissingPluginException {
+      throw const HikerBleException(
+        'BLE event-log download is not available here.',
+      );
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to download the SOS button event log.',
+        code: error.code,
+      );
+    } on TimeoutException {
+      throw const HikerBleException('SOS button event-log download timed out.');
     }
   }
 
@@ -144,8 +295,10 @@ class HikerBleService {
           false;
     } on MissingPluginException {
       return false;
-    } on PlatformException {
-      return false;
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to read the legacy-button setting.',
+      );
     }
   }
 
@@ -157,8 +310,10 @@ class HikerBleService {
           false;
     } on MissingPluginException {
       return false;
-    } on PlatformException {
-      return false;
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to securely unpair the SOS button.',
+      );
     }
   }
 
@@ -171,15 +326,17 @@ class HikerBleService {
     required SosTriggerLocation location,
   }) async {
     try {
-      await _methodChannel.invokeMethod<void>('sendPairedSosLocation', {
-        'deviceId': deviceId,
-        'eventId': eventId,
-        'latitude': location.latitude,
-        'longitude': location.longitude,
-        'accuracyMeters': location.accuracyMeters,
-        'capturedAtMillis': (location.capturedAt ?? DateTime.now().toUtc())
-            .millisecondsSinceEpoch,
-      });
+      await _methodChannel
+          .invokeMethod<void>('sendPairedSosLocation', {
+            'deviceId': deviceId,
+            'eventId': eventId,
+            'latitude': location.latitude,
+            'longitude': location.longitude,
+            'accuracyMeters': location.accuracyMeters,
+            'capturedAtMillis': (location.capturedAt ?? DateTime.now().toUtc())
+                .millisecondsSinceEpoch,
+          })
+          .timeout(_gattOperationTimeout);
     } on MissingPluginException {
       throw const HikerBleException(
         'BLE location handoff is not available here.',
@@ -188,6 +345,8 @@ class HikerBleService {
       throw HikerBleException(
         error.message ?? 'Unable to send the SOS location to the button.',
       );
+    } on TimeoutException {
+      throw const HikerBleException('SOS button location handoff timed out.');
     }
   }
 
@@ -199,8 +358,10 @@ class HikerBleService {
       );
     } on MissingPluginException {
       // Unsupported on platforms without the Android paired-button registry.
-    } on PlatformException {
-      // The setting is optional; paired type-4 buttons remain the default.
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to save the legacy-button setting.',
+      );
     }
   }
 
@@ -328,6 +489,9 @@ sealed class HikerBleEvent {
       ),
       'sosButton' => HikerBleSosButtonEvent.fromPlatform(data),
       'pairedSosButton' => HikerBlePairedSosButtonEvent.fromPlatform(data),
+      'pairedSosButtonTest' => HikerBlePairedSosButtonTestEvent.fromPlatform(
+        data,
+      ),
       'nearbySosButton' => HikerBleNearbySosButtonEvent.fromPlatform(data),
       'nearbySosLocation' => HikerBleNearbySosLocationEvent.fromPlatform(data),
       'sosHelp' => HikerBleSosHelpEvent.fromPlatform(data),
@@ -338,9 +502,10 @@ sealed class HikerBleEvent {
 }
 
 class HikerBleException implements Exception {
-  const HikerBleException(this.message);
+  const HikerBleException(this.message, {this.code});
 
   final String message;
+  final String? code;
 
   @override
   String toString() => message;
@@ -352,11 +517,17 @@ class HikerBlePairedButtonSetupEvent extends HikerBleEvent {
     required this.displayName,
     required this.rssi,
     required this.receivedAt,
+    this.setupModeState,
+    this.setupModeRemainingSeconds,
   });
 
   factory HikerBlePairedButtonSetupEvent.fromPlatform(
     Map<Object?, Object?> data,
   ) {
+    final setupModeState = _intFrom(data['setupModeState']);
+    final setupModeRemainingSeconds = _intFrom(
+      data['setupModeRemainingSeconds'],
+    );
     return HikerBlePairedButtonSetupEvent(
       address: _stringFrom(data['address'], fallback: '')!,
       displayName: _stringFrom(
@@ -365,6 +536,16 @@ class HikerBlePairedButtonSetupEvent extends HikerBleEvent {
       )!,
       rssi: _intFrom(data['rssi']) ?? 0,
       receivedAt: _dateFromMillis(data['receivedAtMillis']),
+      setupModeState:
+          setupModeState != null && setupModeState >= 0 && setupModeState <= 255
+          ? setupModeState
+          : null,
+      setupModeRemainingSeconds:
+          setupModeRemainingSeconds != null &&
+              setupModeRemainingSeconds >= 0 &&
+              setupModeRemainingSeconds <= 255
+          ? setupModeRemainingSeconds
+          : null,
     );
   }
 
@@ -372,6 +553,8 @@ class HikerBlePairedButtonSetupEvent extends HikerBleEvent {
   final String displayName;
   final int rssi;
   final DateTime receivedAt;
+  final int? setupModeState;
+  final int? setupModeRemainingSeconds;
 }
 
 class PairedSosButton {
@@ -403,6 +586,70 @@ class PairedSosButton {
   final int? lastAcceptedEventId;
 }
 
+class HikerBleButtonLogRecord {
+  const HikerBleButtonLogRecord({
+    required this.sequence,
+    required this.uptimeMillis,
+    required this.epochSeconds,
+    required this.eventId,
+    required this.type,
+    required this.resetReason,
+    required this.detail,
+  });
+
+  factory HikerBleButtonLogRecord.fromPlatform(Map<Object?, Object?> data) {
+    return HikerBleButtonLogRecord(
+      sequence: _intFrom(data['sequence']) ?? 0,
+      uptimeMillis: _intFrom(data['uptimeMillis']) ?? 0,
+      epochSeconds: _intFrom(data['epochSeconds']) ?? 0,
+      eventId: _intFrom(data['eventId']) ?? 0,
+      type: _intFrom(data['type']) ?? 0,
+      resetReason: _intFrom(data['resetReason']) ?? 0,
+      detail: _intFrom(data['detail']) ?? 0,
+    );
+  }
+
+  final int sequence;
+  final int uptimeMillis;
+  final int epochSeconds;
+  final int eventId;
+  final int type;
+  final int resetReason;
+  final int detail;
+
+  DateTime? get epochTime {
+    if (epochSeconds <= 0) return null;
+    try {
+      return DateTime.fromMillisecondsSinceEpoch(
+        epochSeconds * 1000,
+        isUtc: true,
+      );
+    } on ArgumentError {
+      return null;
+    }
+  }
+
+  Duration get uptime => Duration(milliseconds: uptimeMillis);
+
+  String get typeLabel => switch (type) {
+    1 => 'Boot',
+    2 => 'Button press',
+    3 => 'SOS triggered',
+    4 => 'Setup mode started',
+    5 => 'Pairing request',
+    6 => 'Pairing confirmed',
+    7 => 'Pairing expired',
+    8 => 'Factory reset',
+    9 => 'Location accepted',
+    10 => 'Location rejected',
+    11 => 'Location relay started',
+    12 => 'SOS session finished',
+    13 => 'Log download authorized',
+    14 => 'Maintenance started',
+    _ => 'Unknown event ($type)',
+  };
+}
+
 class HikerBleSosButtonEvent extends HikerBleEvent {
   const HikerBleSosButtonEvent({
     required this.receivedAt,
@@ -427,7 +674,7 @@ class HikerBleSosButtonEvent extends HikerBleEvent {
 }
 
 /// An authenticated type-4 press from a button paired to this phone.
-/// Only the native Android registry verifies its tag; no secret is exposed to
+/// The native Android/iOS registry verifies its tag; no secret is exposed to
 /// Dart or included in this event.
 class HikerBlePairedSosButtonEvent extends HikerBleEvent {
   const HikerBlePairedSosButtonEvent({
@@ -456,6 +703,36 @@ class HikerBlePairedSosButtonEvent extends HikerBleEvent {
   final String? displayName;
   final int? counter;
   final int mode;
+  final int? rssi;
+  final DateTime receivedAt;
+}
+
+/// An authenticated press consumed by an explicitly armed local test window.
+/// Native code emits this instead of persisting or dispatching an SOS.
+class HikerBlePairedSosButtonTestEvent extends HikerBleEvent {
+  const HikerBlePairedSosButtonTestEvent({
+    required this.deviceId,
+    required this.receivedAt,
+    this.displayName,
+    this.counter,
+    this.rssi,
+  });
+
+  factory HikerBlePairedSosButtonTestEvent.fromPlatform(
+    Map<Object?, Object?> data,
+  ) {
+    return HikerBlePairedSosButtonTestEvent(
+      deviceId: _stringFrom(data['deviceId'], fallback: '')!,
+      displayName: _stringFrom(data['displayName']),
+      counter: _intFrom(data['counter']),
+      rssi: _intFrom(data['rssi']),
+      receivedAt: _dateFromMillis(data['receivedAtMillis']),
+    );
+  }
+
+  final String deviceId;
+  final String? displayName;
+  final int? counter;
   final int? rssi;
   final DateTime receivedAt;
 }
@@ -629,36 +906,44 @@ String? _stringFrom(Object? value, {String? fallback}) {
 }
 
 int? _intFrom(Object? value) {
-  if (value is num) {
+  if (value is num && value.isFinite) {
     return value.toInt();
   }
   return null;
 }
 
 double _doubleFrom(Object? value) {
-  if (value is num) {
+  if (value is num && value.isFinite) {
     return value.toDouble();
   }
   return 0;
 }
 
 double? _nullableDoubleFrom(Object? value) {
-  if (value is num) {
+  if (value is num && value.isFinite) {
     return value.toDouble();
   }
   return null;
 }
 
 DateTime _dateFromMillis(Object? value) {
-  if (value is num && value > 0) {
-    return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
+  if (value is num && value.isFinite && value > 0) {
+    try {
+      return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
+    } on ArgumentError {
+      // Ignore malformed native timestamps and fall back to receipt time.
+    }
   }
   return DateTime.now().toUtc();
 }
 
 DateTime? _nullableDateFromMillis(Object? value) {
-  if (value is num && value > 0) {
-    return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
+  if (value is num && value.isFinite && value > 0) {
+    try {
+      return DateTime.fromMillisecondsSinceEpoch(value.toInt(), isUtc: true);
+    } on ArgumentError {
+      return null;
+    }
   }
   return null;
 }

@@ -17,7 +17,7 @@ class ActiveHikeMapPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _MapColors.background,
+      backgroundColor: _MapColors.backgroundFor(context),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -77,11 +77,11 @@ class _Header extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            'Active Offline Map',
+            'Active Hike Map',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: _MapColors.text,
+              color: _MapColors.textFor(context),
               fontSize: 24,
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
@@ -105,13 +105,19 @@ class _StatusCard extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         child: Row(
           children: [
-            const _Glyph(icon: Icons.cloud_off_rounded),
+            _Glyph(
+              icon: activeHike.queuedUpdates > 0
+                  ? Icons.sync_problem_rounded
+                  : Icons.route_rounded,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                'No connection available. Your trail and emergency data are being stored on this phone. ${activeHike.queuedUpdates} location updates are waiting to sync.',
+                activeHike.queuedUpdates > 0
+                    ? 'Your hike data is stored on this phone. ${activeHike.queuedUpdates} location update${activeHike.queuedUpdates == 1 ? '' : 's'} will sync when connectivity is available.'
+                    : 'Your active route and safety data are stored on this phone. No location updates are waiting to sync.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _MapColors.text,
+                  color: _MapColors.textFor(context),
                   letterSpacing: 0,
                 ),
               ),
@@ -185,4 +191,13 @@ abstract final class _MapColors {
   static const Color background = Color(0xFFF2F2F7);
   static const Color green = Color(0xFF34A853);
   static const Color text = Color(0xFF111111);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
 }

@@ -15,4 +15,17 @@ void main() {
       );
     },
   );
+
+  test('duress SOS never instructs an emergency contact to call', () {
+    final message = SosAlertMessageComposer.compose(
+      mode: SosAlertMode.duress,
+      phoneNumber: '+60123456789',
+      triggeredAt: DateTime.utc(2026, 8, 4),
+      triggerLocation: null,
+    );
+
+    expect(message, contains('Do not call'));
+    expect(message.toLowerCase(), isNot(contains('call me')));
+    expect(message.toLowerCase(), isNot(contains('call the hiker')));
+  });
 }

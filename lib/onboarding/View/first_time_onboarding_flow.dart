@@ -25,7 +25,8 @@ class FirstTimeOnboardingFlow extends StatefulWidget {
   final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
-  State<FirstTimeOnboardingFlow> createState() => _FirstTimeOnboardingFlowState();
+  State<FirstTimeOnboardingFlow> createState() =>
+      _FirstTimeOnboardingFlowState();
 }
 
 class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
@@ -42,8 +43,12 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
   void initState() {
     super.initState();
     _profileComplete = widget.session.isOnboardingProfileComplete;
-    _onboardingRepository = OnboardingRepository(firebaseBootstrapResult: widget.firebaseBootstrapResult);
-    _contactsRepository = EmergencyContactsRepository(firebaseBootstrapResult: widget.firebaseBootstrapResult);
+    _onboardingRepository = OnboardingRepository(
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+    );
+    _contactsRepository = EmergencyContactsRepository(
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+    );
     unawaited(_loadSavedProgress());
   }
 
@@ -79,7 +84,10 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
   }
 
   Future<void> _saveProfile(OnboardingProfile profile) async {
-    await _onboardingRepository.saveProfile(session: widget.session, profile: profile);
+    await _onboardingRepository.saveProfile(
+      session: widget.session,
+      profile: profile,
+    );
     if (!mounted) {
       return;
     }
@@ -96,7 +104,10 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
   }
 
   Future<void> _complete(List<EmergencyContact> contacts) async {
-    await _contactsRepository.saveEmergencyContacts(session: widget.session, contacts: contacts);
+    await _contactsRepository.saveEmergencyContacts(
+      session: widget.session,
+      contacts: contacts,
+    );
     await _onboardingRepository.completeOnboarding(widget.session);
     _contacts = contacts;
     await widget.onCompleted();
@@ -120,11 +131,20 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
                   children: [
                     const Icon(Icons.cloud_off_rounded, size: 48),
                     const SizedBox(height: 14),
-                    const Text('Unable to load account setup', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                    const Text(
+                      'Unable to load account setup',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Text(_loadError!, textAlign: TextAlign.center),
                     const SizedBox(height: 18),
-                    FilledButton(onPressed: _loadSavedProgress, child: const Text('Try again')),
+                    FilledButton(
+                      onPressed: _loadSavedProgress,
+                      child: const Text('Try again'),
+                    ),
                   ],
                 ),
               ),
@@ -134,7 +154,10 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
       );
     }
     if (!_profileComplete) {
-      return OnboardingProfilePage(initialProfile: _profile, onSubmit: _saveProfile);
+      return OnboardingProfilePage(
+        initialProfile: _profile,
+        onSubmit: _saveProfile,
+      );
     }
     if (!_safetyQuestionsComplete) {
       return SafetyQuestionsSetupPage(onSubmitted: _onSafetyQuestionsDone);

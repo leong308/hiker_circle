@@ -28,24 +28,42 @@ class QrScannerPage extends StatefulWidget {
 class _QrScannerPageState extends State<QrScannerPage> {
   static const _eventChannel = EventChannel('hiker_circle/qr_scanner_events');
   bool _isProcessing = false;
+  String? _scannerError;
   StreamSubscription<dynamic>? _subscription;
 
   @override
   void initState() {
     super.initState();
-    _subscription = _eventChannel
-        .receiveBroadcastStream()
-        .listen(_onQrDetected);
+    try {
+      _subscription = _eventChannel.receiveBroadcastStream().listen(
+        _onQrDetected,
+        onError: (Object error, StackTrace stackTrace) {
+          if (!mounted) return;
+          setState(() {
+            _isProcessing = false;
+            _scannerError = 'The camera scanner stopped unexpectedly.';
+          });
+        },
+      );
+    } catch (_) {
+      _scannerError = 'The camera scanner is unavailable on this device.';
+    }
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
+    final subscription = _subscription;
+    _subscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel().catchError((_) {}));
+    }
     super.dispose();
   }
 
   void _onQrDetected(dynamic rawValue) {
-    if (_isProcessing || rawValue is! String || rawValue.isEmpty) return;
+    if (!mounted || _isProcessing || rawValue is! String || rawValue.isEmpty) {
+      return;
+    }
 
     final uri = Uri.tryParse(rawValue);
     if (uri == null || uri.scheme != 'hikercircle') return;
@@ -76,10 +94,13 @@ class _QrScannerPageState extends State<QrScannerPage> {
       return;
     }
 
-    _showAddBuddyPrompt(name: name, handle: handle, phoneNumber: phone);
+    unawaited(
+      _showAddBuddyPrompt(name: name, handle: handle, phoneNumber: phone),
+    );
   }
 
   void _showOwnQrMessage() {
+    if (!mounted) return;
     setState(() => _isProcessing = true);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -101,82 +122,94 @@ class _QrScannerPageState extends State<QrScannerPage> {
     required String handle,
     required String phoneNumber,
   }) async {
+    if (!mounted) return;
     setState(() => _isProcessing = true);
 
-    final shouldAdd = await showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 6, 18, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  width: 58,
-                  height: 58,
-                  alignment: Alignment.center,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFEAF7EE),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.person_add_alt_1_rounded,
-                    color: Color(0xFF34A853),
-                    size: 30,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Add $name as a buddy?',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  handle.isEmpty
-                      ? 'This QR belongs to a HikerCircle profile.'
-                      : '$handle can be added to your Trail Buddies for future team hikes and shared trail plans.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF6E6E73),
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        child: const Text('Not Now'),
-                      ),
+    bool? shouldAdd;
+    try {
+      shouldAdd = await showModalBottomSheet<bool>(
+        context: context,
+        showDragHandle: true,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        builder: (context) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 6, 18, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      shape: BoxShape.circle,
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        icon: const Icon(Icons.person_add_alt_1_rounded),
-                        label: const Text('Add Buddy'),
-                      ),
+                    child: Icon(
+                      Icons.person_add_alt_1_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 30,
                     ),
-                  ],
-                ),
-              ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Add $name as a buddy?',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    handle.isEmpty
+                        ? 'This QR belongs to a HikerCircle profile.'
+                        : '$handle can be added to your Trail Buddies for future team hikes and shared trail plans.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Not Now'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          icon: const Icon(Icons.person_add_alt_1_rounded),
+                          label: const Text('Add Buddy'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
-    );
+          );
+        },
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _scannerError = 'Unable to open the scanned profile.';
+        });
+      }
+      return;
+    }
 
     if (!mounted) return;
 
@@ -243,10 +276,7 @@ class _QrScannerPageState extends State<QrScannerPage> {
       appBar: AppBar(
         backgroundColor: Colors.black87,
         iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
-          'Scan QR',
-          style: TextStyle(color: Colors.white),
-        ),
+        title: const Text('Scan QR', style: TextStyle(color: Colors.white)),
       ),
       body: Stack(
         fit: StackFit.expand,
@@ -270,8 +300,39 @@ class _QrScannerPageState extends State<QrScannerPage> {
                 style: TextStyle(color: Colors.white70),
               ),
             ),
-          if (_isProcessing)
-            Container(color: Colors.black54),
+          if (_scannerError case final scannerError?)
+            ColoredBox(
+              color: Colors.black87,
+              child: SafeArea(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.camera_alt_outlined,
+                          color: Colors.white70,
+                          size: 42,
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          scannerError,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        const SizedBox(height: 14),
+                        OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('Go Back'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          if (_isProcessing) Container(color: Colors.black54),
         ],
       ),
     );

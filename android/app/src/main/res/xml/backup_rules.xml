@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- These records are encrypted with a device-local Android Keystore key
+         or contain device-local SOS delivery state. Restoring them onto a new
+         device would make the pairing registry unreadable or consume stale
+         emergency events. -->
+    <exclude domain="sharedpref" path="hiker_circle_paired_sos_buttons.xml"/>
+    <exclude domain="sharedpref" path="hiker_circle_ble_pending_events.xml"/>
+    <exclude domain="sharedpref" path="hiker_circle_ble_monitor.xml"/>
+</full-backup-content>

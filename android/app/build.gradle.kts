@@ -5,6 +5,23 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
+val developmentOnlySigning =
+    keystoreProperties.getProperty("developmentOnly", "false").toBoolean()
+val requestedTaskNames = gradle.startParameter.taskNames.map {
+    it.substringAfterLast(':').lowercase()
+}
+val releaseArtifactRequested = requestedTaskNames.any { taskName ->
+    taskName.contains("release") ||
+        taskName == "build" ||
+        taskName == "assemble" ||
+        taskName == "bundle"
+}
+val developmentSigningForbidden = requestedTaskNames.any { taskName ->
+    taskName == "build" ||
+        taskName == "assemble" ||
+        taskName == "bundle" ||
+        (taskName.contains("bundle") && taskName.contains("release"))
+}
 
 plugins {
     id("com.android.application")
@@ -41,6 +58,15 @@ android {
         }
         manifestPlaceholders["GOOGLE_MAPS_API_KEY"] =
             localProperties.getProperty("google.maps.apiKey", "")
+        buildConfigField(
+            "boolean",
+            "DEVELOPMENT_ONLY_SIGNING",
+            developmentOnlySigning.toString(),
+        )
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {
@@ -62,11 +88,23 @@ android {
 
         release {
             val releaseSigning = signingConfigs.findByName("release")
-
-            signingConfig = releaseSigning ?: signingConfigs.getByName("debug")
-
-            if (releaseSigning == null) {
-                println("WARNING: Release signing not configured. Using debug signing for local release build.")
+            if (releaseSigning != null) {
+                if (
+                    developmentOnlySigning &&
+                    releaseArtifactRequested &&
+                    developmentSigningForbidden
+                ) {
+                    throw GradleException(
+                        "The configured Android signing key is for local release-mode APK testing only. " +
+                            "Replace android/key.properties with a production upload key before building " +
+                            "an app bundle or another release artifact."
+                    )
+                }
+                signingConfig = releaseSigning
+            } else if (releaseArtifactRequested) {
+                throw GradleException(
+                    "Release signing is not configured. Add android/key.properties and a release keystore before building a release artifact."
+                )
             }
         }
     }

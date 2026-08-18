@@ -3,20 +3,18 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/services/hiker_ble_service.dart';
-
-class _ButtonNameDialog extends StatefulWidget {
-  const _ButtonNameDialog({required this.initialName});
-
-  final String initialName;
-
-  @override
-  State<_ButtonNameDialog> createState() => _ButtonNameDialogState();
-}
+import 'sos_button_pairing_sheet.dart';
 
 class _PairingHeroCard extends StatelessWidget {
-  const _PairingHeroCard({required this.scheme});
+  const _PairingHeroCard({
+    required this.scheme,
+    required this.enabled,
+    required this.onAdd,
+  });
 
   final ColorScheme scheme;
+  final bool enabled;
+  final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -40,203 +38,63 @@ class _PairingHeroCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.sos_rounded, color: Colors.white, size: 24),
+          Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.sos_rounded,
+                  color: Colors.white,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Connect your SOS button',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      'A guided setup will walk you through detection, secure pairing, and physical confirmation.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.84),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Connect your SOS button',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  'Pair it once, then keep it ready for a fast Manual SOS.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.84),
-                  ),
-                ),
-              ],
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: enabled ? onAdd : null,
+            icon: const Icon(Icons.add_circle_outline_rounded),
+            label: const Text('Detect and add a button'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: scheme.primary,
+              disabledBackgroundColor: Colors.white.withValues(alpha: 0.35),
+              disabledForegroundColor: Colors.white.withValues(alpha: 0.75),
+              minimumSize: const Size.fromHeight(50),
+              textStyle: const TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _PairingStepsCard extends StatelessWidget {
-  const _PairingStepsCard({required this.scheme});
-
-  final ColorScheme scheme;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 7),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'How pairing works',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 12),
-            const _StepRow(
-              number: '1',
-              text: 'Hold the external button for 8 seconds.',
-            ),
-            const _StepRow(
-              number: '2',
-              text: 'Release, then press it twice within 5 seconds.',
-            ),
-            const _StepRow(
-              number: '3',
-              text:
-                  'After the name prompt, press the external button once to confirm.',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StepRow extends StatelessWidget {
-  const _StepRow({required this.number, required this.text});
-
-  final String number;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 24,
-            height: 24,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              shape: BoxShape.circle,
-            ),
-            child: Text(
-              number,
-              style: TextStyle(
-                color: scheme.onPrimary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: Text(text)),
-        ],
-      ),
-    );
-  }
-}
-
-class _SetupScanCard extends StatelessWidget {
-  const _SetupScanCard({
-    required this.scheme,
-    required this.scanning,
-    required this.pairingInProgress,
-    required this.message,
-    required this.onToggleScan,
-  });
-
-  final ColorScheme scheme;
-  final bool scanning;
-  final bool pairingInProgress;
-  final String? message;
-  final VoidCallback onToggleScan;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-        side: BorderSide(color: scheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.bluetooth_searching_rounded, color: scheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Discover a setup button',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                      Text(
-                        scanning
-                            ? 'Listening for buttons in setup mode nearby…'
-                            : 'Put the button in setup mode, then scan for it here.',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            if (scanning) ...[
-              const SizedBox(height: 14),
-              LinearProgressIndicator(borderRadius: BorderRadius.circular(8)),
-            ],
-            if (message != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                message!,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: scheme.primary),
-              ),
-            ],
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              onPressed: pairingInProgress ? null : onToggleScan,
-              icon: Icon(
-                scanning ? Icons.stop_rounded : Icons.bluetooth_rounded,
-              ),
-              label: Text(scanning ? 'Stop scan' : 'Scan for button'),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -280,44 +138,10 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
-class _ButtonNameDialogState extends State<_ButtonNameDialog> {
-  late String _name;
-
-  @override
-  void initState() {
-    super.initState();
-    _name = widget.initialName;
-  }
-
-  void _submit() {
-    Navigator.of(context).pop(_name.trim());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Name this SOS button'),
-      content: TextFormField(
-        initialValue: widget.initialName,
-        autofocus: true,
-        textInputAction: TextInputAction.done,
-        onChanged: (value) => _name = value,
-        onFieldSubmitted: (_) => _submit(),
-        decoration: const InputDecoration(labelText: 'Button name'),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('Continue')),
-      ],
-    );
-  }
-}
-
 class PairedSosButtonPage extends StatefulWidget {
-  const PairedSosButtonPage({super.key});
+  const PairedSosButtonPage({super.key, required this.accountId});
+
+  final String accountId;
 
   @override
   State<PairedSosButtonPage> createState() => _PairedSosButtonPageState();
@@ -325,152 +149,96 @@ class PairedSosButtonPage extends StatefulWidget {
 
 class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
   final HikerBleService _ble = const HikerBleService();
-  final Map<String, HikerBlePairedButtonSetupEvent> _devices = {};
-  StreamSubscription<HikerBleEvent>? _events;
   List<PairedSosButton> _paired = const [];
-  bool _scanning = false;
+  bool _accountReady = false;
   bool _pairingInProgress = false;
+  bool _registryNeedsReset = false;
+  String? _downloadingLogsFor;
+  String? _testingButtonFor;
+  Timer? _buttonTestCountdownTimer;
+  StreamSubscription<HikerBleEvent>? _buttonTestSubscription;
+  Completer<_ButtonTestOutcome>? _buttonTestOutcome;
   String? _message;
 
   @override
   void initState() {
     super.initState();
-    _events = _ble.events.listen(_handleEvent, onError: (_) {});
-    unawaited(_loadPaired());
+    unawaited(_initialize());
+  }
+
+  Future<void> _initialize() async {
+    try {
+      await _ble.setActiveSosAccount(widget.accountId);
+      if (!mounted) return;
+      _accountReady = true;
+      await _loadPaired();
+    } on HikerBleException catch (error) {
+      if (!mounted) return;
+      setState(() => _message = error.message);
+    }
   }
 
   @override
   void dispose() {
+    _buttonTestCountdownTimer?.cancel();
+    final testOutcome = _buttonTestOutcome;
+    if (testOutcome != null && !testOutcome.isCompleted) {
+      testOutcome.complete(const _ButtonTestOutcome.cancelled());
+    }
+    unawaited(_buttonTestSubscription?.cancel());
+    if (_testingButtonFor != null) {
+      unawaited(_cancelButtonTestSilently());
+    }
     unawaited(_ble.stopPairedButtonSetupScan());
-    unawaited(_events?.cancel());
     super.dispose();
   }
 
-  void _handleEvent(HikerBleEvent event) {
-    if (event is HikerBlePairedButtonSetupEvent && event.address.isNotEmpty) {
-      if (mounted) {
-        setState(() => _devices[event.address] = event);
-      }
-      return;
-    }
-    if (event is HikerBleStatusEvent &&
-        event.status.startsWith('paired_button_')) {
-      final message = switch (event.status) {
-        'paired_button_awaiting_confirmation' =>
-          'Press and release the external SOS button once now to confirm ownership.',
-        'paired_button_paired' => 'Button paired successfully.',
-        'paired_button_pairing_written' =>
-          'Pairing data written. Waiting for the button confirmation press.',
-        _ => event.message ?? event.status,
-      };
-      if (mounted) setState(() => _message = message);
+  Future<void> _cancelButtonTestSilently() async {
+    try {
+      await _ble.cancelPairedSosButtonTest();
+    } catch (_) {
+      // Native test mode is also bounded by its own 30-second expiry.
     }
   }
 
   Future<void> _loadPaired() async {
-    final paired = await _ble.listPairedSosButtons();
-    if (mounted) setState(() => _paired = paired);
-  }
-
-  Future<void> _toggleScan() async {
-    if (_scanning) {
-      await _ble.stopPairedButtonSetupScan();
-      if (mounted) setState(() => _scanning = false);
-      return;
-    }
-    setState(() {
-      _devices.clear();
-      _message = 'Hold the button for 8 seconds, then make two short presses.';
-      _scanning = true;
-    });
     try {
-      await _ble.startPairedButtonSetupScan();
-    } on HikerBleException catch (error) {
+      final paired = await _ble.listPairedSosButtons();
       if (mounted) {
         setState(() {
-          _scanning = false;
-          _message = error.message;
+          _paired = paired;
+          _registryNeedsReset = false;
         });
       }
+    } on HikerBleException {
+      if (mounted) setState(() => _registryNeedsReset = true);
+      rethrow;
     }
   }
 
-  Future<void> _pair(HikerBlePairedButtonSetupEvent device) async {
-    if (_pairingInProgress) return;
-    final name = await showDialog<String>(
+  Future<void> _openPairingGuide() async {
+    if (!_accountReady || _registryNeedsReset || _pairingInProgress) return;
+    setState(() {
+      _pairingInProgress = true;
+      _message = null;
+    });
+    final paired = await showModalBottomSheet<bool>(
       context: context,
-      builder: (_) => const _ButtonNameDialog(
-        initialName: HikerBleService.defaultPairedButtonName,
-      ),
+      useSafeArea: true,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (context) =>
+          SosButtonPairingSheet(ble: _ble, onPaired: _loadPaired),
     );
-    if (name == null || name.isEmpty) return;
-    if (!mounted) return;
-    setState(() => _pairingInProgress = true);
-    try {
-      await _ble.stopPairedButtonSetupScan();
-    } on HikerBleException catch (error) {
-      if (mounted) {
-        setState(() {
-          _pairingInProgress = false;
-          _message = error.message;
-        });
-      }
-      return;
-    }
     if (!mounted) return;
     setState(() {
-      _scanning = false;
-      _message = 'Write pairing data, then press the button once to confirm.';
-    });
-    final progressDialog = showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const AlertDialog(
-        title: Text('Confirm button ownership'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Pairing data is being written to the button. When prompted, press and release the external SOS button once to confirm ownership. Do not use BOOT or RST.',
-            ),
-            SizedBox(height: 18),
-            CircularProgressIndicator(),
-          ],
-        ),
-      ),
-    );
-    // Let the dialog route finish mounting before the GATT callbacks begin.
-    await Future<void>.delayed(Duration.zero);
-    try {
-      await _ble.pairSosButton(address: device.address, displayName: name);
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      await progressDialog;
-      await _loadPaired();
-      if (mounted) {
-        setState(() => _message = 'Button paired successfully.');
-        await showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('SOS button paired'),
-            content: Text(
-              '$name is now paired to this phone. A valid button press will start this phone’s Manual SOS workflow.',
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Done'),
-              ),
-            ],
-          ),
-        );
+      _pairingInProgress = false;
+      if (paired == true) {
+        _message = 'SOS button paired and ready.';
       }
-    } on HikerBleException catch (error) {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      await progressDialog;
-      if (mounted) setState(() => _message = error.message);
-    } finally {
-      if (mounted) setState(() => _pairingInProgress = false);
-    }
+    });
   }
 
   Future<void> _unpair(PairedSosButton button) async {
@@ -492,8 +260,422 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
       ),
     );
     if (confirmed != true) return;
-    await _ble.unpairSosButton(button.deviceId);
-    await _loadPaired();
+    try {
+      final removed = await _ble.unpairSosButton(button.deviceId);
+      if (!removed) {
+        throw const HikerBleException(
+          'The SOS button was not removed. Refresh and try again.',
+        );
+      }
+      await _loadPaired();
+    } on HikerBleException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  Future<void> _resetPairingData() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset local pairing data?'),
+        content: const Text(
+          'This clears unreadable SOS button secrets from this phone. The '
+          'physical button will no longer trigger SOS here until it is put '
+          'back into setup or factory-reset mode and paired again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _pairingInProgress = true);
+    try {
+      await _ble.resetPairedSosButtonRegistry();
+      await _loadPaired();
+      if (!mounted) return;
+      setState(() {
+        _message =
+            'Local pairing data was reset. Put the button in setup mode and pair it again.';
+      });
+    } on HikerBleException catch (error) {
+      if (mounted) setState(() => _message = error.message);
+    } finally {
+      if (mounted) setState(() => _pairingInProgress = false);
+    }
+  }
+
+  Future<void> _downloadLogs(PairedSosButton button) async {
+    final ready = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Download button event log'),
+        content: const Text(
+          'Pairing setup and RST are not required.\n\n'
+          'After tapping Start, immediately press the external SOS button '
+          'five times within 3 seconds. The app will wait for the read-only '
+          'log service, then authenticate with the existing pairing secret.\n\n'
+          'When all five presses are detected, the firmware suppresses SOS '
+          'and opens log download for 30 seconds. Complete all five presses: '
+          'an incomplete sequence is handled as a normal SOS press.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Start'),
+          ),
+        ],
+      ),
+    );
+    if (ready != true || !mounted) return;
+
+    await _ble.stopPairedButtonSetupScan();
+    if (!mounted) return;
+    setState(() {
+      _downloadingLogsFor = button.deviceId;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Now press the external button 5 times within 3 seconds.',
+        ),
+        duration: Duration(seconds: 5),
+      ),
+    );
+    try {
+      final records = await _ble.readPairedSosButtonLog(button.deviceId);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('${button.displayName} event log'),
+          content: SizedBox(
+            width: 620,
+            child: records.isEmpty
+                ? const Text('The button event log is empty.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: records.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final record = records[index];
+                      final absoluteTime = record.epochTime?.toLocal();
+                      final details = <String>[
+                        if (absoluteTime != null)
+                          absoluteTime.toString()
+                        else
+                          'Uptime ${_formatUptime(record.uptime)}',
+                        if (record.eventId != 0) 'Event ID ${record.eventId}',
+                        if (record.resetReason != 0)
+                          'Reset reason ${record.resetReason}',
+                        if (record.detail != 0) 'Detail ${record.detail}',
+                      ];
+                      return ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: CircleAvatar(
+                          child: Text(record.sequence.toString()),
+                        ),
+                        title: Text(
+                          record.typeLabel,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: Text(details.join(' · ')),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
+    } on HikerBleException catch (error) {
+      if (mounted) {
+        if (error.code == 'paired_button_log_service_missing' ||
+            error.code == 'paired_button_log_bluetooth_cache_stale') {
+          await _showLogServiceRecoveryDialog(button);
+        } else {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(error.message)));
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _downloadingLogsFor = null);
+    }
+  }
+
+  Future<void> _testButtonConnection(PairedSosButton button) async {
+    if (_pairingInProgress ||
+        _downloadingLogsFor != null ||
+        _testingButtonFor != null) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.play_circle_outline_rounded),
+        title: const Text('Test physical SOS button'),
+        content: Text(
+          'After the test starts, you have 30 seconds to press '
+          '${button.displayName} once. During this test window, an '
+          'authenticated press from this button is consumed as a test on this '
+          'phone and will not open SOS or notify your emergency contacts.\n\n'
+          'Test mode is local to this phone. Current button firmware still '
+          'broadcasts the normal radio packet, so nearby HikerCircle phones '
+          'may detect it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: const Text('Enter test mode'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    const testDuration = Duration(seconds: 30);
+    final outcome = Completer<_ButtonTestOutcome>();
+    _buttonTestOutcome = outcome;
+    final dialogReady = Completer<BuildContext>();
+    final countdown = ValueNotifier<int>(testDuration.inSeconds);
+    BuildContext? testDialogContext;
+    Future<_ButtonTestOutcome?>? testDialogFuture;
+    try {
+      await _ble.setActiveSosAccount(widget.accountId);
+      await _buttonTestSubscription?.cancel();
+      _buttonTestSubscription = _ble.events.listen((event) {
+        if (event is HikerBlePairedSosButtonTestEvent &&
+            event.deviceId.toUpperCase() == button.deviceId.toUpperCase() &&
+            !outcome.isCompleted) {
+          outcome.complete(_ButtonTestOutcome.pressed(event));
+        }
+      });
+      await _ble.armPairedSosButtonTest(
+        button.deviceId,
+        duration: testDuration,
+      );
+      if (!mounted) return;
+      setState(() {
+        _testingButtonFor = button.deviceId;
+        _message = null;
+      });
+
+      final startedAt = DateTime.now();
+      _buttonTestCountdownTimer?.cancel();
+      _buttonTestCountdownTimer = Timer.periodic(const Duration(seconds: 1), (
+        _,
+      ) {
+        final elapsed = DateTime.now().difference(startedAt).inSeconds;
+        final remaining = testDuration.inSeconds - elapsed;
+        countdown.value = remaining.clamp(0, testDuration.inSeconds);
+        if (remaining <= 0 && !outcome.isCompleted) {
+          outcome.complete(const _ButtonTestOutcome.timeout());
+        }
+      });
+
+      testDialogFuture = showDialog<_ButtonTestOutcome>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          testDialogContext = dialogContext;
+          if (!dialogReady.isCompleted) {
+            dialogReady.complete(dialogContext);
+          }
+          return PopScope(
+            canPop: false,
+            child: AlertDialog(
+              icon: const Icon(Icons.sensors_rounded),
+              title: const Text('Test mode active'),
+              content: ValueListenableBuilder<int>(
+                valueListenable: countdown,
+                builder: (context, seconds, _) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '$seconds',
+                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Press ${button.displayName} once now.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(
+                      value: seconds / testDuration.inSeconds,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'SOS dispatch is disabled for this paired button on '
+                      'this phone until the test ends.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    if (!outcome.isCompleted) {
+                      outcome.complete(const _ButtonTestOutcome.cancelled());
+                    }
+                  },
+                  child: const Text('Cancel test'),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      unawaited(testDialogFuture);
+
+      final result = await outcome.future;
+      final dialogContext = await dialogReady.future;
+      if (dialogContext.mounted) {
+        Navigator.of(dialogContext).pop(result);
+      }
+      await testDialogFuture;
+      if (!mounted) return;
+
+      if (result.event != null) {
+        await _loadPaired();
+        if (!mounted) return;
+        final event = result.event!;
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            icon: Icon(
+              Icons.check_circle_rounded,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            title: const Text('Button press detected'),
+            content: Text(
+              '${button.displayName} responded successfully. The press was '
+              'handled only as a test and no SOS was triggered.'
+              '${event.rssi == null ? '' : '\n\nSignal: ${event.rssi} dBm'}',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        );
+      } else if (result.timedOut) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No authenticated button press was detected within 30 seconds.',
+            ),
+          ),
+        );
+      }
+    } on HikerBleException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Button test failed. ${error.message}')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Button test failed. Refresh the page and try again.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      _buttonTestCountdownTimer?.cancel();
+      _buttonTestCountdownTimer = null;
+      await _buttonTestSubscription?.cancel();
+      _buttonTestSubscription = null;
+      try {
+        await _ble.cancelPairedSosButtonTest();
+      } catch (_) {
+        // Native test mode also expires after 30 seconds.
+      }
+      final dialogContext = testDialogContext;
+      if (dialogContext != null && dialogContext.mounted) {
+        Navigator.of(dialogContext).pop();
+      }
+      final dialogFuture = testDialogFuture;
+      if (dialogFuture != null) {
+        await dialogFuture;
+      }
+      countdown.dispose();
+      if (identical(_buttonTestOutcome, outcome)) {
+        _buttonTestOutcome = null;
+      }
+      if (mounted) setState(() => _testingButtonFor = null);
+    }
+  }
+
+  Future<void> _showLogServiceRecoveryDialog(PairedSosButton button) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.bluetooth_searching_rounded),
+        title: const Text('Button log service unavailable'),
+        content: Text(
+          '${button.displayName} connected, but Android returned an incomplete '
+          'cached Bluetooth service list. The app already tried refreshing it '
+          'automatically.\n\n'
+          'In Android Bluetooth settings, forget “HikerCircle Setup”. Then '
+          'return here, enter button setup mode, pair it again, and retry the '
+          'history download by pressing the external button five times within '
+          '3 seconds.\n\n'
+          'The installed ESP32 firmware already includes the authenticated log '
+          'service. Pairing and live SOS alerts are unaffected.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatUptime(Duration uptime) {
+    final hours = uptime.inHours;
+    final minutes = uptime.inMinutes.remainder(60);
+    final seconds = uptime.inSeconds.remainder(60);
+    return '${hours}h ${minutes}m ${seconds}s';
   }
 
   @override
@@ -508,52 +690,58 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          _PairingHeroCard(scheme: scheme),
-          const SizedBox(height: 16),
-          _PairingStepsCard(scheme: scheme),
-          const SizedBox(height: 16),
-          _SetupScanCard(
+          _PairingHeroCard(
             scheme: scheme,
-            scanning: _scanning,
-            pairingInProgress: _pairingInProgress,
-            message: _message,
-            onToggleScan: _toggleScan,
+            enabled:
+                _accountReady && !_registryNeedsReset && !_pairingInProgress,
+            onAdd: _openPairingGuide,
           ),
-          if (_devices.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _SectionHeading(
-              title: 'Detected nearby',
-              subtitle: 'Select the button you want to pair with this phone.',
-              count: _devices.length,
-            ),
-            const SizedBox(height: 8),
-            ..._devices.values.map(
-              (device) => Card(
-                elevation: 0,
-                margin: const EdgeInsets.only(bottom: 10),
-                color: scheme.primaryContainer.withValues(alpha: 0.42),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
+          if (_message != null) ...[
+            const SizedBox(height: 12),
+            Card(
+              elevation: 0,
+              color: scheme.primaryContainer.withValues(alpha: 0.55),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, color: scheme.primary),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(_message!)),
+                  ],
                 ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 5,
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: scheme.primary,
-                    foregroundColor: scheme.onPrimary,
-                    child: const Icon(Icons.bluetooth_rounded),
-                  ),
-                  title: Text(
-                    device.displayName,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  subtitle: Text('${device.address} · ${device.rssi} dBm'),
-                  trailing: FilledButton.tonal(
-                    onPressed: _pairingInProgress ? null : () => _pair(device),
-                    child: const Text('Pair'),
-                  ),
+              ),
+            ),
+          ],
+          if (_registryNeedsReset) ...[
+            const SizedBox(height: 12),
+            Card(
+              elevation: 0,
+              color: scheme.errorContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pairing data needs recovery',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: scheme.onErrorContainer,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'The encrypted button registry cannot be read on this device. Reset only the local pairing data, then pair the physical button again.',
+                      style: TextStyle(color: scheme.onErrorContainer),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.tonalIcon(
+                      onPressed: _pairingInProgress ? null : _resetPairingData,
+                      icon: const Icon(Icons.restart_alt_rounded),
+                      label: const Text('Reset pairing data'),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -613,12 +801,56 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
                     'Last seen: ${button.lastSeenAt?.toLocal() ?? 'Not seen yet'}',
                   ),
                   isThreeLine: true,
-                  trailing: IconButton(
-                    icon: const Icon(Icons.link_off_rounded),
-                    tooltip: 'Unpair',
-                    onPressed: _pairingInProgress
-                        ? null
-                        : () => _unpair(button),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_testingButtonFor == button.deviceId)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 12),
+                          child: SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      else
+                        IconButton(
+                          icon: const Icon(Icons.play_circle_outline_rounded),
+                          tooltip: 'Test SOS button',
+                          onPressed:
+                              _pairingInProgress ||
+                                  _downloadingLogsFor != null ||
+                                  _testingButtonFor != null
+                              ? null
+                              : () => _testButtonConnection(button),
+                        ),
+                      if (_downloadingLogsFor == button.deviceId)
+                        const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      else
+                        IconButton(
+                          icon: const Icon(Icons.history_rounded),
+                          tooltip: 'Download event log',
+                          onPressed:
+                              _pairingInProgress ||
+                                  _downloadingLogsFor != null ||
+                                  _testingButtonFor != null
+                              ? null
+                              : () => _downloadLogs(button),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.link_off_rounded),
+                        tooltip: 'Unpair',
+                        onPressed:
+                            _pairingInProgress ||
+                                _downloadingLogsFor != null ||
+                                _testingButtonFor != null
+                            ? null
+                            : () => _unpair(button),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -627,4 +859,13 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
       ),
     );
   }
+}
+
+class _ButtonTestOutcome {
+  const _ButtonTestOutcome.pressed(this.event) : timedOut = false;
+  const _ButtonTestOutcome.timeout() : event = null, timedOut = true;
+  const _ButtonTestOutcome.cancelled() : event = null, timedOut = false;
+
+  final HikerBlePairedSosButtonTestEvent? event;
+  final bool timedOut;
 }

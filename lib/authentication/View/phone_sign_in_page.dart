@@ -45,7 +45,9 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   }
 
   void _refresh() {
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _sendCode() async {

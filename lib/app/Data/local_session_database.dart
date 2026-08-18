@@ -8,11 +8,16 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart'
     show databaseFactoryFfi, sqfliteFfiInit;
 
 import '../../home/Model/hike_session_models.dart';
+import '../../sos/Model/nearby_sos_event.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/app_session.dart';
 
 class LocalSessionDatabase {
+  LocalSessionDatabase({String? databasePath})
+    : _databasePathOverride = databasePath;
+
   Database? _database;
+  final String? _databasePathOverride;
   static bool _isDesktopFactoryConfigured = false;
 
   Future<AppSession?> loadSession() async {
@@ -45,7 +50,13 @@ class LocalSessionDatabase {
     await database.transaction((transaction) async {
       await transaction.delete('users');
       await transaction.delete('active_hike_session');
+      await transaction.delete('planned_hike_state');
     });
+  }
+
+  Future<void> clearUserSessionOnly() async {
+    final database = await _openDatabase();
+    await database.delete('users');
   }
 
   Future<void> saveActiveHikeSession({
@@ -59,6 +70,135 @@ class LocalSessionDatabase {
       'payload_json': jsonEncode(activeHike.toPersistence()),
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Rebinds a locally generated hike ID to the canonical ID returned by the
+  /// cloud recovery/completion callable. Pending hike-end records deliberately
+  /// keep their original idempotency key so an interrupted retry can be replayed
+  /// with the same request.
+  Future<ActiveHikeSession> migrateActiveHikeSessionId({
+    required String ownerPhoneNumber,
+    required ActiveHikeSession activeHike,
+    required String newSessionId,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    final oldSessionId = activeHike.sessionId.trim();
+    final canonicalSessionId = newSessionId.trim();
+    if (owner.isEmpty) {
+      throw ArgumentError.value(
+        ownerPhoneNumber,
+        'ownerPhoneNumber',
+        'must not be empty',
+      );
+    }
+    if (oldSessionId.isEmpty || canonicalSessionId.isEmpty) {
+      throw ArgumentError('Hike session IDs must not be empty.');
+    }
+    final migratedHike = activeHike.copyWith(sessionId: canonicalSessionId);
+    if (oldSessionId == canonicalSessionId) {
+      await saveActiveHikeSession(phoneNumber: owner, activeHike: migratedHike);
+      return migratedHike;
+    }
+
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      final activeRows = await transaction.query(
+        'active_hike_session',
+        columns: ['session_id', 'payload_json'],
+        where: 'owner_phone_number = ?',
+        whereArgs: [owner],
+        limit: 1,
+      );
+      if (activeRows.isNotEmpty &&
+          activeRows.first['session_id'] == oldSessionId) {
+        var snapshotToSave = migratedHike;
+        try {
+          final decoded = jsonDecode(
+            activeRows.first['payload_json'] as String,
+          );
+          if (decoded is Map) {
+            final persisted = ActiveHikeSession.fromPersistence(
+              Map<String, dynamic>.from(decoded),
+            );
+            if (persisted.sessionId == oldSessionId) {
+              snapshotToSave = persisted.copyWith(
+                sessionId: canonicalSessionId,
+              );
+            }
+          }
+        } catch (_) {
+          // The supplied in-memory snapshot is the safe fallback when an older
+          // local payload is malformed.
+        }
+        await transaction.update(
+          'active_hike_session',
+          {
+            'session_id': canonicalSessionId,
+            'payload_json': jsonEncode(snapshotToSave.toPersistence()),
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          },
+          where: 'owner_phone_number = ? AND session_id = ?',
+          whereArgs: [owner, oldSessionId],
+        );
+      }
+      await _migrateHikeTelemetrySessionId(
+        transaction,
+        ownerPhoneNumber: owner,
+        oldSessionId: oldSessionId,
+        newSessionId: canonicalSessionId,
+      );
+    });
+    return migratedHike;
+  }
+
+  Future<void> migrateHikeTelemetrySessionId({
+    required String ownerPhoneNumber,
+    required String oldSessionId,
+    required String newSessionId,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    final oldId = oldSessionId.trim();
+    final newId = newSessionId.trim();
+    if (owner.isEmpty || oldId.isEmpty || newId.isEmpty || oldId == newId) {
+      return;
+    }
+    final database = await _openDatabase();
+    await database.transaction((transaction) {
+      return _migrateHikeTelemetrySessionId(
+        transaction,
+        ownerPhoneNumber: owner,
+        oldSessionId: oldId,
+        newSessionId: newId,
+      );
+    });
+  }
+
+  Future<void> _migrateHikeTelemetrySessionId(
+    DatabaseExecutor database, {
+    required String ownerPhoneNumber,
+    required String oldSessionId,
+    required String newSessionId,
+  }) async {
+    await database.update(
+      'local_location_points',
+      {'session_id': newSessionId},
+      where:
+          'session_id = ? AND (owner_phone_number = ? OR owner_phone_number = ?)',
+      whereArgs: [oldSessionId, ownerPhoneNumber, ''],
+    );
+    await database.update(
+      'network_observations',
+      {'session_id': newSessionId},
+      where: 'session_id = ?',
+      whereArgs: [oldSessionId],
+    );
+    await database.update(
+      'queued_alerts',
+      {'session_id': newSessionId},
+      where:
+          'session_id = ? AND (owner_phone_number = ? OR owner_phone_number = ?)',
+      whereArgs: [oldSessionId, ownerPhoneNumber, ''],
+    );
   }
 
   Future<ActiveHikeSession?> loadActiveHikeSession({
@@ -86,7 +226,20 @@ class LocalSessionDatabase {
       if (activeHike.sessionId.isEmpty) {
         throw const FormatException('Active hike session ID is missing.');
       }
-      return activeHike;
+      final queuedUpdates = Sqflite.firstIntValue(
+        await database.rawQuery(
+          '''
+          SELECT COUNT(*)
+          FROM local_location_points
+          WHERE session_id = ?
+            AND is_synced = 0
+            AND latitude BETWEEN -90 AND 90
+            AND longitude BETWEEN -180 AND 180
+          ''',
+          [activeHike.sessionId],
+        ),
+      );
+      return activeHike.copyWith(queuedUpdates: queuedUpdates ?? 0);
     } catch (error) {
       debugPrint('Unable to restore active hike snapshot: $error');
       await clearActiveHikeSession(phoneNumber: phoneNumber);
@@ -96,10 +249,338 @@ class LocalSessionDatabase {
 
   Future<void> clearActiveHikeSession({required String phoneNumber}) async {
     final database = await _openDatabase();
-    await database.delete(
+    final rows = await database.query(
       'active_hike_session',
+      columns: ['session_id'],
       where: 'owner_phone_number = ?',
       whereArgs: [phoneNumber],
+    );
+    final sessionIds = rows
+        .map((row) => row['session_id'])
+        .whereType<String>()
+        .where((sessionId) => sessionId.isNotEmpty)
+        .toSet();
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'active_hike_session',
+        where: 'owner_phone_number = ?',
+        whereArgs: [phoneNumber],
+      );
+      for (final sessionId in sessionIds) {
+        await _deleteCompletedHikeTelemetry(
+          transaction,
+          sessionId: sessionId,
+          preserveUnsent: true,
+        );
+      }
+    });
+  }
+
+  Future<void> saveUpcomingHikesForPlanning({
+    required String ownerPhoneNumber,
+    required Iterable<UpcomingHike> upcomingHikes,
+    bool pruneMissing = false,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty) {
+      throw ArgumentError.value(
+        ownerPhoneNumber,
+        'ownerPhoneNumber',
+        'must not be empty',
+      );
+    }
+    final hikes = <String, UpcomingHike>{
+      for (final hike in upcomingHikes)
+        if (hike.id.trim().isNotEmpty) hike.id.trim(): hike,
+    };
+    final database = await _openDatabase();
+    final now = DateTime.now().toUtc().toIso8601String();
+    await database.transaction((transaction) async {
+      for (final entry in hikes.entries) {
+        final hike = entry.value;
+        final payload = hike.toPersistence();
+        if (hike.draft == null) {
+          final existing = await transaction.query(
+            'planned_hike_state',
+            columns: ['upcoming_payload_json'],
+            where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+            whereArgs: [owner, entry.key],
+            limit: 1,
+          );
+          if (existing.isNotEmpty) {
+            final saved = _decodeJsonMap(
+              existing.first['upcoming_payload_json'] as String?,
+            );
+            final savedDraft = saved['draft'];
+            if (savedDraft is Map) {
+              payload['draft'] = Map<String, dynamic>.from(savedDraft);
+            }
+          }
+        }
+        final initialChecklist = GearChecklistCatalog.sanitize(
+          hike.draft?.completedChecklistItems ?? const <String>{},
+        ).toList()..sort();
+        await transaction.insert('planned_hike_state', {
+          'owner_phone_number': owner,
+          'upcoming_hike_id': entry.key,
+          'upcoming_payload_json': jsonEncode(payload),
+          'completed_checklist_json': jsonEncode(initialChecklist),
+          'is_consumed': 0,
+          'updated_at': now,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        await transaction.update(
+          'planned_hike_state',
+          {'upcoming_payload_json': jsonEncode(payload), 'updated_at': now},
+          where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+          whereArgs: [owner, entry.key],
+        );
+      }
+      final confirmedBySchedule = <String, UpcomingHike>{
+        for (final hike in hikes.values)
+          if (!hike.isLocalPendingSync) _plannedHikeScheduleKey(hike): hike,
+      };
+      final savedConfirmedRows = await transaction.query(
+        'planned_hike_state',
+        where: 'owner_phone_number = ? AND upcoming_hike_id NOT LIKE ?',
+        whereArgs: [owner, 'local_pending_%'],
+      );
+      for (final row in savedConfirmedRows) {
+        try {
+          final state = LocalPlannedHikeState.fromRow(row);
+          confirmedBySchedule[_plannedHikeScheduleKey(state.upcomingHike)] =
+              state.upcomingHike;
+        } catch (_) {
+          continue;
+        }
+      }
+      if (confirmedBySchedule.isNotEmpty) {
+        final pendingRows = await transaction.query(
+          'planned_hike_state',
+          where: 'owner_phone_number = ? AND upcoming_hike_id LIKE ?',
+          whereArgs: [owner, 'local_pending_%'],
+        );
+        for (final pendingRow in pendingRows) {
+          LocalPlannedHikeState pendingState;
+          try {
+            pendingState = LocalPlannedHikeState.fromRow(pendingRow);
+          } catch (_) {
+            continue;
+          }
+          final confirmed =
+              confirmedBySchedule[_plannedHikeScheduleKey(
+                pendingState.upcomingHike,
+              )];
+          if (confirmed == null) continue;
+          final targetRows = await transaction.query(
+            'planned_hike_state',
+            where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+            whereArgs: [owner, confirmed.id],
+            limit: 1,
+          );
+          if (targetRows.isNotEmpty) {
+            final confirmedPayload = _decodeJsonMap(
+              targetRows.first['upcoming_payload_json'] as String?,
+            );
+            final pendingPayload = _decodeJsonMap(
+              pendingRow['upcoming_payload_json'] as String?,
+            );
+            if (pendingPayload['draft'] is Map) {
+              confirmedPayload['draft'] = Map<String, dynamic>.from(
+                pendingPayload['draft'] as Map,
+              );
+            }
+            final existingChecklist = _decodeJsonStringList(
+              targetRows.first['completed_checklist_json'] as String?,
+            );
+            final transferredChecklist = existingChecklist.isEmpty
+                ? pendingState.completedChecklistItems.toList()
+                : existingChecklist;
+            transferredChecklist.sort();
+            await transaction.update(
+              'planned_hike_state',
+              {
+                'upcoming_payload_json': jsonEncode(confirmedPayload),
+                'completed_checklist_json': jsonEncode(transferredChecklist),
+                'updated_at': now,
+              },
+              where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+              whereArgs: [owner, confirmed.id],
+            );
+          }
+          await transaction.delete(
+            'planned_hike_state',
+            where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+            whereArgs: [owner, pendingState.upcomingHike.id],
+          );
+        }
+      }
+      if (!pruneMissing) return;
+      if (hikes.isEmpty) {
+        await transaction.delete(
+          'planned_hike_state',
+          where: 'owner_phone_number = ?',
+          whereArgs: [owner],
+        );
+        return;
+      }
+      final placeholders = List.filled(hikes.length, '?').join(', ');
+      await transaction.delete(
+        'planned_hike_state',
+        where:
+            'owner_phone_number = ? AND upcoming_hike_id NOT IN ($placeholders)',
+        whereArgs: [owner, ...hikes.keys],
+      );
+    });
+  }
+
+  Future<List<LocalPlannedHikeState>> loadPlannedHikeStates({
+    required String ownerPhoneNumber,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty) return const [];
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'planned_hike_state',
+      where: 'owner_phone_number = ?',
+      whereArgs: [owner],
+      orderBy: 'updated_at DESC',
+      limit: 100,
+    );
+    final states = <LocalPlannedHikeState>[];
+    for (final row in rows) {
+      try {
+        states.add(LocalPlannedHikeState.fromRow(row));
+      } catch (error) {
+        debugPrint('Ignoring an invalid planned hike snapshot: $error');
+      }
+    }
+    return states;
+  }
+
+  Future<void> savePlannedHikeChecklist({
+    required String ownerPhoneNumber,
+    required String upcomingHikeId,
+    required Iterable<String> completedItems,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    final hikeId = upcomingHikeId.trim();
+    if (owner.isEmpty || hikeId.isEmpty) return;
+    final items = GearChecklistCatalog.sanitize(completedItems).toList()
+      ..sort();
+    final database = await _openDatabase();
+    await database.update(
+      'planned_hike_state',
+      {
+        'completed_checklist_json': jsonEncode(items),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+      whereArgs: [owner, hikeId],
+    );
+  }
+
+  Future<void> markPlannedHikeConsumed({
+    required String ownerPhoneNumber,
+    required String upcomingHikeId,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    final hikeId = upcomingHikeId.trim();
+    if (owner.isEmpty || hikeId.isEmpty) return;
+    final database = await _openDatabase();
+    await database.update(
+      'planned_hike_state',
+      {
+        'is_consumed': 1,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+      whereArgs: [owner, hikeId],
+    );
+  }
+
+  Future<void> queuePendingHikeEnd({
+    required String ownerPhoneNumber,
+    required ActiveHikeSession activeHike,
+    HikeSummaryReport? summary,
+    DateTime? endedAt,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    final sessionId = activeHike.sessionId.trim();
+    if (owner.isEmpty) {
+      throw ArgumentError.value(
+        ownerPhoneNumber,
+        'ownerPhoneNumber',
+        'must not be empty',
+      );
+    }
+    if (sessionId.isEmpty) {
+      throw ArgumentError.value(sessionId, 'sessionId', 'must not be empty');
+    }
+    final database = await _openDatabase();
+    final now = DateTime.now().toUtc().toIso8601String();
+    await database.insert('pending_hike_ends', {
+      'owner_phone_number': owner,
+      'session_id': sessionId,
+      'active_hike_payload_json': jsonEncode(activeHike.toPersistence()),
+      if (summary != null)
+        'summary_payload_json': jsonEncode(summary.toFirestore()),
+      if (endedAt != null) 'ended_at': endedAt.toUtc().toIso8601String(),
+      'created_at': now,
+      'updated_at': now,
+      'retry_count': 0,
+      'last_error': '',
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<LocalPendingHikeEnd>> loadPendingHikeEnds({
+    required String ownerPhoneNumber,
+    int limit = 20,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty || limit <= 0) return const [];
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'pending_hike_ends',
+      where: 'owner_phone_number = ?',
+      whereArgs: [owner],
+      orderBy: 'created_at ASC',
+      limit: limit,
+    );
+    return rows.map(LocalPendingHikeEnd.fromRow).toList();
+  }
+
+  Future<void> deletePendingHikeEnd({
+    required String ownerPhoneNumber,
+    required String sessionId,
+  }) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'pending_hike_ends',
+      where: 'owner_phone_number = ? AND session_id = ?',
+      whereArgs: [ownerPhoneNumber.trim(), sessionId.trim()],
+    );
+  }
+
+  Future<void> markPendingHikeEndRetry({
+    required String ownerPhoneNumber,
+    required String sessionId,
+    String lastError = '',
+  }) async {
+    final database = await _openDatabase();
+    await database.rawUpdate(
+      '''
+      UPDATE pending_hike_ends
+      SET retry_count = retry_count + 1,
+          last_error = ?,
+          updated_at = ?
+      WHERE owner_phone_number = ? AND session_id = ?
+      ''',
+      [
+        lastError,
+        DateTime.now().toUtc().toIso8601String(),
+        ownerPhoneNumber.trim(),
+        sessionId.trim(),
+      ],
     );
   }
 
@@ -298,6 +779,162 @@ class LocalSessionDatabase {
     );
   }
 
+  Future<void> saveNearbySosEvent(NearbySosEvent event) async {
+    final owner = event.ownerPhoneNumber.trim();
+    final eventKey = event.eventKey.trim();
+    if (owner.isEmpty || eventKey.isEmpty) return;
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      final existingRows = await transaction.query(
+        'nearby_sos_events',
+        where: 'owner_phone_number = ? AND event_key = ?',
+        whereArgs: [owner, eventKey],
+        limit: 1,
+      );
+      final existing = existingRows.isEmpty ? null : existingRows.first;
+      final existingReceivedAt = DateTime.tryParse(
+        existing?['received_at'] as String? ?? '',
+      );
+      final receivedAt =
+          existingReceivedAt != null &&
+              existingReceivedAt.isBefore(event.receivedAt)
+          ? existingReceivedAt
+          : event.receivedAt;
+      final location = event.hasReportedLocation ? event.location : null;
+      final detectorLocation = event.detectorLocation?.hasValidPosition == true
+          ? event.detectorLocation
+          : null;
+      final row = <String, Object?>{
+        'owner_phone_number': owner,
+        'event_key': eventKey,
+        'device_id': event.deviceId.trim(),
+        'counter': event.counter ?? existing?['counter'],
+        'rssi': event.rssi ?? existing?['rssi'],
+        'received_at': receivedAt.toUtc().toIso8601String(),
+        'updated_at': event.updatedAt.toUtc().toIso8601String(),
+        'latitude': location?.latitude ?? existing?['latitude'],
+        'longitude': location?.longitude ?? existing?['longitude'],
+        'accuracy_meters':
+            location?.accuracyMeters ?? existing?['accuracy_meters'],
+        'location_captured_at':
+            location?.capturedAt?.toUtc().toIso8601String() ??
+            existing?['location_captured_at'],
+        'detector_latitude':
+            existing?['detector_latitude'] ?? detectorLocation?.latitude,
+        'detector_longitude':
+            existing?['detector_longitude'] ?? detectorLocation?.longitude,
+        'detector_accuracy_meters':
+            existing?['detector_accuracy_meters'] ??
+            detectorLocation?.accuracyMeters,
+        'detector_captured_at':
+            existing?['detector_captured_at'] ??
+            detectorLocation?.capturedAt?.toUtc().toIso8601String(),
+      };
+      if (existing == null) {
+        await transaction.insert('nearby_sos_events', row);
+      } else {
+        await transaction.update(
+          'nearby_sos_events',
+          row,
+          where: 'owner_phone_number = ? AND event_key = ?',
+          whereArgs: [owner, eventKey],
+        );
+      }
+
+      await transaction.delete(
+        'nearby_sos_events',
+        where: '''
+          owner_phone_number = ? AND event_key NOT IN (
+            SELECT event_key FROM nearby_sos_events
+            WHERE owner_phone_number = ?
+            ORDER BY received_at DESC
+            LIMIT 200
+          )
+        ''',
+        whereArgs: [owner, owner],
+      );
+    });
+  }
+
+  Future<List<NearbySosEvent>> loadNearbySosEvents({
+    required String ownerPhoneNumber,
+    int limit = 200,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty || limit <= 0) return const [];
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'nearby_sos_events',
+      where: 'owner_phone_number = ?',
+      whereArgs: [owner],
+      orderBy: 'received_at DESC',
+      limit: limit,
+    );
+    final events = <NearbySosEvent>[];
+    for (final row in rows) {
+      try {
+        final latitude = row['latitude'];
+        final longitude = row['longitude'];
+        final hasLocation =
+            latitude is num &&
+            longitude is num &&
+            latitude.isFinite &&
+            longitude.isFinite;
+        final detectorLatitude = row['detector_latitude'];
+        final detectorLongitude = row['detector_longitude'];
+        final hasDetectorLocation =
+            detectorLatitude is num &&
+            detectorLongitude is num &&
+            detectorLatitude.isFinite &&
+            detectorLongitude.isFinite;
+        events.add(
+          NearbySosEvent(
+            ownerPhoneNumber: owner,
+            eventKey: row['event_key'] as String? ?? '',
+            deviceId: row['device_id'] as String? ?? '',
+            counter: row['counter'] is num
+                ? (row['counter'] as num).toInt()
+                : null,
+            rssi: row['rssi'] is num ? (row['rssi'] as num).toInt() : null,
+            receivedAt: DateTime.parse(row['received_at'] as String).toUtc(),
+            updatedAt:
+                DateTime.tryParse(
+                  row['updated_at'] as String? ?? '',
+                )?.toUtc() ??
+                DateTime.parse(row['received_at'] as String).toUtc(),
+            location: hasLocation
+                ? SosTriggerLocation(
+                    latitude: latitude.toDouble(),
+                    longitude: longitude.toDouble(),
+                    accuracyMeters: row['accuracy_meters'] is num
+                        ? (row['accuracy_meters'] as num).toDouble()
+                        : null,
+                    capturedAt: DateTime.tryParse(
+                      row['location_captured_at'] as String? ?? '',
+                    )?.toUtc(),
+                  )
+                : null,
+            detectorLocation: hasDetectorLocation
+                ? SosTriggerLocation(
+                    latitude: detectorLatitude.toDouble(),
+                    longitude: detectorLongitude.toDouble(),
+                    accuracyMeters: row['detector_accuracy_meters'] is num
+                        ? (row['detector_accuracy_meters'] as num).toDouble()
+                        : null,
+                    capturedAt: DateTime.tryParse(
+                      row['detector_captured_at'] as String? ?? '',
+                    )?.toUtc(),
+                  )
+                : null,
+          ),
+        );
+      } catch (error) {
+        debugPrint('Ignoring an invalid nearby SOS event: $error');
+      }
+    }
+    return events;
+  }
+
   Future<Database> _openDatabase() async {
     final existingDatabase = _database;
     if (existingDatabase != null) {
@@ -306,12 +943,14 @@ class LocalSessionDatabase {
 
     _configureDatabaseFactory();
     final databaseDirectory = await getDatabasesPath();
-    final databasePath = path.join(databaseDirectory, 'hiker_circle.db');
+    final databasePath =
+        _databasePathOverride ??
+        path.join(databaseDirectory, 'hiker_circle.db');
     debugPrint('HikerCircle SQLite database path: $databasePath');
 
     _database = await openDatabase(
       databasePath,
-      version: 16,
+      version: 22,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -335,6 +974,9 @@ class LocalSessionDatabase {
         await _createActiveHikeSessionTable(database);
         await _createChatReadReceiptsTable(database);
         await _createDeviceNotificationsTable(database);
+        await _createNearbySosEventsTable(database);
+        await _createPendingHikeEndsTable(database);
+        await _createPlannedHikeStateTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -451,13 +1093,77 @@ class LocalSessionDatabase {
             definition: 'TEXT',
           );
         }
+        if (oldVersion < 17) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'local_location_points',
+            columnName: 'owner_phone_number',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await _createSafetyIndexes(database);
+        }
+        if (oldVersion < 18) {
+          await _createPendingHikeEndsTable(database);
+        }
+        if (oldVersion < 19) {
+          await _createPlannedHikeStateTable(database);
+        }
+        if (oldVersion < 20) {
+          await database.update(
+            'queued_alerts',
+            {
+              'send_status': 'quarantined',
+              'last_error':
+                  'Legacy SOS queue has no account owner and cannot be sent safely.',
+            },
+            where: "TRIM(owner_phone_number) = '' AND send_status IN (?, ?)",
+            whereArgs: ['queued', 'retry'],
+          );
+        }
+        if (oldVersion < 21) {
+          await _createNearbySosEventsTable(database);
+        }
+        if (oldVersion < 22) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'nearby_sos_events',
+            columnName: 'detector_latitude',
+            definition: 'REAL',
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'nearby_sos_events',
+            columnName: 'detector_longitude',
+            definition: 'REAL',
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'nearby_sos_events',
+            columnName: 'detector_accuracy_meters',
+            definition: 'REAL',
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'nearby_sos_events',
+            columnName: 'detector_captured_at',
+            definition: 'TEXT',
+          );
+        }
       },
     );
 
     return _database!;
   }
 
+  @visibleForTesting
+  Future<void> close() async {
+    final database = _database;
+    _database = null;
+    await database?.close();
+  }
+
   Future<int> insertLocationPoint({
+    String ownerPhoneNumber = '',
     required String sessionId,
     required double latitude,
     required double longitude,
@@ -466,33 +1172,52 @@ class LocalSessionDatabase {
     int? batteryLevel,
     required String pointType,
     bool isSynced = false,
+    DateTime? recordedAt,
   }) async {
+    final normalizedSessionId = sessionId.trim();
+    if (normalizedSessionId.isEmpty) {
+      throw ArgumentError.value(sessionId, 'sessionId', 'must not be empty');
+    }
+    if (!_isValidCoordinate(latitude, longitude)) {
+      throw ArgumentError('Location coordinates are outside valid GPS bounds.');
+    }
     final database = await _openDatabase();
     return database.insert('local_location_points', {
-      'session_id': sessionId,
+      'owner_phone_number': ownerPhoneNumber.trim(),
+      'session_id': normalizedSessionId,
       'latitude': latitude,
       'longitude': longitude,
-      'altitude': altitude,
-      'accuracy': accuracy,
-      'battery_level': batteryLevel,
-      'point_type': pointType,
-      'recorded_at': DateTime.now().toUtc().toIso8601String(),
+      'altitude': altitude?.isFinite == true ? altitude : null,
+      'accuracy': accuracy?.isFinite == true && accuracy! >= 0
+          ? accuracy
+          : null,
+      'battery_level': batteryLevel?.clamp(0, 100),
+      'point_type': pointType.trim().isEmpty ? 'automatic' : pointType.trim(),
+      'recorded_at': (recordedAt ?? DateTime.now()).toUtc().toIso8601String(),
       'is_synced': isSynced ? 1 : 0,
     });
   }
 
   Future<int> insertQueuedAlert({
-    String ownerPhoneNumber = '',
+    required String ownerPhoneNumber,
     required String sessionId,
     required String alertType,
     required double triggerLatitude,
     required double triggerLongitude,
     required String payloadJson,
   }) async {
+    final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty) {
+      throw ArgumentError.value(
+        ownerPhoneNumber,
+        'ownerPhoneNumber',
+        'must not be empty',
+      );
+    }
     final database = await _openDatabase();
     final now = DateTime.now().toUtc().toIso8601String();
     return database.insert('queued_alerts', {
-      'owner_phone_number': ownerPhoneNumber,
+      'owner_phone_number': owner,
       'session_id': sessionId,
       'alert_type': alertType,
       'trigger_latitude': triggerLatitude,
@@ -507,42 +1232,38 @@ class LocalSessionDatabase {
   }
 
   Future<List<LocalQueuedAlert>> loadQueuedAlerts({
-    String ownerPhoneNumber = '',
+    required String ownerPhoneNumber,
     int limit = 20,
   }) async {
     final database = await _openDatabase();
     final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty) {
+      return const [];
+    }
     final rows = await database.query(
       'queued_alerts',
-      where: owner.isEmpty
-          ? 'send_status IN (?, ?)'
-          : 'owner_phone_number IN (?, ?) AND send_status IN (?, ?)',
-      whereArgs: owner.isEmpty
-          ? ['queued', 'retry']
-          : [owner, '', 'queued', 'retry'],
+      where: 'owner_phone_number = ? AND send_status IN (?, ?)',
+      whereArgs: [owner, 'queued', 'retry'],
       orderBy: 'created_at ASC',
       limit: limit,
     );
     return rows.map(LocalQueuedAlert.fromRow).toList();
   }
 
-  Future<int> countQueuedAlerts({String ownerPhoneNumber = ''}) async {
+  Future<int> countQueuedAlerts({required String ownerPhoneNumber}) async {
     final database = await _openDatabase();
     final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty) {
+      return 0;
+    }
     final result = await database.rawQuery(
-      owner.isEmpty
-          ? '''
-            SELECT COUNT(*) AS total
-            FROM queued_alerts
-            WHERE send_status IN (?, ?)
-            '''
-          : '''
-            SELECT COUNT(*) AS total
-            FROM queued_alerts
-            WHERE owner_phone_number IN (?, ?)
-              AND send_status IN (?, ?)
-            ''',
-      owner.isEmpty ? ['queued', 'retry'] : [owner, '', 'queued', 'retry'],
+      '''
+        SELECT COUNT(*) AS total
+        FROM queued_alerts
+        WHERE owner_phone_number = ?
+          AND send_status IN (?, ?)
+      ''',
+      [owner, 'queued', 'retry'],
     );
     return Sqflite.firstIntValue(result) ?? 0;
   }
@@ -555,6 +1276,25 @@ class LocalSessionDatabase {
         'send_status': 'sent',
         'sent_at': DateTime.now().toUtc().toIso8601String(),
         'last_error': '',
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateQueuedAlertPayload({
+    required int id,
+    required String payloadJson,
+    String sendStatus = 'queued',
+    String lastError = '',
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'queued_alerts',
+      {
+        'send_status': sendStatus,
+        'payload_json': payloadJson,
+        'last_error': lastError,
       },
       where: 'id = ?',
       whereArgs: [id],
@@ -623,16 +1363,158 @@ class LocalSessionDatabase {
   Future<int> countUnsentLocationPoints(String sessionId) async {
     final database = await _openDatabase();
     final result = await database.rawQuery(
-      'SELECT COUNT(*) AS total FROM local_location_points WHERE session_id = ? AND is_synced = 0',
+      '''
+      SELECT COUNT(*) AS total
+      FROM local_location_points
+      WHERE session_id = ?
+        AND is_synced = 0
+        AND latitude BETWEEN -90 AND 90
+        AND longitude BETWEEN -180 AND 180
+      ''',
       [sessionId],
     );
     return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<List<LocalLocationPoint>> loadUnsentLocationPoints({
+    required String sessionId,
+    int limit = 200,
+  }) async {
+    final normalizedSessionId = sessionId.trim();
+    if (normalizedSessionId.isEmpty || limit <= 0) {
+      return const [];
+    }
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'local_location_points',
+      where: '''
+        session_id = ?
+        AND is_synced = 0
+        AND latitude BETWEEN -90 AND 90
+        AND longitude BETWEEN -180 AND 180
+      ''',
+      whereArgs: [normalizedSessionId],
+      orderBy: 'recorded_at ASC, id ASC',
+      limit: limit,
+    );
+    return rows
+        .map(LocalLocationPoint.fromRow)
+        .where((point) => point.hasValidCoordinate)
+        .toList();
+  }
+
+  Future<void> markLocationPointsSynced(Iterable<int> pointIds) async {
+    final ids = pointIds.where((id) => id > 0).toSet();
+    if (ids.isEmpty) {
+      return;
+    }
+    final database = await _openDatabase();
+    final batch = database.batch();
+    for (final id in ids) {
+      batch.update(
+        'local_location_points',
+        {'is_synced': 1},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<int> deleteSyncedLocationPoints({
+    String? sessionId,
+    DateTime? recordedBefore,
+  }) async {
+    final clauses = <String>['is_synced = 1'];
+    final arguments = <Object?>[];
+    final normalizedSessionId = sessionId?.trim() ?? '';
+    if (normalizedSessionId.isNotEmpty) {
+      clauses.add('session_id = ?');
+      arguments.add(normalizedSessionId);
+    }
+    if (recordedBefore != null) {
+      clauses.add('recorded_at < ?');
+      arguments.add(recordedBefore.toUtc().toIso8601String());
+    }
+    final database = await _openDatabase();
+    return database.delete(
+      'local_location_points',
+      where: clauses.join(' AND '),
+      whereArgs: arguments,
+    );
+  }
+
+  Future<void> clearCompletedHikeTelemetry({
+    required String sessionId,
+    bool preserveUnsent = true,
+  }) async {
+    final normalizedSessionId = sessionId.trim();
+    if (normalizedSessionId.isEmpty) {
+      return;
+    }
+    final database = await _openDatabase();
+    await database.transaction((transaction) {
+      return _deleteCompletedHikeTelemetry(
+        transaction,
+        sessionId: normalizedSessionId,
+        preserveUnsent: preserveUnsent,
+      );
+    });
+  }
+
+  /// Deletes location/network tracking rows after the canonical route capture
+  /// is saved, while deliberately preserving every queued SOS alert.
+  Future<void> discardHikeTrackingTelemetry({required String sessionId}) async {
+    final normalizedSessionId = sessionId.trim();
+    if (normalizedSessionId.isEmpty) return;
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'local_location_points',
+        where: 'session_id = ?',
+        whereArgs: [normalizedSessionId],
+      );
+      await transaction.delete(
+        'network_observations',
+        where: 'session_id = ?',
+        whereArgs: [normalizedSessionId],
+      );
+    });
+  }
+
+  Future<void> _deleteCompletedHikeTelemetry(
+    DatabaseExecutor database, {
+    required String sessionId,
+    required bool preserveUnsent,
+  }) async {
+    await database.delete(
+      'local_location_points',
+      where: preserveUnsent
+          ? 'session_id = ? AND is_synced = 1'
+          : 'session_id = ?',
+      whereArgs: [sessionId],
+    );
+    await database.delete(
+      'network_observations',
+      where: preserveUnsent
+          ? 'session_id = ? AND is_synced = 1'
+          : 'session_id = ?',
+      whereArgs: [sessionId],
+    );
+    await database.delete(
+      'queued_alerts',
+      where: preserveUnsent
+          ? "session_id = ? AND send_status = 'sent'"
+          : 'session_id = ?',
+      whereArgs: [sessionId],
+    );
   }
 
   Future<void> _createSafetyTables(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS local_location_points (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_phone_number TEXT NOT NULL DEFAULT '',
         session_id TEXT NOT NULL,
         latitude REAL NOT NULL,
         longitude REAL NOT NULL,
@@ -694,6 +1576,23 @@ class LocalSessionDatabase {
         is_synced INTEGER NOT NULL DEFAULT 0
       )
     ''');
+
+    await _createSafetyIndexes(database);
+  }
+
+  Future<void> _createSafetyIndexes(Database database) async {
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_location_points_session_sync_time
+      ON local_location_points(session_id, is_synced, recorded_at)
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_queued_alerts_session_status
+      ON queued_alerts(session_id, send_status, created_at)
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_network_observations_session_sync
+      ON network_observations(session_id, is_synced, recorded_at)
+    ''');
   }
 
   Future<void> _createDeviceBindingTables(Database database) async {
@@ -749,6 +1648,45 @@ class LocalSessionDatabase {
     ''');
   }
 
+  Future<void> _createPendingHikeEndsTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS pending_hike_ends (
+        owner_phone_number TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        active_hike_payload_json TEXT NOT NULL,
+        summary_payload_json TEXT,
+        ended_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (owner_phone_number, session_id)
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_pending_hike_ends_owner_created
+      ON pending_hike_ends(owner_phone_number, created_at)
+    ''');
+  }
+
+  Future<void> _createPlannedHikeStateTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS planned_hike_state (
+        owner_phone_number TEXT NOT NULL,
+        upcoming_hike_id TEXT NOT NULL,
+        upcoming_payload_json TEXT NOT NULL,
+        completed_checklist_json TEXT NOT NULL DEFAULT '[]',
+        is_consumed INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (owner_phone_number, upcoming_hike_id)
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_planned_hike_state_owner_updated
+      ON planned_hike_state(owner_phone_number, updated_at DESC)
+    ''');
+  }
+
   Future<void> _createChatReadReceiptsTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS chat_read_receipts (
@@ -778,6 +1716,33 @@ class LocalSessionDatabase {
     await database.execute('''
       CREATE INDEX IF NOT EXISTS idx_device_notifications_owner_received
       ON device_notifications(owner_phone_number, received_at DESC)
+    ''');
+  }
+
+  Future<void> _createNearbySosEventsTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS nearby_sos_events (
+        owner_phone_number TEXT NOT NULL,
+        event_key TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        counter INTEGER,
+        rssi INTEGER,
+        received_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        latitude REAL,
+        longitude REAL,
+        accuracy_meters REAL,
+        location_captured_at TEXT,
+        detector_latitude REAL,
+        detector_longitude REAL,
+        detector_accuracy_meters REAL,
+        detector_captured_at TEXT,
+        PRIMARY KEY (owner_phone_number, event_key)
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_nearby_sos_events_owner_received
+      ON nearby_sos_events(owner_phone_number, received_at DESC)
     ''');
   }
 
@@ -1101,6 +2066,16 @@ class LocalSessionDatabase {
       return;
     }
 
+    // An explicit path is used by host-side tests and diagnostics. Flutter
+    // tests default to an Android target even while running on Windows, so
+    // target-platform detection alone cannot select the FFI database factory.
+    if (_databasePathOverride != null) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+      _isDesktopFactoryConfigured = true;
+      return;
+    }
+
     switch (defaultTargetPlatform) {
       case TargetPlatform.linux:
       case TargetPlatform.macOS:
@@ -1174,6 +2149,107 @@ class LocalSessionDatabase {
   }
 }
 
+class LocalPlannedHikeState {
+  const LocalPlannedHikeState({
+    required this.ownerPhoneNumber,
+    required this.upcomingHike,
+    required this.completedChecklistItems,
+    required this.isConsumed,
+    required this.updatedAt,
+  });
+
+  factory LocalPlannedHikeState.fromRow(Map<String, Object?> row) {
+    final hikeId = row['upcoming_hike_id'] as String? ?? '';
+    final payload = _decodeJsonMap(row['upcoming_payload_json'] as String?);
+    if (hikeId.trim().isEmpty || payload.isEmpty) {
+      throw const FormatException('Planned hike snapshot is incomplete.');
+    }
+    final rawChecklist = row['completed_checklist_json'] as String? ?? '[]';
+    Iterable<String> checklist = const <String>[];
+    try {
+      final decoded = jsonDecode(rawChecklist);
+      if (decoded is Iterable) {
+        checklist = decoded.whereType<String>();
+      }
+    } catch (_) {
+      checklist = const <String>[];
+    }
+    return LocalPlannedHikeState(
+      ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
+      upcomingHike: UpcomingHike.fromFirestore(hikeId, payload),
+      completedChecklistItems: GearChecklistCatalog.sanitize(checklist),
+      isConsumed: row['is_consumed'] == 1,
+      updatedAt:
+          DateTime.tryParse(row['updated_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
+  }
+
+  final String ownerPhoneNumber;
+  final UpcomingHike upcomingHike;
+  final Set<String> completedChecklistItems;
+  final bool isConsumed;
+  final DateTime updatedAt;
+}
+
+class LocalPendingHikeEnd {
+  const LocalPendingHikeEnd({
+    required this.ownerPhoneNumber,
+    required this.sessionId,
+    required this.activeHikePayload,
+    required this.summaryPayload,
+    required this.endedAt,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.retryCount,
+    required this.lastError,
+  });
+
+  factory LocalPendingHikeEnd.fromRow(Map<String, Object?> row) {
+    return LocalPendingHikeEnd(
+      ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
+      sessionId: row['session_id'] as String? ?? '',
+      activeHikePayload: _decodeJsonMap(
+        row['active_hike_payload_json'] as String?,
+      ),
+      summaryPayload: _decodeNullableJsonMap(
+        row['summary_payload_json'] as String?,
+      ),
+      endedAt: DateTime.tryParse(row['ended_at'] as String? ?? ''),
+      createdAt:
+          DateTime.tryParse(row['created_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      updatedAt:
+          DateTime.tryParse(row['updated_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      retryCount:
+          row['retry_count'] is num && (row['retry_count'] as num).isFinite
+          ? (row['retry_count'] as num).toInt()
+          : 0,
+      lastError: row['last_error'] as String? ?? '',
+    );
+  }
+
+  final String ownerPhoneNumber;
+  final String sessionId;
+  final Map<String, dynamic> activeHikePayload;
+  final Map<String, dynamic>? summaryPayload;
+  final DateTime? endedAt;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final int retryCount;
+  final String lastError;
+
+  ActiveHikeSession? get activeHike {
+    if (activeHikePayload.isEmpty) return null;
+    try {
+      return ActiveHikeSession.fromPersistence(activeHikePayload);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
 class CacheUsageSummary {
   const CacheUsageSummary({
     required this.downloadedMapCount,
@@ -1191,6 +2267,65 @@ class CacheUsageSummary {
         : '${(downloadedMapBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     return '$sizeLabel offline maps, $downloadedMapCount route packs, $networkObservationCount connection records';
   }
+}
+
+class LocalLocationPoint {
+  const LocalLocationPoint({
+    required this.id,
+    required this.ownerPhoneNumber,
+    required this.sessionId,
+    required this.latitude,
+    required this.longitude,
+    required this.altitude,
+    required this.accuracy,
+    required this.batteryLevel,
+    required this.pointType,
+    required this.recordedAt,
+    required this.isSynced,
+  });
+
+  factory LocalLocationPoint.fromRow(Map<String, Object?> row) {
+    final latitude = row['latitude'];
+    final longitude = row['longitude'];
+    final altitude = row['altitude'];
+    final accuracy = row['accuracy'];
+    final batteryLevel = row['battery_level'];
+    return LocalLocationPoint(
+      id: row['id'] is int ? row['id'] as int : 0,
+      ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
+      sessionId: row['session_id'] as String? ?? '',
+      latitude: latitude is num ? latitude.toDouble() : double.nan,
+      longitude: longitude is num ? longitude.toDouble() : double.nan,
+      altitude: altitude is num && altitude.isFinite
+          ? altitude.toDouble()
+          : null,
+      accuracy: accuracy is num && accuracy.isFinite && accuracy >= 0
+          ? accuracy.toDouble()
+          : null,
+      batteryLevel: batteryLevel is num && batteryLevel.isFinite
+          ? batteryLevel.toInt().clamp(0, 100)
+          : null,
+      pointType: row['point_type'] as String? ?? 'automatic',
+      recordedAt:
+          DateTime.tryParse(row['recorded_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      isSynced: row['is_synced'] == 1,
+    );
+  }
+
+  final int id;
+  final String ownerPhoneNumber;
+  final String sessionId;
+  final double latitude;
+  final double longitude;
+  final double? altitude;
+  final double? accuracy;
+  final int? batteryLevel;
+  final String pointType;
+  final DateTime recordedAt;
+  final bool isSynced;
+
+  bool get hasValidCoordinate => _isValidCoordinate(latitude, longitude);
 }
 
 class DeviceNotificationRecord {
@@ -1299,4 +2434,54 @@ class LocalQueuedAlert {
   final int retryCount;
   final DateTime createdAt;
   final String lastError;
+}
+
+bool _isValidCoordinate(double latitude, double longitude) {
+  return latitude.isFinite &&
+      longitude.isFinite &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180;
+}
+
+Map<String, dynamic> _decodeJsonMap(String? value) {
+  if (value == null || value.isEmpty) return const {};
+  try {
+    final decoded = jsonDecode(value);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : const {};
+  } catch (_) {
+    return const {};
+  }
+}
+
+Map<String, dynamic>? _decodeNullableJsonMap(String? value) {
+  if (value == null || value.isEmpty) return null;
+  final decoded = _decodeJsonMap(value);
+  return decoded.isEmpty ? null : decoded;
+}
+
+List<String> _decodeJsonStringList(String? value) {
+  if (value == null || value.isEmpty) return const [];
+  try {
+    final decoded = jsonDecode(value);
+    return decoded is Iterable
+        ? decoded.whereType<String>().toList()
+        : const [];
+  } catch (_) {
+    return const [];
+  }
+}
+
+String _plannedHikeScheduleKey(UpcomingHike hike) {
+  final phone = hike.creatorPhone.replaceAll(RegExp(r'[^0-9]'), '');
+  return jsonEncode([
+    hike.trailId.trim().toLowerCase(),
+    hike.departureTime.toUtc().toIso8601String(),
+    hike.expectedReturnTime.toUtc().toIso8601String(),
+    hike.hikeType.trim().toLowerCase(),
+    hike.startPointName.trim(),
+    hike.destinationName.trim(),
+    phone,
+  ]);
 }

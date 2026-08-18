@@ -39,13 +39,14 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
     });
 
     try {
-      await FirebaseFunctions.instance.httpsCallable('registerSafetyQuestions')
+      await FirebaseFunctions.instance
+          .httpsCallable('registerSafetyQuestions')
           .call(<String, Object?>{
-        'q1': _question1,
-        'a1': _answer1Controller.text.trim(),
-        'q2': _question2,
-        'a2': _answer2Controller.text.trim(),
-      });
+            'q1': _question1,
+            'a1': _answer1Controller.text.trim(),
+            'q2': _question2,
+            'a2': _answer2Controller.text.trim(),
+          });
       if (!mounted) return;
       await widget.onSubmitted();
     } catch (error) {
@@ -82,19 +83,22 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Choose two safety questions and provide answers. '
+                      'Step 2 of 3. Choose two safety questions and provide answers. '
                       'You will need them to reset your password.',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
                     const SizedBox(height: 24),
-                    Text('Question 1',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600)),
+                    Text(
+                      'Question 1',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
-                      value: _question1,
+                      initialValue: _question1,
                       decoration: const InputDecoration(
                         labelText: 'Select a question',
                         prefixIcon: Icon(Icons.help_outline),
@@ -102,14 +106,15 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
                       isExpanded: true,
                       items: safetyQuestionsList
                           .where((q) => q != _question2)
-                          .map((q) => DropdownMenuItem(
-                                value: q,
-                                child: Text(q, overflow: TextOverflow.ellipsis),
-                              ))
+                          .map(
+                            (q) => DropdownMenuItem(
+                              value: q,
+                              child: Text(q, overflow: TextOverflow.ellipsis),
+                            ),
+                          )
                           .toList(),
                       onChanged: (v) => setState(() => _question1 = v),
-                      validator: (v) =>
-                          v == null ? 'Select a question.' : null,
+                      validator: (v) => v == null ? 'Select a question.' : null,
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
@@ -127,12 +132,15 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
                       },
                     ),
                     const SizedBox(height: 24),
-                    Text('Question 2',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600)),
+                    Text(
+                      'Question 2',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
-                      value: _question2,
+                      initialValue: _question2,
                       decoration: const InputDecoration(
                         labelText: 'Select a different question',
                         prefixIcon: Icon(Icons.help_outline),
@@ -140,14 +148,15 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
                       isExpanded: true,
                       items: safetyQuestionsList
                           .where((q) => q != _question1)
-                          .map((q) => DropdownMenuItem(
-                                value: q,
-                                child: Text(q, overflow: TextOverflow.ellipsis),
-                              ))
+                          .map(
+                            (q) => DropdownMenuItem(
+                              value: q,
+                              child: Text(q, overflow: TextOverflow.ellipsis),
+                            ),
+                          )
                           .toList(),
                       onChanged: (v) => setState(() => _question2 = v),
-                      validator: (v) =>
-                          v == null ? 'Select a question.' : null,
+                      validator: (v) => v == null ? 'Select a question.' : null,
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
@@ -172,8 +181,10 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
                           color: scheme.errorContainer,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Text(_error!,
-                            style: TextStyle(color: scheme.onErrorContainer)),
+                        child: Text(
+                          _error!,
+                          style: TextStyle(color: scheme.onErrorContainer),
+                        ),
                       ),
                       const SizedBox(height: 12),
                     ],
@@ -182,8 +193,7 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
                       icon: _isSaving
                           ? const SizedBox.square(
                               dimension: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.arrow_forward),
                       label: Text(_isSaving ? 'Saving...' : 'Continue'),

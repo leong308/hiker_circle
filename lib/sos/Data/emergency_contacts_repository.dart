@@ -4,6 +4,7 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
+import '../../authentication/Data/phone_number_formatter.dart';
 import '../Model/sos_models.dart';
 
 class EmergencyContactsRepositoryException implements Exception {
@@ -27,6 +28,7 @@ class EmergencyContactsRepository {
 
   static final LocalSessionDatabase _defaultLocalDatabase =
       LocalSessionDatabase();
+  static const int maxContacts = 3;
 
   final FirebaseFirestore? _firestore;
   final LocalSessionDatabase? _localDatabase;
@@ -45,9 +47,20 @@ class EmergencyContactsRepository {
   Future<List<EmergencyContact>> loadEmergencyContacts({
     required AppSession session,
   }) async {
-    final localContacts = await _resolvedLocalDatabase.loadEmergencyContacts(
+    final rawLocalContacts = await _resolvedLocalDatabase.loadEmergencyContacts(
       phoneNumber: session.phoneNumber,
     );
+    final localContacts = <EmergencyContact>[];
+    for (final contact in rawLocalContacts) {
+      final normalized = _validatedContact(contact);
+      if (normalized != null &&
+          !localContacts.any(
+            (saved) => saved.phoneNumber == normalized.phoneNumber,
+          ) &&
+          localContacts.length < maxContacts) {
+        localContacts.add(normalized);
+      }
+    }
     if (!_firebaseBootstrapResult.isAvailable) {
       return localContacts;
     }
@@ -63,11 +76,17 @@ class EmergencyContactsRepository {
       final contacts = <EmergencyContact>[];
       for (final rawContact in rawContacts) {
         if (rawContact is Map) {
-          contacts.add(
-            EmergencyContact.fromFirestore(
-              Map<String, dynamic>.from(rawContact),
-            ),
+          final parsed = EmergencyContact.fromFirestore(
+            Map<String, dynamic>.from(rawContact),
           );
+          final normalized = _validatedContact(parsed);
+          if (normalized != null &&
+              !contacts.any(
+                (contact) => contact.phoneNumber == normalized.phoneNumber,
+              ) &&
+              contacts.length < maxContacts) {
+            contacts.add(normalized);
+          }
         }
       }
 
@@ -94,9 +113,31 @@ class EmergencyContactsRepository {
     required AppSession session,
     required List<EmergencyContact> contacts,
   }) async {
+    if (contacts.length > maxContacts) {
+      throw const EmergencyContactsRepositoryException(
+        'You can save up to 3 emergency contacts.',
+      );
+    }
+    final normalizedContacts = <EmergencyContact>[];
+    for (final contact in contacts) {
+      final normalized = _validatedContact(contact);
+      if (normalized == null) {
+        throw const EmergencyContactsRepositoryException(
+          'Each emergency contact needs a name and a valid international phone number.',
+        );
+      }
+      if (normalizedContacts.any(
+        (saved) => saved.phoneNumber == normalized.phoneNumber,
+      )) {
+        throw const EmergencyContactsRepositoryException(
+          'Each emergency contact phone number must be unique.',
+        );
+      }
+      normalizedContacts.add(normalized);
+    }
     await _resolvedLocalDatabase.saveEmergencyContacts(
       phoneNumber: session.phoneNumber,
-      contacts: contacts,
+      contacts: normalizedContacts,
     );
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
@@ -107,10 +148,10 @@ class EmergencyContactsRepository {
       final userDocument = _userDocumentFor(session);
 
       await userDocument.set({
-        'sos_contacts': contacts
+        'sos_contacts': normalizedContacts
             .map((contact) => contact.toFirestore())
             .toList(),
-        'sosContactsCount': contacts.length,
+        'sosContactsCount': normalizedContacts.length,
         'sosContactsUpdatedAt': FieldValue.serverTimestamp(),
         'sosContactsUpdatedAtLocal': now.toIso8601String(),
         'phoneNumber': session.phoneNumber,
@@ -125,6 +166,22 @@ class EmergencyContactsRepository {
   DocumentReference<Map<String, dynamic>> _userDocumentFor(AppSession session) {
     return _users.doc(
       FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber),
+    );
+  }
+
+  static EmergencyContact? _validatedContact(EmergencyContact contact) {
+    final name = contact.name.trim();
+    final relationship = contact.relationship.trim();
+    if (name.isEmpty ||
+        name.length > 80 ||
+        relationship.length > 80 ||
+        !PhoneNumberFormatter.isValid(contact.phoneNumber)) {
+      return null;
+    }
+    return EmergencyContact(
+      name: name,
+      phoneNumber: PhoneNumberFormatter.normalize(contact.phoneNumber),
+      relationship: relationship,
     );
   }
 }

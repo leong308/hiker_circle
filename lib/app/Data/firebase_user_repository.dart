@@ -6,9 +6,13 @@ import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
 
 class FirebaseUserRepositoryException implements Exception {
-  const FirebaseUserRepositoryException(this.message);
+  const FirebaseUserRepositoryException(
+    this.message, {
+    this.requiresSignIn = false,
+  });
 
   final String message;
+  final bool requiresSignIn;
 
   @override
   String toString() => message;
@@ -171,6 +175,7 @@ class FirebaseUserRepository {
           boundAppInstanceId != session.appInstanceId) {
         throw const FirebaseUserRepositoryException(
           'This account is now bound to another phone. Request a new WhatsApp code to use it here again.',
+          requiresSignIn: true,
         );
       }
 
@@ -201,6 +206,7 @@ class FirebaseUserRepository {
         session.appInstanceId.trim().isEmpty) {
       throw const FirebaseUserRepositoryException(
         'The saved login credentials are incomplete. Sign in again.',
+        requiresSignIn: true,
       );
     }
 
@@ -216,6 +222,7 @@ class FirebaseUserRepository {
       if (data is! Map || data['customToken'] is! String) {
         throw const FirebaseUserRepositoryException(
           'Firebase returned an invalid authentication response.',
+          requiresSignIn: true,
         );
       }
       final expectedUserId = documentIdForPhoneNumber(session.phoneNumber);
@@ -227,6 +234,7 @@ class FirebaseUserRepository {
         await _resolvedFirebaseAuth.signOut();
         throw const FirebaseUserRepositoryException(
           'Firebase could not validate this HikerCircle account.',
+          requiresSignIn: true,
         );
       }
       return user;
@@ -235,10 +243,17 @@ class FirebaseUserRepository {
     } on FirebaseFunctionsException catch (error) {
       throw FirebaseUserRepositoryException(
         error.message ?? 'Firebase rejected the saved login.',
+        requiresSignIn: const {
+          'unauthenticated',
+          'permission-denied',
+        }.contains(error.code),
       );
     } on FirebaseAuthException catch (error) {
       throw FirebaseUserRepositoryException(
         error.message ?? 'Firebase authentication failed.',
+        requiresSignIn:
+            error.code != 'network-request-failed' &&
+            error.code != 'too-many-requests',
       );
     }
   }

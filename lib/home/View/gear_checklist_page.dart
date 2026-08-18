@@ -8,64 +8,26 @@ class GearChecklistPage extends StatefulWidget {
 
   final PlannedHike? plannedHike;
 
+  static int get checklistItemCount => GearChecklistCatalog.itemCount;
+
+  static Set<String> sanitizeCompletedItems(Iterable<String> items) =>
+      GearChecklistCatalog.sanitize(items);
+
   @override
   State<GearChecklistPage> createState() => _GearChecklistPageState();
 }
 
 class _GearChecklistPageState extends State<GearChecklistPage> {
-  late final Set<String> _completedItems = <String>{
-    'Charged phone',
-    if (widget.plannedHike?.offlineMapDownloaded == true)
-      'Offline map downloaded',
-    'Torch',
-    'Drinking water',
-    'Raincoat',
-  };
+  late final Set<String> _completedItems = widget.plannedHike == null
+      ? <String>{}
+      : GearChecklistCatalog.sanitize(
+          widget.plannedHike!.completedChecklistItems,
+        ).toSet();
 
-  static const Map<String, List<String>> _sections = {
-    'Safety Essentials': [
-      'Charged phone',
-      'Power bank',
-      'Offline map downloaded',
-      'Torch',
-      'First-aid kit',
-      'Emergency whistle',
-      'Multi-tool',
-    ],
-    'Navigation & Communication': [
-      'GPS device or app',
-      'Physical map',
-      'Compass',
-      'Fully charged phone',
-      'Emergency contacts saved',
-    ],
-    'Water and Food': [
-      'Drinking water',
-      'Water filter or tablets',
-      'Energy snack',
-      'Extra food for delays',
-    ],
-    'Weather & Clothing': [
-      'Raincoat',
-      'Extra clothing layer',
-      'Sun protection (hat, sunscreen)',
-      'Warm hat and gloves',
-    ],
-    'Emergency & Recovery': [
-      'Headlamp with spare batteries',
-      'Fire starter or matches',
-      'Emergency blanket',
-      'Whistle',
-      'Signal mirror',
-    ],
-  };
+  static const Map<String, List<String>> _sections =
+      GearChecklistCatalog.sections;
 
-  int get _totalItems {
-    return _sections.values.fold<int>(
-      0,
-      (total, items) => total + items.length,
-    );
-  }
+  int get _totalItems => GearChecklistCatalog.itemCount;
 
   void _toggle(String item, bool? isSelected) {
     setState(() {
@@ -80,7 +42,7 @@ class _GearChecklistPageState extends State<GearChecklistPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _ChecklistColors.background,
+      backgroundColor: _ChecklistColors.backgroundFor(context),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -94,8 +56,7 @@ class _GearChecklistPageState extends State<GearChecklistPage> {
                   const SizedBox(height: 16),
                   if (widget.plannedHike != null)
                     _TripSummary(plannedHike: widget.plannedHike!),
-                  if (widget.plannedHike != null)
-                    const SizedBox(height: 18),
+                  if (widget.plannedHike != null) const SizedBox(height: 18),
                   for (final entry in _sections.entries) ...[
                     _ChecklistSection(
                       title: entry.key,
@@ -111,9 +72,18 @@ class _GearChecklistPageState extends State<GearChecklistPage> {
                   ),
                   const SizedBox(height: 14),
                   FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () {
+                      final selection = Set<String>.unmodifiable(
+                        _completedItems,
+                      );
+                      Navigator.of(
+                        context,
+                      ).pop(widget.plannedHike == null ? null : selection);
+                    },
                     icon: const Icon(Icons.save_rounded),
-                    label: const Text('Save checklist'),
+                    label: Text(
+                      widget.plannedHike == null ? 'Done' : 'Save checklist',
+                    ),
                   ),
                 ],
               ),
@@ -148,7 +118,7 @@ class _Header extends StatelessWidget {
           child: Text(
             'Gear Checklist',
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: _ChecklistColors.text,
+              color: _ChecklistColors.textFor(context),
               fontSize: 24,
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
@@ -167,6 +137,12 @@ class _TripSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final departure = plannedHike.plannedStartTime.toLocal();
+    final localizations = MaterialLocalizations.of(context);
+    final departureLabel =
+        '${localizations.formatMediumDate(departure)}, '
+        '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(departure))}';
+
     return _InsetGroup(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -183,16 +159,16 @@ class _TripSummary extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: _ChecklistColors.text,
+                      color: _ChecklistColors.textFor(context),
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'Departure: Tomorrow, 6:30 AM',
+                    'Departure: $departureLabel',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _ChecklistColors.secondaryText,
+                      color: _ChecklistColors.secondaryTextFor(context),
                       letterSpacing: 0,
                     ),
                   ),
@@ -229,7 +205,7 @@ class _ChecklistSection extends StatelessWidget {
           child: Text(
             title.toUpperCase(),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _ChecklistColors.secondaryText,
+              color: _ChecklistColors.secondaryTextFor(context),
               fontSize: 12,
               fontWeight: FontWeight.w500,
               letterSpacing: 0,
@@ -251,7 +227,7 @@ class _ChecklistSection extends StatelessWidget {
                     title: Text(
                       items[index],
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: _ChecklistColors.text,
+                        color: _ChecklistColors.textFor(context),
                         fontWeight: FontWeight.w500,
                         letterSpacing: 0,
                       ),
@@ -291,7 +267,7 @@ class _ProgressCard extends StatelessWidget {
             Text(
               'Progress: $completed / $total Completed',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: _ChecklistColors.text,
+                color: _ChecklistColors.textFor(context),
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
               ),
@@ -302,7 +278,7 @@ class _ProgressCard extends StatelessWidget {
               minHeight: 5,
               borderRadius: BorderRadius.circular(4),
               color: _ChecklistColors.green,
-              backgroundColor: _ChecklistColors.greenSoft,
+              backgroundColor: _ChecklistColors.greenSoftFor(context),
             ),
           ],
         ),
@@ -321,8 +297,8 @@ class _CircleIcon extends StatelessWidget {
     return Container(
       width: 36,
       height: 36,
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: _ChecklistColors.surfaceFor(context),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: _ChecklistColors.green, size: 20),
@@ -360,7 +336,7 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _ChecklistColors.surfaceFor(context),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -374,10 +350,10 @@ class _HorizontalSeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(
+    return Divider(
       height: 1,
       thickness: 0.7,
-      color: _ChecklistColors.separator,
+      color: _ChecklistColors.separatorFor(context),
     );
   }
 }
@@ -389,4 +365,25 @@ abstract final class _ChecklistColors {
   static const Color separator = Color(0xFFD9E1DC);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
+
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
+
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color greenSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF183625) : greenSoft;
+
+  static Color separatorFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF2B3A31) : separator;
+
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
+
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
 }

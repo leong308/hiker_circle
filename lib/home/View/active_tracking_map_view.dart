@@ -6,6 +6,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../trail/Model/trail_models.dart';
 import '../Data/active_hike_weather_service.dart';
 import '../Model/hike_session_models.dart';
 
@@ -21,6 +22,15 @@ final _teamColors = <Color>[
   const Color(0xFF84CC16),
   const Color(0xFFF43F5E),
 ];
+
+bool _isValidCoordinate(double latitude, double longitude) {
+  return latitude.isFinite &&
+      longitude.isFinite &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180;
+}
 
 const _selfTeamColor = Color(0xFF34A853);
 
@@ -73,18 +83,29 @@ class ActiveTrackingMapView extends StatefulWidget {
 
 class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     with WidgetsBindingObserver {
+  static const double _navigationZoom = 17;
+  static const Duration _navigationRefocusDelay = Duration(seconds: 30);
+
   mapbox.MapboxMap? _mapboxMap;
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
+  Future<bool>? _annotationManagersFuture;
   List<Offset?> _weatherScreenPositions = const [];
-  List<Offset?> _teamScreenPositions = const [];
+  Map<String, Offset?> _teamScreenPositions = const {};
   var _weatherProjectionScheduled = false;
   var _teamProjectionScheduled = false;
+  var _weatherProjectionGeneration = 0;
+  var _teamProjectionGeneration = 0;
   var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
   var _isRendering = false;
   var _renderPending = false;
+  var _mapGeneration = 0;
+  var _renderGeneration = 0;
+  var _hasReferenceEndpoints = false;
+  var _showsMap = false;
+  Timer? _navigationRefocusTimer;
   late double _currentZoom;
   late double _scaleLatitude;
   mapbox.CameraOptions? _initialCamera;
@@ -98,14 +119,25 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _buildPoints();
+    _showsMap = _visiblePoints.isNotEmpty;
     _initialCamera = _computeInitialCamera();
     _currentZoom = _initialCamera?.zoom ?? 13.5;
-    _scaleLatitude = _initialCamera?.center?.coordinates[1]?.toDouble() ?? 0;
+    final initialCenter = _initialCamera?.center;
+    _scaleLatitude = initialCenter == null
+        ? 0
+        : mapPointCoordinatesOrNull(initialCenter)?.latitude ?? 0;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _navigationRefocusTimer?.cancel();
+    _mapGeneration++;
+    _renderGeneration++;
+    _mapboxMap = null;
+    _polylineManager = null;
+    _circleManager = null;
+    _annotationManagersFuture = null;
     super.dispose();
   }
 
@@ -118,15 +150,24 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
   Future<void> _refocusOnSelf() async {
     final map = _mapboxMap;
-    final location = widget.activeHike.latestLocation;
-    if (map == null || location == null) return;
+    final focusPoint =
+        _latestPoint ??
+        (_hasReferenceEndpoints ? _startPoint : _validTrailCenterPoint());
+    if (map == null || focusPoint == null) return;
+    _navigationRefocusTimer?.cancel();
+    _navigationRefocusTimer = null;
     try {
       await map.flyTo(
         mapbox.CameraOptions(
-          center: mapbox.Point(
-            coordinates: mapbox.Position(location.longitude, location.latitude),
+          center: focusPoint,
+          padding: mapbox.MbxEdgeInsets(
+            top: 150,
+            left: 0,
+            bottom: 30,
+            right: 0,
           ),
-          zoom: 15,
+          zoom: _navigationZoom,
+          bearing: _navigationBearing(),
         ),
         mapbox.MapAnimationOptions(duration: 500),
       );
@@ -135,49 +176,138 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   }
 
   mapbox.CameraOptions? _computeInitialCamera() {
-    final latest = widget.activeHike.latestLocation;
-    if (latest != null) {
-      return mapbox.CameraOptions(
-        center: mapbox.Point(
-          coordinates: mapbox.Position(latest.longitude, latest.latitude),
-        ),
-        zoom: 15,
-      );
-    }
+    final focusPoint =
+        _latestPoint ??
+        (_hasReferenceEndpoints ? _startPoint : _validTrailCenterPoint());
+    if (focusPoint == null) return null;
     return mapbox.CameraOptions(
-      center: mapbox.Point(
-        coordinates: mapbox.Position(
-          _startPoint.coordinates[0]!,
-          _startPoint.coordinates[1]!,
-        ),
-      ),
-      zoom: 13.5,
+      center: focusPoint,
+      padding: mapbox.MbxEdgeInsets(top: 150, left: 0, bottom: 30, right: 0),
+      zoom: _navigationZoom,
+      bearing: _navigationBearing(),
     );
+  }
+
+  double? _navigationBearing() {
+    final latest = _latestPoint;
+    final recorded = _recordedRoutePoints;
+    if (latest != null && recorded.length >= 2) {
+      for (var index = recorded.length - 2; index >= 0; index--) {
+        if (distanceMeters(recorded[index], latest) >= 5) {
+          return _bearingBetween(recorded[index], latest);
+        }
+      }
+    }
+
+    final planned = _routePoints.length >= 2 ? _routePoints : _checkpointPoints;
+    if (planned.length < 2) return null;
+    if (latest == null) {
+      return _bearingBetween(planned.first, planned[1]);
+    }
+
+    var nearestIndex = 0;
+    var nearestDistance = double.infinity;
+    for (var index = 0; index < planned.length; index++) {
+      final distance = distanceMeters(latest, planned[index]);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    }
+    for (var index = nearestIndex + 1; index < planned.length; index++) {
+      if (distanceMeters(latest, planned[index]) >= 15) {
+        return _bearingBetween(latest, planned[index]);
+      }
+    }
+    if (nearestIndex > 0) {
+      return _bearingBetween(planned[nearestIndex - 1], planned[nearestIndex]);
+    }
+    return _bearingBetween(planned.first, planned[1]);
+  }
+
+  double? _bearingBetween(mapbox.Point from, mapbox.Point to) {
+    final start = mapPointCoordinatesOrNull(from);
+    final end = mapPointCoordinatesOrNull(to);
+    if (start == null || end == null || distanceMeters(from, to) < 2) {
+      return null;
+    }
+    final startLatitude = start.latitude * math.pi / 180;
+    final endLatitude = end.latitude * math.pi / 180;
+    final longitudeDelta = (end.longitude - start.longitude) * math.pi / 180;
+    final y = math.sin(longitudeDelta) * math.cos(endLatitude);
+    final x =
+        math.cos(startLatitude) * math.sin(endLatitude) -
+        math.sin(startLatitude) *
+            math.cos(endLatitude) *
+            math.cos(longitudeDelta);
+    if (x.abs() < 1e-12 && y.abs() < 1e-12) return null;
+    return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+  }
+
+  void _pauseNavigationFollow() {
+    if (!widget.interactive) return;
+    _navigationRefocusTimer?.cancel();
+    _navigationRefocusTimer = Timer(_navigationRefocusDelay, () {
+      _navigationRefocusTimer = null;
+      if (mounted) {
+        unawaited(_refocusOnSelf());
+      }
+    });
   }
 
   void _buildPoints() {
-    final checkpoints = [...widget.activeHike.trail.checkpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    _startPoint = mapbox.Point(
-      coordinates: mapbox.Position(
-        checkpoints.first.longitude,
-        checkpoints.first.latitude,
-      ),
-    );
-    _endPoint = mapbox.Point(
-      coordinates: mapbox.Position(
-        checkpoints.last.longitude,
-        checkpoints.last.latitude,
-      ),
-    );
+    final checkpoints =
+        widget.activeHike.draft.effectiveCheckpoints
+            .where((checkpoint) => checkpoint.hasValidCoordinate)
+            .toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
     final encoded = widget.activeHike.trail.routeEncodedPolyline;
-    _routePoints = encoded == null || encoded.isEmpty
-        ? const []
-        : _orientRoutePoints(_decodePolyline(encoded));
+    final decodedRoute = encoded == null || encoded.isEmpty
+        ? const <mapbox.Point>[]
+        : _decodePolyline(encoded);
+    final recordedRoute = _recordedRoutePoints;
+    final latestPoint = _latestPoint;
+    if (checkpoints.isNotEmpty) {
+      _startPoint = _pointForCheckpoint(checkpoints.first);
+      _endPoint = _pointForCheckpoint(checkpoints.last);
+      _hasReferenceEndpoints = true;
+      _routePoints = _orientRoutePoints(decodedRoute);
+      return;
+    }
+    if (decodedRoute.isNotEmpty) {
+      _startPoint = decodedRoute.first;
+      _endPoint = decodedRoute.last;
+      _hasReferenceEndpoints = true;
+      _routePoints = decodedRoute;
+      return;
+    }
+    final fallbackPoint = recordedRoute.isNotEmpty
+        ? recordedRoute.last
+        : latestPoint ?? _validTrailCenterPoint();
+    _startPoint = fallbackPoint ?? _zeroPoint;
+    _endPoint = fallbackPoint ?? _zeroPoint;
+    _hasReferenceEndpoints = fallbackPoint != null;
+    _routePoints = const [];
   }
+
+  mapbox.Point _pointForCheckpoint(TrailCheckpoint checkpoint) => mapbox.Point(
+    coordinates: mapbox.Position(checkpoint.longitude, checkpoint.latitude),
+  );
+
+  mapbox.Point? _validTrailCenterPoint() {
+    final latitude = widget.activeHike.trail.latitude;
+    final longitude = widget.activeHike.trail.longitude;
+    if (!_isValidCoordinate(latitude, longitude)) {
+      return null;
+    }
+    return mapbox.Point(coordinates: mapbox.Position(longitude, latitude));
+  }
+
+  static final _zeroPoint = mapbox.Point(coordinates: mapbox.Position(0, 0));
 
   List<mapbox.Point> get _recordedRoutePoints {
     return widget.activeHike.routePoints
+        .where((point) => point.hasValidPosition)
         .map(
           (point) => mapbox.Point(
             coordinates: mapbox.Position(point.longitude, point.latitude),
@@ -187,8 +317,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   }
 
   List<mapbox.Point> get _checkpointPoints {
-    final checkpoints = [...widget.activeHike.trail.checkpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
+    final checkpoints =
+        widget.activeHike.draft.effectiveCheckpoints
+            .where((checkpoint) => checkpoint.hasValidCoordinate)
+            .toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
     return checkpoints
         .map(
           (checkpoint) => mapbox.Point(
@@ -203,6 +336,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
   List<mapbox.Point> get _manualPinPoints {
     return widget.activeHike.manualPinLocations
+        .where((pin) => pin.coordinate.hasValidPosition)
         .map(
           (pin) => mapbox.Point(
             coordinates: mapbox.Position(
@@ -227,8 +361,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   }
 
   List<TeamHikeParticipant> get _locatedTeamParticipants {
+    final now = DateTime.now().toUtc();
     return _effectiveParticipants
-        .where((participant) => participant.latestLocation != null)
+        .where((participant) => participant.hasFreshLocationAt(now))
         .toList();
   }
 
@@ -241,8 +376,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   }
 
   List<mapbox.Point> get _teamMatePoints {
-    return _effectiveParticipants
-        .where((p) => p.latestLocation != null)
+    return _locatedTeamParticipants
         .map(
           (p) => mapbox.Point(
             coordinates: mapbox.Position(
@@ -256,7 +390,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
   mapbox.Point? get _latestPoint {
     final latest = widget.activeHike.latestLocation;
-    if (latest == null) {
+    if (latest == null || !latest.hasValidPosition) {
       return null;
     }
     return mapbox.Point(
@@ -279,42 +413,52 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   }
 
   List<mapbox.Point> _decodePolyline(String encoded) {
-    final points = <mapbox.Point>[];
-    var index = 0;
-    var latitude = 0;
-    var longitude = 0;
+    try {
+      final points = <mapbox.Point>[];
+      var index = 0;
+      var latitude = 0;
+      var longitude = 0;
 
-    while (index < encoded.length) {
-      var shift = 0;
-      var result = 0;
-      int byte;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      latitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+      int? readDelta() {
+        var shift = 0;
+        var result = 0;
+        while (true) {
+          if (index >= encoded.length || shift > 30) return null;
+          final byte = encoded.codeUnitAt(index++) - 63;
+          if (byte < 0 || byte > 0x3f) return null;
+          result |= (byte & 0x1f) << shift;
+          if (byte < 0x20) {
+            return (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+          }
+          shift += 5;
+        }
+      }
 
-      shift = 0;
-      result = 0;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      longitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-
-      points.add(
-        mapbox.Point(
-          coordinates: mapbox.Position(longitude / 100000, latitude / 100000),
-        ),
-      );
+      while (index < encoded.length) {
+        final latitudeDelta = readDelta();
+        final longitudeDelta = readDelta();
+        if (latitudeDelta == null || longitudeDelta == null) return const [];
+        latitude += latitudeDelta;
+        longitude += longitudeDelta;
+        final decodedLatitude = latitude / 100000;
+        final decodedLongitude = longitude / 100000;
+        if (!_isValidCoordinate(decodedLatitude, decodedLongitude)) {
+          return const [];
+        }
+        points.add(
+          mapbox.Point(
+            coordinates: mapbox.Position(decodedLongitude, decodedLatitude),
+          ),
+        );
+      }
+      return points;
+    } catch (_) {
+      return const [];
     }
-    return points;
   }
 
   List<mapbox.Point> _orientRoutePoints(List<mapbox.Point> points) {
-    if (points.length < 2) {
+    if (points.length < 2 || !_hasReferenceEndpoints) {
       return points;
     }
     final forwardScore =
@@ -333,55 +477,161 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   void didUpdateWidget(covariant ActiveTrackingMapView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.activeHike != widget.activeHike) {
+      _teamProjectionGeneration++;
+      final previouslyShowedMap = _showsMap;
       _buildPoints();
+      _showsMap = _visiblePoints.isNotEmpty;
+      if (previouslyShowedMap != _showsMap) {
+        _mapGeneration++;
+        _renderGeneration++;
+        _styleLoaded = false;
+        _mapboxMap = null;
+        _polylineManager = null;
+        _circleManager = null;
+        _annotationManagersFuture = null;
+        _weatherScreenPositions = const [];
+        _teamScreenPositions = const {};
+      }
+      _initialCamera = _computeInitialCamera();
       _routeRendered = false;
+      _renderGeneration++;
+      _teamScreenPositions = const {};
       unawaited(_renderRouteIfReady());
       _scheduleTeamProjection();
+      if (_navigationRefocusTimer == null) {
+        unawaited(_refocusOnSelf());
+      }
     }
     if (!identical(oldWidget.weatherSamples, widget.weatherSamples)) {
+      _weatherProjectionGeneration++;
       _scheduleWeatherProjection();
     }
     if (oldWidget.teamHikeSession != widget.teamHikeSession ||
         oldWidget.currentPhoneNumber != widget.currentPhoneNumber) {
+      _teamProjectionGeneration++;
+      _teamScreenPositions = const {};
       _scheduleTeamProjection();
     }
   }
 
-  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+  bool _isCurrentMap(mapbox.MapboxMap map, int generation) {
+    return mounted &&
+        generation == _mapGeneration &&
+        identical(map, _mapboxMap);
+  }
+
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap, int generation) async {
+    if (!mounted || generation != _mapGeneration) return;
+    final replacingNativeMap =
+        _mapboxMap != null && !identical(_mapboxMap, mapboxMap);
     _mapboxMap = mapboxMap;
-    await mapboxMap.compass.updateSettings(
-      mapbox.CompassSettings(enabled: false),
-    );
-    await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
-    await mapboxMap.gestures.updateSettings(
-      mapbox.GesturesSettings(
-        scrollEnabled: widget.interactive,
-        pinchToZoomEnabled: widget.interactive,
-        rotateEnabled: true,
-        pitchEnabled: true,
-      ),
-    );
-    await mapboxMap.setBounds(
-      mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
-    );
-    _polylineManager = await mapboxMap.annotations
-        .createPolylineAnnotationManager();
-    _circleManager = await mapboxMap.annotations
-        .createCircleAnnotationManager();
-    await _renderRouteIfReady();
-    await _syncScaleFromCamera();
+    if (replacingNativeMap) {
+      _styleLoaded = false;
+      _routeRendered = false;
+      _polylineManager = null;
+      _circleManager = null;
+      _annotationManagersFuture = null;
+      _renderGeneration++;
+    }
+    try {
+      await mapboxMap.compass.updateSettings(
+        mapbox.CompassSettings(enabled: false),
+      );
+      if (!_isCurrentMap(mapboxMap, generation)) return;
+      await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
+      if (!_isCurrentMap(mapboxMap, generation)) return;
+      await mapboxMap.gestures.updateSettings(
+        mapbox.GesturesSettings(
+          scrollEnabled: widget.interactive,
+          pinchToZoomEnabled: widget.interactive,
+          rotateEnabled: true,
+          pitchEnabled: true,
+        ),
+      );
+      if (!_isCurrentMap(mapboxMap, generation)) return;
+      await mapboxMap.setBounds(
+        mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
+      );
+    } catch (error) {
+      debugPrint('Unable to configure active hike map: $error');
+    }
+    if (!_isCurrentMap(mapboxMap, generation)) return;
+    if (_styleLoaded) {
+      await _ensureAnnotationManagers(mapboxMap, generation);
+      await _renderRouteIfReady();
+    }
+    unawaited(_syncScaleFromCamera());
     _scheduleWeatherProjection();
     _scheduleTeamProjection();
   }
 
-  Future<void> _onStyleLoaded() async {
-    await enableTerrain3D(_mapboxMap!);
-    schedulePitch(_mapboxMap!);
-    _styleLoaded = true;
-    _routeRendered = false;
+  Future<void> _onStyleLoaded(int generation) async {
+    final map = _mapboxMap;
+    if (map == null || !_isCurrentMap(map, generation)) return;
+    if (!_styleLoaded) {
+      _styleLoaded = true;
+      _routeRendered = false;
+      _polylineManager = null;
+      _circleManager = null;
+      _annotationManagersFuture = null;
+      _renderGeneration++;
+    }
+    await enableTerrain3D(map);
+    if (!_isCurrentMap(map, generation)) return;
+    schedulePitch(map);
+    if (!await _ensureAnnotationManagers(map, generation)) return;
     await _renderRouteIfReady();
     _scheduleWeatherProjection();
     _scheduleTeamProjection();
+  }
+
+  Future<void> _onMapLoaded(int generation) async {
+    final map = _mapboxMap;
+    if (map == null || !_isCurrentMap(map, generation) || _styleLoaded) return;
+    await _onStyleLoaded(generation);
+  }
+
+  Future<bool> _ensureAnnotationManagers(mapbox.MapboxMap map, int generation) {
+    if (!_styleLoaded || !_isCurrentMap(map, generation)) {
+      return Future.value(false);
+    }
+    final existingFuture = _annotationManagersFuture;
+    if (existingFuture != null) return existingFuture;
+    final future = _createAnnotationManagers(map, generation);
+    _annotationManagersFuture = future;
+    return future.whenComplete(() {
+      if (identical(_annotationManagersFuture, future)) {
+        _annotationManagersFuture = null;
+      }
+    });
+  }
+
+  Future<bool> _createAnnotationManagers(
+    mapbox.MapboxMap map,
+    int generation,
+  ) async {
+    try {
+      var polylineManager = _polylineManager;
+      var circleManager = _circleManager;
+      polylineManager ??= await map.annotations
+          .createPolylineAnnotationManager();
+      if (!_isCurrentMap(map, generation)) return false;
+      circleManager ??= await map.annotations.createCircleAnnotationManager();
+      if (!_isCurrentMap(map, generation)) return false;
+      _polylineManager = polylineManager;
+      _circleManager = circleManager;
+      return true;
+    } catch (error) {
+      if (_isCurrentMap(map, generation)) {
+        debugPrint('Unable to prepare active hike map annotations: $error');
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (_isCurrentMap(map, generation)) {
+            unawaited(_renderRouteIfReady());
+          }
+        });
+      }
+      return false;
+    }
   }
 
   Future<void> _renderRouteIfReady() async {
@@ -390,16 +640,25 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       return;
     }
     final map = _mapboxMap;
+    final mapGeneration = _mapGeneration;
     if (map == null ||
         !_styleLoaded ||
         _routeRendered ||
         _visiblePoints.isEmpty) {
       return;
     }
+    if (!await _ensureAnnotationManagers(map, mapGeneration)) return;
 
     _isRendering = true;
+    final renderGeneration = _renderGeneration;
     try {
-      await _renderRouteNow();
+      await _renderRouteNow(map, mapGeneration, renderGeneration);
+    } catch (error) {
+      if (_isCurrentMap(map, mapGeneration) &&
+          renderGeneration == _renderGeneration) {
+        _routeRendered = false;
+        debugPrint('Unable to draw active hike route: $error');
+      }
     } finally {
       _isRendering = false;
       if (_renderPending && mounted) {
@@ -410,17 +669,28 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     }
   }
 
-  Future<void> _renderRouteNow() async {
-    final map = _mapboxMap;
-    if (map == null ||
+  Future<void> _renderRouteNow(
+    mapbox.MapboxMap map,
+    int mapGeneration,
+    int renderGeneration,
+  ) async {
+    if (!_isCurrentMap(map, mapGeneration) ||
+        renderGeneration != _renderGeneration ||
         !_styleLoaded ||
         _routeRendered ||
         _visiblePoints.isEmpty) {
       return;
     }
 
-    await _polylineManager?.deleteAll();
-    await _circleManager?.deleteAll();
+    final polylineManager = _polylineManager;
+    final circleManager = _circleManager;
+    if (polylineManager == null || circleManager == null) return;
+    await polylineManager.deleteAll();
+    await circleManager.deleteAll();
+    if (!_isCurrentMap(map, mapGeneration) ||
+        renderGeneration != _renderGeneration) {
+      return;
+    }
 
     var created = false;
 
@@ -431,7 +701,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     // Draw the planned trail route (decoded polyline) as background reference,
     // matching the style used by RoutePreviewMap on the trail page.
     if (hasTrailRoute) {
-      await _polylineManager?.create(
+      await polylineManager.create(
         mapbox.PolylineAnnotationOptions(
           geometry: mapbox.LineString(
             coordinates: [
@@ -450,7 +720,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
     // Draw the recorded GPS route (thicker, brighter) on top when available.
     if (recordedRoute.length >= 2) {
-      await _polylineManager?.create(
+      await polylineManager.create(
         mapbox.PolylineAnnotationOptions(
           geometry: mapbox.LineString(
             coordinates: [
@@ -469,7 +739,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
     // Fallback: connect checkpoints with a subtle gray line when no route data.
     if (!hasTrailRoute && recordedRoute.length < 2 && hasCheckpoints) {
-      await _polylineManager?.create(
+      await polylineManager.create(
         mapbox.PolylineAnnotationOptions(
           geometry: mapbox.LineString(
             coordinates: [
@@ -542,15 +812,21 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     ];
 
     if (circleAnnotations.isNotEmpty) {
-      await _circleManager?.createMulti(circleAnnotations);
+      await circleManager.createMulti(circleAnnotations);
       created = true;
     }
 
+    if (!_isCurrentMap(map, mapGeneration) ||
+        renderGeneration != _renderGeneration) {
+      return;
+    }
     if (created) {
       _routeRendered = true;
     }
 
-    await _fitRoute();
+    if (_navigationRefocusTimer == null) {
+      await _refocusOnSelf();
+    }
   }
 
   void _scheduleWeatherProjection() {
@@ -581,7 +857,14 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
   Future<void> _projectWeatherMarkers() async {
     final map = _mapboxMap;
-    if (map == null || !_styleLoaded || widget.weatherSamples.isEmpty) {
+    final generation = _mapGeneration;
+    final projectionGeneration = _weatherProjectionGeneration;
+    final samples = widget.weatherSamples;
+    final validIndices = <int>[
+      for (var index = 0; index < samples.length; index++)
+        if (samples[index].coordinate.hasValidPosition) index,
+    ];
+    if (map == null || !_styleLoaded || validIndices.isEmpty) {
       if (mounted && _weatherScreenPositions.isNotEmpty) {
         setState(() {
           _weatherScreenPositions = const [];
@@ -592,26 +875,34 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
     try {
       final pixels = await map.pixelsForCoordinates([
-        for (final sample in widget.weatherSamples)
+        for (final index in validIndices)
           mapbox.Point(
             coordinates: mapbox.Position(
-              sample.coordinate.longitude,
-              sample.coordinate.latitude,
+              samples[index].coordinate.longitude,
+              samples[index].coordinate.latitude,
             ),
           ),
       ]);
-      if (!mounted) {
+      if (!_isCurrentMap(map, generation) ||
+          projectionGeneration != _weatherProjectionGeneration) {
         return;
       }
       setState(() {
-        _weatherScreenPositions = pixels
-            .map((pixel) => pixel == null ? null : Offset(pixel.x, pixel.y))
-            .toList();
+        final positions = List<Offset?>.filled(samples.length, null);
+        final projectedCount = math.min(validIndices.length, pixels.length);
+        for (var index = 0; index < projectedCount; index++) {
+          final pixel = pixels[index];
+          positions[validIndices[index]] =
+              pixel == null || !pixel.x.isFinite || !pixel.y.isFinite
+              ? null
+              : Offset(pixel.x, pixel.y);
+        }
+        _weatherScreenPositions = positions;
       });
     } catch (error) {
       debugPrint('Unable to project hike weather markers: $error');
       Future.delayed(const Duration(milliseconds: 800), () {
-        if (mounted) {
+        if (mounted && generation == _mapGeneration) {
           _scheduleWeatherProjection();
         }
       });
@@ -620,17 +911,22 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
   Future<void> _projectTeamMarkers() async {
     final map = _mapboxMap;
+    final generation = _mapGeneration;
+    final projectionGeneration = _teamProjectionGeneration;
     final participants = _locatedTeamParticipants;
     if (map == null || !_styleLoaded || participants.isEmpty) {
       if (mounted && _teamScreenPositions.isNotEmpty) {
         setState(() {
-          _teamScreenPositions = const [];
+          _teamScreenPositions = const {};
         });
       }
       return;
     }
 
     try {
+      final participantKeys = participants
+          .map(_participantProjectionKey)
+          .toList();
       final pixels = await map.pixelsForCoordinates([
         for (final participant in participants)
           mapbox.Point(
@@ -640,25 +936,41 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
             ),
           ),
       ]);
-      if (!mounted) {
+      if (!_isCurrentMap(map, generation) ||
+          projectionGeneration != _teamProjectionGeneration) {
         return;
       }
       setState(() {
-        _teamScreenPositions = pixels
-            .map((pixel) => pixel == null ? null : Offset(pixel.x, pixel.y))
-            .toList();
+        final projectedCount = math.min(participantKeys.length, pixels.length);
+        _teamScreenPositions = {
+          for (var index = 0; index < projectedCount; index++)
+            participantKeys[index]: pixels[index] == null
+                ? null
+                : pixels[index]!.x.isFinite && pixels[index]!.y.isFinite
+                ? Offset(pixels[index]!.x, pixels[index]!.y)
+                : null,
+        };
       });
     } catch (error) {
       debugPrint('Unable to project team markers: $error');
       Future.delayed(const Duration(milliseconds: 800), () {
-        if (mounted) {
+        if (mounted && generation == _mapGeneration) {
           _scheduleTeamProjection();
         }
       });
     }
   }
 
+  String _participantProjectionKey(TeamHikeParticipant participant) {
+    final phone = participant.phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+    if (phone.isNotEmpty) return 'phone:$phone';
+    final handle = participant.buddy.handle.trim().toLowerCase();
+    if (handle.isNotEmpty) return 'handle:$handle';
+    return 'name:${participant.buddy.name.trim().toLowerCase()}';
+  }
+
   Future<void> _fitRoute() async {
+    _pauseNavigationFollow();
     final map = _mapboxMap;
     final points = _visiblePoints;
     if (map == null || points.isEmpty) {
@@ -706,10 +1018,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
           null,
           null,
         );
+        final cameraCenter = camera.center == null
+            ? null
+            : mapPointCoordinatesOrNull(camera.center!);
         if (camera.zoom != null &&
             camera.zoom!.isFinite &&
-            camera.center != null &&
-            camera.center!.coordinates[0] != null) {
+            cameraCenter != null) {
           await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 300));
         } else {
           throw Exception('Invalid camera from cameraForCoordinateBounds');
@@ -731,15 +1045,26 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
   void _cycleStyle() {
     setState(() {
+      _mapGeneration++;
+      _renderGeneration++;
+      _weatherProjectionGeneration++;
+      _teamProjectionGeneration++;
       _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
       _styleLoaded = false;
       _routeRendered = false;
+      _mapboxMap = null;
+      _polylineManager = null;
+      _circleManager = null;
+      _annotationManagersFuture = null;
+      _weatherScreenPositions = const [];
+      _teamScreenPositions = const {};
     });
     widget.onStyleChanged?.call(_styleIndex);
   }
 
   Future<void> _zoomBy(double amount) async {
     if (_mapboxMap == null) return;
+    _pauseNavigationFollow();
     try {
       await _mapboxMap!.flyTo(
         mapbox.CameraOptions(zoom: _currentZoom + amount),
@@ -757,25 +1082,32 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
   Future<void> _syncScaleFromCamera() async {
     final map = _mapboxMap;
+    final generation = _mapGeneration;
     if (map == null) return;
-    final state = await map.getCameraState();
-    final nextZoom = state.zoom;
-    final nextLatitude = state.center.coordinates[1]!.toDouble();
-    if (!mounted) return;
-    setState(() {
-      _currentZoom = nextZoom;
-      _scaleLatitude = nextLatitude;
-    });
-    _scheduleWeatherProjection();
-    _scheduleTeamProjection();
+    try {
+      final state = await map.getCameraState();
+      if (!_isCurrentMap(map, generation)) return;
+      final nextZoom = state.zoom;
+      final coordinates = mapPointCoordinatesOrNull(state.center);
+      if (!nextZoom.isFinite || coordinates == null) return;
+      setState(() {
+        _currentZoom = nextZoom;
+        _scaleLatitude = coordinates.latitude;
+      });
+      _scheduleWeatherProjection();
+      _scheduleTeamProjection();
+    } catch (_) {
+      // Map replacement can invalidate an in-flight camera request.
+    }
   }
 
   void _updateScale(mapbox.CameraChangedEventData data) {
     final nextZoom = data.cameraState.zoom;
-    final nextLatitude = data.cameraState.center.coordinates[1]!.toDouble();
-    if (!mounted ||
-        ((nextZoom - _currentZoom).abs() < 0.005 &&
-            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
+    final coordinates = mapPointCoordinatesOrNull(data.cameraState.center);
+    if (!mounted || !nextZoom.isFinite || coordinates == null) return;
+    final nextLatitude = coordinates.latitude;
+    if (((nextZoom - _currentZoom).abs() < 0.005 &&
+        (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
       return;
     }
     setState(() {
@@ -788,12 +1120,20 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   Widget build(BuildContext context) {
     final visiblePoints = _visiblePoints;
     if (visiblePoints.isEmpty) {
-      return const ColoredBox(
-        color: Color(0xFFEAF7EE),
-        child: Center(child: Text('Waiting for trail coordinates')),
+      return ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        child: Center(
+          child: Text(
+            'Waiting for trail coordinates',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
       );
     }
     final locatedParticipants = _locatedTeamParticipants;
+    final mapGeneration = _mapGeneration;
 
     return Stack(
       fit: StackFit.expand,
@@ -801,27 +1141,45 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         mapbox.MapWidget(
           key: ValueKey(mapStyleUrls[_styleIndex]),
           styleUri: mapStyleUrls[_styleIndex],
+          // ignore: deprecated_member_use
           cameraOptions: _initialCamera,
           gestureRecognizers: mapGestureRecognizers,
-          onMapCreated: _onMapCreated,
-          onStyleLoadedListener: (_) => _onStyleLoaded(),
-          onCameraChangeListener: _onCameraChange,
+          onMapCreated: (map) => _onMapCreated(map, mapGeneration),
+          onStyleLoadedListener: (_) => _onStyleLoaded(mapGeneration),
+          onMapLoadedListener: (_) => _onMapLoaded(mapGeneration),
+          onScrollListener: (_) => _pauseNavigationFollow(),
+          onZoomListener: (_) => _pauseNavigationFollow(),
+          onCameraChangeListener: (data) {
+            if (mapGeneration == _mapGeneration) {
+              _onCameraChange(data);
+            }
+          },
           onMapIdleListener: (_) {
-            unawaited(_syncScaleFromCamera());
-            _scheduleWeatherProjection();
-            _scheduleTeamProjection();
+            if (mapGeneration == _mapGeneration) {
+              unawaited(_syncScaleFromCamera());
+              _scheduleWeatherProjection();
+              _scheduleTeamProjection();
+            }
           },
         ),
-        for (
-          var index = 0;
-          index < locatedParticipants.length &&
-              index < _teamScreenPositions.length;
-          index++
-        )
-          if (_teamScreenPositions[index] != null)
+        for (var index = 0; index < locatedParticipants.length; index++)
+          if (_teamScreenPositions[_participantProjectionKey(
+                locatedParticipants[index],
+              )] !=
+              null)
             Positioned(
-              left: _teamScreenPositions[index]!.dx - 24,
-              top: _teamScreenPositions[index]!.dy - 50,
+              left:
+                  _teamScreenPositions[_participantProjectionKey(
+                        locatedParticipants[index],
+                      )]!
+                      .dx -
+                  24,
+              top:
+                  _teamScreenPositions[_participantProjectionKey(
+                        locatedParticipants[index],
+                      )]!
+                      .dy -
+                  50,
               child: IgnorePointer(
                 child: _ProjectedTeamMarker(
                   participant: locatedParticipants[index],
@@ -1224,6 +1582,7 @@ class _TeamParticipantPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now().toUtc();
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.92),
@@ -1259,7 +1618,7 @@ class _TeamParticipantPanel extends StatelessWidget {
                   name: participants[i].buddy.shortName,
                   photoURL: participants[i].buddy.photoURL,
                   isLeader: participants[i].isLeader,
-                  hasLocation: participants[i].latestLocation != null,
+                  hasLocation: participants[i].hasFreshLocationAt(now),
                   status: participants[i].status,
                 ),
             ],

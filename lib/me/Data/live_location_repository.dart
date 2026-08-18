@@ -24,6 +24,7 @@ class LiveLocationRepository {
 
   static const String _hostingBaseUrl =
       'https://hiker-circle.web.app/live-location';
+  static const Duration _maximumShareDuration = Duration(hours: 24);
 
   final FirebaseFirestore? _firestore;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
@@ -51,7 +52,14 @@ class LiveLocationRepository {
 
       final shareId = data['liveLocationShareId'];
       final shareUrl = data['liveLocationShareUrl'];
+      final expiresAt =
+          _dateFromValue(data['liveLocationExpiresAt']) ??
+          _dateFromValue(data['liveLocationExpiresAtLocal']);
       if (shareId is! String || shareId.isEmpty) {
+        return null;
+      }
+      if (expiresAt == null || !expiresAt.isAfter(DateTime.now().toUtc())) {
+        await deactivate(phoneNumber: phoneNumber, share: null);
         return null;
       }
 
@@ -61,6 +69,7 @@ class LiveLocationRepository {
             ? shareUrl
             : _shareUrlFor(shareId),
         isActive: true,
+        expiresAt: expiresAt,
       );
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
@@ -86,6 +95,7 @@ class LiveLocationRepository {
       final shareId = shareDocument.id;
       final shareUrl = _shareUrlFor(shareId);
       final now = DateTime.now().toUtc();
+      final expiresAt = now.add(_maximumShareDuration);
 
       final batch = _resolvedFirestore.batch();
       batch.set(userDocument, {
@@ -96,6 +106,8 @@ class LiveLocationRepository {
         'liveLocation': location.toFirestore(),
         'liveLocationUpdatedAt': FieldValue.serverTimestamp(),
         'liveLocationUpdatedAtLocal': now.toIso8601String(),
+        'liveLocationExpiresAt': Timestamp.fromDate(expiresAt),
+        'liveLocationExpiresAtLocal': expiresAt.toIso8601String(),
       }, SetOptions(merge: true));
 
       batch.set(shareDocument, {
@@ -110,6 +122,8 @@ class LiveLocationRepository {
         'createdAtLocal': now.toIso8601String(),
         'updatedAt': FieldValue.serverTimestamp(),
         'updatedAtLocal': now.toIso8601String(),
+        'expiresAt': Timestamp.fromDate(expiresAt),
+        'expiresAtLocal': expiresAt.toIso8601String(),
       }, SetOptions(merge: true));
 
       await batch.commit();
@@ -117,6 +131,7 @@ class LiveLocationRepository {
         id: shareId,
         shareUrl: shareUrl,
         isActive: true,
+        expiresAt: expiresAt,
         latestLocation: location,
       );
     } on FirebaseException catch (error) {
@@ -147,6 +162,8 @@ class LiveLocationRepository {
         'liveLocation': location.toFirestore(),
         'liveLocationUpdatedAt': FieldValue.serverTimestamp(),
         'liveLocationUpdatedAtLocal': now.toIso8601String(),
+        'liveLocationExpiresAt': Timestamp.fromDate(share.expiresAt),
+        'liveLocationExpiresAtLocal': share.expiresAt.toIso8601String(),
       }, SetOptions(merge: true));
 
       batch.set(shareDocument, {
@@ -159,6 +176,8 @@ class LiveLocationRepository {
         'shareUrl': share.shareUrl,
         'updatedAt': FieldValue.serverTimestamp(),
         'updatedAtLocal': now.toIso8601String(),
+        'expiresAt': Timestamp.fromDate(share.expiresAt),
+        'expiresAtLocal': share.expiresAt.toIso8601String(),
       }, SetOptions(merge: true));
 
       await batch.commit();
@@ -186,11 +205,15 @@ class LiveLocationRepository {
         'liveLocationEnabled': false,
         'liveLocationUpdatedAt': FieldValue.serverTimestamp(),
         'liveLocationUpdatedAtLocal': now.toIso8601String(),
+        'liveLocationExpiresAt': Timestamp.fromDate(now),
+        'liveLocationExpiresAtLocal': now.toIso8601String(),
       }, SetOptions(merge: true));
 
       if (shareId != null && shareId.isNotEmpty) {
         batch.set(_liveLocationShares.doc(shareId), {
           'isActive': false,
+          'expiresAt': Timestamp.fromDate(now),
+          'expiresAtLocal': now.toIso8601String(),
           'updatedAt': FieldValue.serverTimestamp(),
           'updatedAtLocal': now.toIso8601String(),
         }, SetOptions(merge: true));
@@ -222,6 +245,12 @@ class LiveLocationRepository {
 
   String _shareUrlFor(String shareId) {
     return '$_hostingBaseUrl?share=${Uri.encodeComponent(shareId)}';
+  }
+
+  DateTime? _dateFromValue(Object? value) {
+    if (value is Timestamp) return value.toDate().toUtc();
+    if (value is String) return DateTime.tryParse(value)?.toUtc();
+    return null;
   }
 
   void _throwIfFirebaseUnavailable() {

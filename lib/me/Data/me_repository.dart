@@ -20,9 +20,9 @@ class MeRepository {
 
   List<MeStat> loadStats() {
     return const [
-      MeStat(label: 'Circles', value: '3'),
-      MeStat(label: 'Buddies', value: '3'),
-      MeStat(label: 'Trails', value: '3'),
+      MeStat(label: 'Circles', value: '0'),
+      MeStat(label: 'Buddies', value: '0'),
+      MeStat(label: 'Trails', value: '0'),
     ];
   }
 

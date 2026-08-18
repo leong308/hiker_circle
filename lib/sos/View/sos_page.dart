@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
@@ -17,13 +18,28 @@ import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/network_reachability_service.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Data/location_snapshot_service.dart';
+import '../Data/nearby_sos_event_repository.dart';
 import '../Data/sos_alert_repository.dart';
 import '../Data/sos_device_alert_service.dart';
 import '../Model/sos_models.dart';
+import '../Model/nearby_sos_event.dart';
 import '../ModelView/sos_view_model.dart';
 import 'emergency_contacts_page.dart';
 import 'ios_sos_volume_guard.dart';
+import 'nearby_sos_map_page.dart';
 import 'paired_sos_button_page.dart';
+
+class _QueuedSosRequest {
+  const _QueuedSosRequest({
+    required this.mode,
+    required this.triggeredAt,
+    required this.triggerSource,
+  });
+
+  final SosAlertMode mode;
+  final DateTime triggeredAt;
+  final SosAlertTriggerSource triggerSource;
+}
 
 class SosPage extends StatefulWidget {
   const SosPage({
@@ -32,6 +48,11 @@ class SosPage extends StatefulWidget {
     this.manualSosRequestId = 0,
     this.immediateSosRequestId = 0,
     this.immediateSosMode,
+    this.immediateSosTriggerSource,
+    this.nearbySosEventRepository,
+    this.sosAlertRepository,
+    this.emergencyContactsRepository,
+    this.nearbySosRevision = 0,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
   });
 
@@ -39,6 +60,11 @@ class SosPage extends StatefulWidget {
   final int manualSosRequestId;
   final int immediateSosRequestId;
   final SosAlertMode? immediateSosMode;
+  final SosAlertTriggerSource? immediateSosTriggerSource;
+  final NearbySosEventRepository? nearbySosEventRepository;
+  final SosAlertRepository? sosAlertRepository;
+  final EmergencyContactsRepository? emergencyContactsRepository;
+  final int nearbySosRevision;
   final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
@@ -48,6 +74,10 @@ class SosPage extends StatefulWidget {
 class _SosPageState extends State<SosPage> {
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
+  final HikerBleService _bleService = const HikerBleService();
+  final Queue<_QueuedSosRequest> _queuedSosRequests = Queue();
+  late final NearbySosEventRepository _nearbySosEventRepository;
+  Future<void>? _sosRequestDrain;
   late final SosViewModel viewModel;
   int _handledManualSosRequestId = 0;
   int _handledImmediateSosRequestId = 0;
@@ -56,6 +86,11 @@ class _SosPageState extends State<SosPage> {
   List<Map<String, dynamic>> _adminSosSystemLogs = const [];
   bool _isLoadingAdminSosSystemLogs = false;
   String? _adminSosSystemLogsError;
+  List<NearbySosEvent> _nearbySosEvents = const [];
+  SosTriggerLocation? _nearbyEventsPhoneLocation;
+  bool _isLoadingNearbySosEvents = false;
+  bool _nearbySosReloadPending = false;
+  Timer? _nearbySosRefreshTimer;
   StreamSubscription<NetworkReachabilitySnapshot>? _networkSubscription;
   NetworkReachabilitySnapshot _networkSnapshot =
       const NetworkReachabilitySnapshot(
@@ -65,14 +100,21 @@ class _SosPageState extends State<SosPage> {
   @override
   void initState() {
     super.initState();
+    _nearbySosEventRepository =
+        widget.nearbySosEventRepository ?? NearbySosEventRepository();
+    unawaited(_activateSosAccount());
     viewModel = SosViewModel(
       session: widget.session,
-      emergencyContactsRepository: EmergencyContactsRepository(
-        firebaseBootstrapResult: widget.firebaseBootstrapResult,
-      ),
-      sosAlertRepository: SosAlertRepository(
-        firebaseBootstrapResult: widget.firebaseBootstrapResult,
-      ),
+      emergencyContactsRepository:
+          widget.emergencyContactsRepository ??
+          EmergencyContactsRepository(
+            firebaseBootstrapResult: widget.firebaseBootstrapResult,
+          ),
+      sosAlertRepository:
+          widget.sosAlertRepository ??
+          SosAlertRepository(
+            firebaseBootstrapResult: widget.firebaseBootstrapResult,
+          ),
     );
     viewModel.addListener(_refresh);
     _networkSubscription = NetworkReachabilityService.instance.snapshots.listen(
@@ -83,6 +125,10 @@ class _SosPageState extends State<SosPage> {
     unawaited(_loadCustomWhatsAppNotes());
     unawaited(viewModel.loadCloudAlertLogs());
     unawaited(viewModel.loadQueuedAlertCount());
+    unawaited(_loadNearbySosEvents());
+    _nearbySosRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_loadNearbySosEvents());
+    });
     if (widget.session.isAdmin) {
       unawaited(_loadAdminSosSystemLogs());
     }
@@ -91,9 +137,20 @@ class _SosPageState extends State<SosPage> {
     });
   }
 
+  Future<void> _activateSosAccount() async {
+    try {
+      await _bleService.setActiveSosAccount(widget.session.phoneNumber);
+    } on HikerBleException catch (error) {
+      debugPrint('Unable to scope paired SOS buttons to this account: $error');
+    }
+  }
+
   @override
   void didUpdateWidget(covariant SosPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.nearbySosRevision != oldWidget.nearbySosRevision) {
+      unawaited(_loadNearbySosEvents());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _handlePendingManualSosRequest();
     });
@@ -105,6 +162,7 @@ class _SosPageState extends State<SosPage> {
       unawaited(_deviceAlertService.stopManualSosPattern());
     }
     _networkSubscription?.cancel();
+    _nearbySosRefreshTimer?.cancel();
     unawaited(NetworkReachabilityService.instance.stop());
     viewModel.removeListener(_refresh);
     viewModel.dispose();
@@ -112,7 +170,74 @@ class _SosPageState extends State<SosPage> {
   }
 
   void _refresh() {
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _loadNearbySosEvents() async {
+    if (_isLoadingNearbySosEvents) {
+      _nearbySosReloadPending = true;
+      return;
+    }
+    _isLoadingNearbySosEvents = true;
+    try {
+      final events = await _nearbySosEventRepository.load(
+        ownerPhoneNumber: widget.session.phoneNumber,
+      );
+      if (!mounted) return;
+      setState(() {
+        _nearbySosEvents = events;
+        _nearbyEventsPhoneLocation =
+            LocationSnapshotService.instance.latestLocation;
+      });
+      final phoneLocation = await _currentPhoneLocation();
+      if (!mounted) return;
+      setState(() {
+        _nearbyEventsPhoneLocation = phoneLocation;
+      });
+    } catch (error) {
+      debugPrint('Unable to load nearby SOS events: $error');
+    } finally {
+      _isLoadingNearbySosEvents = false;
+      if (_nearbySosReloadPending && mounted) {
+        _nearbySosReloadPending = false;
+        unawaited(_loadNearbySosEvents());
+      }
+    }
+  }
+
+  Future<SosTriggerLocation?> _currentPhoneLocation() async {
+    try {
+      final snapshots = LocationSnapshotService.instance;
+      return await snapshots.refresh() ?? snapshots.latestLocation;
+    } catch (_) {
+      return LocationSnapshotService.instance.latestLocation;
+    }
+  }
+
+  List<NearbySosEvent> get _activeNearbySosEvents {
+    final now = DateTime.now().toUtc();
+    return _nearbySosEvents
+        .where(
+          (event) => event.isActiveAt(
+            now: now,
+            phoneLocation: _nearbyEventsPhoneLocation,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  List<NearbySosEvent> get _archivedNearbySosEvents {
+    final now = DateTime.now().toUtc();
+    return _nearbySosEvents
+        .where(
+          (event) => !event.isActiveAt(
+            now: now,
+            phoneLocation: _nearbyEventsPhoneLocation,
+          ),
+        )
+        .toList(growable: false);
   }
 
   static Map<SosAlertMode, String> _defaultWhatsAppNotes() {
@@ -176,7 +301,7 @@ class _SosPageState extends State<SosPage> {
 
   String _customWhatsAppNoteFor(SosAlertMode mode) {
     return _customWhatsAppNotes[mode] ??
-        SosAlertMessageComposer.defaultCustomNote;
+        SosAlertMessageComposer.defaultCustomNoteFor(mode);
   }
 
   Future<void> _loadAdminSosSystemLogs() async {
@@ -207,7 +332,7 @@ class _SosPageState extends State<SosPage> {
     } catch (_) {
       if (mounted) {
         setState(() {
-          _adminSosSystemLogsError = 'Unable to load SOS system logs.';
+          _adminSosSystemLogsError = 'Unable to load SOS events.';
         });
       }
     } finally {
@@ -226,7 +351,12 @@ class _SosPageState extends State<SosPage> {
         widget.immediateSosRequestId > 0 &&
         widget.immediateSosRequestId != _handledImmediateSosRequestId) {
       _handledImmediateSosRequestId = widget.immediateSosRequestId;
-      unawaited(_handleImmediateSos(immediateMode));
+      unawaited(
+        _handleImmediateSos(
+          immediateMode,
+          widget.immediateSosTriggerSource ?? SosAlertTriggerSource.mobilePhone,
+        ),
+      );
       return;
     }
 
@@ -241,10 +371,6 @@ class _SosPageState extends State<SosPage> {
   }
 
   Future<void> _handleManualSos() async {
-    if (viewModel.isSendingSosAlert) {
-      return;
-    }
-
     unawaited(HapticFeedback.heavyImpact());
     final shouldSend = await showCupertinoDialog<bool>(
       context: context,
@@ -258,29 +384,34 @@ class _SosPageState extends State<SosPage> {
       return;
     }
 
-    await _triggerAlert(SosAlertMode.manual);
+    // A user-initiated alert may offer an alarm-volume check, but that dialog
+    // stays outside the dispatch queue so a hardware SOS can still be sent
+    // while the dialog is open.
+    final volumeReady = await ensureIosSosOutputVolumeReady(
+      context: context,
+      deviceAlertService: _deviceAlertService,
+      message:
+          '${SosAlertMode.manual.label} uses iPhone media volume for the local alarm. Turn it up before continuing.',
+    );
+    if (!volumeReady || !mounted) return;
+    await _enqueueAlert(SosAlertMode.manual);
   }
 
-  Future<void> _handleImmediateSos(SosAlertMode mode) async {
-    if (viewModel.isSendingSosAlert) {
-      return;
-    }
-
+  Future<void> _handleImmediateSos(
+    SosAlertMode mode,
+    SosAlertTriggerSource triggerSource,
+  ) async {
     unawaited(
       mode == SosAlertMode.duress
           ? HapticFeedback.mediumImpact()
           : HapticFeedback.heavyImpact(),
     );
-    await _triggerAlert(mode);
+    await _enqueueAlert(mode, triggerSource: triggerSource);
   }
 
   Future<void> _handleDuressSos() async {
-    if (viewModel.isSendingSosAlert) {
-      return;
-    }
-
     unawaited(HapticFeedback.mediumImpact());
-    await _triggerAlert(SosAlertMode.duress);
+    await _enqueueAlert(SosAlertMode.duress);
   }
 
   void _openTestSettings() {
@@ -297,22 +428,26 @@ class _SosPageState extends State<SosPage> {
   void _openPairedSosButton() {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => const PairedSosButtonPage(),
+        builder: (_) =>
+            PairedSosButtonPage(accountId: widget.session.phoneNumber),
       ),
     );
   }
 
-  void _showManualSosDetailsOverlay() {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: _SosColors.surfaceFor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+  void _openSosGestureGuide() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const _SosGestureGuidePage()),
+    );
+  }
+
+  void _openQueuedDispatches() {
+    if (viewModel.queuedAlertCount <= 0) return;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => _QueuedSosDispatchesPage(
+          loadDispatches: viewModel.loadQueuedDispatches,
+        ),
       ),
-      builder: (context) {
-        return _ManualSosDetailsOverlay(details: viewModel.manualSosDetails);
-      },
     );
   }
 
@@ -334,24 +469,6 @@ class _SosPageState extends State<SosPage> {
     );
   }
 
-  void _openSafetyToolDetail({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required List<(String, String)> rows,
-  }) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => _SosSafetyToolDetailPage(
-          icon: icon,
-          title: title,
-          subtitle: subtitle,
-          rows: rows,
-        ),
-      ),
-    );
-  }
-
   void _openLiveLocationPage() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -363,27 +480,74 @@ class _SosPageState extends State<SosPage> {
     );
   }
 
-  Future<void> _triggerAlert(SosAlertMode mode) async {
-    if (mode.usesLoudEmergencyPattern) {
-      final volumeReady = await ensureIosSosOutputVolumeReady(
-        context: context,
-        deviceAlertService: _deviceAlertService,
-        message:
-            '${mode.label} uses iPhone media volume for the local alarm. Turn it up before continuing.',
-      );
-      if (!volumeReady || !mounted) {
-        return;
+  void _openNearbySosEvent(NearbySosEvent event) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => NearbySosMapPage(
+          event: event,
+          initialPhoneLocation: _nearbyEventsPhoneLocation,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _enqueueAlert(
+    SosAlertMode mode, {
+    SosAlertTriggerSource? triggerSource,
+  }) async {
+    _queuedSosRequests.add(
+      _QueuedSosRequest(
+        mode: mode,
+        triggeredAt: DateTime.now().toUtc(),
+        triggerSource: triggerSource ?? SosAlertTriggerSource.mobilePhone,
+      ),
+    );
+
+    // Keep checking after an existing worker completes. An alert can arrive in
+    // the small interval between that worker emptying the queue and clearing
+    // its Future, and it must start another worker instead of being stranded.
+    while (mounted && _queuedSosRequests.isNotEmpty) {
+      final activeDrain = _sosRequestDrain;
+      if (activeDrain != null) {
+        await activeDrain;
+        continue;
       }
+
+      final drain = _drainSosRequests();
+      _sosRequestDrain = drain;
+      try {
+        await drain;
+      } finally {
+        if (identical(_sosRequestDrain, drain)) {
+          _sosRequestDrain = null;
+        }
+      }
+    }
+  }
+
+  Future<void> _drainSosRequests() async {
+    while (mounted && _queuedSosRequests.isNotEmpty) {
+      final request = _queuedSosRequests.removeFirst();
+      await _triggerAlert(request);
+    }
+    if (!mounted) {
+      _queuedSosRequests.clear();
+    }
+  }
+
+  Future<void> _triggerAlert(_QueuedSosRequest request) async {
+    final mode = request.mode;
+    if (mode.usesLoudEmergencyPattern) {
       unawaited(_startManualSosPattern(mode));
     }
 
-    final triggeredAt = DateTime.now().toUtc();
     final triggerLocation = await _captureTriggerLocation();
     final result = await viewModel.triggerAlert(
       mode: mode,
-      triggeredAt: triggeredAt,
+      triggeredAt: request.triggeredAt,
       triggerLocation: triggerLocation,
       customMessageNote: _customWhatsAppNoteFor(mode),
+      triggerSource: request.triggerSource,
     );
     if (!mounted) {
       return;
@@ -409,7 +573,7 @@ class _SosPageState extends State<SosPage> {
   Future<SosTriggerLocation?> _captureTriggerLocation() async {
     try {
       final snapshotService = LocationSnapshotService.instance;
-      return snapshotService.latestLocation ?? await snapshotService.refresh();
+      return await snapshotService.refresh() ?? snapshotService.latestLocation;
     } catch (_) {
       return null;
     }
@@ -477,8 +641,21 @@ class _SosPageState extends State<SosPage> {
     return '${alert.mode.label} could not be sent to your contacts.';
   }
 
+  Map<String, dynamic> _eventLogForAlert(SosAlert alert) {
+    return <String, dynamic>{
+      ...alert.toFirestore(),
+      'alertId': alert.id,
+      'phoneNumber': alert.triggeredByPhoneNumber,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
+    final activeNearbyEvents = _activeNearbySosEvents;
+    final archivedNearbyEvents = _archivedNearbySosEvents;
+    final userEventLogs = viewModel.cloudAlertLogs
+        .map(_eventLogForAlert)
+        .toList(growable: false);
     return ColoredBox(
       color: _SosColors.backgroundFor(context),
       child: SafeArea(
@@ -500,6 +677,14 @@ class _SosPageState extends State<SosPage> {
                     onOpenTestSettings: _openTestSettings,
                     onOpenPairedButton: _openPairedSosButton,
                   ),
+                  if (activeNearbyEvents.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    _ActiveNearbySosEventsPanel(
+                      events: activeNearbyEvents,
+                      phoneLocation: _nearbyEventsPhoneLocation,
+                      onTap: _openNearbySosEvent,
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   _NetworkSosStatusCard(
                     isNetworkAvailable:
@@ -516,12 +701,7 @@ class _SosPageState extends State<SosPage> {
                   _MetricsGroup(
                     metrics: viewModel.metrics,
                     onLiveTap: _openLiveLocationPage,
-                  ),
-                  const SizedBox(height: 18),
-                  _SosAlertStatusCard(
-                    isSending: viewModel.isSendingSosAlert,
-                    latestResult: viewModel.latestSosAlertResult,
-                    errorMessage: viewModel.sosAlertErrorMessage,
+                    onQueuedTap: _openQueuedDispatches,
                   ),
                   const SizedBox(height: 14),
                   _EmergencySosControlCard(
@@ -529,7 +709,7 @@ class _SosPageState extends State<SosPage> {
                     isAlarmActive: _isManualSosPatternActive,
                     onTrigger: () => unawaited(_handleManualSos()),
                     onStopAlarm: () => unawaited(_stopManualSosPattern()),
-                    onShowDetailsOverlay: _showManualSosDetailsOverlay,
+                    onShowGuide: _openSosGestureGuide,
                     onDuressLongPress: () => unawaited(_handleDuressSos()),
                   ),
                   const SizedBox(height: 18),
@@ -543,11 +723,17 @@ class _SosPageState extends State<SosPage> {
                   if (widget.session.isAdmin)
                     _AdminSosSystemLogsPanel(
                       logs: _adminSosSystemLogs,
+                      nearbyEvents: archivedNearbyEvents,
+                      phoneLocation: _nearbyEventsPhoneLocation,
                       isLoading: _isLoadingAdminSosSystemLogs,
                       errorMessage: _adminSosSystemLogsError,
-                      onRefresh: () => unawaited(_loadAdminSosSystemLogs()),
+                      onNearbyEventTap: _openNearbySosEvent,
+                      onRefresh: () {
+                        unawaited(_loadAdminSosSystemLogs());
+                        unawaited(_loadNearbySosEvents());
+                      },
                     )
-                  else
+                  else ...[
                     _SosTriggerLogPanel(
                       isNetworkAvailable:
                           widget.firebaseBootstrapResult.isAvailable &&
@@ -570,6 +756,20 @@ class _SosPageState extends State<SosPage> {
                         );
                       },
                     ),
+                    const SizedBox(height: 12),
+                    _AdminSosSystemLogsPanel(
+                      logs: userEventLogs,
+                      nearbyEvents: archivedNearbyEvents,
+                      phoneLocation: _nearbyEventsPhoneLocation,
+                      isLoading: false,
+                      errorMessage: null,
+                      onNearbyEventTap: _openNearbySosEvent,
+                      onRefresh: () {
+                        unawaited(viewModel.loadCloudAlertLogs());
+                        unawaited(_loadNearbySosEvents());
+                      },
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -895,10 +1095,15 @@ class _NetworkSosStatusCard extends StatelessWidget {
 }
 
 class _MetricsGroup extends StatelessWidget {
-  const _MetricsGroup({required this.metrics, required this.onLiveTap});
+  const _MetricsGroup({
+    required this.metrics,
+    required this.onLiveTap,
+    required this.onQueuedTap,
+  });
 
   final List<SosMetric> metrics;
   final VoidCallback onLiveTap;
+  final VoidCallback onQueuedTap;
 
   @override
   Widget build(BuildContext context) {
@@ -911,7 +1116,11 @@ class _MetricsGroup extends StatelessWidget {
               Expanded(
                 child: _MetricCell(
                   metric: metrics[index],
-                  onTap: metrics[index].label == 'Live' ? onLiveTap : null,
+                  onTap: switch (metrics[index].label) {
+                    'Live' => onLiveTap,
+                    'Queued' when metrics[index].value != '0' => onQueuedTap,
+                    _ => null,
+                  },
                 ),
               ),
               if (index != metrics.length - 1) const _VerticalSeparator(),
@@ -965,135 +1174,258 @@ class _MetricCell extends StatelessWidget {
   }
 }
 
-class _SosAlertStatusCard extends StatelessWidget {
-  const _SosAlertStatusCard({
-    required this.isSending,
-    required this.latestResult,
-    required this.errorMessage,
+class _ActiveNearbySosEventsPanel extends StatelessWidget {
+  const _ActiveNearbySosEventsPanel({
+    required this.events,
+    required this.phoneLocation,
+    required this.onTap,
   });
 
-  final bool isSending;
-  final SosAlertResult? latestResult;
-  final String? errorMessage;
+  final List<NearbySosEvent> events;
+  final SosTriggerLocation? phoneLocation;
+  final ValueChanged<NearbySosEvent> onTap;
 
   @override
   Widget build(BuildContext context) {
-    final latestAlert = latestResult?.alert;
-    final statusColor =
-        latestAlert?.status == SosAlertStatus.failed ||
-            latestAlert?.status == SosAlertStatus.queued
-        ? _SosColors.destructiveFor(context)
-        : latestAlert?.status == SosAlertStatus.partial
-        ? _SosColors.orange
-        : _SosColors.green;
-    final title = isSending
-        ? 'Sending SOS alert'
-        : latestAlert == null
-        ? 'SOS ready'
-        : '${latestAlert.mode.label} ${latestAlert.status.label.toLowerCase()}';
-    final subtitle = errorMessage != null
-        ? errorMessage!
-        : latestAlert == null
-        ? 'Emergency alerts will be logged to your profile and sent by WhatsApp.'
-        : _subtitleFor(latestAlert);
-
     return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            child: Row(
               children: [
-                _Glyph(
-                  icon: isSending
-                      ? Icons.outbox_rounded
-                      : Icons.verified_user_rounded,
-                  color: errorMessage != null
-                      ? _SosColors.destructiveFor(context)
-                      : statusColor,
-                ),
+                const _Glyph(icon: Icons.sos_rounded, color: _SosColors.orange),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        'Nearby SOS needed',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
                               color: _SosColors.textFor(context),
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w800,
                               letterSpacing: 0,
                             ),
                       ),
-                      const SizedBox(height: 3),
                       Text(
-                        subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                        events.length == 1
+                            ? '1 active nearby event'
+                            : '${events.length} active nearby events',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: errorMessage != null
-                              ? _SosColors.destructiveFor(context)
-                              : _SosColors.secondaryTextFor(context),
-                          fontWeight: FontWeight.w400,
+                          color: _SosColors.secondaryTextFor(context),
                           letterSpacing: 0,
                         ),
                       ),
                     ],
                   ),
                 ),
+                _StatusPill(
+                  label: 'Active',
+                  color: _SosColors.orange,
+                  surface: _SosColors.orange.withValues(alpha: 0.12),
+                ),
               ],
             ),
-            if (isSending) ...[
-              const SizedBox(height: 12),
-              const LinearProgressIndicator(minHeight: 2),
-            ],
+          ),
+          const _HorizontalSeparator(),
+          for (var index = 0; index < events.length; index++) ...[
+            _TapSurface(
+              onTap: () => onTap(events[index]),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.location_searching_rounded,
+                      color: _SosColors.orange,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            events[index].hasReportedLocation
+                                ? 'Reported location available'
+                                : 'Approximate nearby area',
+                            style: Theme.of(context).textTheme.bodyLarge
+                                ?.copyWith(
+                                  color: _SosColors.textFor(context),
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _nearbySosEventSummary(
+                              events[index],
+                              phoneLocation,
+                            ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: _SosColors.secondaryTextFor(context),
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      CupertinoIcons.chevron_forward,
+                      color: _SosColors.chevronFor(context),
+                      size: 16,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (index != events.length - 1) const _HorizontalSeparator(),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NearbySosHistoryRow extends StatelessWidget {
+  const _NearbySosHistoryRow({
+    required this.event,
+    required this.phoneLocation,
+    required this.onTap,
+  });
+
+  final NearbySosEvent event;
+  final SosTriggerLocation? phoneLocation;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final distance = event.distanceMetersFrom(phoneLocation);
+    final archivedByAge =
+        event.ageAt(DateTime.now().toUtc()) > NearbySosEvent.activeDuration;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _Glyph(icon: Icons.sos_rounded, color: _SosColors.orange),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'NEARBY SOS',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: _SosColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _nearbySosTimestamp(event.receivedAt),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _SosColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _StatusPill(
+                        label: event.hasReportedLocation
+                            ? 'Location reported'
+                            : 'Approximate area',
+                        color: _SosColors.orange,
+                        surface: _SosColors.orange.withValues(alpha: 0.12),
+                      ),
+                      _StatusPill(
+                        label: archivedByAge
+                            ? 'Over 1 hour old'
+                            : distance == null
+                            ? 'Distance unavailable'
+                            : _nearbySosDistance(distance),
+                        color: _SosColors.secondaryTextFor(context),
+                        surface: _SosColors.surfaceFor(context),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded),
           ],
         ),
       ),
     );
   }
+}
 
-  String _subtitleFor(SosAlert alert) {
-    if (alert.status == SosAlertStatus.noContacts) {
-      return 'Saved to Firebase, but no emergency contacts were available.';
-    }
-    if (alert.status == SosAlertStatus.sent) {
-      return 'Saved to Firebase and sent to ${alert.sentCount} contacts.';
-    }
-    if (alert.status == SosAlertStatus.partial) {
-      return 'Sent to ${alert.sentCount}; ${alert.failedCount} queued for retry.';
-    }
-    if (alert.status == SosAlertStatus.queued) {
-      return 'Saved offline and queued for retry when delivery is available.';
-    }
-    return 'Saved to Firebase, but contact delivery failed.';
-  }
+String _nearbySosEventSummary(
+  NearbySosEvent event,
+  SosTriggerLocation? phoneLocation,
+) {
+  final age = event.ageAt(DateTime.now().toUtc());
+  final ageLabel = age.inMinutes < 1
+      ? 'Just now'
+      : age.inMinutes == 1
+      ? '1 minute ago'
+      : '${age.inMinutes} minutes ago';
+  final distance = event.distanceMetersFrom(phoneLocation);
+  if (distance == null) return ageLabel;
+  return '$ageLabel • ${_nearbySosDistance(distance)}';
+}
+
+String _nearbySosDistance(double meters) {
+  if (meters < 1000) return '${meters.round()} m away';
+  return '${(meters / 1000).toStringAsFixed(1)} km away';
+}
+
+String _nearbySosTimestamp(DateTime value) {
+  final local = value.toLocal();
+  final date =
+      '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  final time =
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}:${local.second.toString().padLeft(2, '0')}';
+  return '$date $time';
 }
 
 class _AdminSosSystemLogsPanel extends StatelessWidget {
   const _AdminSosSystemLogsPanel({
     required this.logs,
+    required this.nearbyEvents,
+    required this.phoneLocation,
     required this.isLoading,
     required this.errorMessage,
+    required this.onNearbyEventTap,
     required this.onRefresh,
   });
 
   final List<Map<String, dynamic>> logs;
+  final List<NearbySosEvent> nearbyEvents;
+  final SosTriggerLocation? phoneLocation;
   final bool isLoading;
   final String? errorMessage;
+  final ValueChanged<NearbySosEvent> onNearbyEventTap;
   final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = errorMessage != null
-        ? 'Unable to load logs. Tap to inspect the status.'
-        : logs.isEmpty
-        ? 'No SOS system logs found yet.'
-        : '${logs.length} log${logs.length == 1 ? '' : 's'} available. Tap to view all.';
+    final eventCount = logs.length + nearbyEvents.length;
+    final subtitle = errorMessage != null && eventCount == 0
+        ? 'Unable to load events. Tap to inspect the status.'
+        : eventCount == 0
+        ? 'No SOS events found yet.'
+        : '$eventCount event${eventCount == 1 ? '' : 's'} available. Tap to view all.';
 
     return _InsetGroup(
       child: Material(
@@ -1116,7 +1448,7 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'SOS System Logs',
+                        'SOS events',
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: _SosColors.textFor(context),
                           fontWeight: FontWeight.w800,
@@ -1135,7 +1467,7 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Refresh SOS system logs',
+                  tooltip: 'Refresh SOS events',
                   onPressed: isLoading ? null : onRefresh,
                   icon: isLoading
                       ? const SizedBox.square(
@@ -1176,11 +1508,9 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      const Expanded(
-                        child: _SectionTitle(label: 'SOS System Logs'),
-                      ),
+                      const Expanded(child: _SectionTitle(label: 'SOS events')),
                       IconButton(
-                        tooltip: 'Refresh SOS system logs',
+                        tooltip: 'Refresh SOS events',
                         onPressed: isLoading ? null : onRefresh,
                         icon: isLoading
                             ? const SizedBox.square(
@@ -1197,22 +1527,44 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
                   _InsetGroup(
                     child: Column(
                       children: [
-                        if (errorMessage != null)
+                        if (errorMessage != null) ...[
                           _SosSystemLogEmptyState(
                             icon: Icons.cloud_off_rounded,
                             message: errorMessage!,
-                          )
-                        else if (logs.isEmpty)
+                          ),
+                          if (logs.isNotEmpty || nearbyEvents.isNotEmpty)
+                            const _HorizontalSeparator(),
+                        ],
+                        if (logs.isEmpty &&
+                            nearbyEvents.isEmpty &&
+                            errorMessage == null)
                           const _SosSystemLogEmptyState(
                             icon: Icons.fact_check_rounded,
-                            message: 'No SOS system logs found yet.',
+                            message: 'No SOS events found yet.',
                           )
-                        else
+                        else if (logs.isNotEmpty ||
+                            nearbyEvents.isNotEmpty) ...[
+                          for (
+                            var index = 0;
+                            index < nearbyEvents.length;
+                            index++
+                          ) ...[
+                            _NearbySosHistoryRow(
+                              event: nearbyEvents[index],
+                              phoneLocation: phoneLocation,
+                              onTap: () =>
+                                  onNearbyEventTap(nearbyEvents[index]),
+                            ),
+                            if (index != nearbyEvents.length - 1 ||
+                                logs.isNotEmpty)
+                              const _HorizontalSeparator(),
+                          ],
                           for (var index = 0; index < logs.length; index++) ...[
                             _SosSystemLogRow(log: logs[index]),
                             if (index != logs.length - 1)
                               const _HorizontalSeparator(),
                           ],
+                        ],
                       ],
                     ),
                   ),
@@ -1388,7 +1740,7 @@ class _SosSystemLogDetailSheet extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'SOS System Log',
+                        'SOS event',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           color: _SosColors.textFor(context),
                           fontWeight: FontWeight.w800,
@@ -1468,13 +1820,13 @@ class _SosSystemLogDetailSheet extends StatelessWidget {
   }
 }
 
-class _EmergencySosControlCard extends StatelessWidget {
+class _EmergencySosControlCard extends StatefulWidget {
   const _EmergencySosControlCard({
     required this.isSending,
     required this.isAlarmActive,
     required this.onTrigger,
     required this.onStopAlarm,
-    required this.onShowDetailsOverlay,
+    required this.onShowGuide,
     required this.onDuressLongPress,
   });
 
@@ -1482,8 +1834,84 @@ class _EmergencySosControlCard extends StatelessWidget {
   final bool isAlarmActive;
   final VoidCallback onTrigger;
   final VoidCallback onStopAlarm;
-  final VoidCallback onShowDetailsOverlay;
+  final VoidCallback onShowGuide;
   final VoidCallback onDuressLongPress;
+
+  @override
+  State<_EmergencySosControlCard> createState() =>
+      _EmergencySosControlCardState();
+}
+
+class _EmergencySosControlCardState extends State<_EmergencySosControlCard>
+    with SingleTickerProviderStateMixin {
+  static const Duration _duressHoldDuration = Duration(milliseconds: 1200);
+
+  late final AnimationController _holdController;
+  bool _isPressing = false;
+  bool _duressTriggered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _holdController =
+        AnimationController(vsync: this, duration: _duressHoldDuration)
+          ..addStatusListener((status) {
+            if (status != AnimationStatus.completed ||
+                _duressTriggered ||
+                widget.isSending ||
+                widget.isAlarmActive) {
+              return;
+            }
+            _duressTriggered = true;
+            if (mounted) setState(() {});
+            widget.onDuressLongPress();
+          });
+  }
+
+  @override
+  void dispose() {
+    _holdController.dispose();
+    super.dispose();
+  }
+
+  void _handleTapDown(TapDownDetails details) {
+    if (widget.isSending) return;
+    _duressTriggered = false;
+    setState(() => _isPressing = true);
+    if (!widget.isAlarmActive) {
+      _holdController.forward(from: 0);
+    }
+  }
+
+  void _handleTapUp(TapUpDetails details) {
+    if (widget.isSending) {
+      _cancelPress();
+      return;
+    }
+    final didTriggerDuress = _duressTriggered;
+    final shouldStopAlarm = widget.isAlarmActive;
+    _cancelPress();
+    if (didTriggerDuress) return;
+    if (shouldStopAlarm) {
+      widget.onStopAlarm();
+    } else {
+      widget.onTrigger();
+    }
+  }
+
+  void _cancelPress() {
+    _holdController.stop();
+    _holdController.value = 0;
+    if (mounted && (_isPressing || _duressTriggered)) {
+      setState(() {
+        _isPressing = false;
+        _duressTriggered = false;
+      });
+    } else {
+      _isPressing = false;
+      _duressTriggered = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1494,7 +1922,7 @@ class _EmergencySosControlCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Manual SOS',
+              'Emergency SOS',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 color: _SosColors.textFor(context),
@@ -1505,96 +1933,195 @@ class _EmergencySosControlCard extends StatelessWidget {
             const SizedBox(height: 12),
             Center(
               child: GestureDetector(
-                onTap: isAlarmActive
-                    ? onStopAlarm
-                    : isSending
-                    ? null
-                    : onTrigger,
-                onLongPress: onShowDetailsOverlay,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: 188,
-                  height: 188,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isAlarmActive
+                key: const Key('sos-emergency-button'),
+                behavior: HitTestBehavior.opaque,
+                onTapDown: _handleTapDown,
+                onTapUp: _handleTapUp,
+                onTapCancel: _cancelPress,
+                child: AnimatedBuilder(
+                  animation: _holdController,
+                  builder: (context, child) {
+                    final holdProgress = widget.isAlarmActive
+                        ? 0.0
+                        : _holdController.value;
+                    final idleColor = _SosColors.destructiveFor(context);
+                    final buttonColor = widget.isAlarmActive
                         ? _SosColors.green
-                        : isSending
-                        ? _SosColors.destructiveFor(
-                            context,
-                          ).withValues(alpha: 0.58)
-                        : _SosColors.destructiveFor(context),
-                    boxShadow: [
-                      BoxShadow(
-                        color:
-                            (isAlarmActive
-                                    ? _SosColors.green
-                                    : _SosColors.destructiveFor(context))
-                                .withValues(alpha: 0.26),
-                        blurRadius: 26,
-                        spreadRadius: 8,
-                      ),
-                    ],
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.72),
-                      width: 7,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        isAlarmActive
-                            ? Icons.notifications_off_rounded
-                            : Icons.sos_rounded,
-                        color: Colors.white,
-                        size: 46,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        isAlarmActive
-                            ? 'STOP'
-                            : isSending
-                            ? 'SENDING'
-                            : 'HOLD SOS',
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0,
+                        : widget.isSending
+                        ? idleColor.withValues(alpha: 0.58)
+                        : Color.lerp(
+                            idleColor,
+                            _SosColors.duress,
+                            holdProgress,
+                          )!;
+                    final actionLabel = widget.isAlarmActive
+                        ? 'STOP'
+                        : widget.isSending
+                        ? 'SENDING'
+                        : _duressTriggered
+                        ? 'DURESS'
+                        : _isPressing
+                        ? 'HOLD…'
+                        : null;
+                    final helperLabel = widget.isAlarmActive
+                        ? 'Alarm active'
+                        : widget.isSending
+                        ? 'Notifying contacts'
+                        : _duressTriggered
+                        ? 'Silent alert started'
+                        : _isPressing
+                        ? 'Keep holding for Duress'
+                        : 'Tap or hold';
+                    return SizedBox.square(
+                      dimension: 208,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          if (holdProgress > 0)
+                            SizedBox.square(
+                              dimension: 204,
+                              child: CircularProgressIndicator(
+                                value: holdProgress,
+                                strokeWidth: 5,
+                                color: _SosColors.duress,
+                                backgroundColor: _SosColors.duress.withValues(
+                                  alpha: 0.14,
+                                ),
+                              ),
                             ),
+                          AnimatedScale(
+                            scale: _isPressing ? 0.96 : 1,
+                            duration: const Duration(milliseconds: 140),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 140),
+                              width: 188,
+                              height: 188,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: buttonColor,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: buttonColor.withValues(alpha: 0.26),
+                                    blurRadius: 26,
+                                    spreadRadius: 8,
+                                  ),
+                                ],
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.72),
+                                  width: 7,
+                                ),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    widget.isAlarmActive
+                                        ? Icons.notifications_off_rounded
+                                        : _duressTriggered
+                                        ? Icons.visibility_off_rounded
+                                        : Icons.sos_rounded,
+                                    color: Colors.white,
+                                    size: 46,
+                                  ),
+                                  SizedBox(
+                                    height: actionLabel == null ? 12 : 8,
+                                  ),
+                                  if (actionLabel != null) ...[
+                                    Text(
+                                      actionLabel,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .headlineSmall
+                                          ?.copyWith(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w900,
+                                            letterSpacing: 0,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                  ],
+                                  Text(
+                                    helperLabel,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.88,
+                                          ),
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        isAlarmActive
-                            ? 'Alarm active'
-                            : isSending
-                            ? 'Notifying contacts'
-                            : 'Tap to start',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.white.withValues(alpha: 0.88),
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
             const SizedBox(height: 14),
-            _HiddenDuressIndicator(
-              isSending: isSending,
-              onLongPress: onDuressLongPress,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Tap for the 10-second cancel window. Press and hold the button to view exactly what gets activated.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _SosColors.secondaryTextFor(context),
-                fontWeight: FontWeight.w500,
-                letterSpacing: 0,
+            Container(
+              padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+              decoration: BoxDecoration(
+                color: _SosColors.backgroundFor(context),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _SosColors.separatorFor(context)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          const TextSpan(
+                            text: 'Tap: ',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          const TextSpan(
+                            text:
+                                'Manual SOS with a loud alarm and cancel time.\n',
+                          ),
+                          TextSpan(
+                            text: 'Hold: ',
+                            style: TextStyle(
+                              color: _SosColors.duress,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const TextSpan(
+                            text: 'silent Duress SOS sent without a countdown.',
+                          ),
+                        ],
+                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _SosColors.secondaryTextFor(context),
+                        height: 1.45,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                  Transform.translate(
+                    offset: const Offset(0, -5),
+                    child: IconButton(
+                      key: const Key('sos-gesture-info-button'),
+                      tooltip: 'How Manual and Duress SOS work',
+                      iconSize: 18,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: widget.onShowGuide,
+                      icon: const Icon(Icons.info_outline_rounded),
+                      color: _SosColors.green,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1604,76 +2131,530 @@ class _EmergencySosControlCard extends StatelessWidget {
   }
 }
 
-class _HiddenDuressIndicator extends StatelessWidget {
-  const _HiddenDuressIndicator({
-    required this.isSending,
-    required this.onLongPress,
-  });
+enum _SosGestureDemoResult { waiting, manual, duress }
 
-  final bool isSending;
-  final VoidCallback onLongPress;
+class _SosGestureGuidePage extends StatefulWidget {
+  const _SosGestureGuidePage();
+
+  @override
+  State<_SosGestureGuidePage> createState() => _SosGestureGuidePageState();
+}
+
+class _SosGestureGuidePageState extends State<_SosGestureGuidePage> {
+  _SosGestureDemoResult _demoResult = _SosGestureDemoResult.waiting;
+  bool _isHoldingDemo = false;
+
+  void _showManualDemo() {
+    unawaited(HapticFeedback.selectionClick());
+    setState(() {
+      _isHoldingDemo = false;
+      _demoResult = _SosGestureDemoResult.manual;
+    });
+  }
+
+  void _showDuressDemo() {
+    unawaited(HapticFeedback.mediumImpact());
+    setState(() {
+      _isHoldingDemo = false;
+      _demoResult = _SosGestureDemoResult.duress;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.center,
-      child: _TapSurface(
-        onLongPress: isSending ? null : onLongPress,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: _SosColors.duress.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: _SosColors.duress.withValues(alpha: 0.22),
+    return Scaffold(
+      backgroundColor: _SosColors.backgroundFor(context),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SosDetailHeader(
+                    title: 'Manual & Duress SOS',
+                    subtitle: 'One button, two emergency actions',
+                    onBack: () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(height: 16),
+                  _SosGestureExplanationCard(
+                    icon: Icons.touch_app_rounded,
+                    color: _SosColors.destructiveFor(context),
+                    title: 'Tap for Manual SOS',
+                    subtitle:
+                        'Shows a 10-second cancel window, then starts the phone alarm and flashlight while notifying your contacts.',
+                  ),
+                  const SizedBox(height: 10),
+                  const _SosGestureExplanationCard(
+                    icon: Icons.visibility_off_rounded,
+                    color: _SosColors.duress,
+                    title: 'Hold for Duress SOS',
+                    subtitle:
+                        'Hold for about one second. The alert is sent silently without an alarm or countdown, and contacts are warned not to call if that could increase danger.',
+                  ),
+                  const SizedBox(height: 18),
+                  const _SectionTitle(label: 'Try the gesture safely'),
+                  const SizedBox(height: 8),
+                  _InsetGroup(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _SosColors.greenSoftFor(context),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: const Text(
+                              'DEMO ONLY · NO ALERT WILL BE SENT',
+                              style: TextStyle(
+                                color: _SosColors.green,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          GestureDetector(
+                            onTap: _showManualDemo,
+                            onLongPressStart: (_) {
+                              setState(() => _isHoldingDemo = true);
+                            },
+                            onLongPress: _showDuressDemo,
+                            onLongPressEnd: (_) {
+                              if (mounted) {
+                                setState(() => _isHoldingDemo = false);
+                              }
+                            },
+                            child: AnimatedContainer(
+                              key: const Key('sos-gesture-demo-button'),
+                              duration: const Duration(milliseconds: 180),
+                              width: 144,
+                              height: 144,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _isHoldingDemo
+                                    ? _SosColors.duress
+                                    : _SosColors.destructiveFor(context),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color:
+                                        (_isHoldingDemo
+                                                ? _SosColors.duress
+                                                : _SosColors.destructiveFor(
+                                                    context,
+                                                  ))
+                                            .withValues(alpha: 0.22),
+                                    blurRadius: 20,
+                                    spreadRadius: 5,
+                                  ),
+                                ],
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(
+                                    Icons.sos_rounded,
+                                    color: Colors.white,
+                                    size: 38,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    _isHoldingDemo ? 'KEEP HOLDING' : 'TRY IT',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 220),
+                            child: _SosDemoResultPanel(
+                              key: ValueKey(_demoResult),
+                              result: _demoResult,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _InsetGroup(
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const _Glyph(
+                            icon: Icons.shield_outlined,
+                            color: _SosColors.green,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'If you are unsure, tap and release. Only a continuous hold activates Duress SOS. Releasing early starts the Manual SOS cancel window.',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: _SosColors.secondaryTextFor(context),
+                                    height: 1.45,
+                                    letterSpacing: 0,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SosGestureExplanationCard extends StatelessWidget {
+  const _SosGestureExplanationCard({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Glyph(icon: icon, color: color),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: _SosColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _SosColors.secondaryTextFor(context),
+                      height: 1.4,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SosDemoResultPanel extends StatelessWidget {
+  const _SosDemoResultPanel({super.key, required this.result});
+
+  final _SosGestureDemoResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color, title, message) = switch (result) {
+      _SosGestureDemoResult.manual => (
+        Icons.notifications_active_rounded,
+        _SosColors.destructiveFor(context),
+        'Manual SOS gesture',
+        'A 10-second cancel screen would appear before the loud alert starts.',
+      ),
+      _SosGestureDemoResult.duress => (
+        Icons.visibility_off_rounded,
+        _SosColors.duress,
+        'Duress SOS gesture',
+        'A silent alert would be sent immediately without showing a countdown.',
+      ),
+      _SosGestureDemoResult.waiting => (
+        Icons.touch_app_rounded,
+        _SosColors.green,
+        'Tap or hold the demo button',
+        'The result will appear here. This demo never contacts anyone.',
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  message,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _SosColors.secondaryTextFor(context),
+                    letterSpacing: 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QueuedSosDispatchesPage extends StatefulWidget {
+  const _QueuedSosDispatchesPage({required this.loadDispatches});
+
+  final Future<List<SosQueuedDispatch>> Function() loadDispatches;
+
+  @override
+  State<_QueuedSosDispatchesPage> createState() =>
+      _QueuedSosDispatchesPageState();
+}
+
+class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
+  late Future<List<SosQueuedDispatch>> _dispatches;
+
+  @override
+  void initState() {
+    super.initState();
+    _dispatches = widget.loadDispatches();
+  }
+
+  void _refresh() {
+    setState(() => _dispatches = widget.loadDispatches());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _SosColors.backgroundFor(context),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SosDetailHeader(
+                    title: 'Queued SOS dispatches',
+                    subtitle: 'Protected alerts waiting for delivery',
+                    onBack: () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(height: 14),
+                  _InsetGroup(
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const _Glyph(
+                            icon: Icons.lock_outline_rounded,
+                            color: _SosColors.green,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'View only',
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(
+                                        color: _SosColors.textFor(context),
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Queued SOS alerts cannot be removed here. HikerCircle retries them automatically when delivery becomes available.',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: _SosColors.secondaryTextFor(
+                                          context,
+                                        ),
+                                        height: 1.4,
+                                        letterSpacing: 0,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Refresh queue',
+                            onPressed: _refresh,
+                            icon: const Icon(Icons.refresh_rounded),
+                            color: _SosColors.green,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: FutureBuilder<List<SosQueuedDispatch>>(
+                      future: _dispatches,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState != ConnectionState.done) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        if (snapshot.hasError) {
+                          return _QueuedSosEmptyState(
+                            icon: Icons.sync_problem_rounded,
+                            title: 'Queue unavailable',
+                            subtitle:
+                                'The protected queue could not be read right now.',
+                            onRetry: _refresh,
+                          );
+                        }
+                        final dispatches = snapshot.data ?? const [];
+                        if (dispatches.isEmpty) {
+                          return _QueuedSosEmptyState(
+                            icon: Icons.outbox_rounded,
+                            title: 'Queue is clear',
+                            subtitle:
+                                'There are no SOS dispatches waiting for delivery.',
+                            onRetry: _refresh,
+                          );
+                        }
+                        return ListView.separated(
+                          itemCount: dispatches.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final dispatch = dispatches[index];
+                            return _QueuedSosDispatchCard(
+                              dispatch: dispatch,
+                              onTap: () => Navigator.of(context).push<void>(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => _QueuedSosDispatchDetailPage(
+                                    dispatch: dispatch,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QueuedSosDispatchCard extends StatelessWidget {
+  const _QueuedSosDispatchCard({required this.dispatch, required this.onTap});
+
+  final SosQueuedDispatch dispatch;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: _TapSurface(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: _SosColors.duress.withValues(alpha: 0.14),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.shield_outlined,
-                  color: _SosColors.duress,
-                  size: 18,
-                ),
+              _Glyph(
+                icon: dispatch.mode == SosAlertMode.duress
+                    ? Icons.visibility_off_rounded
+                    : Icons.outbox_rounded,
+                color: dispatch.mode == SosAlertMode.duress
+                    ? _SosColors.duress
+                    : _SosColors.orange,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Duress SOS',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: _SosColors.duress,
-                        fontWeight: FontWeight.w900,
+                      dispatch.mode.label,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: _SosColors.textFor(context),
+                        fontWeight: FontWeight.w800,
                         letterSpacing: 0,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
                     Text(
-                      'Long press to send a silent emergency alert',
+                      _queuedSosTimeLabel(dispatch.triggeredAt),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: _SosColors.secondaryTextFor(context),
-                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${dispatch.pendingContactCount} contact dispatches waiting'
+                      '${dispatch.retryCount == 0 ? '' : ' · ${dispatch.retryCount} retries'}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _SosColors.orange,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
               Icon(
-                Icons.touch_app_rounded,
-                color: isSending
-                    ? _SosColors.secondaryTextFor(context)
-                    : _SosColors.duress,
-                size: 18,
+                CupertinoIcons.chevron_forward,
+                color: _SosColors.chevronFor(context),
+                size: 17,
               ),
             ],
           ),
@@ -1683,53 +2664,215 @@ class _HiddenDuressIndicator extends StatelessWidget {
   }
 }
 
-class _ManualSosDetailsOverlay extends StatelessWidget {
-  const _ManualSosDetailsOverlay({required this.details});
+class _QueuedSosDispatchDetailPage extends StatelessWidget {
+  const _QueuedSosDispatchDetailPage({required this.dispatch});
 
-  final List<SosActionDetail> details;
+  final SosQueuedDispatch dispatch;
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Manual SOS activates',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _SosColors.textFor(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
+    final status = dispatch.sendStatus == 'retry'
+        ? 'Waiting to retry'
+        : 'Waiting to send';
+    return Scaffold(
+      backgroundColor: _SosColors.backgroundFor(context),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SosDetailHeader(
+                    title: 'Queued SOS details',
+                    subtitle: 'Read-only dispatch record',
+                    onBack: () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(height: 16),
+                  _InsetGroup(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          const _Glyph(
+                            icon: Icons.lock_outline_rounded,
+                            color: _SosColors.green,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            dispatch.mode.label,
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  color: _SosColors.textFor(context),
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                          const SizedBox(height: 4),
+                          _StatusPill(
+                            label: status,
+                            color: _SosColors.orange,
+                            surface: _SosColors.orange.withValues(alpha: 0.1),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _InsetGroup(
+                    child: Column(
+                      children: [
+                        _StatusRow(
+                          label: 'Triggered',
+                          value: _queuedSosTimeLabel(dispatch.triggeredAt),
+                        ),
+                        const _HorizontalSeparator(),
+                        _StatusRow(
+                          label: 'Pending contacts',
+                          value:
+                              '${dispatch.pendingContactCount}/${dispatch.contactCount}',
+                        ),
+                        const _HorizontalSeparator(),
+                        _StatusRow(
+                          label: 'Retry attempts',
+                          value: '${dispatch.retryCount}',
+                        ),
+                        const _HorizontalSeparator(),
+                        _StatusRow(
+                          label: 'Location',
+                          value:
+                              dispatch.triggerLocation?.universalMapLink ??
+                              'Unavailable',
+                        ),
+                        if (dispatch.lastError.isNotEmpty) ...[
+                          const _HorizontalSeparator(),
+                          _StatusRow(
+                            label: 'Last delivery result',
+                            value: dispatch.lastError,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (dispatch.message.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _InsetGroup(
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Message snapshot',
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(
+                                    color: _SosColors.textFor(context),
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                            ),
+                            const SizedBox(height: 8),
+                            SelectableText(
+                              dispatch.message,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: _SosColors.secondaryTextFor(context),
+                                    height: 1.45,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Text(
+                    'This record is protected from manual removal and will leave the queue only after HikerCircle confirms it no longer needs dispatch.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _SosColors.secondaryTextFor(context),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'These are shown on hold so the main button stays calm and uncluttered.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _SosColors.secondaryTextFor(context),
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                for (final detail in details)
-                  _DetailChip(icon: detail.icon, label: detail.label),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
+}
+
+class _QueuedSosEmptyState extends StatelessWidget {
+  const _QueuedSosEmptyState({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onRetry,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _Glyph(icon: icon, color: _SosColors.green),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: _SosColors.textFor(context),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: _SosColors.secondaryTextFor(context),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Refresh'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _queuedSosTimeLabel(DateTime value) {
+  final local = value.toLocal();
+  const months = <String>[
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+  final minute = local.minute.toString().padLeft(2, '0');
+  final period = local.hour >= 12 ? 'PM' : 'AM';
+  return '${local.day} ${months[local.month - 1]} ${local.year}, '
+      '$hour:$minute $period';
 }
 
 class _SosSafetyToolsGrid extends StatelessWidget {
@@ -1824,134 +2967,6 @@ class _SosSafetyToolTile extends StatelessWidget {
   }
 }
 
-class _SosSafetyToolDetailPage extends StatelessWidget {
-  const _SosSafetyToolDetailPage({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.rows,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final List<(String, String)> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _SosColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _SosSafetyToolHeader(
-                    title: title,
-                    subtitle: 'Safety tool',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _Glyph(icon: icon, color: _SosColors.green),
-                          const SizedBox(height: 12),
-                          Text(
-                            subtitle,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: _SosColors.textFor(context),
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 14),
-                          for (var index = 0; index < rows.length; index++) ...[
-                            _StatusRow(
-                              label: rows[index].$1,
-                              value: rows[index].$2,
-                            ),
-                            if (index != rows.length - 1)
-                              const _HorizontalSeparator(),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SosSafetyToolHeader extends StatelessWidget {
-  const _SosSafetyToolHeader({
-    required this.title,
-    required this.subtitle,
-    required this.onBack,
-  });
-
-  final String title;
-  final String subtitle;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        CupertinoButton(
-          padding: EdgeInsets.zero,
-          minimumSize: const Size.square(36),
-          onPressed: onBack,
-          child: Icon(
-            CupertinoIcons.chevron_back,
-            color: _SosColors.textFor(context),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: _SosColors.textFor(context),
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _SosColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _SosTriggerLogPanel extends StatelessWidget {
   const _SosTriggerLogPanel({
     required this.isNetworkAvailable,
@@ -2010,7 +3025,7 @@ class _SosTriggerLogPanel extends StatelessWidget {
           subtitle: latestAlert == null
               ? 'Trigger results appear after an SOS alert is sent.'
               : '${latestAlert.sentCount} sent, ${latestAlert.failedCount} failed.',
-          trailing: latestAlert?.status.label ?? 'Ready',
+          trailing: latestAlert?.status.label ?? 'View',
           onTap: () => _openDeliveryDetail(
             context,
             title: 'SOS trigger log',
@@ -2198,9 +3213,9 @@ class _DeliveryActionCard extends StatelessWidget {
                 surface: _SosColors.greenSoftFor(context),
               ),
               const SizedBox(width: 6),
-              const Icon(
+              Icon(
                 CupertinoIcons.chevron_forward,
-                color: _SosColors.chevron,
+                color: _SosColors.chevronFor(context),
                 size: 16,
               ),
             ],
@@ -2432,7 +3447,7 @@ class _WhatsAppMessageDetailPageState
   }
 
   String _noteFor(SosAlertMode mode) {
-    return _notes[mode] ?? SosAlertMessageComposer.defaultCustomNote;
+    return _notes[mode] ?? SosAlertMessageComposer.defaultCustomNoteFor(mode);
   }
 
   void _saveCurrentNote() {
@@ -2610,9 +3625,13 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
 
   Future<void> _toggleLegacyButtonSetting() async {
     final enabled = !_legacyUnpairedButtonEnabled;
-    await _bleService.setLegacyUnpairedSosButtonEnabled(enabled);
-    if (mounted) {
-      setState(() => _legacyUnpairedButtonEnabled = enabled);
+    try {
+      await _bleService.setLegacyUnpairedSosButtonEnabled(enabled);
+      if (mounted) {
+        setState(() => _legacyUnpairedButtonEnabled = enabled);
+      }
+    } on HikerBleException catch (error) {
+      _showTestResult(error.message);
     }
   }
 
@@ -2670,10 +3689,13 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
                         _SosTestRow(
                           icon: Icons.settings_remote_rounded,
                           title: 'Paired SOS button',
-                          subtitle: 'Add a button, wait for physical confirmation, or manage paired buttons.',
+                          subtitle:
+                              'Add a button, wait for physical confirmation, or manage paired buttons.',
                           onTap: () => Navigator.of(context).push(
                             MaterialPageRoute<void>(
-                              builder: (_) => const PairedSosButtonPage(),
+                              builder: (_) => PairedSosButtonPage(
+                                accountId: widget.phoneNumber,
+                              ),
                             ),
                           ),
                         ),
@@ -2767,11 +3789,19 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
     try {
       final dispatches = await widget.onSendWhatsAppTest();
       final sent = dispatches.where((dispatch) => dispatch.wasSent).length;
+      final firstFailure = dispatches
+          .where((dispatch) => !dispatch.wasSent)
+          .map((dispatch) => dispatch.errorMessage?.trim() ?? '')
+          .where((message) => message.isNotEmpty)
+          .firstOrNull;
       _showTestResult(
-        'WhatsApp cloud test sent to $sent/${dispatches.length} contacts.',
+        sent == dispatches.length
+            ? 'WhatsApp cloud test sent to $sent/${dispatches.length} contacts.'
+            : 'WhatsApp cloud test sent to $sent/${dispatches.length} contacts.'
+                  '${firstFailure == null ? '' : ' $firstFailure'}',
       );
-    } catch (_) {
-      _showTestResult('Unable to send WhatsApp cloud test right now.');
+    } catch (error) {
+      _showTestResult('Unable to send WhatsApp cloud test. $error');
     }
   }
 
@@ -2814,53 +3844,61 @@ class _SosTestSettingsPageState extends State<_SosTestSettingsPage> {
   }
 
   Future<void> _toggleFlashlightTest() async {
-    if (_isFlashlightActive) {
-      await _deviceAlertService.stopFlashlightPattern();
-      if (mounted) {
-        setState(() {
-          _isFlashlightActive = false;
-        });
+    try {
+      if (_isFlashlightActive) {
+        await _deviceAlertService.stopFlashlightPattern();
+        if (mounted) {
+          setState(() {
+            _isFlashlightActive = false;
+          });
+        }
+        return;
       }
-      return;
-    }
 
-    await _stopAllTests();
-    await _deviceAlertService.startFlashlightPattern();
-    if (!mounted) {
-      return;
+      await _stopAllTests();
+      await _deviceAlertService.startFlashlightPattern();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isFlashlightActive = true;
+      });
+      _scheduleAutoStop();
+      _showTestResult('SOS flashlight pattern started.');
+    } catch (_) {
+      _showTestResult('Unable to start the flashlight test on this device.');
     }
-    setState(() {
-      _isFlashlightActive = true;
-    });
-    _scheduleAutoStop();
-    _showTestResult('SOS flashlight pattern started.');
   }
 
   Future<void> _toggleSirenTest(SosAlertMode mode) async {
     final isActive = mode == SosAlertMode.medical
         ? _isMedicalSirenActive
         : _isEmergencySirenActive;
-    if (isActive) {
-      await _stopAllTests();
-      return;
-    }
+    try {
+      if (isActive) {
+        await _stopAllTests();
+        return;
+      }
 
-    await _stopAllTests();
-    await _deviceAlertService.stopFlashlightPattern();
-    await _deviceAlertService.startSirenOnlyForMode(mode);
-    if (!mounted) {
-      return;
+      await _stopAllTests();
+      await _deviceAlertService.stopFlashlightPattern();
+      await _deviceAlertService.startSirenOnlyForMode(mode);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isEmergencySirenActive = mode != SosAlertMode.medical;
+        _isMedicalSirenActive = mode == SosAlertMode.medical;
+      });
+      _scheduleAutoStop();
+      _showTestResult(
+        mode == SosAlertMode.medical
+            ? 'Medical siren test started.'
+            : 'Emergency siren test started.',
+      );
+    } catch (_) {
+      _showTestResult('Unable to start the siren test on this device.');
     }
-    setState(() {
-      _isEmergencySirenActive = mode != SosAlertMode.medical;
-      _isMedicalSirenActive = mode == SosAlertMode.medical;
-    });
-    _scheduleAutoStop();
-    _showTestResult(
-      mode == SosAlertMode.medical
-          ? 'Medical siren test started.'
-          : 'Emergency siren test started.',
-    );
   }
 
   Future<void> _stopAllTests() async {
@@ -3175,9 +4213,9 @@ class _SosTestRow extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(
+            Icon(
               CupertinoIcons.chevron_forward,
-              color: _SosColors.chevron,
+              color: _SosColors.chevronFor(context),
               size: 16,
             ),
           ],
@@ -3319,39 +4357,6 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-class _DetailChip extends StatelessWidget {
-  const _DetailChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-      decoration: BoxDecoration(
-        color: _SosColors.destructiveSoftFor(context),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: _SosColors.destructiveFor(context), size: 15),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _SosColors.destructiveFor(context),
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _StatusPill extends StatelessWidget {
   const _StatusPill({
     required this.label,
@@ -3406,17 +4411,16 @@ class _Glyph extends StatelessWidget {
 }
 
 class _TapSurface extends StatelessWidget {
-  const _TapSurface({required this.child, this.onTap, this.onLongPress});
+  const _TapSurface({required this.child, this.onTap});
 
   final Widget child;
   final VoidCallback? onTap;
-  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-      child: InkWell(onTap: onTap, onLongPress: onLongPress, child: child),
+      child: InkWell(onTap: onTap, child: child),
     );
   }
 }
@@ -3478,7 +4482,7 @@ String _sosLogString(Object? value, {required String fallback}) {
 }
 
 int _sosLogInt(Object? value) {
-  return value is num ? value.toInt() : 0;
+  return value is num && value.isFinite ? value.toInt() : 0;
 }
 
 String _sosLogDateLabel(Object? value) {
@@ -3548,6 +4552,9 @@ abstract final class _SosColors {
 
   static Color secondaryTextFor(BuildContext context) =>
       isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+
+  static Color chevronFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF6F8175) : chevron;
 
   static Color destructiveFor(BuildContext context) =>
       isDark(context) ? const Color(0xFFFF6B61) : destructive;

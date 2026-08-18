@@ -15,13 +15,14 @@ class EmergencyContactsViewModel extends ChangeNotifier {
        _repository = repository,
        _contacts = List.of(initialContacts);
 
-  static const int maxContacts = 3;
+  static const int maxContacts = EmergencyContactsRepository.maxContacts;
 
   final AppSession _session;
   final EmergencyContactsRepository _repository;
   final List<EmergencyContact> _contacts;
   bool _isSaving = false;
   String? _saveErrorMessage;
+  bool _isDisposed = false;
 
   List<EmergencyContact> get contacts => List.unmodifiable(_contacts);
   int get remainingSlots => maxContacts - _contacts.length;
@@ -40,6 +41,11 @@ class EmergencyContactsViewModel extends ChangeNotifier {
 
     final normalizedPhoneNumber = _normalizedPhoneNumber(phoneNumber);
     if (normalizedPhoneNumber == null) {
+      return false;
+    }
+    if (name.trim().isEmpty) {
+      _saveErrorMessage = 'Enter a name for this emergency contact.';
+      notifyListeners();
       return false;
     }
     if (_contacts.any(
@@ -74,6 +80,19 @@ class EmergencyContactsViewModel extends ChangeNotifier {
 
     final normalizedPhoneNumber = _normalizedPhoneNumber(phoneNumber);
     if (normalizedPhoneNumber == null) {
+      return;
+    }
+    if (name.trim().isEmpty) {
+      _saveErrorMessage = 'Enter a name for this emergency contact.';
+      notifyListeners();
+      return;
+    }
+    if (_contacts.indexed.any(
+      (entry) =>
+          entry.$1 != index && entry.$2.phoneNumber == normalizedPhoneNumber,
+    )) {
+      _saveErrorMessage = 'This emergency contact is already saved.';
+      notifyListeners();
       return;
     }
 
@@ -126,5 +145,18 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     }
     _saveErrorMessage = null;
     return PhoneNumberFormatter.normalize(phoneNumber);
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_isDisposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
   }
 }

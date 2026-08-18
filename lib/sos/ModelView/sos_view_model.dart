@@ -18,7 +18,6 @@ class SosViewModel extends ChangeNotifier {
        dashboard = repository.loadDashboard(),
        _emergencyContacts = repository.loadEmergencyContacts(),
        _metrics = repository.loadMetrics(),
-       manualSosDetails = repository.loadManualSosDetails(),
        sections = repository.loadSections();
 
   final AppSession _session;
@@ -26,7 +25,6 @@ class SosViewModel extends ChangeNotifier {
   final SosAlertRepository _sosAlertRepository;
   final SosDashboard dashboard;
   final List<SosMetric> _metrics;
-  final List<SosActionDetail> manualSosDetails;
   final List<SosFeatureSection> sections;
   List<EmergencyContact> _emergencyContacts;
   bool _isLoadingEmergencyContacts = false;
@@ -50,10 +48,6 @@ class SosViewModel extends ChangeNotifier {
         label: 'Contacts',
         value:
             '${_emergencyContacts.length}/${EmergencyContactsViewModel.maxContacts}',
-      ),
-      SosMetric(
-        label: 'Latest',
-        value: _latestSosAlertResult?.alert.status.label ?? 'Ready',
       ),
       SosMetric(label: 'Queued', value: _queuedAlertCount.toString()),
       ..._metrics.where(
@@ -168,10 +162,21 @@ class SosViewModel extends ChangeNotifier {
     if (_isDisposed) {
       return;
     }
-    _queuedAlertCount = await _sosAlertRepository.countQueuedAlerts(
-      session: _session,
-    );
-    _notifyListenersIfActive();
+    try {
+      final count = await _sosAlertRepository.countQueuedAlerts(
+        session: _session,
+      );
+      if (_isDisposed) return;
+      _queuedAlertCount = count;
+      _notifyListenersIfActive();
+    } catch (_) {
+      // A damaged or temporarily unavailable local queue must not surface as
+      // an uncaught startup error on the SOS screen.
+    }
+  }
+
+  Future<List<SosQueuedDispatch>> loadQueuedDispatches() {
+    return _sosAlertRepository.loadQueuedDispatches(session: _session);
   }
 
   Future<SosQueueFlushResult?> flushQueuedAlerts() async {
@@ -212,6 +217,7 @@ class SosViewModel extends ChangeNotifier {
     required DateTime triggeredAt,
     required SosTriggerLocation? triggerLocation,
     String? customMessageNote,
+    SosAlertTriggerSource? triggerSource,
   }) async {
     if (_isDisposed || _isSendingSosAlert) {
       return null;
@@ -238,6 +244,7 @@ class SosViewModel extends ChangeNotifier {
         triggerLocation: triggerLocation,
         contacts: emergencyContacts,
         customMessageNote: customMessageNote,
+        triggerSource: triggerSource,
       );
       if (_isDisposed) {
         return result;

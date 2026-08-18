@@ -67,9 +67,7 @@ class GeoapifyService {
     required double longitude,
   }) async {
     if (_apiKey.trim().isEmpty) {
-      throw const GeoapifyException(
-        'Geoapify API key is not configured.',
-      );
+      throw const GeoapifyException('Geoapify API key is not configured.');
     }
 
     final client = _client ?? http.Client();
@@ -113,7 +111,8 @@ class GeoapifyService {
         );
       }
 
-      final area = properties['city'] as String? ??
+      final area =
+          properties['city'] as String? ??
           properties['town'] as String? ??
           properties['village'] as String? ??
           properties['county'] as String? ??
@@ -127,17 +126,11 @@ class GeoapifyService {
         );
       }
 
-      return GeoapifyLocation(
-        area: area,
-        state: state,
-        country: country,
-      );
+      return GeoapifyLocation(area: area, state: state, country: country);
     } on GeoapifyException {
       rethrow;
     } on FormatException {
-      throw const GeoapifyException(
-        'Geoapify returned invalid location data.',
-      );
+      throw const GeoapifyException('Geoapify returned invalid location data.');
     } catch (_) {
       throw const GeoapifyException(
         'Unable to resolve location. Check your connection and try again.',
@@ -157,9 +150,7 @@ class GeoapifyService {
     List<TrailCheckpoint> waypoints = const [],
   }) async {
     if (_apiKey.trim().isEmpty) {
-      throw const GeoapifyException(
-        'Geoapify API key is not configured.',
-      );
+      throw const GeoapifyException('Geoapify API key is not configured.');
     }
 
     final client = _client ?? http.Client();
@@ -195,9 +186,7 @@ class GeoapifyService {
     } on GeoapifyException {
       rethrow;
     } on FormatException {
-      throw const GeoapifyException(
-        'Geoapify routing returned invalid data.',
-      );
+      throw const GeoapifyException('Geoapify routing returned invalid data.');
     } catch (_) {
       throw const GeoapifyException(
         'Unable to compute hiking route. Check your connection.',
@@ -220,62 +209,50 @@ class GeoapifyService {
       throw const GeoapifyException('No route found.');
     }
 
-    final feature = features.first as Map?;
-    if (feature == null) {
+    final rawFeature = features.first;
+    if (rawFeature is! Map) {
       throw const GeoapifyException('Invalid route feature.');
     }
+    final feature = Map<Object?, Object?>.from(rawFeature);
 
-    final properties = feature['properties'] as Map?;
-    if (properties == null) {
+    final rawProperties = feature['properties'];
+    if (rawProperties is! Map) {
       throw const GeoapifyException('Missing route properties.');
     }
+    final properties = Map<Object?, Object?>.from(rawProperties);
 
     final distanceRaw = properties['distance'];
     final timeRaw = properties['time'];
-    final distanceMeters = distanceRaw is num ? distanceRaw.toInt() : 0;
-    final durationSeconds = timeRaw is num ? timeRaw.toDouble() : 0.0;
+    final distanceMeters = distanceRaw is num && distanceRaw.isFinite
+        ? distanceRaw.toInt()
+        : 0;
+    final durationSeconds = timeRaw is num && timeRaw.isFinite
+        ? timeRaw.toDouble()
+        : 0.0;
 
     if (distanceMeters <= 0 || durationSeconds <= 0) {
       throw const GeoapifyException('Route has no distance or duration.');
     }
 
-    final geometry = feature['geometry'] as Map?;
-    if (geometry == null) {
+    final rawGeometry = feature['geometry'];
+    if (rawGeometry is! Map) {
       throw const GeoapifyException('Missing route geometry.');
     }
+    final geometry = Map<Object?, Object?>.from(rawGeometry);
 
-    final coordinatesRaw = geometry['coordinates'];
-    List<List<double>> coordinates;
-    if (coordinatesRaw is List && coordinatesRaw.isNotEmpty) {
-      if (coordinatesRaw.first is List) {
-        coordinates = coordinatesRaw
-            .whereType<List>()
-            .expand((segment) => segment)
-            .whereType<List>()
-            .map((point) {
-              final lon = point[0] is num ? (point[0] as num).toDouble() : 0.0;
-              final lat = point[1] is num ? (point[1] as num).toDouble() : 0.0;
-              return [lon, lat];
-            })
-            .toList();
-      } else {
-        coordinates = [];
-      }
-    } else {
-      coordinates = [];
-    }
+    final coordinates = _routeCoordinatesFrom(geometry['coordinates']);
 
     if (coordinates.length < 2) {
       throw const GeoapifyException('Route path has too few points.');
     }
 
     double? elevationGain;
-    final legs = properties['legs'] as List?;
-    if (legs != null && legs.isNotEmpty) {
-      final firstLeg = legs.first as Map?;
-      if (firstLeg != null) {
+    final rawLegs = properties['legs'];
+    if (rawLegs is List && rawLegs.isNotEmpty) {
+      final firstLeg = rawLegs.first;
+      if (firstLeg is Map) {
         final gain = firstLeg['elevation_gain'];
-        if (gain is num) {
+        if (gain is num && gain.isFinite) {
           elevationGain = gain.toDouble();
         }
       }
@@ -287,5 +264,32 @@ class GeoapifyService {
       coordinates: coordinates,
       elevationGainMeters: elevationGain,
     );
+  }
+
+  List<List<double>> _routeCoordinatesFrom(Object? raw) {
+    final coordinates = <List<double>>[];
+
+    void collect(Object? value) {
+      if (value is! List || value.isEmpty) return;
+      if (value.length >= 2 && value[0] is num && value[1] is num) {
+        final longitude = (value[0] as num).toDouble();
+        final latitude = (value[1] as num).toDouble();
+        if (longitude.isFinite &&
+            latitude.isFinite &&
+            longitude >= -180 &&
+            longitude <= 180 &&
+            latitude >= -90 &&
+            latitude <= 90) {
+          coordinates.add([longitude, latitude]);
+        }
+        return;
+      }
+      for (final child in value) {
+        collect(child);
+      }
+    }
+
+    collect(raw);
+    return coordinates;
   }
 }

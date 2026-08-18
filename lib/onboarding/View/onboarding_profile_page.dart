@@ -22,6 +22,19 @@ class OnboardingProfilePage extends StatefulWidget {
 }
 
 class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
+  static const _genderValues = {
+    'male',
+    'female',
+    'non_binary',
+    'prefer_not_to_say',
+  };
+  static const _experienceValues = {'new', 'experienced'};
+  static const _frequencyValues = {
+    'rarely',
+    'monthly',
+    'several_times_monthly',
+    'weekly',
+  };
   final _formKey = GlobalKey<FormState>();
   final _residentialCityFieldKey =
       GlobalKey<FormFieldState<ResidentialCitySelection>>();
@@ -45,15 +58,29 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
     );
     _passwordController = TextEditingController();
     _confirmPasswordController = TextEditingController();
-    _gender = widget.initialProfile.gender.isEmpty
-        ? null
-        : widget.initialProfile.gender;
-    _hikerExperience = widget.initialProfile.hikerExperience.isEmpty
-        ? null
-        : widget.initialProfile.hikerExperience;
-    _hikeFrequency = widget.initialProfile.hikeFrequency.isEmpty
-        ? null
-        : widget.initialProfile.hikeFrequency;
+    _gender = _normalizedChoice(
+      widget.initialProfile.gender,
+      _genderValues,
+      aliases: const {
+        'non-binary': 'non_binary',
+        'prefer not to say': 'prefer_not_to_say',
+      },
+    );
+    _hikerExperience = _normalizedChoice(
+      widget.initialProfile.hikerExperience,
+      _experienceValues,
+      aliases: const {'new hiker': 'new', 'experienced hiker': 'experienced'},
+    );
+    _hikeFrequency = _normalizedChoice(
+      widget.initialProfile.hikeFrequency,
+      _frequencyValues,
+      aliases: const {
+        'a few times a year': 'rarely',
+        'about once a month': 'monthly',
+        'several times a month': 'several_times_monthly',
+        'weekly or more': 'weekly',
+      },
+    );
     final latitude = widget.initialProfile.residentialLatitude;
     final longitude = widget.initialProfile.residentialLongitude;
     if (widget.initialProfile.residentialLocation.isNotEmpty &&
@@ -194,7 +221,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Step 1 of 2. These details are required before you can use HikerCircle.',
+                        'Step 1 of 3. These details are required before you can use HikerCircle.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
@@ -203,6 +230,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                         controller: _usernameController,
                         enabled: !_isSaving,
                         textInputAction: TextInputAction.next,
+                        maxLength: 24,
                         decoration: const InputDecoration(
                           labelText: 'Username',
                           hintText: 'e.g. trailwalker',
@@ -212,6 +240,9 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                           final username = value?.trim() ?? '';
                           if (username.length < 3) {
                             return 'Username must contain at least 3 characters.';
+                          }
+                          if (username.length > 24) {
+                            return 'Username must contain 24 characters or fewer.';
                           }
                           if (!RegExp(r'^[A-Za-z0-9_]+$').hasMatch(username)) {
                             return 'Use only letters, numbers, and underscores.';
@@ -455,4 +486,17 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
       ),
     );
   }
+}
+
+String? _normalizedChoice(
+  String raw,
+  Set<String> allowed, {
+  Map<String, String> aliases = const {},
+}) {
+  final normalized = raw.trim().toLowerCase();
+  if (allowed.contains(normalized)) {
+    return normalized;
+  }
+  final alias = aliases[normalized];
+  return alias != null && allowed.contains(alias) ? alias : null;
 }

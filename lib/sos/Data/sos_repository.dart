@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../Model/sos_models.dart';
@@ -25,18 +24,6 @@ class SosRepository {
       SosMetric(label: 'Contacts', value: '0/3'),
       SosMetric(label: 'Queued', value: '0'),
       SosMetric(label: 'Live', value: 'Off'),
-    ];
-  }
-
-  List<SosActionDetail> loadManualSosDetails() {
-    return const [
-      SosActionDetail(icon: CupertinoIcons.timer, label: '10s cancel'),
-      SosActionDetail(icon: Icons.alarm_rounded, label: 'Alarm volume'),
-      SosActionDetail(icon: Icons.flash_on_rounded, label: 'SOS flash'),
-      SosActionDetail(icon: Icons.location_on_rounded, label: 'GPS link'),
-      SosActionDetail(icon: Icons.chat_bubble_rounded, label: 'WhatsApp alert'),
-      SosActionDetail(icon: Icons.contacts_rounded, label: 'Saved contacts'),
-      SosActionDetail(icon: Icons.cloud_done_rounded, label: 'Firebase log'),
     ];
   }
 
@@ -78,8 +65,8 @@ class SosRepository {
         items: [
           SosFeatureItem(
             icon: Icons.pan_tool_alt_rounded,
-            title: 'Silent long press',
-            subtitle: 'Hold the duress card to send without a countdown',
+            title: 'Silent button hold',
+            subtitle: 'Hold the main SOS button to send without a countdown',
           ),
           SosFeatureItem(
             icon: Icons.visibility_off_rounded,

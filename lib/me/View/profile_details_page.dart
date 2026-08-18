@@ -65,14 +65,19 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
   }
 
   Future<void> _changePhoto(OnboardingProfile profile) async {
-    final file = await _imagePicker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1024,
-      maxHeight: 1024,
-    );
-    if (file == null || !mounted) return;
     try {
+      final file = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1024,
+        maxHeight: 1024,
+      );
+      if (file == null || !mounted) return;
+      if (await file.length() > 10 * 1024 * 1024) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'Profile photos must be 10 MB or smaller.',
+        );
+      }
       final bytes = await file.readAsBytes();
       if (!mounted) return;
       final croppedBytes = await showDialog<Uint8List>(
@@ -380,6 +385,8 @@ class _ProfilePhotoCropDialogState extends State<_ProfilePhotoCropDialog> {
   double _viewportSize = 280;
 
   double _gestureStartScale = 1;
+  bool _isCropping = false;
+  String? _cropError;
 
   @override
   void initState() {
@@ -501,10 +508,28 @@ class _ProfilePhotoCropDialogState extends State<_ProfilePhotoCropDialog> {
   }
 
   Future<void> _confirmCrop() async {
+    if (_isCropping) {
+      return;
+    }
     final navigator = Navigator.of(context);
-    final cropped = await _cropImage();
-    if (!mounted) return;
-    navigator.pop(cropped);
+    setState(() {
+      _isCropping = true;
+      _cropError = null;
+    });
+    try {
+      final cropped = await _cropImage();
+      if (!mounted) return;
+      navigator.pop(cropped);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cropError = 'Unable to crop this image. Try another photo.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isCropping = false);
+      }
+    }
   }
 
   @override
@@ -640,6 +665,16 @@ class _ProfilePhotoCropDialogState extends State<_ProfilePhotoCropDialog> {
                   ],
                 ),
                 const SizedBox(height: 18),
+                if (_cropError != null) ...[
+                  Text(
+                    _cropError!,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 Row(
                   children: [
                     Expanded(
@@ -651,8 +686,10 @@ class _ProfilePhotoCropDialogState extends State<_ProfilePhotoCropDialog> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: FilledButton(
-                        onPressed: _confirmCrop,
-                        child: const Text('Use Photo'),
+                        onPressed: _isCropping ? null : _confirmCrop,
+                        child: Text(
+                          _isCropping ? 'Processing...' : 'Use Photo',
+                        ),
                       ),
                     ),
                   ],
@@ -769,6 +806,12 @@ class _IdentityCard extends StatelessWidget {
                             width: 78,
                             height: 78,
                             fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(
+                                  CupertinoIcons.person_fill,
+                                  color: Colors.white,
+                                  size: 40,
+                                ),
                           )
                         : profile.photoURL != null
                         ? Image.network(

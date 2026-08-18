@@ -77,27 +77,14 @@ class OpenMeteoService {
       final precipProb = daily['precipitation_probability_max'];
       final dailyCodes = daily['weather_code'];
 
-      final maxTemp = tempMax is List && tempMax.isNotEmpty
-          ? (tempMax[0] as num).toDouble()
-          : currentTemp is num
-          ? currentTemp.toDouble()
-          : 0.0;
-      final minTemp = tempMin is List && tempMin.isNotEmpty
-          ? (tempMin[0] as num).toDouble()
-          : currentTemp is num
-          ? currentTemp.toDouble()
-          : 0.0;
+      final fallbackTemp = _finiteDouble(currentTemp) ?? 0.0;
+      final maxTemp = _finiteListDouble(tempMax) ?? fallbackTemp;
+      final minTemp = _finiteListDouble(tempMin) ?? fallbackTemp;
 
-      final dailyCode = dailyCodes is List && dailyCodes.isNotEmpty
-          ? (dailyCodes[0] as num).toInt()
-          : currentCode is num
-          ? currentCode.toInt()
-          : 0;
+      final dailyCode =
+          _finiteListInt(dailyCodes) ?? _finiteInt(currentCode) ?? 0;
 
-      final precipitationProbability =
-          precipProb is List && precipProb.isNotEmpty
-          ? (precipProb[0] as num).toInt()
-          : 0;
+      final precipitationProbability = _finiteListInt(precipProb) ?? 0;
 
       final humidity = current['relative_humidity_2m'];
       final feelsLike = current['apparent_temperature'];
@@ -111,10 +98,10 @@ class OpenMeteoService {
         temperatureRange: '${minTemp.round()} °C - ${maxTemp.round()} °C',
         rainProbability: precipitationProbability.clamp(0, 100),
         cachedAt: DateTime.now(),
-        humidity: humidity is num ? humidity.toInt() : null,
-        windSpeed: windSpeed is num ? windSpeed.toDouble() : null,
-        uvIndex: uvIndex is num ? uvIndex.toDouble() : null,
-        feelsLike: feelsLike is num ? feelsLike.toDouble() : null,
+        humidity: _finiteInt(humidity)?.clamp(0, 100),
+        windSpeed: _finiteDouble(windSpeed),
+        uvIndex: _finiteDouble(uvIndex),
+        feelsLike: _finiteDouble(feelsLike),
         hourlyForecast: hourlyForecast,
       );
     } on OpenMeteoException {
@@ -155,7 +142,11 @@ class OpenMeteoService {
       final temp = temps[i];
       final code = codes[i];
 
-      if (timeStr is! String || temp is! num || code is! num) continue;
+      final temperature = _finiteDouble(temp);
+      final weatherCode = _finiteInt(code);
+      if (timeStr is! String || temperature == null || weatherCode == null) {
+        continue;
+      }
 
       final time = DateTime.tryParse(timeStr);
       if (time == null) continue;
@@ -172,16 +163,32 @@ class OpenMeteoService {
       forecasts.add(
         HourlyForecast(
           time: time,
-          temperature: temp.toDouble(),
-          precipitationProbability: precip is num
-              ? precip.toInt().clamp(0, 100)
-              : 0,
-          weatherCode: code.toInt(),
+          temperature: temperature,
+          precipitationProbability: _finiteInt(precip)?.clamp(0, 100) ?? 0,
+          weatherCode: weatherCode,
         ),
       );
     }
 
     return forecasts;
+  }
+
+  double? _finiteDouble(Object? value) {
+    return value is num && value.isFinite ? value.toDouble() : null;
+  }
+
+  int? _finiteInt(Object? value) {
+    return value is num && value.isFinite ? value.toInt() : null;
+  }
+
+  double? _finiteListDouble(Object? value) {
+    return value is List && value.isNotEmpty
+        ? _finiteDouble(value.first)
+        : null;
+  }
+
+  int? _finiteListInt(Object? value) {
+    return value is List && value.isNotEmpty ? _finiteInt(value.first) : null;
   }
 }
 

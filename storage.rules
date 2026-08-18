@@ -1,37 +1,119 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.phoneNumber is string;
+    }
+
+    function admin() {
+      return signedIn()
+        && request.auth.token.keys().hasAny(['isAdmin'])
+        && request.auth.token.isAdmin == true;
+    }
+
+    function chatMember(chatId) {
+      return signedIn()
+        && firestore.get(
+          /databases/(default)/documents/groupChats/$(chatId)
+        ).data.participantPhones.hasAny([request.auth.token.phoneNumber]);
+    }
+
+    function supportedImage(contentType, fileName) {
+      return (
+        contentType == 'image/jpeg'
+          && fileName.lower().matches('.*\\.(jpg|jpeg)$')
+      ) || (
+        contentType == 'image/png'
+          && fileName.lower().matches('.*\\.png$')
+      ) || (
+        contentType == 'image/gif'
+          && fileName.lower().matches('.*\\.gif$')
+      ) || (
+        contentType == 'image/webp'
+          && fileName.lower().matches('.*\\.webp$')
+      ) || (
+        contentType == 'image/heic'
+          && fileName.lower().matches('.*\\.heic$')
+      ) || (
+        contentType == 'image/heif'
+          && fileName.lower().matches('.*\\.heif$')
+      );
+    }
+
+    function supportedVideo(contentType, fileName) {
+      return (
+        contentType == 'video/mp4'
+          && fileName.lower().matches('.*\\.mp4$')
+      ) || (
+        contentType == 'video/quicktime'
+          && fileName.lower().matches('.*\\.mov$')
+      ) || (
+        contentType == 'video/x-m4v'
+          && fileName.lower().matches('.*\\.m4v$')
+      );
+    }
+
+    function supportedDocument(contentType, fileName) {
+      return (
+        contentType == 'application/pdf'
+          && fileName.lower().matches('.*\\.pdf$')
+      ) || (
+        contentType == 'application/msword'
+          && fileName.lower().matches('.*\\.doc$')
+      ) || (
+        contentType == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          && fileName.lower().matches('.*\\.docx$')
+      ) || (
+        contentType == 'application/vnd.ms-excel'
+          && fileName.lower().matches('.*\\.xls$')
+      ) || (
+        contentType == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          && fileName.lower().matches('.*\\.xlsx$')
+      ) || (
+        contentType == 'text/plain'
+          && fileName.lower().matches('.*\\.txt$')
+      );
+    }
+
     match /trail_covers/{trailId}/{imageName} {
-      allow read: if true;
-      allow delete: if request.auth != null;
-      allow create, update: if request.auth != null
-        && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+      allow read: if signedIn();
+      allow create, update: if admin()
+        && request.resource.size <= 10 * 1024 * 1024
+        && supportedImage(request.resource.contentType, imageName);
+      allow delete: if admin();
     }
 
     match /profile_photos/{userId}/{fileName} {
-      allow read: if true;
-      allow create, update: if request.auth != null
+      allow read: if signedIn();
+      allow create, update: if signedIn()
         && request.auth.uid == userId
-        && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
-      allow delete: if request.auth != null
-        && request.auth.uid == userId;
+        && request.resource.size <= 10 * 1024 * 1024
+        && supportedImage(request.resource.contentType, fileName);
+      allow delete: if signedIn()
+        && (request.auth.uid == userId || admin());
     }
 
     match /group_chats/{chatId}/attachments/{fileName} {
-      allow read: if request.auth != null;
-      allow create, update: if request.auth != null
+      allow read: if chatMember(chatId);
+      allow create: if resource == null
+        && chatMember(chatId)
         && request.resource.metadata.senderPhone == request.auth.token.phoneNumber
         && request.resource.size <= 25 * 1024 * 1024
         && (
-          request.resource.contentType.matches('image/.*')
-          || request.resource.contentType.matches('video/.*')
-          || request.resource.contentType == 'application/pdf'
-          || request.resource.contentType.matches('application/.*')
-          || request.resource.contentType.matches('text/.*')
+          supportedImage(request.resource.contentType, fileName)
+          || supportedVideo(request.resource.contentType, fileName)
+          || supportedDocument(request.resource.contentType, fileName)
         );
-      allow delete: if request.auth != null;
+      allow update: if false;
+      allow delete: if admin() || (
+        chatMember(chatId)
+        && resource.metadata.senderPhone == request.auth.token.phoneNumber
+      );
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }

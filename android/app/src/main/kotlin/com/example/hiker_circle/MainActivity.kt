@@ -36,6 +36,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "hiker_circle/sos_device_alerts"
         private const val DEEP_LINK_CHANNEL = "hiker_circle/deeplinks"
+        private const val BUILD_CONFIG_CHANNEL = "hiker_circle/build_config"
         private const val ACTIVE_HIKE_LIVE_STATUS_CHANNEL =
             "hiker_circle/active_hike_live_status"
         private const val CAMERA_REQUEST_CODE = 8472
@@ -227,6 +228,17 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            BUILD_CONFIG_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isDevelopmentOnlyRelease" ->
+                    result.success(BuildConfig.DEVELOPMENT_ONLY_SIGNING)
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             ACTIVE_HIKE_LIVE_STATUS_CHANNEL,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -240,11 +252,93 @@ class MainActivity : FlutterActivity() {
                         )
                     } else {
                         startOrUpdateActiveHikeLiveStatus(status)
+                        if (status.fallDetectionEnabled) {
+                            HikeSafetyMonitorService.startOrUpdate(
+                                this,
+                                HikeSafetyMonitorService.SafetyConfig(
+                                    sessionId = status.sessionId,
+                                    trailName = status.trailName,
+                                    longestRestMillis = status.longestRestMillis,
+                                    responseMillis = status.fallResponseMillis,
+                                    sensitivity = status.sensorSensitivity,
+                                ),
+                            )
+                        } else {
+                            HikeSafetyMonitorService.stop(this)
+                        }
                         result.success(null)
                     }
                 }
                 "stopActiveHikeLiveStatus" -> {
                     stopActiveHikeLiveStatus()
+                    HikeSafetyMonitorService.stop(this)
+                    result.success(null)
+                }
+                "consumePendingSafetyEvent" -> {
+                    result.success(HikeSafetyMonitorService.pendingEvent(this))
+                }
+                "acknowledgeSafetyEvent" -> {
+                    val eventId = call.argument<String>("eventId").orEmpty()
+                    if (eventId.isNotBlank()) {
+                        HikeSafetyMonitorService.acknowledgeEvent(this, eventId)
+                    }
+                    result.success(null)
+                }
+                "cancelNativeSafetyAlert" -> {
+                    startService(
+                        Intent(this, HikeSafetyMonitorService::class.java).apply {
+                            action = HikeSafetyMonitorService.ACTION_CANCEL_ALERT
+                        },
+                    )
+                    result.success(null)
+                }
+                "getNativeSafetyStatus" -> {
+                    val backgroundLocationGranted =
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+                            checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+                            PackageManager.PERMISSION_GRANTED
+                    val fullScreenIntentGranted =
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+                            getSystemService(NotificationManager::class.java)
+                                .canUseFullScreenIntent()
+                    val overlayGranted = android.provider.Settings.canDrawOverlays(this)
+                    result.success(
+                        mapOf(
+                            "configured" to HikeSafetyMonitorService.isConfigured(this),
+                            "backgroundLocationGranted" to backgroundLocationGranted,
+                            "fineLocationGranted" to hasFineLocationPermission(),
+                            "fullScreenIntentGranted" to fullScreenIntentGranted,
+                            "overlayGranted" to overlayGranted,
+                        ),
+                    )
+                }
+                "openBackgroundLocationSettings" -> {
+                    startActivity(
+                        Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                    result.success(null)
+                }
+                "openFullScreenIntentSettings" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        startActivity(
+                            Intent(
+                                android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                                Uri.parse("package:$packageName"),
+                            ),
+                        )
+                    }
+                    result.success(null)
+                }
+                "openOverlaySettings" -> {
+                    startActivity(
+                        Intent(
+                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -258,6 +352,16 @@ class MainActivity : FlutterActivity() {
         val deepLink = intent.dataString ?: return
         pendingDeepLink = deepLink
         deepLinkChannel?.invokeMethod("onDeepLink", deepLink)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hikerBleBridge?.onActivityResumed()
+    }
+
+    override fun onPause() {
+        hikerBleBridge?.onActivityPaused()
+        super.onPause()
     }
 
     override fun onRequestPermissionsResult(
@@ -312,7 +416,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
-        stopFallStillnessCountdownVibration()
+        // Do not cancel the system vibrator here. The native hike-safety
+        // foreground service may own an urgent response prompt after Flutter
+        // is reclaimed or the activity is destroyed.
         stopSpokenPrompt()
         textToSpeech?.shutdown()
         textToSpeech = null
@@ -417,7 +523,9 @@ class MainActivity : FlutterActivity() {
             .setContentTitle("Hiking ${status.trailName}")
             .setContentText(status.summary)
             .setSubText("HikerCircle")
-            .setContentIntent(pendingActivityIntent("hikercircle://hike/active"))
+            .setContentIntent(
+                pendingActivityIntent(activeHikeDeepLink("active", status.sessionId)),
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(true)
@@ -428,7 +536,7 @@ class MainActivity : FlutterActivity() {
                 icon = android.R.drawable.ic_menu_view,
                 title = "View details",
                 pendingIntent = pendingActivityIntent(
-                    "hikercircle://hike/active?source=android_live_status",
+                    activeHikeDeepLink("active", status.sessionId),
                     6101,
                 ),
             )
@@ -436,13 +544,24 @@ class MainActivity : FlutterActivity() {
                 icon = android.R.drawable.ic_menu_mylocation,
                 title = "Check in",
                 pendingIntent = pendingActivityIntent(
-                    "hikercircle://hike/check-in?source=android_live_status",
+                    activeHikeDeepLink("check-in", status.sessionId),
                     6102,
                 ),
             )
             .build()
 
         notificationManager.notify(ACTIVE_HIKE_NOTIFICATION_ID, notification)
+    }
+
+    private fun activeHikeDeepLink(path: String, sessionId: String): String {
+        return Uri.Builder()
+            .scheme("hikercircle")
+            .authority("hike")
+            .appendPath(path)
+            .appendQueryParameter("source", "android_live_status")
+            .appendQueryParameter("sessionId", sessionId)
+            .build()
+            .toString()
     }
 
     private fun pendingActivityIntent(
@@ -721,7 +840,8 @@ class MainActivity : FlutterActivity() {
             completePendingLocation(lastKnownLocationFallback())
             return
         }
-        val provider = locationProvider(manager) ?: run {
+        val providers = locationProviders(manager)
+        if (providers.isEmpty()) {
             completePendingLocation(lastKnownLocationFallback())
             return
         }
@@ -736,9 +856,15 @@ class MainActivity : FlutterActivity() {
         mainHandler.removeCallbacks(locationTimeoutRunnable)
         mainHandler.postDelayed(locationTimeoutRunnable, LOCATION_TIMEOUT_MILLIS)
 
-        runCatching {
-            manager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
-        }.onFailure {
+        val registered = providers.count { provider ->
+            runCatching {
+                // Request network and GPS concurrently. Selecting GPS alone
+                // caused every indoor request to time out even when a fresh
+                // network position was available.
+                manager.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+            }.isSuccess
+        }
+        if (registered == 0) {
             completePendingLocation(lastKnownLocationFallback())
         }
     }
@@ -758,11 +884,11 @@ class MainActivity : FlutterActivity() {
         result.success(location?.toFlutterMap())
     }
 
-    private fun locationProvider(manager: LocationManager): String? {
+    private fun locationProviders(manager: LocationManager): List<String> {
         val providers = if (hasFineLocationPermission()) {
             listOf(
-                LocationManager.GPS_PROVIDER,
                 LocationManager.NETWORK_PROVIDER,
+                LocationManager.GPS_PROVIDER,
                 LocationManager.PASSIVE_PROVIDER,
             )
         } else {
@@ -772,7 +898,7 @@ class MainActivity : FlutterActivity() {
             )
         }
 
-        return providers.firstOrNull { provider ->
+        return providers.filter { provider ->
             runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
         }
     }
@@ -846,6 +972,10 @@ class MainActivity : FlutterActivity() {
         val manualPins: Int,
         val queuedUpdates: Int,
         val batteryLevel: Int,
+        val fallDetectionEnabled: Boolean,
+        val sensorSensitivity: Double,
+        val fallResponseMillis: Long,
+        val longestRestMillis: Long,
     ) {
         val summary: String
             get() = "Check-ins $checkIns | Pins $manualPins | $queuedUpdates queued"
@@ -864,6 +994,14 @@ class MainActivity : FlutterActivity() {
                     manualPins = (data["manualPins"] as? Number)?.toInt() ?: 0,
                     queuedUpdates = (data["queuedUpdates"] as? Number)?.toInt() ?: 0,
                     batteryLevel = (data["batteryLevel"] as? Number)?.toInt() ?: 0,
+                    fallDetectionEnabled = data["fallDetectionEnabled"] as? Boolean
+                        ?: true,
+                    sensorSensitivity = (data["sensorSensitivity"] as? Number)
+                        ?.toDouble()?.coerceIn(1.0, 10.0) ?: 5.0,
+                    fallResponseMillis = (data["fallResponseMillis"] as? Number)
+                        ?.toLong()?.coerceIn(5_000L, 600_000L) ?: 30_000L,
+                    longestRestMillis = (data["longestRestMillis"] as? Number)
+                        ?.toLong()?.coerceIn(30_000L, 86_400_000L) ?: 180_000L,
                 )
             }
         }

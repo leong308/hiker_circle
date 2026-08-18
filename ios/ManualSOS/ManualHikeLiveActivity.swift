@@ -20,6 +20,8 @@ struct ManualHikeAttributes: ActivityAttributes {
     var batteryLevel: Int
     var distanceKm: Double
     var routePointCount: Int
+    var safetyPhase: String
+    var warningDeadline: Date?
   }
 
   var sessionId: String
@@ -60,6 +62,12 @@ struct ManualHikeLiveActivity: Widget {
 
         DynamicIslandExpandedRegion(.bottom) {
           HStack(spacing: 8) {
+            liveLink(
+              title: "I'm Safe",
+              url: deepLink("safety-safe", sessionId: context.attributes.sessionId),
+              background: HikeLiveColors.safeAmber
+            )
+
             liveLink(
               title: "View Details",
               url: deepLink("active", sessionId: context.attributes.sessionId),
@@ -131,6 +139,12 @@ private struct HikeLiveActivityLockScreenView: View {
 
       HStack(spacing: 8) {
         liveLink(
+          title: "I'm Safe",
+          url: deepLink("safety-safe", sessionId: context.attributes.sessionId),
+          background: HikeLiveColors.safeAmber
+        )
+
+        liveLink(
           title: "View",
           url: deepLink("active", sessionId: context.attributes.sessionId),
           background: Color.white.opacity(0.18)
@@ -147,6 +161,13 @@ private struct HikeLiveActivityLockScreenView: View {
   }
 
   private var statusLine: String {
+    if context.state.safetyPhase == "warning",
+       let deadline = context.state.warningDeadline {
+      return "Are you okay? Respond by \(deadline.formatted(date: .omitted, time: .standard))"
+    }
+    if context.state.safetyPhase == "escalated" {
+      return "SOS sent · Tap I'm Safe to stop the alarm"
+    }
     "GPS \(context.state.routePointCount) | Queue \(context.state.queuedUpdates) | ETA \(etaText(context.state.expectedReturnAt))"
   }
 
@@ -199,4 +220,5 @@ private enum HikeLiveColors {
   static let green = Color(red: 0.247, green: 0.561, blue: 0.369) // #3F8F5E
   static let brightGreen = Color(red: 0.204, green: 0.659, blue: 0.325) // #34A853
   static let deepGreen = Color(red: 0.031, green: 0.220, blue: 0.157)
+  static let safeAmber = Color(red: 0.96, green: 0.62, blue: 0.12)
 }

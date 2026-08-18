@@ -41,11 +41,13 @@ class _CirclePageState extends State<CirclePage> {
   List<_BuddyRequest> _buddyRequests = const [];
   List<_CommunityPerson> _people = const [];
   late List<_CommunityPost> _posts = const [];
-  late final List<_TeamPlan> _teams = _seedTeams();
+  final List<_TeamPlan> _teams = const [];
   bool _isLoadingPosts = false;
   List<GroupChat> _groupChats = const [];
   bool _isLoadingChats = false;
   Set<String> _pinnedChatIds = {};
+  final Map<String, int> _pinUpdateGeneration = {};
+  final Map<String, Future<void>> _pinWriteChains = {};
   Map<String, DateTime> _localLastReadAt = const {};
   String _currentUserPhotoURL = '';
   StreamSubscription<List<GroupChat>>? _chatsSubscription;
@@ -64,40 +66,48 @@ class _CirclePageState extends State<CirclePage> {
   }
 
   Future<void> _loadCurrentUserPhoto() async {
-    final profile = await widget.hikerCircleRepository.loadCommunityProfile(
-      phoneNumber: widget.session.phoneNumber,
-    );
-    if (!mounted || profile == null) return;
-    final photoURL = _stringFrom(profile['photoURL']).trim();
-    if (photoURL.isEmpty || photoURL == _currentUserPhotoURL) return;
-    setState(() {
-      _currentUserPhotoURL = photoURL;
-    });
+    try {
+      final profile = await widget.hikerCircleRepository.loadCommunityProfile(
+        phoneNumber: widget.session.phoneNumber,
+      );
+      if (!mounted || profile == null) return;
+      final photoURL = _stringFrom(profile['photoURL']).trim();
+      if (photoURL.isEmpty || photoURL == _currentUserPhotoURL) return;
+      setState(() {
+        _currentUserPhotoURL = photoURL;
+      });
+    } catch (_) {
+      // The session avatar remains available if its remote refresh fails.
+    }
   }
 
   Future<void> _loadCommunityPeople() async {
-    final results = await Future.wait<Object>([
-      widget.hikerCircleRepository.loadCommunityProfiles(
-        session: widget.session,
-      ),
-      widget.hikerCircleRepository.loadBuddyPhoneNumbers(
-        session: widget.session,
-      ),
-      widget.hikerCircleRepository.loadOutgoingBuddyRequestPhoneNumbers(
-        session: widget.session,
-      ),
-    ]);
-    if (!mounted) return;
-    final profiles = results[0] as List<Map<String, dynamic>>;
-    setState(() {
-      _people = profiles.map(_communityPersonFromProfile).toList();
-      _buddyPhones
-        ..clear()
-        ..addAll(results[1] as Set<String>);
-      _outgoingBuddyRequestPhones
-        ..clear()
-        ..addAll(results[2] as Set<String>);
-    });
+    try {
+      final results = await Future.wait<Object>([
+        widget.hikerCircleRepository.loadCommunityProfiles(
+          session: widget.session,
+        ),
+        widget.hikerCircleRepository.loadBuddyPhoneNumbers(
+          session: widget.session,
+        ),
+        widget.hikerCircleRepository.loadOutgoingBuddyRequestPhoneNumbers(
+          session: widget.session,
+        ),
+      ]);
+      if (!mounted) return;
+      final profiles = results[0] as List<Map<String, dynamic>>;
+      setState(() {
+        _people = profiles.map(_communityPersonFromProfile).toList();
+        _buddyPhones
+          ..clear()
+          ..addAll(results[1] as Set<String>);
+        _outgoingBuddyRequestPhones
+          ..clear()
+          ..addAll(results[2] as Set<String>);
+      });
+    } catch (_) {
+      // Keep the last successfully loaded community snapshot.
+    }
   }
 
   Future<void> _loadBuddyRequests() async {
@@ -135,22 +145,7 @@ class _CirclePageState extends State<CirclePage> {
     _chatsSubscription = widget.hikerCircleRepository
         .userGroupChatsStream(phone)
         .listen(
-          (chats) async {
-            if (!mounted) return;
-            unawaited(
-              widget.hikerCircleRepository.syncPendingReadReceipts(
-                phoneNumber: phone,
-              ),
-            );
-            final local = await widget.hikerCircleRepository
-                .loadAllLocalLastReadAt();
-            if (!mounted) return;
-            setState(() {
-              _groupChats = chats;
-              _localLastReadAt = local;
-              _isLoadingChats = false;
-            });
-          },
+          (chats) => unawaited(_applyGroupChats(chats, phone)),
           onError: (error) {
             if (!mounted) return;
             setState(() {
@@ -163,17 +158,56 @@ class _CirclePageState extends State<CirclePage> {
     });
   }
 
-  Future<void> _loadPinnedChats() async {
-    final pinned = await widget.hikerCircleRepository.loadPinnedChats(
-      session: widget.session,
-    );
+  Future<void> _applyGroupChats(List<GroupChat> chats, String phone) async {
     if (!mounted) return;
-    setState(() => _pinnedChatIds = pinned);
+    unawaited(_syncReadReceipts(phone));
+    var local = Map<String, DateTime>.from(_localLastReadAt);
+    try {
+      local = await widget.hikerCircleRepository.loadAllLocalLastReadAt();
+    } catch (_) {
+      // The remote chat list is still useful without local read timestamps.
+    }
+    if (!mounted) return;
+    setState(() {
+      _groupChats = chats;
+      _localLastReadAt = local;
+      _isLoadingChats = false;
+    });
+  }
+
+  Future<void> _syncReadReceipts(String phone) async {
+    try {
+      await widget.hikerCircleRepository.syncPendingReadReceipts(
+        phoneNumber: phone,
+      );
+    } catch (_) {
+      // Pending receipts are retried on the next stream update.
+    }
+  }
+
+  Future<void> _loadPinnedChats() async {
+    try {
+      final pinned = await widget.hikerCircleRepository.loadPinnedChats(
+        session: widget.session,
+      );
+      if (!mounted) return;
+      setState(() => _pinnedChatIds = pinned);
+    } catch (_) {
+      // Pin state can be retried by reopening Circle.
+    }
   }
 
   Future<void> _showChatNotifications(GroupChat chat) async {
-    final mutedUntil = await widget.hikerCircleRepository
-        .loadGroupChatMutedUntil(session: widget.session, chatId: chat.id);
+    DateTime? mutedUntil;
+    try {
+      mutedUntil = await widget.hikerCircleRepository.loadGroupChatMutedUntil(
+        session: widget.session,
+        chatId: chat.id,
+      );
+    } catch (_) {
+      _showCircleMessage('Unable to load notification settings.');
+      return;
+    }
     if (!mounted) return;
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -229,6 +263,9 @@ class _CirclePageState extends State<CirclePage> {
 
   void _pinChat(GroupChat chat) {
     final isPinned = _pinnedChatIds.contains(chat.id);
+    final desiredPinned = !isPinned;
+    final generation = (_pinUpdateGeneration[chat.id] ?? 0) + 1;
+    _pinUpdateGeneration[chat.id] = generation;
     setState(() {
       if (isPinned) {
         _pinnedChatIds.remove(chat.id);
@@ -236,13 +273,50 @@ class _CirclePageState extends State<CirclePage> {
         _pinnedChatIds.add(chat.id);
       }
     });
-    unawaited(
-      widget.hikerCircleRepository.setChatPinned(
+    unawaited(_persistPinnedChat(chat, desiredPinned, generation));
+  }
+
+  Future<void> _persistPinnedChat(
+    GroupChat chat,
+    bool desiredPinned,
+    int generation,
+  ) async {
+    final previous = _pinWriteChains[chat.id] ?? Future<void>.value();
+    final write = previous.then(
+      (_) => widget.hikerCircleRepository.setChatPinned(
         session: widget.session,
         chatId: chat.id,
-        pinned: !isPinned,
+        pinned: desiredPinned,
       ),
     );
+    _pinWriteChains[chat.id] = write.then<void>((_) {}, onError: (_) {});
+    try {
+      await write;
+    } catch (_) {
+      if (!mounted || _pinUpdateGeneration[chat.id] != generation) return;
+      setState(() {
+        if (desiredPinned) {
+          _pinnedChatIds.remove(chat.id);
+        } else {
+          _pinnedChatIds.add(chat.id);
+        }
+      });
+      _showCircleMessage('Unable to update the pinned chat.');
+    } finally {
+      if (_pinUpdateGeneration[chat.id] == generation) {
+        _pinUpdateGeneration.remove(chat.id);
+        _pinWriteChains.remove(chat.id);
+      }
+    }
+  }
+
+  void _showCircleMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
   }
 
   Future<void> _deleteChat(GroupChat chat) async {
@@ -322,50 +396,55 @@ class _CirclePageState extends State<CirclePage> {
       return;
     }
 
-    await widget.hikerCircleRepository.sendBuddyRequest(
-      session: widget.session,
-      buddyPhoneNumber: person.phoneNumber,
-    );
-    if (!mounted) return;
-    setState(() {
-      _outgoingBuddyRequestPhones.add(_phoneKeyFor(person.phoneNumber));
-    });
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Friend request sent to ${person.name}.'),
-          behavior: SnackBarBehavior.floating,
-        ),
+    try {
+      await widget.hikerCircleRepository.sendBuddyRequest(
+        session: widget.session,
+        buddyPhoneNumber: person.phoneNumber,
       );
+      if (!mounted) return;
+      setState(() {
+        _outgoingBuddyRequestPhones.add(_phoneKeyFor(person.phoneNumber));
+      });
+      _showCircleMessage('Friend request sent to ${person.name}.');
+    } catch (_) {
+      _showCircleMessage('Unable to send the buddy request.');
+    }
   }
 
   Future<void> _acceptBuddyRequest(_BuddyRequest request) async {
-    await widget.hikerCircleRepository.acceptBuddyRequest(
-      session: widget.session,
-      requesterPhoneNumber: request.phoneNumber,
-    );
-    if (!mounted) return;
-    setState(() {
-      _buddyRequests = _buddyRequests
-          .where((item) => item.phoneNumber != request.phoneNumber)
-          .toList();
-      _buddyPhones.add(request.phoneNumber);
-    });
-    unawaited(_loadCommunityPeople());
+    try {
+      await widget.hikerCircleRepository.acceptBuddyRequest(
+        session: widget.session,
+        requesterPhoneNumber: request.phoneNumber,
+      );
+      if (!mounted) return;
+      setState(() {
+        _buddyRequests = _buddyRequests
+            .where((item) => item.phoneNumber != request.phoneNumber)
+            .toList();
+        _buddyPhones.add(request.phoneNumber);
+      });
+      unawaited(_loadCommunityPeople());
+    } catch (_) {
+      _showCircleMessage('Unable to accept the buddy request.');
+    }
   }
 
   Future<void> _declineBuddyRequest(_BuddyRequest request) async {
-    await widget.hikerCircleRepository.declineBuddyRequest(
-      session: widget.session,
-      requesterPhoneNumber: request.phoneNumber,
-    );
-    if (!mounted) return;
-    setState(() {
-      _buddyRequests = _buddyRequests
-          .where((item) => item.phoneNumber != request.phoneNumber)
-          .toList();
-    });
+    try {
+      await widget.hikerCircleRepository.declineBuddyRequest(
+        session: widget.session,
+        requesterPhoneNumber: request.phoneNumber,
+      );
+      if (!mounted) return;
+      setState(() {
+        _buddyRequests = _buddyRequests
+            .where((item) => item.phoneNumber != request.phoneNumber)
+            .toList();
+      });
+    } catch (_) {
+      _showCircleMessage('Unable to decline the buddy request.');
+    }
   }
 
   Future<void> _openBuddyRequests() async {
@@ -385,27 +464,37 @@ class _CirclePageState extends State<CirclePage> {
 
   Future<void> _openDirectChat(_CommunityPerson person) async {
     if (person.phoneNumber == widget.session.phoneNumber) return;
-    final chat = await widget.hikerCircleRepository.openDirectChat(
-      session: widget.session,
-      otherPhoneNumber: person.phoneNumber,
-      otherDisplayName: person.name,
-    );
-    if (!mounted) return;
-    _openGroupChat(chat);
+    try {
+      final chat = await widget.hikerCircleRepository.openDirectChat(
+        session: widget.session,
+        otherPhoneNumber: person.phoneNumber,
+        otherDisplayName: person.name,
+      );
+      if (!mounted) return;
+      unawaited(_openGroupChat(chat));
+    } catch (_) {
+      _showCircleMessage('Unable to open this conversation.');
+    }
   }
 
   Future<void> _showCommunityProfile(_CommunityPost post) async {
-    final profile = await widget.hikerCircleRepository.loadCommunityProfile(
-      userId: post.authorId,
-      phoneNumber: post.authorPhoneNumber,
-    );
+    Map<String, dynamic>? profile;
+    try {
+      profile = await widget.hikerCircleRepository.loadCommunityProfile(
+        userId: post.authorId,
+        phoneNumber: post.authorPhoneNumber,
+      );
+    } catch (_) {
+      _showCircleMessage('Unable to load this hiker profile.');
+      return;
+    }
     if (!mounted || profile == null) return;
     final person = _communityPersonFromProfile(profile);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _CommunityProfileSheet(
+      builder: (sheetContext) => _CommunityProfileSheet(
         person: person,
         isBuddy: _buddyPhones.contains(person.phoneNumber),
         isRequested: _outgoingBuddyRequestPhones.contains(
@@ -413,19 +502,14 @@ class _CirclePageState extends State<CirclePage> {
         ),
         isOwnProfile: person.phoneNumber == widget.session.phoneNumber,
         onAddBuddy: () {
-          Navigator.of(context).pop();
+          Navigator.of(sheetContext).pop();
           unawaited(_addBuddy(person));
         },
         onMessage: () {
-          Navigator.of(context).pop();
+          Navigator.of(sheetContext).pop();
           if (person.phoneNumber == widget.session.phoneNumber) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text(
-                  'You cannot start a conversation with yourself.',
-                ),
-                behavior: SnackBarBehavior.floating,
-              ),
+            _showCircleMessage(
+              'You cannot start a conversation with yourself.',
             );
           } else {
             unawaited(_openDirectChat(person));
@@ -454,24 +538,20 @@ class _CirclePageState extends State<CirclePage> {
       builder: (context) => _SharePostToChatSheet(chats: groupChats),
     );
     if (chat == null || !mounted) return;
-    await widget.hikerCircleRepository.sendGroupChatMessage(
-      chatId: chat.id,
-      senderPhone: widget.session.phoneNumber,
-      senderName: widget.session.username,
-      text:
-          'Shared ${post.author}’s community post:\n${post.body}\nTrail: ${post.trail}',
-      localId: 'share_${DateTime.now().microsecondsSinceEpoch}',
-      sentAt: DateTime.now(),
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Post shared to ${chat.trailName}.'),
-          behavior: SnackBarBehavior.floating,
-        ),
+    try {
+      await widget.hikerCircleRepository.sendGroupChatMessage(
+        chatId: chat.id,
+        senderPhone: widget.session.phoneNumber,
+        senderName: widget.session.username,
+        text:
+            'Shared ${post.author}’s community post:\n${post.body}\nTrail: ${post.trail}',
+        localId: 'share_${DateTime.now().microsecondsSinceEpoch}',
+        sentAt: DateTime.now(),
       );
+      _showCircleMessage('Post shared to ${chat.trailName}.');
+    } catch (_) {
+      _showCircleMessage('Unable to share the post right now.');
+    }
   }
 
   Future<void> _createCommunityPost(String caption) async {
@@ -504,6 +584,8 @@ class _CirclePageState extends State<CirclePage> {
             behavior: SnackBarBehavior.floating,
           ),
         );
+    } catch (_) {
+      _showCircleMessage('Unable to share the community post right now.');
     }
   }
 
@@ -544,6 +626,8 @@ class _CirclePageState extends State<CirclePage> {
             behavior: SnackBarBehavior.floating,
           ),
         );
+    } catch (_) {
+      _showCircleMessage('Unable to share this hike update right now.');
     }
   }
 
@@ -569,40 +653,20 @@ class _CirclePageState extends State<CirclePage> {
   }
 
   void _createTeam() {
-    final buddies = _people
-        .where((person) => _buddyPhones.contains(person.phoneNumber))
-        .take(4)
-        .map((person) => person.name)
-        .toList();
-
-    setState(() {
-      _teams.insert(
-        0,
-        _TeamPlan(
-          name: 'Morning Ridge Crew',
-          trail: 'Broga Hill Trail',
-          dateLabel: 'Saturday, 6:30 AM',
-          status: 'Draft invites',
-          members: ['You', ...buddies],
-          readiness: 68,
-        ),
-      );
-    });
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Dummy hiking team created.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    _showCircleMessage(
+      'Create a real team session from Home > Start Hike > Team Hike.',
+    );
   }
 
   Future<void> _openGroupChat(GroupChat chat) async {
     final repo = widget.hikerCircleRepository;
     final phone = widget.session.phoneNumber;
     final now = DateTime.now();
-    await repo.markGroupChatAsRead(chatId: chat.id, phoneNumber: phone);
+    try {
+      await repo.markGroupChatAsRead(chatId: chat.id, phoneNumber: phone);
+    } catch (_) {
+      // Receipt sync should not prevent opening a locally cached chat.
+    }
     if (!mounted) return;
     setState(() {
       _localLastReadAt = Map<String, DateTime>.from(_localLastReadAt)
@@ -1395,7 +1459,7 @@ class _BuddySuggestionCard extends StatelessWidget {
               Row(
                 children: [
                   _Avatar(
-                    label: person.name.substring(0, 1),
+                    label: _circleInitial(person.name),
                     color: person.color,
                     imageUrl: person.photoURL,
                   ),
@@ -1564,7 +1628,7 @@ class _CommunityPostCard extends StatelessWidget {
                     GestureDetector(
                       onTap: onOpenProfile,
                       child: _Avatar(
-                        label: post.author.substring(0, 1),
+                        label: _circleInitial(post.author),
                         color: post.color,
                         imageUrl: post.authorPhotoURL,
                       ),
@@ -1650,7 +1714,7 @@ class _CommunityPostCard extends StatelessWidget {
                       _PostAction(
                         icon: CupertinoIcons.heart,
                         label: '${post.likes}',
-                        onTap: () => _showDummySnack(context, 'Liked post.'),
+                        onTap: null,
                       ),
                       const SizedBox(width: 18),
                       _PostAction(
@@ -1727,16 +1791,25 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
     setState(() {
       _isLoadingComments = true;
     });
-    final comments = await widget.repository.loadCommunityComments(
-      postId: postId,
-    );
-    if (!mounted) {
-      return;
+    try {
+      final comments = await widget.repository.loadCommunityComments(
+        postId: postId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _comments = comments.map(_communityCommentFromFirestore).toList();
+      });
+    } catch (_) {
+      _showDetailSnack('Unable to load comments right now.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingComments = false;
+        });
+      }
     }
-    setState(() {
-      _comments = comments.map(_communityCommentFromFirestore).toList();
-      _isLoadingComments = false;
-    });
   }
 
   Future<void> _postComment() async {
@@ -1974,9 +2047,7 @@ class _CommentRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _Avatar(
-            label: comment.author.isEmpty
-                ? '?'
-                : comment.author.substring(0, 1),
+            label: _circleInitial(comment.author),
             color: _CircleColors.green,
             imageUrl: comment.authorPhotoURL,
           ),
@@ -2198,8 +2269,8 @@ class _TeamBuilderCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(vertical: 13),
                     ),
                     onPressed: onCreateTeam,
-                    icon: const Icon(Icons.add_rounded, size: 18),
-                    label: const Text('Create Team'),
+                    icon: const Icon(Icons.home_rounded, size: 18),
+                    label: const Text('How to Start'),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -2215,10 +2286,9 @@ class _TeamBuilderCard extends StatelessWidget {
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 13),
                     ),
-                    onPressed: () =>
-                        _showDummySnack(context, 'Join code scanner opened.'),
+                    onPressed: null,
                     icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-                    label: const Text('Join Code'),
+                    label: const Text('Join Code Later'),
                   ),
                 ),
               ],
@@ -2522,10 +2592,7 @@ class _TeamDetailPage extends StatelessWidget {
                                     vertical: 13,
                                   ),
                                 ),
-                                onPressed: () => _showDummySnack(
-                                  context,
-                                  'Team check-in schedule opened.',
-                                ),
+                                onPressed: null,
                                 icon: const Icon(
                                   Icons.check_circle_rounded,
                                   size: 18,
@@ -2550,10 +2617,7 @@ class _TeamDetailPage extends StatelessWidget {
                                     vertical: 13,
                                   ),
                                 ),
-                                onPressed: () => _showDummySnack(
-                                  context,
-                                  'Invite manager opened.',
-                                ),
+                                onPressed: null,
                                 icon: const Icon(
                                   Icons.group_add_rounded,
                                   size: 18,
@@ -2695,7 +2759,7 @@ class _CommunityProfileSheet extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _Avatar(
-                      label: person.name.substring(0, 1),
+                      label: _circleInitial(person.name),
                       color: person.color,
                       size: 58,
                       imageUrl: person.photoURL,
@@ -2856,9 +2920,9 @@ class _SharePostToChatSheet extends StatelessWidget {
                 ),
                 for (final chat in chats)
                   ListTile(
-                    leading: const CircleAvatar(
-                      backgroundColor: _CircleColors.greenSoft,
-                      child: Icon(
+                    leading: CircleAvatar(
+                      backgroundColor: _CircleColors.greenSoftFor(context),
+                      child: const Icon(
                         Icons.groups_rounded,
                         color: _CircleColors.green,
                       ),
@@ -2890,10 +2954,6 @@ class _CircleSettingsPage extends StatefulWidget {
 }
 
 class _CircleSettingsPageState extends State<_CircleSettingsPage> {
-  bool _autoAcceptBuddies = false;
-  bool _nearbyTrailPosts = true;
-  bool _teamInviteAlerts = true;
-  bool _showHikeHistory = true;
   bool _groupChatNotificationsEnabled = true;
   bool _isLoadingGroupChatSetting = true;
   bool _isSavingGroupChatSetting = false;
@@ -2905,16 +2965,25 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
   }
 
   Future<void> _loadGroupChatNotificationSetting() async {
-    final enabled = await widget.repository.loadGroupChatNotificationsEnabled(
-      session: widget.session,
-    );
-    if (!mounted) {
-      return;
+    try {
+      final enabled = await widget.repository.loadGroupChatNotificationsEnabled(
+        session: widget.session,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _groupChatNotificationsEnabled = enabled;
+      });
+    } catch (_) {
+      // Keep the safe enabled default when the setting cannot be loaded.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingGroupChatSetting = false;
+        });
+      }
     }
-    setState(() {
-      _groupChatNotificationsEnabled = enabled;
-      _isLoadingGroupChatSetting = false;
-    });
   }
 
   Future<void> _setGroupChatNotificationsEnabled(bool enabled) async {
@@ -2977,36 +3046,27 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                   const SizedBox(height: 16),
                   _SettingsSwitchTile(
                     title: 'Auto-accept buddy requests',
-                    subtitle: 'Only for people with two mutual buddies.',
-                    value: _autoAcceptBuddies,
-                    onChanged: (value) {
-                      setState(() {
-                        _autoAcceptBuddies = value;
-                      });
-                    },
+                    subtitle:
+                        'Not available yet. Buddy requests require confirmation.',
+                    value: false,
+                    onChanged: null,
+                    unavailable: true,
                   ),
                   const SizedBox(height: 8),
                   _SettingsSwitchTile(
                     title: 'Nearby trail posts',
-                    subtitle:
-                        'Prioritize posts from trails you saved or hiked.',
-                    value: _nearbyTrailPosts,
-                    onChanged: (value) {
-                      setState(() {
-                        _nearbyTrailPosts = value;
-                      });
-                    },
+                    subtitle: 'Coming later with personalized community feeds.',
+                    value: false,
+                    onChanged: null,
+                    unavailable: true,
                   ),
                   const SizedBox(height: 8),
                   _SettingsSwitchTile(
                     title: 'Team invite alerts',
-                    subtitle: 'Notify when buddies invite you to a hike.',
-                    value: _teamInviteAlerts,
-                    onChanged: (value) {
-                      setState(() {
-                        _teamInviteAlerts = value;
-                      });
-                    },
+                    subtitle: 'Managed by the mobile notification permission.',
+                    value: true,
+                    onChanged: null,
+                    unavailable: true,
                   ),
                   const SizedBox(height: 8),
                   _SettingsSwitchTile(
@@ -3025,52 +3085,11 @@ class _CircleSettingsPageState extends State<_CircleSettingsPage> {
                   const SizedBox(height: 8),
                   _SettingsSwitchTile(
                     title: 'Show hike history on profile',
-                    subtitle: 'Buddies can see completed public hikes.',
-                    value: _showHikeHistory,
-                    onChanged: (value) {
-                      setState(() {
-                        _showHikeHistory = value;
-                      });
-                    },
+                    subtitle: 'Profile privacy controls are not available yet.',
+                    value: false,
+                    onChanged: null,
+                    unavailable: true,
                   ),
-                  if (widget.session.isAdmin) ...[
-                    const SizedBox(height: 22),
-                    _SectionTitle(label: 'Moderation'),
-                    const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _CircleColors.surfaceFor(context),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: _CircleColors.separatorFor(
-                            context,
-                          ).withValues(alpha: 0.5),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _CircleColors.shadowFor(context),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: const Column(
-                        children: [
-                          _TeamFlowRow(
-                            icon: Icons.visibility_off_rounded,
-                            title: 'Muted topics',
-                            subtitle: 'Hide route spam, gear sales, or events.',
-                          ),
-                          _HorizontalSeparator(),
-                          _TeamFlowRow(
-                            icon: Icons.block_rounded,
-                            title: 'Blocked hikers',
-                            subtitle: 'Manage people who cannot message you.',
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -3087,12 +3106,14 @@ class _SettingsSwitchTile extends StatelessWidget {
     required this.subtitle,
     required this.value,
     required this.onChanged,
+    this.unavailable = false,
   });
 
   final String title;
   final String subtitle;
   final bool value;
   final ValueChanged<bool>? onChanged;
+  final bool unavailable;
 
   @override
   Widget build(BuildContext context) {
@@ -3140,10 +3161,29 @@ class _SettingsSwitchTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            Opacity(
-              opacity: onChanged == null ? 0.55 : 1,
-              child: _CircleAnimatedToggle(value: value, onChanged: onChanged),
-            ),
+            if (unavailable)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _CircleColors.greenSoftFor(context),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'Unavailable',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: _CircleColors.secondaryTextFor(context),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              )
+            else
+              Opacity(
+                opacity: onChanged == null ? 0.55 : 1,
+                child: _CircleAnimatedToggle(
+                  value: value,
+                  onChanged: onChanged,
+                ),
+              ),
           ],
         ),
       ),
@@ -3215,7 +3255,7 @@ class _RosterRow extends StatelessWidget {
       child: Row(
         children: [
           _Avatar(
-            label: name.substring(0, 1),
+            label: _circleInitial(name),
             color: isLeader ? _CircleColors.green : _CircleColors.blue,
             size: 38,
           ),
@@ -3369,34 +3409,40 @@ class _PostAction extends StatelessWidget {
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 17,
-              color: _CircleColors.secondaryTextFor(context),
+    return Tooltip(
+      message: onTap == null ? 'This action is not available yet.' : label,
+      child: Opacity(
+        opacity: onTap == null ? 0.55 : 1,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 17,
+                  color: _CircleColors.secondaryTextFor(context),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: _CircleColors.secondaryTextFor(context),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: _CircleColors.secondaryTextFor(context),
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0,
-                fontSize: 12,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -3572,7 +3618,7 @@ class _BuddyRequestRow extends StatelessWidget {
       child: Row(
         children: [
           _Avatar(
-            label: request.name.isEmpty ? '?' : request.name.substring(0, 1),
+            label: _circleInitial(request.name),
             color: _colorForPost(request.phoneNumber),
             imageUrl: request.photoURL,
           ),
@@ -3732,6 +3778,17 @@ class _Avatar extends StatelessWidget {
               width: size,
               height: size,
               fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Center(
+                child: Text(
+                  label.toUpperCase(),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                    fontSize: size * 0.42,
+                  ),
+                ),
+              ),
             )
           : trimmedImageUrl.isEmpty
           ? Text(
@@ -3943,8 +4000,8 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   mapbox.CircleAnnotationManager? _circleManager;
   var _styleLoaded = false;
   var _routeRendered = false;
-  late double _currentZoom = 13.5;
-  late double _scaleLatitude;
+  double _currentZoom = 13.5;
+  double _scaleLatitude = 0;
 
   List<mapbox.Point> get _routePoints {
     return widget.post.routePreviewPoints
@@ -3953,26 +4010,57 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
             coordinates: mapbox.Position(point.longitude, point.latitude),
           ),
         )
+        .where((point) => mapPointCoordinatesOrNull(point) != null)
         .toList();
   }
 
   @override
   void initState() {
     super.initState();
-    final pts = _routePoints;
-    if (pts.isNotEmpty) {
-      _scaleLatitude = pts.first.coordinates[1]!.toDouble();
-    }
+    _resetScaleLatitude();
   }
 
   @override
   void didUpdateWidget(covariant _CommunityRouteThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.post.postId != widget.post.postId ||
-        oldWidget.post.routePointCount != widget.post.routePointCount) {
+        !_sameRouteGeometry(
+          oldWidget.post.routePreviewPoints,
+          widget.post.routePreviewPoints,
+        )) {
       _routeRendered = false;
+      _resetScaleLatitude();
       unawaited(_renderRoute());
     }
+  }
+
+  @override
+  void dispose() {
+    _mapboxMap = null;
+    _polylineManager = null;
+    _circleManager = null;
+    super.dispose();
+  }
+
+  void _resetScaleLatitude() {
+    final points = _routePoints;
+    _scaleLatitude = points.isEmpty
+        ? 0
+        : mapPointCoordinatesOrNull(points.first)?.latitude ?? 0;
+  }
+
+  static bool _sameRouteGeometry(
+    List<HikeCoordinate> first,
+    List<HikeCoordinate> second,
+  ) {
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index++) {
+      if (first[index].latitude != second[index].latitude ||
+          first[index].longitude != second[index].longitude) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
@@ -3991,68 +4079,96 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
           pitchEnabled: true,
         ),
       );
-      _polylineManager = await mapboxMap.annotations
+      final polylineManager = await mapboxMap.annotations
           .createPolylineAnnotationManager();
-      _circleManager = await mapboxMap.annotations
+      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+      final circleManager = await mapboxMap.annotations
           .createCircleAnnotationManager();
+      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+      _polylineManager = polylineManager;
+      _circleManager = circleManager;
       await _renderRoute();
       await _syncScaleFromCamera();
     } catch (_) {}
   }
 
   Future<void> _onStyleLoaded() async {
-    await enableTerrain3D(_mapboxMap!);
-    schedulePitch(_mapboxMap!);
-    _styleLoaded = true;
-    _routeRendered = false;
-    await _renderRoute();
+    final map = _mapboxMap;
+    if (map == null || !mounted) return;
+    try {
+      await enableTerrain3D(map);
+      if (!mounted || !identical(map, _mapboxMap)) return;
+      schedulePitch(map);
+      _styleLoaded = true;
+      _routeRendered = false;
+      await _renderRoute();
+    } catch (_) {
+      // The native style can be replaced while its callback is in flight.
+    }
   }
 
   Future<void> _renderRoute() async {
+    final map = _mapboxMap;
+    final polylineManager = _polylineManager;
+    final circleManager = _circleManager;
     final points = _routePoints;
-    if (_mapboxMap == null ||
+    if (map == null ||
+        polylineManager == null ||
+        circleManager == null ||
         !_styleLoaded ||
         _routeRendered ||
         points.length < 2) {
       return;
     }
 
-    await _polylineManager?.deleteAll();
-    await _circleManager?.deleteAll();
+    try {
+      await polylineManager.deleteAll();
+      await circleManager.deleteAll();
+      if (!mounted ||
+          !identical(map, _mapboxMap) ||
+          !identical(polylineManager, _polylineManager) ||
+          !identical(circleManager, _circleManager)) {
+        return;
+      }
 
-    await _polylineManager?.create(
-      mapbox.PolylineAnnotationOptions(
-        geometry: mapbox.LineString(
-          coordinates: [
-            for (final pt in points)
-              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-          ],
+      await polylineManager.create(
+        mapbox.PolylineAnnotationOptions(
+          geometry: mapbox.LineString(
+            coordinates: [
+              for (final pt in points)
+                mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+            ],
+          ),
+          lineColor: const Color(0xFF34A853).toARGB32(),
+          lineOpacity: 0.94,
+          lineWidth: 4.0,
+          lineJoin: mapbox.LineJoin.ROUND,
         ),
-        lineColor: const Color(0xFF34A853).toARGB32(),
-        lineOpacity: 0.94,
-        lineWidth: 4.0,
-        lineJoin: mapbox.LineJoin.ROUND,
-      ),
-    );
-    await _circleManager?.createMulti([
-      mapbox.CircleAnnotationOptions(
-        geometry: points.first,
-        circleColor: const Color(0xFF7BC90E).toARGB32(),
-        circleRadius: 6,
-        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-        circleStrokeWidth: 2,
-      ),
-      mapbox.CircleAnnotationOptions(
-        geometry: points.last,
-        circleColor: const Color(0xFF0A84FF).toARGB32(),
-        circleRadius: 7,
-        circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-        circleStrokeWidth: 2,
-      ),
-    ]);
-
-    _routeRendered = true;
-    await _fitRoute();
+      );
+      await circleManager.createMulti([
+        mapbox.CircleAnnotationOptions(
+          geometry: points.first,
+          circleColor: const Color(0xFF7BC90E).toARGB32(),
+          circleRadius: 6,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 2,
+        ),
+        mapbox.CircleAnnotationOptions(
+          geometry: points.last,
+          circleColor: const Color(0xFF0A84FF).toARGB32(),
+          circleRadius: 7,
+          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
+          circleStrokeWidth: 2,
+        ),
+      ]);
+      if (!mounted || !identical(map, _mapboxMap)) return;
+      _routeRendered = true;
+      await _fitRoute();
+    } catch (_) {
+      if (mounted && identical(map, _mapboxMap)) {
+        _routeRendered = false;
+      }
+    }
   }
 
   Future<void> _fitRoute() async {
@@ -4071,10 +4187,20 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
   }
 
   Future<void> _zoomBy(double amount) async {
-    await _mapboxMap?.flyTo(
-      mapbox.CameraOptions(zoom: _currentZoom + amount),
-      mapbox.MapAnimationOptions(duration: 300),
-    );
+    final map = _mapboxMap;
+    if (map == null) return;
+    try {
+      await map.flyTo(
+        mapbox.CameraOptions(
+          zoom: (_currentZoom + amount)
+              .clamp(kMapMinZoom, kMapMaxZoom)
+              .toDouble(),
+        ),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {
+      return;
+    }
     await _syncScaleFromCamera();
   }
 
@@ -4088,20 +4214,23 @@ class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
     if (!mounted) return;
     try {
       final state = await map.getCameraState();
-      if (!mounted) return;
+      if (!mounted || !identical(map, _mapboxMap)) return;
+      final coordinates = mapPointCoordinatesOrNull(state.center);
+      if (!state.zoom.isFinite || coordinates == null) return;
       setState(() {
         _currentZoom = state.zoom;
-        _scaleLatitude = state.center.coordinates[1]!.toDouble();
+        _scaleLatitude = coordinates.latitude;
       });
     } catch (_) {}
   }
 
   void _updateScale(mapbox.CameraChangedEventData data) {
     final nextZoom = data.cameraState.zoom;
-    final nextLatitude = data.cameraState.center.coordinates[1]!.toDouble();
-    if (!mounted ||
-        ((nextZoom - _currentZoom).abs() < 0.005 &&
-            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
+    final coordinates = mapPointCoordinatesOrNull(data.cameraState.center);
+    if (!mounted || !nextZoom.isFinite || coordinates == null) return;
+    final nextLatitude = coordinates.latitude;
+    if (((nextZoom - _currentZoom).abs() < 0.005 &&
+        (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
       return;
     }
     setState(() {
@@ -4244,27 +4373,6 @@ class _CommunityImagePainter extends CustomPainter {
   }
 }
 
-List<_TeamPlan> _seedTeams() {
-  return const [
-    _TeamPlan(
-      name: 'Gasing Easy Loop',
-      trail: 'Bukit Gasing Trail',
-      dateLabel: 'Sunday, 7:00 AM',
-      status: 'Ready',
-      members: ['You', 'Trail Lead', 'Navigator', 'Sweep'],
-      readiness: 92,
-    ),
-    _TeamPlan(
-      name: 'Penang Mist Walk',
-      trail: 'Penang Hill Heritage Trail',
-      dateLabel: 'Next Friday, 6:45 AM',
-      status: 'Inviting',
-      members: ['You', 'Route Partner', 'Safety Contact'],
-      readiness: 74,
-    ),
-  ];
-}
-
 _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
   final authorPhone = _stringFrom(data['authorPhoneNumber']);
   final authorName = _stringFrom(data['authorName']).isEmpty
@@ -4281,7 +4389,7 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
       : _stringFrom(data['caption']);
   final routePreviewPoints = _listOfMaps(
     data['routePreviewPoints'],
-  ).map(HikeCoordinate.fromFirestore).toList();
+  ).map(HikeCoordinate.tryFromFirestore).nonNulls.toList();
 
   return _CommunityPost(
     postId: _stringFrom(data['postId']),
@@ -5276,8 +5384,16 @@ String _compactChatTime(DateTime value) {
   return '${local.day}/${local.month}';
 }
 
+String _circleInitial(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) {
+    return '?';
+  }
+  return String.fromCharCode(trimmed.runes.first).toUpperCase();
+}
+
 int _intFrom(Object? value) {
-  if (value is num) {
+  if (value is num && value.isFinite) {
     return value.toInt();
   }
   return 0;
@@ -5305,14 +5421,6 @@ Color _colorForPost(String postId) {
   }
   return colors[postId.codeUnits.fold<int>(0, (sum, unit) => sum + unit) %
       colors.length];
-}
-
-void _showDummySnack(BuildContext context, String message) {
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-    );
 }
 
 abstract final class _CircleColors {

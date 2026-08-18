@@ -109,18 +109,24 @@ class OpenRouteService {
       throw const OpenRouteServiceException('No route found.');
     }
 
-    final feature = features.first as Map?;
-    if (feature == null) {
+    final rawFeature = features.first;
+    if (rawFeature is! Map) {
       throw const OpenRouteServiceException('Invalid route feature.');
     }
+    final feature = Map<Object?, Object?>.from(rawFeature);
 
-    final properties = feature['properties'] as Map?;
-    if (properties == null) {
+    final rawProperties = feature['properties'];
+    if (rawProperties is! Map) {
       throw const OpenRouteServiceException('Missing route properties.');
     }
+    final properties = Map<Object?, Object?>.from(rawProperties);
 
-    final summary = properties['summary'] as Map?;
-    final segments = properties['segments'] as List?;
+    final summary = properties['summary'] is Map
+        ? Map<Object?, Object?>.from(properties['summary'] as Map)
+        : null;
+    final segments = properties['segments'] is List
+        ? properties['segments'] as List
+        : null;
 
     int distanceMeters;
     double durationSeconds;
@@ -130,11 +136,15 @@ class OpenRouteService {
       distanceMeters = _numValue(summary['distance']).toInt();
       durationSeconds = _numValue(summary['duration']);
     } else if (segments != null && segments.isNotEmpty) {
-      final seg = segments.first as Map;
+      final rawSegment = segments.first;
+      if (rawSegment is! Map) {
+        throw const OpenRouteServiceException('Invalid route segment.');
+      }
+      final seg = Map<Object?, Object?>.from(rawSegment);
       distanceMeters = _numValue(seg['distance']).toInt();
       durationSeconds = _numValue(seg['duration']);
       final ascent = seg['ascent'];
-      if (ascent is num) {
+      if (ascent is num && ascent.isFinite) {
         ascentMeters = ascent.toDouble();
       }
     } else {
@@ -149,10 +159,11 @@ class OpenRouteService {
       );
     }
 
-    final geometry = feature['geometry'] as Map?;
-    if (geometry == null) {
+    final rawGeometry = feature['geometry'];
+    if (rawGeometry is! Map) {
       throw const OpenRouteServiceException('Missing route geometry.');
     }
+    final geometry = Map<Object?, Object?>.from(rawGeometry);
 
     final coordinatesRaw = geometry['coordinates'];
     final coordinates = <List<double>>[];
@@ -163,23 +174,24 @@ class OpenRouteService {
           if (raw is List && raw.length >= 2) {
             final lon = _numValue(raw[0]);
             final lat = _numValue(raw[1]);
-            coordinates.add([lon, lat]);
+            if (lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90) {
+              coordinates.add([lon, lat]);
+            }
           }
         }
       }
     }
 
     if (coordinates.length < 2) {
-      throw const OpenRouteServiceException(
-        'Route path has too few points.',
-      );
+      throw const OpenRouteServiceException('Route path has too few points.');
     }
 
-    if (ascentMeters <= 0 && segments == null) {
-      if (segments != null && segments.isNotEmpty) {
-        final seg = segments.first as Map;
+    if (ascentMeters <= 0 && segments != null && segments.isNotEmpty) {
+      final rawSegment = segments.first;
+      if (rawSegment is Map) {
+        final seg = Map<Object?, Object?>.from(rawSegment);
         final ascent = seg['ascent'];
-        if (ascent is num) {
+        if (ascent is num && ascent.isFinite) {
           ascentMeters = ascent.toDouble();
         }
       }
@@ -194,7 +206,7 @@ class OpenRouteService {
   }
 
   double _numValue(dynamic value) {
-    if (value is num) return value.toDouble();
+    if (value is num && value.isFinite) return value.toDouble();
     return 0.0;
   }
 }

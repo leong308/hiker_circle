@@ -124,11 +124,23 @@ class MapScaleBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const targetWidth = 72.0;
-    final metersPerPixel = 156543.03392 *
-        math.cos(latitude * math.pi / 180).abs() /
-        math.pow(2, zoom);
+    final safeLatitude = latitude.isFinite
+        ? latitude.clamp(-85.0, 85.0).toDouble()
+        : 0.0;
+    final safeZoom = zoom.isFinite ? zoom.clamp(0.0, 30.0).toDouble() : 13.5;
+    final calculatedMetersPerPixel =
+        156543.03392 *
+        math.cos(safeLatitude * math.pi / 180).abs() /
+        math.pow(2, safeZoom);
+    final metersPerPixel =
+        calculatedMetersPerPixel.isFinite && calculatedMetersPerPixel > 0
+        ? calculatedMetersPerPixel
+        : 1.0;
     final distanceMeters = _niceDistance(targetWidth * metersPerPixel);
-    final width = (distanceMeters / metersPerPixel).clamp(34.0, 92.0);
+    final calculatedWidth = distanceMeters / metersPerPixel;
+    final width = calculatedWidth.isFinite
+        ? calculatedWidth.clamp(34.0, 92.0).toDouble()
+        : targetWidth;
 
     final surface = Theme.of(context).colorScheme.surfaceContainer;
     final onSurface = Theme.of(context).colorScheme.onSurface;
@@ -175,10 +187,23 @@ class MapScaleBar extends StatelessWidget {
 
   double _niceDistance(double rawMeters) {
     const distances = [
-      1000000.0, 500000.0, 200000.0, 100000.0,
-      50000.0, 20000.0, 10000.0, 5000.0,
-      2000.0, 1000.0, 500.0, 200.0,
-      100.0, 50.0, 20.0, 10.0, 5.0,
+      1000000.0,
+      500000.0,
+      200000.0,
+      100000.0,
+      50000.0,
+      20000.0,
+      10000.0,
+      5000.0,
+      2000.0,
+      1000.0,
+      500.0,
+      200.0,
+      100.0,
+      50.0,
+      20.0,
+      10.0,
+      5.0,
     ];
 
     for (final distance in distances) {

@@ -1,0 +1,29 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "trails",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isVerifiedTrail", "order": "DESCENDING" },
+        { "fieldPath": "ratingAverage", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "groupChats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participantPhones", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAtLocal", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "communityPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visibility", "order": "ASCENDING" },
+        { "fieldPath": "createdAtLocal", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

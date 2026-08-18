@@ -347,7 +347,7 @@ class _AdminPageState extends State<AdminPage> {
         'teams',
         'teamHikeSessions',
         'fcmOutbox',
-        'whatsAppMessageLogs',
+        'sosWhatsAppDispatches',
         'achievements',
         'userAchievements',
         'networkObservations',
@@ -3072,7 +3072,9 @@ String _stringFrom(Object? value) {
 }
 
 int _intFrom(Object? value) {
-  return value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+  return value is num && value.isFinite
+      ? value.toInt()
+      : int.tryParse('$value') ?? 0;
 }
 
 abstract final class _AdminColors {

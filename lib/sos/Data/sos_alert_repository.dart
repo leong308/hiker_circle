@@ -4,11 +4,11 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
+import '../../app/Data/app_settings_controller.dart';
 import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../authentication/Data/green_api_client.dart';
-import '../../authentication/Data/green_api_config.dart';
 import '../../authentication/Data/phone_number_formatter.dart';
 import '../../core/services/network_reachability_service.dart';
 import '../Model/sos_models.dart';
@@ -37,8 +37,8 @@ class SosQueueFlushResult {
 }
 
 class SosAlertRepository {
-  static const int _maxImmediateSendAttempts = 3;
-  static const Duration _sendAttemptTimeout = Duration(seconds: 4);
+  static const int _maxImmediateSendAttempts = 2;
+  static const Duration _sendAttemptTimeout = Duration(seconds: 15);
   static const Duration _cloudWriteTimeout = Duration(seconds: 5);
 
   SosAlertRepository({
@@ -48,8 +48,7 @@ class SosAlertRepository {
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
-       _greenApiClient =
-           greenApiClient ?? GreenApiClient(config: const GreenApiConfig()),
+       _greenApiClient = greenApiClient ?? GreenApiClient(),
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
@@ -67,10 +66,6 @@ class SosAlertRepository {
 
   CollectionReference<Map<String, dynamic>> get _sosAlerts {
     return _resolvedFirestore.collection('sosAlerts');
-  }
-
-  CollectionReference<Map<String, dynamic>> get _whatsAppMessageLogs {
-    return _resolvedFirestore.collection('whatsAppMessageLogs');
   }
 
   Future<Map<SosAlertMode, String>> loadCustomWhatsAppNotes({
@@ -94,7 +89,9 @@ class SosAlertRepository {
         SosAlertMode.medical,
       ])
         if (notes[mode.firestoreValue] is String)
-          mode: notes[mode.firestoreValue] as String,
+          mode: _boundedCustomWhatsAppNote(
+            notes[mode.firestoreValue] as String,
+          ),
     };
   }
 
@@ -104,9 +101,24 @@ class SosAlertRepository {
     required String note,
   }) async {
     _throwIfFirebaseUnavailable();
+    if (!const {
+      SosAlertMode.manual,
+      SosAlertMode.duress,
+      SosAlertMode.medical,
+    }.contains(mode)) {
+      throw const SosAlertRepositoryException(
+        'Custom notes are not supported for this SOS mode.',
+      );
+    }
+    final normalizedNote = note.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalizedNote.length > 240) {
+      throw const SosAlertRepositoryException(
+        'The custom SOS note must be 240 characters or fewer.',
+      );
+    }
 
     await _userDocumentFor(session).set({
-      'sosWhatsappNotes': {mode.firestoreValue: note.trim()},
+      'sosWhatsappNotes': {mode.firestoreValue: normalizedNote},
       'sosWhatsappNotesUpdatedAt': FieldValue.serverTimestamp(),
       'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
           .toUtc()
@@ -150,7 +162,10 @@ class SosAlertRepository {
     required SosTriggerLocation? triggerLocation,
     required List<EmergencyContact> contacts,
     String? customMessageNote,
+    SosAlertTriggerSource? triggerSource,
   }) async {
+    final resolvedTriggerSource =
+        triggerSource ?? SosAlertTriggerSource.mobilePhone;
     final alertId = _alertIdFor(triggeredAt, mode);
     final message = SosAlertMessageComposer.compose(
       mode: mode,
@@ -158,7 +173,37 @@ class SosAlertRepository {
       triggeredAt: triggeredAt,
       triggerLocation: triggerLocation,
       customNote: customMessageNote,
+      triggerSource: resolvedTriggerSource,
+      preferredTimeZone: AppSettingsController.instance.preferredTimeZone,
     );
+
+    final pendingAlert = SosAlert(
+      id: alertId,
+      mode: mode,
+      status: SosAlertStatus.queued,
+      triggeredAt: triggeredAt,
+      triggeredByPhoneNumber: session.phoneNumber,
+      contactCount: contacts.length,
+      sentCount: 0,
+      failedCount: 0,
+      dispatches: const [],
+      message: message,
+      triggerLocation: triggerLocation,
+      triggerSource: resolvedTriggerSource,
+    );
+    int? durableQueueId;
+    try {
+      durableQueueId = await _queueAlertForRetry(
+        session: session,
+        alert: pendingAlert,
+        contacts: contacts,
+        dispatches: const [],
+        customMessageNote: customMessageNote,
+        failureReason: 'SOS contact dispatch is pending.',
+      );
+    } catch (_) {
+      // Emergency delivery still takes priority if local storage is unavailable.
+    }
 
     final dispatches = <SosContactDispatch>[];
     String? immediateQueueReason;
@@ -173,10 +218,34 @@ class SosAlertRepository {
             (contact) => _failedDispatch(contact, immediateQueueReason!),
           ),
         );
+        await _checkpointQueuedAlert(
+          queueId: durableQueueId,
+          alert: pendingAlert,
+          contacts: _contactsRequiringRetry(contacts, dispatches),
+          dispatches: dispatches,
+          customMessageNote: customMessageNote,
+          failureReason: immediateQueueReason,
+        );
       } else {
         for (final contact in contacts) {
           dispatches.add(
-            await _sendToContact(contact: contact, message: message),
+            await _sendToContact(
+              contact: contact,
+              alertId: alertId,
+              mode: mode,
+              triggeredAt: triggeredAt,
+              triggerLocation: triggerLocation,
+              customMessageNote: customMessageNote,
+              triggerSource: resolvedTriggerSource,
+            ),
+          );
+          await _checkpointQueuedAlert(
+            queueId: durableQueueId,
+            alert: pendingAlert,
+            contacts: _contactsRequiringRetry(contacts, dispatches),
+            dispatches: dispatches,
+            customMessageNote: customMessageNote,
+            failureReason: 'SOS contact dispatch is in progress.',
           );
         }
       }
@@ -202,46 +271,54 @@ class SosAlertRepository {
       dispatches: dispatches,
       message: message,
       triggerLocation: triggerLocation,
+      triggerSource: resolvedTriggerSource,
     );
 
-    var queuedForRetry = false;
+    Object? cloudSaveError;
     try {
       if (immediateQueueReason != null) {
         throw SosAlertRepositoryException(immediateQueueReason);
       }
       _throwIfFirebaseUnavailable();
-      await _saveWhatsAppMessageLogs(
-        session: session,
-        messageType: 'sos_alert',
-        sourceId: alertId,
-        mode: mode.firestoreValue,
-        message: message,
-        dispatches: dispatches,
-        sentAt: triggeredAt,
-      );
       await _saveAlert(session: session, alert: alert);
     } catch (error) {
-      queuedForRetry = true;
-      await _queueAlertForRetry(
-        session: session,
-        alert: alert,
-        contacts: _contactsRequiringRetry(contacts, dispatches),
-        dispatches: dispatches,
-        customMessageNote: customMessageNote,
-        failureReason: _queueFailureMessage(error),
-      );
+      cloudSaveError = error;
     }
 
-    if (!queuedForRetry && _shouldQueueDispatchRetry(status)) {
-      queuedForRetry = true;
-      await _queueAlertForRetry(
-        session: session,
-        alert: alert,
-        contacts: _contactsRequiringRetry(contacts, dispatches),
-        dispatches: dispatches,
-        customMessageNote: customMessageNote,
-        failureReason: 'One or more SOS contact dispatches failed.',
-      );
+    final contactsRequiringRetry = _contactsRequiringRetry(
+      contacts,
+      dispatches,
+    );
+    final queuedForRetry =
+        cloudSaveError != null ||
+        (_shouldQueueDispatchRetry(status) &&
+            contactsRequiringRetry.isNotEmpty);
+    if (queuedForRetry) {
+      final failureReason = cloudSaveError == null
+          ? 'One or more SOS contact dispatches failed.'
+          : _queueFailureMessage(cloudSaveError);
+      if (durableQueueId == null) {
+        durableQueueId = await _queueAlertForRetry(
+          session: session,
+          alert: alert,
+          contacts: contactsRequiringRetry,
+          dispatches: dispatches,
+          customMessageNote: customMessageNote,
+          failureReason: failureReason,
+        );
+      } else {
+        await _checkpointQueuedAlert(
+          queueId: durableQueueId,
+          alert: alert,
+          contacts: contactsRequiringRetry,
+          dispatches: dispatches,
+          customMessageNote: customMessageNote,
+          failureReason: failureReason,
+          sendStatus: 'retry',
+        );
+      }
+    } else if (durableQueueId != null) {
+      await _localDatabase.markQueuedAlertSent(durableQueueId);
     }
 
     final queuedCount = await countQueuedAlerts(session: session);
@@ -259,6 +336,61 @@ class SosAlertRepository {
     return _localDatabase.countQueuedAlerts(
       ownerPhoneNumber: session.phoneNumber,
     );
+  }
+
+  Future<List<SosQueuedDispatch>> loadQueuedDispatches({
+    required AppSession session,
+    int limit = 20,
+  }) async {
+    final queuedAlerts = await _localDatabase.loadQueuedAlerts(
+      ownerPhoneNumber: session.phoneNumber,
+      limit: limit,
+    );
+    return queuedAlerts
+        .map((queuedAlert) {
+          final payload = _queuedPayloadFrom(queuedAlert.payloadJson);
+          final contacts = _contactsFromPayload(payload['contacts']);
+          final triggerLocation = _triggerLocationFromPayload(
+            payload['triggerLocation'],
+            fallbackLatitude: queuedAlert.triggerLatitude,
+            fallbackLongitude: queuedAlert.triggerLongitude,
+          );
+          final rawTriggeredAt = payload['triggeredAtLocal'];
+          final triggeredAt =
+              (rawTriggeredAt is String
+                  ? DateTime.tryParse(rawTriggeredAt)
+                  : null) ??
+              queuedAlert.triggerTime;
+          final contactCount = switch (payload['contactCount']) {
+            final num value when value.isFinite && value >= 0 => value.toInt(),
+            _ => contacts.length,
+          };
+          final payloadError = payload['lastFailure'];
+          return SosQueuedDispatch(
+            id: queuedAlert.id,
+            mode: _modeFromFirestoreValue(
+              payload['mode'] is String
+                  ? payload['mode'] as String
+                  : queuedAlert.alertType,
+            ),
+            triggeredAt: triggeredAt,
+            createdAt: queuedAlert.createdAt,
+            sendStatus: queuedAlert.sendStatus,
+            retryCount: queuedAlert.retryCount,
+            contactCount: contactCount,
+            pendingContactCount: contacts.length,
+            lastError: queuedAlert.lastError.trim().isNotEmpty
+                ? queuedAlert.lastError.trim()
+                : payloadError is String
+                ? payloadError.trim()
+                : '',
+            message: payload['message'] is String
+                ? (payload['message'] as String).trim()
+                : '',
+            triggerLocation: triggerLocation,
+          );
+        })
+        .toList(growable: false);
   }
 
   Future<SosQueueFlushResult> flushQueuedAlerts({
@@ -305,6 +437,9 @@ class SosAlertRepository {
           fallbackLatitude: queuedAlert.triggerLatitude,
           fallbackLongitude: queuedAlert.triggerLongitude,
         );
+        final triggerSource = SosAlertTriggerSource.fromFirestore(
+          payload['triggerSource'],
+        );
         final message =
             payload['message'] as String? ??
             SosAlertMessageComposer.compose(
@@ -313,10 +448,15 @@ class SosAlertRepository {
               triggeredAt: triggeredAt,
               triggerLocation: triggerLocation,
               customNote: payload['customMessageNote'] as String?,
+              triggerSource: triggerSource,
+              preferredTimeZone:
+                  AppSettingsController.instance.preferredTimeZone,
             );
         final previousDispatches = _dispatchesFromPayload(
           payload['dispatches'],
         );
+        final alertId =
+            payload['alertId'] as String? ?? _alertIdFor(triggeredAt, mode);
         final contactsForRetry = _contactsFromPayload(payload['contacts']);
         final retryContacts =
             contactsForRetry.isEmpty && previousDispatches.isEmpty
@@ -341,7 +481,15 @@ class SosAlertRepository {
         } else {
           for (final contact in retryContacts) {
             retryDispatches.add(
-              await _sendToContact(contact: contact, message: message),
+              await _sendToContact(
+                contact: contact,
+                alertId: alertId,
+                mode: mode,
+                triggeredAt: triggeredAt,
+                triggerLocation: triggerLocation,
+                customMessageNote: payload['customMessageNote'] as String?,
+                triggerSource: triggerSource,
+              ),
             );
           }
         }
@@ -354,42 +502,44 @@ class SosAlertRepository {
             .where((dispatch) => dispatch.wasSent)
             .length;
         final latestFailedCount = allDispatches.length - latestSentCount;
-        final alert = SosAlert(
-          id: payload['alertId'] as String? ?? _alertIdFor(triggeredAt, mode),
-          mode: mode,
-          status: _statusFor(
-            contactCount: contactUniverse.isEmpty
+        final originalContactCount = switch (payload['contactCount']) {
+          final num value when value.isFinite && value >= 0 => value.toInt(),
+          _ =>
+            contactUniverse.isEmpty
                 ? allDispatches.length
                 : contactUniverse.length,
+        };
+        final alert = SosAlert(
+          id: alertId,
+          mode: mode,
+          status: _statusFor(
+            contactCount: originalContactCount,
             sentCount: latestSentCount,
             failedCount: latestFailedCount,
           ),
           triggeredAt: triggeredAt,
           triggeredByPhoneNumber: session.phoneNumber,
-          contactCount: contactUniverse.isEmpty
-              ? allDispatches.length
-              : contactUniverse.length,
+          contactCount: originalContactCount,
           sentCount: latestSentCount,
           failedCount: latestFailedCount,
           dispatches: allDispatches,
           message: message,
           triggerLocation: triggerLocation,
+          triggerSource: triggerSource,
         );
 
-        await _saveWhatsAppMessageLogs(
-          session: session,
-          messageType: 'sos_alert_retry',
-          sourceId: '${alert.id}_retry_${queuedAlert.id}',
-          mode: mode.firestoreValue,
-          message: message,
-          dispatches: retryDispatches,
-          sentAt: DateTime.now().toUtc(),
-        );
         await _saveAlert(session: session, alert: alert);
 
-        if (alert.status == SosAlertStatus.sent) {
+        final remainingRetryContacts = _contactsRequiringRetry(
+          contactUniverse,
+          allDispatches,
+        );
+        if (alert.status == SosAlertStatus.sent ||
+            remainingRetryContacts.isEmpty) {
           await _localDatabase.markQueuedAlertSent(queuedAlert.id);
-          sent += 1;
+          if (alert.status == SosAlertStatus.sent) {
+            sent += 1;
+          }
         } else {
           await _localDatabase.updateQueuedAlertRetry(
             id: queuedAlert.id,
@@ -398,10 +548,9 @@ class SosAlertRepository {
               'dispatches': allDispatches
                   .map((dispatch) => dispatch.toFirestore())
                   .toList(),
-              'contacts': _contactsRequiringRetry(
-                contactUniverse,
-                allDispatches,
-              ).map((contact) => contact.toFirestore()).toList(),
+              'contacts': remainingRetryContacts
+                  .map((contact) => contact.toFirestore())
+                  .toList(),
               'lastFailure': 'SOS retry is still not fully sent.',
             }),
             lastError: 'SOS retry is still not fully sent.',
@@ -430,28 +579,21 @@ class SosAlertRepository {
     _throwIfFirebaseUnavailable();
 
     final sentAt = DateTime.now().toUtc();
-    final message = [
-      'HikerCircle cloud messaging TEST',
-      'Hiker: ${session.phoneNumber}',
-      'Sent: ${sentAt.toIso8601String()}',
-      'This is NOT an emergency or SOS alert.',
-      'The hiker is testing cloud messaging during pre-hike preparation so emergency contacts can receive real alerts later.',
-      'No action is required.',
-    ].join('\n');
+    final testDispatchId = 'sos_test_${sentAt.microsecondsSinceEpoch}';
     final dispatches = <SosContactDispatch>[];
     for (final contact in contacts) {
-      dispatches.add(await _sendToContact(contact: contact, message: message));
+      dispatches.add(
+        await _sendToContact(
+          contact: contact,
+          alertId: testDispatchId,
+          mode: SosAlertMode.manual,
+          triggeredAt: sentAt,
+          triggerLocation: null,
+          triggerSource: SosAlertTriggerSource.mobilePhone,
+          isTest: true,
+        ),
+      );
     }
-    await _saveWhatsAppMessageLogs(
-      session: session,
-      messageType: 'sos_test',
-      sourceId: 'sos_test_${sentAt.microsecondsSinceEpoch}',
-      mode: 'test',
-      message: message,
-      dispatches: dispatches,
-      sentAt: sentAt,
-    );
-
     await _userDocumentFor(session).set({
       'latest_sos_messaging_test': {
         'sentAtLocal': sentAt.toIso8601String(),
@@ -468,7 +610,7 @@ class SosAlertRepository {
     return dispatches;
   }
 
-  Future<void> _queueAlertForRetry({
+  Future<int> _queueAlertForRetry({
     required AppSession session,
     required SosAlert alert,
     required List<EmergencyContact> contacts,
@@ -477,30 +619,85 @@ class SosAlertRepository {
     required String failureReason,
   }) async {
     final triggerLocation = alert.triggerLocation;
-    await _localDatabase.insertQueuedAlert(
+    return _localDatabase.insertQueuedAlert(
       ownerPhoneNumber: session.phoneNumber,
       sessionId:
           'sos_${FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber)}',
       alertType: alert.mode.firestoreValue,
       triggerLatitude: triggerLocation?.latitude ?? 0,
       triggerLongitude: triggerLocation?.longitude ?? 0,
-      payloadJson: jsonEncode({
-        'schemaVersion': 1,
-        'alertId': alert.id,
-        'mode': alert.mode.firestoreValue,
-        'triggeredAtLocal': alert.triggeredAt.toUtc().toIso8601String(),
-        'phoneNumber': session.phoneNumber,
-        'message': alert.message,
-        if (triggerLocation != null)
-          'triggerLocation': triggerLocation.toFirestore(),
-        if (customMessageNote != null) 'customMessageNote': customMessageNote,
-        'contacts': contacts.map((contact) => contact.toFirestore()).toList(),
-        'dispatches': dispatches
-            .map((dispatch) => dispatch.toFirestore())
-            .toList(),
-        'lastFailure': failureReason,
-      }),
+      payloadJson: jsonEncode(
+        _queuedAlertPayload(
+          session: session,
+          alert: alert,
+          contacts: contacts,
+          dispatches: dispatches,
+          customMessageNote: customMessageNote,
+          failureReason: failureReason,
+        ),
+      ),
     );
+  }
+
+  Future<void> _checkpointQueuedAlert({
+    required int? queueId,
+    required SosAlert alert,
+    required List<EmergencyContact> contacts,
+    required List<SosContactDispatch> dispatches,
+    required String? customMessageNote,
+    required String failureReason,
+    String sendStatus = 'queued',
+  }) async {
+    if (queueId == null) return;
+    try {
+      await _localDatabase.updateQueuedAlertPayload(
+        id: queueId,
+        sendStatus: sendStatus,
+        payloadJson: jsonEncode(
+          _queuedAlertPayload(
+            sessionPhoneNumber: alert.triggeredByPhoneNumber,
+            alert: alert,
+            contacts: contacts,
+            dispatches: dispatches,
+            customMessageNote: customMessageNote,
+            failureReason: failureReason,
+          ),
+        ),
+        lastError: failureReason,
+      );
+    } catch (_) {
+      // Continue contacting the remaining recipients even if checkpointing fails.
+    }
+  }
+
+  Map<String, dynamic> _queuedAlertPayload({
+    AppSession? session,
+    String? sessionPhoneNumber,
+    required SosAlert alert,
+    required List<EmergencyContact> contacts,
+    required List<SosContactDispatch> dispatches,
+    required String? customMessageNote,
+    required String failureReason,
+  }) {
+    final triggerLocation = alert.triggerLocation;
+    return {
+      'schemaVersion': 3,
+      'alertId': alert.id,
+      'mode': alert.mode.firestoreValue,
+      'triggerSource': alert.triggerSource.firestoreValue,
+      'triggeredAtLocal': alert.triggeredAt.toUtc().toIso8601String(),
+      'phoneNumber': session?.phoneNumber ?? sessionPhoneNumber ?? '',
+      'message': alert.message,
+      'contactCount': alert.contactCount,
+      if (triggerLocation != null)
+        'triggerLocation': triggerLocation.toFirestore(),
+      if (customMessageNote != null) 'customMessageNote': customMessageNote,
+      'contacts': contacts.map((contact) => contact.toFirestore()).toList(),
+      'dispatches': dispatches
+          .map((dispatch) => dispatch.toFirestore())
+          .toList(),
+      'lastFailure': failureReason,
+    };
   }
 
   Map<String, dynamic> _queuedPayloadFrom(String payloadJson) {
@@ -559,17 +756,23 @@ class SosAlertRepository {
     if (contacts.isEmpty) {
       return const [];
     }
-    final successfulPhoneKeys = dispatches
-        .where((dispatch) => dispatch.wasSent)
-        .map((dispatch) => PhoneNumberFormatter.normalize(dispatch.phoneNumber))
-        .map((phone) => phone.replaceAll(RegExp(r'[^0-9A-Za-z]+'), ''))
-        .where((phone) => phone.isNotEmpty)
-        .toSet();
+    final latestByPhone = <String, SosContactDispatch>{};
+    for (final dispatch in dispatches) {
+      final key = PhoneNumberFormatter.normalize(
+        dispatch.phoneNumber,
+      ).replaceAll(RegExp(r'[^0-9A-Za-z]+'), '');
+      if (key.isNotEmpty) {
+        latestByPhone[key] = dispatch;
+      }
+    }
     return contacts.where((contact) {
       final key = PhoneNumberFormatter.normalize(
         contact.phoneNumber,
       ).replaceAll(RegExp(r'[^0-9A-Za-z]+'), '');
-      return key.isEmpty || !successfulPhoneKeys.contains(key);
+      final latest = latestByPhone[key];
+      return key.isEmpty ||
+          latest == null ||
+          (!latest.wasSent && latest.retryable);
     }).toList();
   }
 
@@ -603,6 +806,7 @@ class SosAlertRepository {
       dispatches: alert.dispatches,
       message: alert.message,
       triggerLocation: alert.triggerLocation,
+      triggerSource: alert.triggerSource,
     );
   }
 
@@ -616,8 +820,14 @@ class SosAlertRepository {
     if (error is SosAlertRepositoryException) {
       return error.message;
     }
+    if (error is GreenApiException) {
+      return error.message;
+    }
     if (error is FirebaseException) {
       return error.message ?? error.code;
+    }
+    if (error is String && error.trim().isNotEmpty) {
+      return error.trim();
     }
     return 'SOS alert could not be fully sent.';
   }
@@ -638,7 +848,13 @@ class SosAlertRepository {
 
   Future<SosContactDispatch> _sendToContact({
     required EmergencyContact contact,
-    required String message,
+    required String alertId,
+    required SosAlertMode mode,
+    required DateTime triggeredAt,
+    required SosTriggerLocation? triggerLocation,
+    required SosAlertTriggerSource triggerSource,
+    String? customMessageNote,
+    bool isTest = false,
   }) async {
     final normalizedPhoneNumber = PhoneNumberFormatter.normalize(
       contact.phoneNumber,
@@ -649,33 +865,55 @@ class SosAlertRepository {
         contactName: contact.name,
         phoneNumber: contact.phoneNumber,
         wasSent: false,
+        retryable: false,
         errorMessage: 'Invalid phone number',
       );
     }
 
     Object? lastError;
+    var retryable = true;
     for (var attempt = 1; attempt <= _maxImmediateSendAttempts; attempt++) {
       try {
-        await _greenApiClient
+        final dispatchId = _dispatchIdFor(alertId, normalizedPhoneNumber);
+        final result = await _greenApiClient
             .sendMessage(
               chatId: PhoneNumberFormatter.toWhatsAppChatId(
                 normalizedPhoneNumber,
               ),
-              message: message,
+              dispatchId: dispatchId,
+              mode: isTest ? 'test' : mode.firestoreValue,
+              triggeredAt: triggeredAt,
+              latitude: triggerLocation?.latitude,
+              longitude: triggerLocation?.longitude,
+              accuracyMeters: triggerLocation?.accuracyMeters,
+              customNote: customMessageNote,
+              triggerSource: triggerSource.firestoreValue,
+              isTest: isTest,
             )
             .timeout(_sendAttemptTimeout);
 
-        return SosContactDispatch(
-          contactName: contact.name,
-          phoneNumber: normalizedPhoneNumber,
-          wasSent: true,
-        );
-      } on GreenApiConfigException catch (error) {
-        return _failedDispatch(contact, error.message);
+        if (result.wasSent) {
+          return SosContactDispatch(
+            contactName: contact.name,
+            phoneNumber: normalizedPhoneNumber,
+            wasSent: true,
+            retryable: false,
+            providerMessageId: result.providerMessageId,
+          );
+        }
+        retryable = result.retryable;
+        lastError = result.message ?? 'Emergency message was not confirmed.';
+        if (!retryable || result.deliveryUncertain) {
+          break;
+        }
       } on TimeoutException catch (error) {
         lastError = error;
       } on GreenApiException catch (error) {
         lastError = error;
+        retryable = error.retryable;
+        if (!retryable) {
+          break;
+        }
       } catch (error) {
         lastError = error;
       }
@@ -687,11 +925,18 @@ class SosAlertRepository {
 
     return _failedDispatch(
       contact,
-      'Unable to send WhatsApp message after $_maxImmediateSendAttempts retries. ${_queueFailureMessage(lastError ?? Object())}',
+      retryable
+          ? 'Unable to confirm WhatsApp delivery after $_maxImmediateSendAttempts attempts. ${_queueFailureMessage(lastError ?? Object())}'
+          : _queueFailureMessage(lastError ?? Object()),
+      retryable: retryable,
     );
   }
 
-  SosContactDispatch _failedDispatch(EmergencyContact contact, String message) {
+  SosContactDispatch _failedDispatch(
+    EmergencyContact contact,
+    String message, {
+    bool retryable = true,
+  }) {
     final normalizedPhoneNumber = PhoneNumberFormatter.normalize(
       contact.phoneNumber,
     );
@@ -701,8 +946,16 @@ class SosAlertRepository {
           ? contact.phoneNumber
           : normalizedPhoneNumber,
       wasSent: false,
+      retryable: retryable,
       errorMessage: message,
     );
+  }
+
+  String _dispatchIdFor(String alertId, String phoneNumber) {
+    final safeAlert = alertId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    final phoneDigits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    final raw = '${safeAlert}_$phoneDigits';
+    return raw.length <= 180 ? raw : raw.substring(0, 180);
   }
 
   Future<void> _saveAlert({
@@ -741,47 +994,6 @@ class SosAlertRepository {
     }
   }
 
-  Future<void> _saveWhatsAppMessageLogs({
-    required AppSession session,
-    required String messageType,
-    required String sourceId,
-    required String mode,
-    required String message,
-    required List<SosContactDispatch> dispatches,
-    required DateTime sentAt,
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable || dispatches.isEmpty) {
-      return;
-    }
-
-    final batch = _resolvedFirestore.batch();
-    for (var index = 0; index < dispatches.length; index++) {
-      final dispatch = dispatches[index];
-      final document = _whatsAppMessageLogs.doc(
-        '${sourceId}_${index}_${dispatch.phoneNumber.replaceAll(RegExp(r'[^0-9A-Za-z]+'), '_')}',
-      );
-      batch.set(document, {
-        'messageLogId': document.id,
-        'messageType': messageType,
-        'sourceId': sourceId,
-        'mode': mode,
-        'userId': FirebaseUserRepository.documentIdForPhoneNumber(
-          session.phoneNumber,
-        ),
-        'senderPhoneNumber': session.phoneNumber,
-        'contactName': dispatch.contactName,
-        'recipientPhoneNumber': dispatch.phoneNumber,
-        'wasSent': dispatch.wasSent,
-        if (dispatch.errorMessage != null)
-          'errorMessage': dispatch.errorMessage,
-        'message': message,
-        'sentAt': FieldValue.serverTimestamp(),
-        'sentAtLocal': sentAt.toUtc().toIso8601String(),
-      }, SetOptions(merge: true));
-    }
-    await batch.commit().timeout(_cloudWriteTimeout);
-  }
-
   DocumentReference<Map<String, dynamic>> _userDocumentFor(AppSession session) {
     return _users.doc(
       FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber),
@@ -812,6 +1024,11 @@ class SosAlertRepository {
       }
     }
     return SosAlertMode.manual;
+  }
+
+  String _boundedCustomWhatsAppNote(String value) {
+    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return normalized.length <= 240 ? normalized : normalized.substring(0, 240);
   }
 
   String _alertIdFor(DateTime triggeredAt, SosAlertMode mode) {

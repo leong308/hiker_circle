@@ -53,6 +53,8 @@
 	<string>HikerCircle uses contacts only when you choose SOS emergency contacts from your phone address book.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>HikerCircle uses your location for trail context, nearby safety updates, and SOS location sharing while you use the app.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>HikerCircle requests location for active-hike tracking and paired SOS location handoff. Background delivery is best effort and can pause if iOS suspends or force-quits the app.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>HikerCircle uses motion sensors during active hikes to detect a possible fall followed by stillness and start a cancellable SOS countdown.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -63,8 +65,10 @@
 	<string>LaunchScreen</string>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
+		<string>location</string>
 	</array>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>

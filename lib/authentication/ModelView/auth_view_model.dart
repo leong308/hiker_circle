@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/Data/firebase_app_check_guard.dart';
 import '../../app/Model/app_session.dart';
 import '../Data/phone_number_formatter.dart';
 import '../Model/auth_status.dart';
@@ -11,21 +12,24 @@ class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
     FirebaseAuth? firebaseAuth,
     FirebaseFunctions? firebaseFunctions,
+    FirebaseAppCheckGuard? appCheckGuard,
     Future<void> Function(AppSession session)? onAutomaticallyVerified,
   }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
        _firebaseFunctions = firebaseFunctions ?? FirebaseFunctions.instance,
+       _appCheckGuard = appCheckGuard ?? FirebaseAppCheckGuard(),
        _onAutomaticallyVerified = onAutomaticallyVerified;
 
   final FirebaseAuth _firebaseAuth;
   final FirebaseFunctions _firebaseFunctions;
+  final FirebaseAppCheckGuard _appCheckGuard;
   final Future<void> Function(AppSession session)? _onAutomaticallyVerified;
 
   AuthMode _authMode = AuthMode.signUp;
   AuthStatus _status = AuthStatus.enteringPhone;
-  String? _normalizedPhoneNumber;
   String? _greenApiChallengeId;
   String? _message;
   String? _error;
+  bool _isDisposed = false;
 
   AuthMode get authMode => _authMode;
   AuthStatus get status => _status;
@@ -61,11 +65,11 @@ class AuthViewModel extends ChangeNotifier {
     _status = AuthStatus.sendingCode;
     _message = 'Sending a verification code through WhatsApp...';
     _error = null;
-    _normalizedPhoneNumber = normalized;
     _greenApiChallengeId = null;
     notifyListeners();
 
     try {
+      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('sendGreenApiLoginCode')
           .call(<String, Object?>{'phoneNumber': normalized});
@@ -102,6 +106,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('verifyGreenApiLoginCode')
           .call(<String, Object?>{
@@ -150,8 +155,6 @@ class AuthViewModel extends ChangeNotifier {
     String password,
   ) async {
     final normalized = PhoneNumberFormatter.normalize(phoneNumber);
-    _normalizedPhoneNumber = normalized;
-
     _status = AuthStatus.loggingIn;
     _message = 'Signing in...';
     _error = null;
@@ -217,13 +220,13 @@ class AuthViewModel extends ChangeNotifier {
 
   Future<void> sendPasswordResetCode(String phoneNumber) async {
     final normalized = PhoneNumberFormatter.normalize(phoneNumber);
-    _normalizedPhoneNumber = normalized;
     _message = 'Sending a verification code through WhatsApp...';
     _error = null;
     _resetChallengeId = null;
     notifyListeners();
 
     try {
+      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('sendPasswordResetCode')
           .call(<String, Object?>{'phoneNumber': normalized});
@@ -260,9 +263,9 @@ class AuthViewModel extends ChangeNotifier {
       final response = await _firebaseFunctions
           .httpsCallable('verifyPasswordResetOtp')
           .call(<String, Object?>{
-        'challengeId': challengeId,
-        'code': code.trim(),
-      });
+            'challengeId': challengeId,
+            'code': code.trim(),
+          });
       final data = response.data;
       if (data is! Map || data['resetToken'] is! String) {
         throw FirebaseFunctionsException(
@@ -299,12 +302,9 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _firebaseFunctions
-          .httpsCallable('checkSafetyAnswer')
-          .call(<String, Object?>{
-        'resetToken': token,
-        'answer': answer,
-      });
+      await _firebaseFunctions.httpsCallable('checkSafetyAnswer').call(
+        <String, Object?>{'resetToken': token, 'answer': answer},
+      );
       return true;
     } catch (error) {
       _message = null;
@@ -327,13 +327,13 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _firebaseFunctions
-          .httpsCallable('resetPassword')
-          .call(<String, Object?>{
-        'resetToken': token,
-        'answer': answer,
-        'newPassword': newPassword,
-      });
+      await _firebaseFunctions.httpsCallable('resetPassword').call(
+        <String, Object?>{
+          'resetToken': token,
+          'answer': answer,
+          'newPassword': newPassword,
+        },
+      );
       _message = 'Password has been reset. You can now sign in.';
       _error = null;
       notifyListeners();
@@ -364,6 +364,9 @@ class AuthViewModel extends ChangeNotifier {
   }
 
   String _friendlyFunctionsError(Object error) {
+    if (error is FirebaseAppCheckUnavailable) {
+      return error.toString();
+    }
     if (error is FirebaseFunctionsException) {
       return error.message ?? _codeMessage(error.code);
     }
@@ -377,7 +380,10 @@ class AuthViewModel extends ChangeNotifier {
   }
 
   String _codeMessage(String code) {
-    final normalizedCode = code.toLowerCase().replaceAll('_', '-').replaceAll(' ', '-');
+    final normalizedCode = code
+        .toLowerCase()
+        .replaceAll('_', '-')
+        .replaceAll(' ', '-');
     switch (normalizedCode) {
       case 'not-found':
         return 'No account found with this phone number. Please sign up first.';
@@ -402,5 +408,18 @@ class AuthViewModel extends ChangeNotifier {
       default:
         return 'Operation failed. Please try again.';
     }
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_isDisposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
   }
 }

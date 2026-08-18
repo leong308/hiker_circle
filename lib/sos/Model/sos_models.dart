@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../app/Model/preferred_time_zone.dart';
+
 class SosDashboard {
   const SosDashboard({
     required this.contactsReady,
@@ -152,6 +154,23 @@ enum SosAlertMode {
   }
 }
 
+enum SosAlertTriggerSource {
+  mobilePhone('mobile_phone'),
+  emergencyButton('emergency_button'),
+  automaticDetection('automatic_detection');
+
+  const SosAlertTriggerSource(this.firestoreValue);
+
+  final String firestoreValue;
+
+  static SosAlertTriggerSource fromFirestore(Object? value) {
+    return SosAlertTriggerSource.values.firstWhere(
+      (source) => source.firestoreValue == value,
+      orElse: () => SosAlertTriggerSource.mobilePhone,
+    );
+  }
+}
+
 enum SosAlertStatus {
   sent,
   partial,
@@ -195,7 +214,9 @@ class SosContactDispatch {
     required this.contactName,
     required this.phoneNumber,
     required this.wasSent,
+    this.retryable = true,
     this.errorMessage,
+    this.providerMessageId,
   });
 
   factory SosContactDispatch.fromFirestore(Map<String, dynamic> data) {
@@ -203,8 +224,12 @@ class SosContactDispatch {
       contactName: _stringFrom(data['contactName']),
       phoneNumber: _stringFrom(data['phoneNumber']),
       wasSent: data['wasSent'] == true,
+      retryable: data['retryable'] != false,
       errorMessage: data['errorMessage'] is String
           ? data['errorMessage'] as String
+          : null,
+      providerMessageId: data['providerMessageId'] is String
+          ? data['providerMessageId'] as String
           : null,
     );
   }
@@ -212,14 +237,19 @@ class SosContactDispatch {
   final String contactName;
   final String phoneNumber;
   final bool wasSent;
+  final bool retryable;
   final String? errorMessage;
+  final String? providerMessageId;
 
   Map<String, dynamic> toFirestore() {
     return {
       'contactName': contactName,
       'phoneNumber': phoneNumber,
       'wasSent': wasSent,
+      'retryable': retryable,
       if (errorMessage case final errorMessage?) 'errorMessage': errorMessage,
+      if (providerMessageId case final providerMessageId?)
+        'providerMessageId': providerMessageId,
     };
   }
 
@@ -240,40 +270,23 @@ class SosTriggerLocation {
   });
 
   factory SosTriggerLocation.fromPlatform(Map<Object?, Object?> data) {
-    final latitude = data['latitude'];
-    final longitude = data['longitude'];
-    final accuracyMeters = data['accuracyMeters'];
-    final capturedAtLocal = data['capturedAtLocal'];
-    final capturedAtMillis = data['capturedAtMillis'];
-
     return SosTriggerLocation(
-      latitude: latitude is num ? latitude.toDouble() : 0,
-      longitude: longitude is num ? longitude.toDouble() : 0,
-      accuracyMeters: accuracyMeters is num ? accuracyMeters.toDouble() : null,
-      capturedAt: capturedAtMillis is num
-          ? DateTime.fromMillisecondsSinceEpoch(
-              capturedAtMillis.toInt(),
-              isUtc: true,
-            )
-          : capturedAtLocal is String
-          ? DateTime.tryParse(capturedAtLocal)
-          : null,
+      latitude: _coordinateFrom(data['latitude']) ?? double.nan,
+      longitude: _coordinateFrom(data['longitude']) ?? double.nan,
+      accuracyMeters: _accuracyFrom(data['accuracyMeters']),
+      capturedAt: _dateFrom(
+        localValue: data['capturedAtLocal'],
+        millisValue: data['capturedAtMillis'],
+      ),
     );
   }
 
   factory SosTriggerLocation.fromFirestore(Map<String, dynamic> data) {
-    final capturedAt = data['capturedAtLocal'];
     return SosTriggerLocation(
-      latitude: data['latitude'] is num
-          ? (data['latitude'] as num).toDouble()
-          : 0,
-      longitude: data['longitude'] is num
-          ? (data['longitude'] as num).toDouble()
-          : 0,
-      accuracyMeters: data['accuracyMeters'] is num
-          ? (data['accuracyMeters'] as num).toDouble()
-          : null,
-      capturedAt: capturedAt is String ? DateTime.tryParse(capturedAt) : null,
+      latitude: _coordinateFrom(data['latitude']) ?? double.nan,
+      longitude: _coordinateFrom(data['longitude']) ?? double.nan,
+      accuracyMeters: _accuracyFrom(data['accuracyMeters']),
+      capturedAt: _dateFrom(localValue: data['capturedAtLocal']),
     );
   }
 
@@ -281,6 +294,14 @@ class SosTriggerLocation {
   final double longitude;
   final double? accuracyMeters;
   final DateTime? capturedAt;
+
+  bool get hasValidPosition =>
+      latitude.isFinite &&
+      longitude.isFinite &&
+      latitude >= -90 &&
+      latitude <= 90 &&
+      longitude >= -180 &&
+      longitude <= 180;
 
   String get universalMapLink {
     return 'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude';
@@ -297,11 +318,44 @@ class SosTriggerLocation {
         'capturedAtLocal': capturedAt.toUtc().toIso8601String(),
     };
   }
+
+  static double? _coordinateFrom(Object? value) {
+    if (value is! num || !value.isFinite) {
+      return null;
+    }
+    return value.toDouble();
+  }
+
+  static double? _accuracyFrom(Object? value) {
+    if (value is! num || !value.isFinite || value < 0) {
+      return null;
+    }
+    return value.toDouble();
+  }
+
+  static DateTime? _dateFrom({Object? localValue, Object? millisValue}) {
+    if (millisValue is num && millisValue.isFinite) {
+      try {
+        return DateTime.fromMillisecondsSinceEpoch(
+          millisValue.toInt(),
+          isUtc: true,
+        );
+      } on ArgumentError {
+        // Fall through to the ISO timestamp when native data is out of range.
+      }
+    }
+    return localValue is String ? DateTime.tryParse(localValue) : null;
+  }
 }
 
 abstract final class SosAlertMessageComposer {
   static const String defaultCustomNote =
       'I need urgent help during my hike. Please call me now. If I do not answer, use the map link below and contact local emergency services.';
+  static const String defaultDuressCustomNote =
+      'I may be under pressure and cannot speak safely. Please monitor my location discreetly and contact local emergency services if I stop responding.';
+
+  static String defaultCustomNoteFor(SosAlertMode mode) =>
+      mode == SosAlertMode.duress ? defaultDuressCustomNote : defaultCustomNote;
 
   static String compose({
     required SosAlertMode mode,
@@ -309,32 +363,51 @@ abstract final class SosAlertMessageComposer {
     required DateTime triggeredAt,
     required SosTriggerLocation? triggerLocation,
     String? customNote,
+    SosAlertTriggerSource triggerSource = SosAlertTriggerSource.mobilePhone,
+    String preferredTimeZone = PreferredTimeZone.fallbackId,
   }) {
-    final locationLine = triggerLocation == null
-        ? 'Location: unavailable'
-        : 'Location: ${triggerLocation.universalMapLink}';
-    final accuracyLine = triggerLocation?.accuracyMeters == null
+    final validTriggerLocation = triggerLocation?.hasValidPosition == true
+        ? triggerLocation
+        : null;
+    final locationLine = validTriggerLocation == null
+        ? 'Location unavailable'
+        : validTriggerLocation.universalMapLink;
+    final accuracy = validTriggerLocation?.accuracyMeters;
+    final accuracyLine = accuracy == null || !accuracy.isFinite || accuracy < 0
         ? null
-        : 'GPS accuracy: ${triggerLocation!.accuracyMeters!.round()} m';
-    final note = _normalizedNote(customNote);
+        : 'Estimated accuracy: within ${accuracy.round()} m';
+    final note = _normalizedNote(mode, customNote);
 
     return [
-      'HikerCircle SOS ALERT',
-      'Type: ${mode.label}',
-      'Hiker: $phoneNumber',
-      'Triggered: ${triggeredAt.toUtc().toIso8601String()}',
-      'Reason: ${reasonFor(mode)}',
-      locationLine,
+      '🚨 *HikerCircle SOS Alert*',
+      '',
+      '📞 *Hiker*\n$phoneNumber',
+      '',
+      '🕒 *Triggered*\n${PreferredTimeZone.formatInstant(triggeredAt, preferredTimeZone)}',
+      '',
+      '⚠️ *Reason*\n${reasonFor(mode, triggerSource: triggerSource)}',
+      '',
+      '📍 *Location*\n$locationLine',
       if (accuracyLine != null) accuracyLine,
-      'Message: $note',
-      'Action: Call the hiker first. If there is no response, share this alert and map link with emergency responders.',
+      '',
+      "💬 *Hiker's message*\n$note",
+      '',
+      if (mode == SosAlertMode.duress)
+        '✅ *What to do*\nDo not call if that may increase danger. Discreetly share this alert and location with emergency responders.'
+      else
+        '✅ *What to do*\nCall the hiker first. If there is no response, share this alert and map link with emergency responders.',
     ].join('\n');
   }
 
-  static String reasonFor(SosAlertMode mode) {
+  static String reasonFor(
+    SosAlertMode mode, {
+    SosAlertTriggerSource triggerSource = SosAlertTriggerSource.mobilePhone,
+  }) {
     switch (mode) {
       case SosAlertMode.manual:
-        return 'Manual emergency SOS was confirmed in the app.';
+        return triggerSource == SosAlertTriggerSource.emergencyButton
+            ? 'User triggered SOS through an emergency button.'
+            : 'User triggered SOS through mobile phone.';
       case SosAlertMode.medical:
         return 'Medical help request was triggered from HikerCircle.';
       case SosAlertMode.fallStillness:
@@ -346,10 +419,10 @@ abstract final class SosAlertMessageComposer {
     }
   }
 
-  static String _normalizedNote(String? customNote) {
+  static String _normalizedNote(SosAlertMode mode, String? customNote) {
     final trimmed = customNote?.trim();
     if (trimmed == null || trimmed.isEmpty) {
-      return defaultCustomNote;
+      return defaultCustomNoteFor(mode);
     }
     return trimmed;
   }
@@ -492,7 +565,7 @@ class SosOutputVolumeStatus {
   }
 
   static double? _normalizedDouble(Object? value) {
-    if (value is! num) {
+    if (value is! num || !value.isFinite) {
       return null;
     }
     return value.toDouble().clamp(0.0, 1.0).toDouble();
@@ -512,11 +585,17 @@ class SosAlert {
     required this.dispatches,
     required this.message,
     this.triggerLocation,
+    this.triggerSource = SosAlertTriggerSource.mobilePhone,
   });
 
   factory SosAlert.fromFirestore(Map<String, dynamic> data) {
     final dispatches = data['dispatches'];
     final triggerLocation = data['triggerLocation'];
+    final parsedTriggerLocation = triggerLocation is Map
+        ? SosTriggerLocation.fromFirestore(
+            Map<String, dynamic>.from(triggerLocation),
+          )
+        : null;
     return SosAlert(
       id: _stringFrom(data['id']),
       mode: _modeFrom(data['mode']),
@@ -539,10 +618,9 @@ class SosAlert {
                 .toList()
           : const [],
       message: _stringFrom(data['message']),
-      triggerLocation: triggerLocation is Map
-          ? SosTriggerLocation.fromFirestore(
-              Map<String, dynamic>.from(triggerLocation),
-            )
+      triggerSource: SosAlertTriggerSource.fromFirestore(data['triggerSource']),
+      triggerLocation: parsedTriggerLocation?.hasValidPosition == true
+          ? parsedTriggerLocation
           : null,
     );
   }
@@ -558,6 +636,7 @@ class SosAlert {
   final List<SosContactDispatch> dispatches;
   final String message;
   final SosTriggerLocation? triggerLocation;
+  final SosAlertTriggerSource triggerSource;
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -573,6 +652,7 @@ class SosAlert {
           .map((dispatch) => dispatch.toFirestore())
           .toList(),
       'message': message,
+      'triggerSource': triggerSource.firestoreValue,
       if (triggerLocation case final triggerLocation?)
         'triggerLocation': triggerLocation.toFirestore(),
     };
@@ -608,7 +688,7 @@ class SosAlert {
   }
 
   static int _intFrom(Object? value) {
-    if (value is num) {
+    if (value is num && value.isFinite) {
       return value.toInt();
     }
     return 0;
@@ -630,18 +710,39 @@ class SosAlertResult {
   bool get hasFailedDispatch => alert.failedCount > 0;
 }
 
+class SosQueuedDispatch {
+  const SosQueuedDispatch({
+    required this.id,
+    required this.mode,
+    required this.triggeredAt,
+    required this.createdAt,
+    required this.sendStatus,
+    required this.retryCount,
+    required this.contactCount,
+    required this.pendingContactCount,
+    required this.lastError,
+    required this.message,
+    this.triggerLocation,
+  });
+
+  final int id;
+  final SosAlertMode mode;
+  final DateTime triggeredAt;
+  final DateTime createdAt;
+  final String sendStatus;
+  final int retryCount;
+  final int contactCount;
+  final int pendingContactCount;
+  final String lastError;
+  final String message;
+  final SosTriggerLocation? triggerLocation;
+}
+
 class SosMetric {
   const SosMetric({required this.label, required this.value});
 
   final String label;
   final String value;
-}
-
-class SosActionDetail {
-  const SosActionDetail({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
 }
 
 class SosFeatureItem {

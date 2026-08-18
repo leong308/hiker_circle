@@ -1,73 +1,710 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null
+        && request.auth.uid is string
+        && request.auth.token.phoneNumber is string;
+    }
+
+    function phoneNumber() {
+      return request.auth.token.phoneNumber;
+    }
+
+    function phoneKey() {
+      return phoneNumber().replace('[^0-9]', '');
+    }
+
+    function admin() {
+      return signedIn()
+        && request.auth.token.keys().hasAny(['isAdmin'])
+        && request.auth.token.isAdmin == true;
+    }
+
+    function participant(data) {
+      return signedIn() && (
+        (data.keys().hasAny(['hostPhoneNumber'])
+          && data.hostPhoneNumber == phoneNumber())
+        || (data.keys().hasAny(['creatorPhone'])
+          && data.creatorPhone == phoneNumber())
+        || (data.keys().hasAny(['participantPhones'])
+          && data.participantPhones is list
+          && phoneNumber() in data.participantPhones)
+        || (data.keys().hasAny(['participantPhoneNumbers'])
+          && data.participantPhoneNumbers is list
+          && phoneNumber() in data.participantPhoneNumbers)
+      );
+    }
+
+    function groupChatParticipant(data) {
+      // Keep this predicate directly aligned with the client's
+      // array-contains query so Firestore can prove every returned document.
+      return signedIn() && phoneNumber() in data.participantPhones;
+    }
+
+    function upcomingHikeParticipant(data) {
+      // Keep both branches directly aligned with loadMyUpcomingHikes and
+      // watchMyUpcomingHikes so Firestore can authorize their query shapes.
+      return signedIn() && (
+        data.creatorPhone == phoneNumber()
+        || phoneNumber() in data.participantPhones
+      );
+    }
+
+    function teamMember(data) {
+      return signedIn() && (
+        (data.keys().hasAny(['leaderId'])
+          && data.leaderId == request.auth.uid)
+        || (data.keys().hasAny(['memberIds'])
+          && data.memberIds is list
+          && request.auth.uid in data.memberIds)
+      );
+    }
+
+    function ownHike(data) {
+      return signedIn()
+        && data.userId == request.auth.uid
+        && data.userPhoneNumber == phoneNumber();
+    }
+
+    function ownedHikeSession(sessionId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/hikeSessions/$(sessionId))
+        && ownHike(
+          get(/databases/$(database)/documents/hikeSessions/$(sessionId)).data
+        );
+    }
+
+    function validDownloadedMapIdentity(downloadedMapId, data) {
+      return ownHike(data)
+        && data.trailId is string
+        && data.trailId.size() > 0
+        && data.trailId.size() <= 200
+        && downloadedMapId == request.auth.uid + '_' + data.trailId
+        && data.downloadedMapId == downloadedMapId;
+    }
+
+    function validHikeRouteCaptureWrite(captureId) {
+      return ownedHikeSession(captureId)
+        && request.resource.data.sessionId == captureId
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.userPhoneNumber == phoneNumber();
+    }
+
+    function validLocationPointIdentity(pointId, data) {
+      return data.sessionId is string
+        && data.sessionId.size() > 0
+        && data.sessionId.size() <= 200
+        && ownedHikeSession(data.sessionId)
+        && ownHike(data)
+        && pointId.matches(
+          '^'
+          + data.sessionId.replace('[^A-Za-z0-9_-]', '_')
+          + '_[0-9]+$'
+        );
+    }
+
+    function ownUserIdAndPhone(data, phoneField) {
+      return signedIn()
+        && data.userId == request.auth.uid
+        && data[phoneField] == phoneNumber();
+    }
+
+    function immutableHikeIdentity() {
+      return request.resource.data.userId == resource.data.userId
+        && request.resource.data.userPhoneNumber == resource.data.userPhoneNumber
+        && request.resource.data.sessionId == resource.data.sessionId;
+    }
+
+    function validHikeStatusTransition() {
+      return request.resource.data.status == resource.data.status;
+    }
+
+    function validHikeTelemetryUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'monitoringHeartbeatAt', 'monitoringHeartbeatAtLocal',
+        'monitoringLifecycleState', 'monitoringExpected',
+        'monitoringFcmToken', 'terminationSignalNonce',
+        'terminationSignalAt', 'terminationSignalAtLocal',
+        'latestLocation', 'latestLocationUpdatedAt',
+        'latestLocationUpdatedAtLocal', 'lastPathDeviation',
+        'latestMotion', 'latestMotionUpdatedAt',
+        'latestMotionUpdatedAtLocal',
+        'lastPathDeviationAt', 'lastPathDeviationAtLocal',
+        'pathDeviationAlertCount', 'updatedAt', 'updatedAtLocal'
+      ]);
+    }
+
+    function validLastReadMapUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'lastReadAt'
+        ]) || (
+          request.resource.data.lastReadAt is map
+          && request.resource.data.lastReadAt[phoneKey()] is string
+          && (
+            (!resource.data.keys().hasAny(['lastReadAt'])
+              && request.resource.data.lastReadAt.keys().hasOnly([phoneKey()]))
+            || (resource.data.lastReadAt is map
+              && request.resource.data.lastReadAt.diff(
+                resource.data.lastReadAt
+              ).affectedKeys().hasOnly([phoneKey()]))
+          )
+        );
+    }
+
+    function validUnreadMapUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'unreadCount'
+        ]) || (
+          request.resource.data.unreadCount is map
+          && request.resource.data.unreadCount[phoneKey()] == 0
+          && (
+            (!resource.data.keys().hasAny(['unreadCount'])
+              && request.resource.data.unreadCount.keys().hasOnly([phoneKey()]))
+            || (resource.data.unreadCount is map
+              && request.resource.data.unreadCount.diff(
+                resource.data.unreadCount
+              ).affectedKeys().hasOnly([phoneKey()]))
+          )
+        );
+    }
+
+    function validParticipantChatMetadataUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessage', 'lastMessageAtLocal', 'lastMessageSenderPhone',
+          'lastReadAt', 'unreadCount', 'updatedAt', 'updatedAtLocal'
+        ])
+        && validLastReadMapUpdate()
+        && validUnreadMapUpdate()
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'lastMessage', 'lastMessageAtLocal', 'lastMessageSenderPhone'
+          ])
+          || request.resource.data.lastMessageSenderPhone == phoneNumber()
+        );
+    }
+
+    function validChatAttachment(chatId) {
+      return !request.resource.data.keys().hasAny(['attachment']) || (
+        request.resource.data.attachment is map
+        && request.resource.data.attachment.keys().hasOnly([
+          'type', 'url', 'fileName', 'contentType', 'sizeBytes'
+        ])
+        && request.resource.data.attachment.type in [
+          'image', 'video', 'document'
+        ]
+        && request.resource.data.attachment.url is string
+        && request.resource.data.attachment.url.size() <= 2048
+        && request.resource.data.attachment.url.matches(
+          '^https://firebasestorage\\.googleapis\\.com/v0/b/'
+          + 'hiker-circle\\.firebasestorage\\.app/o/group_chats%2F'
+          + chatId + '%2Fattachments%2F.*'
+        )
+        && request.resource.data.attachment.fileName is string
+        && request.resource.data.attachment.fileName.size() > 0
+        && request.resource.data.attachment.fileName.size() <= 255
+        && request.resource.data.attachment.contentType is string
+        && request.resource.data.attachment.contentType.size() <= 150
+        && request.resource.data.attachment.sizeBytes is int
+        && request.resource.data.attachment.sizeBytes > 0
+        && request.resource.data.attachment.sizeBytes <= 25 * 1024 * 1024
+      );
+    }
+
+    function validChatMessageCreate(chatId) {
+      return request.resource.data.keys().hasOnly([
+          'chatId', 'senderPhone', 'senderName', 'text', 'sentAtLocal',
+          'isSystemMessage', 'seenBy', 'senderPhotoURL', 'attachment'
+        ])
+        && request.resource.data.senderName is string
+        && request.resource.data.senderName.size() > 0
+        && request.resource.data.senderName.size() <= 100
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 5000
+        && (
+          request.resource.data.text.size() > 0
+          || request.resource.data.keys().hasAny(['attachment'])
+        )
+        && request.resource.data.sentAtLocal is string
+        && request.resource.data.sentAtLocal.size() >= 20
+        && request.resource.data.sentAtLocal.size() <= 40
+        && request.resource.data.isSystemMessage is bool
+        && (!request.resource.data.keys().hasAny(['senderPhotoURL'])
+          || (request.resource.data.senderPhotoURL is string
+            && request.resource.data.senderPhotoURL.size() <= 2048))
+        && validChatAttachment(chatId);
+    }
+
+    function validEmergencyContact(contact) {
+      return contact is map
+        && contact.keys().hasOnly(['name', 'phoneNumber', 'relationship'])
+        && contact.name is string
+        && contact.name.size() > 0
+        && contact.name.size() <= 100
+        && contact.phoneNumber is string
+        && contact.phoneNumber.matches('^\\+[1-9][0-9]{7,14}$')
+        && contact.relationship is string
+        && contact.relationship.size() <= 100;
+    }
+
+    function validEmergencyContacts(data) {
+      return data.sos_contacts is list
+        && data.sos_contacts.size() <= 3
+        && data.sosContactsCount is int
+        && data.sosContactsCount == data.sos_contacts.size()
+        && (data.sos_contacts.size() < 1
+          || validEmergencyContact(data.sos_contacts[0]))
+        && (data.sos_contacts.size() < 2
+          || validEmergencyContact(data.sos_contacts[1]))
+        && (data.sos_contacts.size() < 3
+          || validEmergencyContact(data.sos_contacts[2]));
+    }
+
+    function validEmergencyContactsOnCreate(data) {
+      return !data.keys().hasAny(['sos_contacts', 'sosContactsCount'])
+        || validEmergencyContacts(data);
+    }
+
+    function validEmergencyContactsOnUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'sos_contacts', 'sosContactsCount'
+        ])
+        || validEmergencyContacts(request.resource.data);
+    }
+
+    function validSosWhatsappNotes(data) {
+      return data.sosWhatsappNotes is map
+        && data.sosWhatsappNotes.keys().hasOnly(['manual', 'duress', 'medical'])
+        && (!data.sosWhatsappNotes.keys().hasAny(['manual'])
+          || (data.sosWhatsappNotes.manual is string
+            && data.sosWhatsappNotes.manual.size() <= 240))
+        && (!data.sosWhatsappNotes.keys().hasAny(['duress'])
+          || (data.sosWhatsappNotes.duress is string
+            && data.sosWhatsappNotes.duress.size() <= 240))
+        && (!data.sosWhatsappNotes.keys().hasAny(['medical'])
+          || (data.sosWhatsappNotes.medical is string
+            && data.sosWhatsappNotes.medical.size() <= 240));
+    }
+
+    function validSosWhatsappNotesOnCreate(data) {
+      return !data.keys().hasAny(['sosWhatsappNotes'])
+        || validSosWhatsappNotes(data);
+    }
+
+    function validSosWhatsappNotesOnUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'sosWhatsappNotes'
+        ])
+        || validSosWhatsappNotes(request.resource.data);
+    }
+
+    function validPreferredTimeZone(data) {
+      return data.preferredTimeZone is string
+        && data.preferredTimeZone.size() > 0
+        && data.preferredTimeZone.size() <= 80
+        && data.preferredTimeZone.matches(
+          '^[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)*$'
+        );
+    }
+
+    function validPreferredTimeZoneOnCreate(data) {
+      return !data.keys().hasAny(['preferredTimeZone'])
+        || validPreferredTimeZone(data);
+    }
+
+    function validPreferredTimeZoneOnUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'preferredTimeZone'
+        ])
+        || validPreferredTimeZone(request.resource.data);
+    }
+
+    function hasNoCommunityModerationFields(data) {
+      return !data.keys().hasAny([
+        'moderationStatus', 'moderationReason', 'moderatedByAdminId',
+        'moderatedByAdminPhoneNumber', 'moderatedAt', 'moderatedAtLocal'
+      ]);
+    }
+
+    function hasNoHazardReviewFields(data) {
+      return !data.keys().hasAny([
+        'adminNote', 'reviewedByAdminId', 'reviewedByAdminPhoneNumber',
+        'reviewedAt', 'reviewedAtLocal'
+      ]);
+    }
+
+    function safeSelfUserCreate(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.phoneNumber == phoneNumber()
+        && !request.resource.data.keys().hasAny([
+          'isAdmin', 'role', 'roles', 'accountDisabled', 'status',
+          'passwordHash', 'firebaseUid', 'achievementPoints', 'hikerLevel',
+          'hikerLevelName', 'hikerLevelBadge', 'buddyPhoneNumbers',
+          'buddyRequestsIncoming', 'buddyRequestsOutgoing'
+        ])
+        && validEmergencyContactsOnCreate(request.resource.data)
+        && validSosWhatsappNotesOnCreate(request.resource.data)
+        && validPreferredTimeZoneOnCreate(request.resource.data);
+    }
+
+    function safeSelfUserUpdate(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.phoneNumber == phoneNumber()
+        && resource.data.phoneNumber == phoneNumber()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'isAdmin', 'role', 'roles', 'accountDisabled', 'status',
+          'passwordHash', 'firebaseUid', 'createdAt', 'createdAtLocal',
+          'achievementPoints', 'hikerLevel', 'hikerLevelName',
+          'hikerLevelBadge', 'buddyPhoneNumbers', 'buddyRequestsIncoming',
+          'buddyRequestsOutgoing', 'loginFailedAttempts', 'loginCooldownUntil'
+        ])
+        && validEmergencyContactsOnUpdate()
+        && validSosWhatsappNotesOnUpdate()
+        && validPreferredTimeZoneOnUpdate();
+    }
+
     match /users/{userId} {
-      allow read, write: if true;
+      allow read: if signedIn() && (request.auth.uid == userId || admin());
+      allow create: if safeSelfUserCreate(userId) || admin();
+      allow update: if safeSelfUserUpdate(userId) || admin();
+      allow delete: if admin();
     }
+
     match /live_location_shares/{shareId} {
-      allow read, write: if true;
+      allow read: if (
+        resource.data.isActive == true
+        && resource.data.expiresAt is timestamp
+        && resource.data.expiresAt > request.time
+      ) || (
+        signedIn() && resource.data.ownerUserId == request.auth.uid
+      ) || admin();
+      allow create: if signedIn()
+        && request.resource.data.ownerUserId == request.auth.uid
+        && request.resource.data.phoneNumber == phoneNumber()
+        && request.resource.data.shareId == shareId
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(24, 'h');
+      allow update: if signedIn()
+        && resource.data.ownerUserId == request.auth.uid
+        && request.resource.data.ownerUserId == resource.data.ownerUserId
+        && request.resource.data.phoneNumber == resource.data.phoneNumber
+        && request.resource.data.shareId == resource.data.shareId
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt <= request.time + duration.value(24, 'h');
+      allow delete: if admin() || (
+        signedIn() && resource.data.ownerUserId == request.auth.uid
+      );
     }
+
     match /trails/{trailId} {
-      allow read, write: if true;
+      allow read: if signedIn();
+      allow write: if admin();
     }
+
     match /hikeSessions/{sessionId} {
-      allow read, write: if true;
+      allow read: if ownHike(resource.data) || admin();
+      // Session creation is a callable transaction so a client cannot forge
+      // lifecycle state or server monitoring fields.
+      allow create: if false;
+      allow update: if immutableHikeIdentity()
+        && validHikeStatusTransition()
+        && validHikeTelemetryUpdate()
+        && (ownHike(resource.data) || admin());
+      // Backend cleanup writes a terminal tombstone before deletion. A mobile
+      // delete could otherwise remove an active record and later resurrect it.
+      allow delete: if false;
     }
+
     match /localLocationPoints/{pointId} {
-      allow read, write: if true;
+      allow read: if ownHike(resource.data) || admin();
+      allow create, update: if validLocationPointIdentity(
+        pointId,
+        request.resource.data
+      );
+      allow delete: if validLocationPointIdentity(pointId, resource.data);
     }
+
     match /checkIns/{checkInId} {
-      allow read, write: if true;
+      allow read: if ownHike(resource.data) || admin();
+      // Check-ins affect safety metrics and achievements, so creation and all
+      // mutations go through recordActiveHikeCheckIn.
+      allow write: if false;
     }
+
     match /hazardReports/{hazardId} {
-      allow read, write: if true;
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.hazardId == hazardId
+        && request.resource.data.reportedBy == request.auth.uid
+        && request.resource.data.reportedByPhoneNumber == phoneNumber()
+        && request.resource.data.status == 'unverified'
+        && hasNoHazardReviewFields(request.resource.data);
+      allow update, delete: if admin();
     }
+
     match /teams/{teamId} {
-      allow read, write: if true;
+      allow read: if teamMember(resource.data) || admin();
+      // The Admin SDK bypasses rules. No signed-in mobile account, including an
+      // admin account, may create or mutate team membership directly.
+      allow write: if false;
     }
+
+    // Creation and all participant/phase mutations are authenticated Cloud
+    // Functions transactions. Clients receive snapshots but cannot rewrite a
+    // teammate or manufacture notification recipients.
     match /teamHikeSessions/{sessionId} {
-      allow read, write: if true;
+      allow read: if participant(resource.data) || admin();
+      allow write: if false;
     }
+
     match /fcmOutbox/{messageId} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
+
+    match /teamHikeActionRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /upcomingHikeRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /directChatActionRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /activeHikeStartRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /hikeSessionRecoveryRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /buddyRequestRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /sosMessageRateLimits/{rateLimitId} {
+      allow read, write: if false;
+    }
+
+    match /sosWhatsAppDispatches/{dispatchId} {
+      allow read: if admin();
+      allow write: if false;
+    }
+
+    match /achievementEventReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
+    match /communityCounterEventReceipts/{receiptId} {
+      allow read, write: if false;
+    }
+
+    match /hikeSessionTerminalStates/{sessionId} {
+      allow read, write: if false;
+    }
+
     match /communityPosts/{postId} {
-      allow read, write: if true;
+      allow read: if signedIn() && (
+        resource.data.visibility == 'public'
+        || resource.data.authorId == request.auth.uid
+        || admin()
+      );
+      allow create: if signedIn()
+        && request.resource.data.postId == postId
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorPhoneNumber == phoneNumber()
+        && request.resource.data.visibility == 'public'
+        && request.resource.data.likeCount == 0
+        && request.resource.data.commentCount == 0
+        && request.resource.data.caption is string
+        && request.resource.data.caption.size() <= 5000
+        && hasNoCommunityModerationFields(request.resource.data);
+      allow update: if request.resource.data.postId == postId
+        && request.resource.data.postId == resource.data.postId
+        && request.resource.data.commentCount == resource.data.commentCount
+        && request.resource.data.likeCount == resource.data.likeCount
+        && (
+          admin() || (
+            signedIn()
+            && resource.data.authorId == request.auth.uid
+            && request.resource.data.authorId == resource.data.authorId
+            && request.resource.data.authorPhoneNumber == resource.data.authorPhoneNumber
+            && request.resource.data.visibility == resource.data.visibility
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'moderationStatus', 'moderationReason', 'moderatedByAdminId',
+              'moderatedByAdminPhoneNumber', 'moderatedAt', 'moderatedAtLocal'
+            ])
+          )
+        );
+      allow delete: if admin() || (
+        signedIn() && resource.data.authorId == request.auth.uid
+      );
+
       match /comments/{commentId} {
-        allow read, write: if true;
+        function parentPost() {
+          return get(/databases/$(database)/documents/communityPosts/$(postId));
+        }
+
+        allow read: if signedIn() && (
+          parentPost().data.visibility == 'public'
+          || parentPost().data.authorId == request.auth.uid
+          || admin()
+        );
+        allow create: if signedIn()
+          && parentPost().data.visibility == 'public'
+          && request.resource.data.commentId == commentId
+          && request.resource.data.postId == postId
+          && request.resource.data.authorId == request.auth.uid
+          && request.resource.data.authorPhoneNumber == phoneNumber()
+          && request.resource.data.body is string
+          && request.resource.data.body.size() > 0
+          && request.resource.data.body.size() <= 2000;
+        allow update: if signedIn()
+          && resource.data.authorId == request.auth.uid
+          && request.resource.data.commentId == commentId
+          && request.resource.data.commentId == resource.data.commentId
+          && request.resource.data.authorId == resource.data.authorId
+          && request.resource.data.authorPhoneNumber == resource.data.authorPhoneNumber
+          && request.resource.data.postId == resource.data.postId;
+        allow delete: if admin() || (
+          signedIn() && resource.data.authorId == request.auth.uid
+        );
       }
     }
+
     match /achievements/{achievementId} {
-      allow read, write: if true;
+      allow read: if signedIn();
+      allow write: if false;
     }
+
     match /userAchievements/{userAchievementId} {
-      allow read, write: if true;
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid || admin()
+      );
+      allow write: if false;
     }
+
     match /networkObservations/{observationId} {
-      allow read, write: if true;
+      allow read: if signedIn()
+        && (resource.data.userId == request.auth.uid || admin());
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
     }
+
     match /downloadedMaps/{downloadedMapId} {
-      allow read, write: if true;
+      allow read: if ownHike(resource.data) || admin();
+      allow create: if validDownloadedMapIdentity(
+        downloadedMapId,
+        request.resource.data
+      );
+      // Validate the canonical request rather than trusting legacy resource
+      // ownership, so the rightful account can replace an old malicious
+      // preclaim at its deterministic document ID.
+      allow update: if validDownloadedMapIdentity(
+        downloadedMapId,
+        request.resource.data
+      );
+      allow delete: if ownHike(resource.data) || admin();
     }
+
     match /sosAlerts/{alertId} {
-      allow read, create, update: if true;
+      // Queries can prove the immutable userId predicate; requiring a second
+      // phone predicate here would reject the app's owner-scoped log query.
+      allow read: if (
+        signedIn() && resource.data.userId == request.auth.uid
+      ) || admin();
+      allow create: if ownUserIdAndPhone(request.resource.data, 'phoneNumber');
+      allow update: if ownUserIdAndPhone(resource.data, 'phoneNumber')
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.phoneNumber == resource.data.phoneNumber;
       allow delete: if false;
     }
+
     match /whatsAppMessageLogs/{logId} {
-      allow read, create, update: if true;
-      allow delete: if false;
+      // Legacy client-reported logs are not authoritative. New delivery audit
+      // entries live in the server-only sosWhatsAppDispatches collection.
+      allow read: if admin();
+      allow write: if false;
     }
+
     match /hikeRouteCaptures/{captureId} {
-      allow read, write: if true;
+      allow read: if ownHike(resource.data) || admin();
+      // The canonical parent session is the authority. Depending on the
+      // existing capture would let a legacy attacker-owned preclaim block the
+      // real session owner from replacing or deleting it.
+      allow create, update: if validHikeRouteCaptureWrite(captureId);
+      allow delete: if ownedHikeSession(captureId);
     }
+
+    // Scheduling and membership joins are rate-limited server callables.
     match /upcomingHikes/{hikeId} {
-      allow read, write: if true;
+      allow read: if upcomingHikeParticipant(resource.data) || admin();
+      allow write: if false;
     }
+
     match /groupChats/{chatId} {
-      allow read, write: if true;
+      allow read: if groupChatParticipant(resource.data) || admin();
+      allow create: if false;
+      allow update: if request.resource.data.creatorPhone == resource.data.creatorPhone
+        && request.resource.data.participantPhones == resource.data.participantPhones
+        && request.resource.data.hikeSessionId == resource.data.hikeSessionId
+        && request.resource.data.chatType == resource.data.chatType
+        && (
+          admin() || (
+            groupChatParticipant(resource.data)
+            && validParticipantChatMetadataUpdate()
+          )
+        );
+      allow delete: if false;
+
       match /messages/{messageId} {
-        allow read, write: if true;
+        function chat() {
+          return get(/databases/$(database)/documents/groupChats/$(chatId));
+        }
+
+        allow read: if groupChatParticipant(chat().data);
+        allow create: if signedIn()
+          && groupChatParticipant(chat().data)
+          && validChatMessageCreate(chatId)
+          && request.resource.data.chatId == chatId
+          && request.resource.data.senderPhone == phoneNumber()
+          && request.resource.data.isSystemMessage == false
+          && request.resource.data.seenBy is list
+          && request.resource.data.seenBy.size()
+            == request.resource.data.seenBy.toSet().size()
+          && request.resource.data.seenBy.toSet().hasOnly([phoneNumber()]);
+        allow update: if signedIn()
+          && groupChatParticipant(chat().data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenBy'])
+          && request.resource.data.seenBy is list
+          && resource.data.seenBy is list
+          && request.resource.data.seenBy.size()
+            == request.resource.data.seenBy.toSet().size()
+          && chat().data.participantPhones is list
+          && chat().data.participantPhones.toSet().hasAll(
+            request.resource.data.seenBy.toSet()
+          )
+          && request.resource.data.seenBy.toSet().hasAll(resource.data.seenBy.toSet())
+          && request.resource.data.seenBy.toSet().difference(
+            resource.data.seenBy.toSet()
+          ).hasOnly([phoneNumber()]);
+        allow delete: if admin() || (
+          signedIn()
+          && groupChatParticipant(chat().data)
+          && resource.data.senderPhone == phoneNumber()
+        );
       }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -5,9 +5,10 @@ burst. The recommended firmware behavior is:
 
 1. Deep sleep until the tactile switch is pressed.
 2. Start BLE advertising for 3-5 seconds.
-3. Include the HikerCircle manufacturer packet below. The service UUID may also
-   be included, but the manufacturer packet is required for reliable duplicate
-   handling across multiple presses in the same app session.
+3. Include both the HikerCircle manufacturer packet and SOS service UUID below.
+   The manufacturer packet is required for authentication/duplicate handling;
+   the service UUID is required for reliable iOS background and locked-screen
+   discovery. A manufacturer-only button is foreground-only on iOS.
 4. Stop advertising and return to deep sleep.
 
 ## SOS Button Advertisement
@@ -29,6 +30,10 @@ The event id must stay the same for every advertisement inside one 3-5 second
 button-press burst, then change for the next button press. Recommended ESP32
 implementation: set it once when advertising starts, using either Unix seconds
 from RTC/NTP if available or an incrementing counter stored in RTC/NVS memory.
+The paired-v2 counter is compared with uint32 serial arithmetic, so natural
+`0xffffffff` to `0` wrap is accepted. A firmware/factory reset to a lower
+counter is deliberately rejected as a possible replay; physically re-pair the
+button after any reset that clears its counter or pairing state.
 
 ## Paired SOS remote advertisement (protocol v2)
 
@@ -55,17 +60,82 @@ available only through the explicit migration setting.
 
 ### Pairing GATT payloads
 
-During setup, Android scans service
+During setup, Android and iOS scan service
 `7e2a1d37-8b10-4f4d-9f78-0c6f1d65cba1`. It writes exactly 42 bytes to
-`7e2a1d38-8b10-4f4d-9f78-0c6f1d65cba1`: `HC 01 01 01`, six device-ID bytes,
+`7e2a1d38-8b10-4f4d-9f78-0c6f1d65cba1`: `48 43 01 01` (`HC`, version 1,
+pair-request type 1), six device-ID bytes,
 then 32 secret bytes. The status characteristic
 `7e2a1d39-8b10-4f4d-9f78-0c6f1d65cba1` returns 10 bytes: `HC 01 SS` followed by
 the six-byte device ID. Status `02` means the app must wait for the final
 physical confirmation; status `03` commits the encrypted local registry.
 
+The setup peripheral must support a write-with-response payload of at least 42
+bytes (ATT MTU of at least 45, or a standards-compliant long write) and expose a
+CCCD-backed notifying status characteristic. Android requests MTU 247 before
+the write; both mobile clients wait for the asynchronous write result before
+reporting that pairing data was accepted.
+
+Current firmware should also advertise the compact protocol-v1 type-`0x06`
+setup-status manufacturer payload so Android and iOS can display the button's
+actual setup-mode countdown. The extension is backward-compatible and sized to
+coexist with the 128-bit setup UUID in a legacy advertisement. See
+[`SOS_BUTTON_FIRMWARE_UPDATE_FOR_APP.md`](SOS_BUTTON_FIRMWARE_UPDATE_FOR_APP.md)
+for the exact six-byte layout, advertising budget, state behavior, and firmware
+acceptance checklist.
+
+The 32-byte value in this request is a long-lived authentication secret, not an
+application-layer encrypted payload. Production firmware **must** configure the
+pair-request characteristic to require an encrypted, authenticated,
+MITM-protected BLE link (LE Secure Connections with passkey or numeric
+comparison) before accepting any read/write, and should protect pairing-status
+notifications the same way. Reject unauthenticated and Just Works writes. A
+physical confirmation press proves local presence but does not stop a wireless
+sniffer or active MITM from learning a secret sent over an unprotected GATT
+link.
+
+Android requires an OS bond before it connects to write pairing material. The
+first pairing attempt may therefore open the system Bluetooth pairing prompt;
+after approving it, retry in HikerCircle. Bonding alone cannot prove that the
+peripheral selected a MITM-resistant association model, so the firmware
+attribute permissions above remain mandatory. iOS does not expose a public
+bond-state API; CoreBluetooth will request system pairing only when the
+firmware characteristic requires protected access. There is currently no
+ECDH/PAKE envelope in this protocol, so firmware must never accept the 42-byte
+request over plaintext GATT.
+
+Pairings are scoped to the signed-in HikerCircle account. Re-pairing the same
+physical BLE address/peripheral identifier replaces the older local record,
+including a record owned by another account, because the firmware can retain
+only the current secret. Existing pre-scope registry entries must be re-paired.
+Device-local Android pairing preferences are excluded from cloud backup and
+device transfer because their non-exportable Keystore key cannot be restored.
+If secure storage is nevertheless unreadable, the settings screen can discard
+only local pairing material; the physical button must then be placed back into
+setup/factory-reset mode and paired again.
+
 The Android app can still detect the SOS service UUID alone as a legacy signal,
 but service-UUID-only advertisements cannot reliably distinguish a repeated
-packet from a new press. Use the manufacturer packet above for production.
+packet from a new press. The clients therefore apply a 10-second debounce to
+counterless legacy packets; use the manufacturer packet above for production.
+
+Authenticated owner presses are queued by native mobile code when Flutter is
+not ready, tagged with the active account scope, and delivered later through
+the trusted BLE event channel. Custom `hikercircle://sos/paired` URLs are not a
+trusted substitute for this queue. Pending presses older than five minutes (or
+implausibly future-dated) are discarded instead of starting a new, stale SOS.
+
+## Mobile background prerequisites
+
+Android uses a connected-device foreground service, controller-side
+manufacturer/service scan filters, and a boot receiver. Notification permission
+is strongly recommended for visible SOS and monitor alerts, but Android 13+
+notification denial does not prevent the foreground BLE monitor from starting.
+Users
+on Android 11 and later must separately allow background location in system
+settings if they expect a fresh location handoff while HikerCircle is not in
+the foreground. iOS requires the Bluetooth central/peripheral and location
+background modes, notification permission, and the Always location upgrade.
+The app keeps only a recent emergency snapshot (maximum age five minutes).
 
 ## App Test SOS Help Advertisement
 
@@ -97,8 +167,12 @@ characteristic.
 
 ## Team Location Advertisement
 
-Phones in an active team hike advertise compact peer-location packets locally
-over BLE. No network is required for these packets. Android uses
+The version-1 team-location packet format is retained for protocol migration,
+but the mobile app does not currently advertise or trust it. Its public hashes
+do not authenticate the sender, so accepting it as safety evidence would allow
+nearby replay or coordinate injection. Cloud-authorized team locations remain
+active. A future BLE version must add a per-session MAC and replay protection
+before this transport can be enabled again. Android uses
 manufacturer-data-only advertisements for this packet because the 26-byte
 location payload plus a 128-bit service UUID does not fit reliably in a legacy
 31-byte advertisement. On iOS, the same 26-byte packet is exposed through a
@@ -123,8 +197,8 @@ readable GATT characteristic while advertising the team location service UUID.
 | 20-21 | uint16 BE | accuracy in decimeters |
 | 22-25 | uint32 BE | captured-at Unix seconds |
 
-The app uses the hashes only to match known team participants. It does not put
-phone numbers or names in BLE advertisements.
+The packet does not put phone numbers or names in BLE advertisements, but the
+hashes are identifiers rather than security credentials.
 
 ## Owner location handoff and type-5 relay
 
@@ -141,6 +215,8 @@ The first 22 bytes are HMAC-SHA-256 input, keyed by the existing pairing
 secret; the final 8 bytes are the truncated tag. The button accepts the write
 only for the currently active event and only inside its 30-second handoff
 window. It then broadcasts a type-5 location relay for 15 seconds.
+The GATT write payload is exactly 30 bytes; values of any other size must be
+rejected by firmware.
 
 The type-5 advertisement is exactly 24 bytes so it fits a legacy BLE
 advertisement:
@@ -160,3 +236,46 @@ use their reception time. Nearby phones do not hold the pairing secret, so they
 must label this as an unverified proximity/location signal and must not start
 their own SOS workflow. They should display the relayed coordinate and reported
 GPS accuracy, not an RSSI-derived distance or radius.
+
+## Authenticated event-log maintenance
+
+The owner can download the button's 32-record NVS event log without entering
+pairing setup. The app begins waiting, then the user presses the external button
+five times within three seconds. The first press wakes a button in deep sleep;
+a completed sequence suppresses SOS and advertises read-only maintenance service
+`7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1` for 30 seconds. The service cannot
+change button ownership.
+
+The pairing service retains the same characteristics for compatibility. The
+pairing secret remains in the Android encrypted registry or iOS Keychain and
+never crosses the Flutter channel.
+
+The maintenance service exposes these characteristics:
+
+| Characteristic | UUID | Operation |
+| --- | --- | --- |
+| Challenge | `7e2a1d3c-8b10-4f4d-9f78-0c6f1d65cba1` | Read |
+| Authentication | `7e2a1d3d-8b10-4f4d-9f78-0c6f1d65cba1` | Write |
+| Log data | `7e2a1d3e-8b10-4f4d-9f78-0c6f1d65cba1` | Read |
+| Page selection | `7e2a1d3f-8b10-4f4d-9f78-0c6f1d65cba1` | Write |
+
+The 26-byte challenge is `HC 01 10`, followed by the six-byte button device ID
+and a fresh 16-byte random nonce. The authentication write repeats those 26
+bytes and appends the first eight bytes of HMAC-SHA-256 over the challenge,
+keyed by the pairing secret.
+
+Successful authentication is bound to the current BLE connection for 30
+seconds. The firmware immediately rotates the nonce, preventing the accepted
+response from being replayed by another connection. Page writes are one
+zero-based page-index byte and are ignored for unauthenticated connections.
+
+Each log page starts with this eight-byte header:
+
+```text
+HC 01 12 record-size total-count page-index page-record-count
+```
+
+`record-size` is 20. Each record contains four big-endian uint32 fields
+(`sequence`, `uptimeMillis`, `epochSeconds`, and `eventId`), followed by
+`type` uint8, `resetReason` uint8, and `detail` uint16 big-endian. Pages contain
+at most eight records and are returned oldest first.

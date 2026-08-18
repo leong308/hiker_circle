@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -14,17 +14,388 @@ import '../../home/Model/hike_session_models.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/app_session.dart';
+import '../Model/preferred_time_zone.dart';
 import 'firebase_bootstrap.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
 
+const Set<String> _upcomingHikePreviewFields = {
+  'sessionId',
+  'trailId',
+  'trailName',
+  'latitude',
+  'longitude',
+  'area',
+  'state',
+  'distanceKm',
+  'durationMinutes',
+  'difficulty',
+  'startPointName',
+  'destinationName',
+  'departureTimeLocal',
+  'departureTime',
+  'expectedReturnTimeLocal',
+  'expectedReturnTime',
+  'hikeType',
+  'participantCount',
+  'creatorPhone',
+  'creatorName',
+  'createdAt',
+  'createdAtLocal',
+  'participantPhones',
+  'isDeleted',
+  'deletedAtLocal',
+};
+
+@visibleForTesting
+List<UpcomingHike> parseUpcomingHikePreviewPayload(Object? payload) {
+  if (payload is! Map) return const [];
+  final rawHikes = payload['hikes'];
+  if (rawHikes is! List) return const [];
+
+  final hikes = <UpcomingHike>[];
+  final seenIds = <String>{};
+  for (final rawHike in rawHikes) {
+    if (rawHike is! Map) continue;
+    final rawId = rawHike['id'];
+    if (rawId is! String) continue;
+    final id = rawId.trim();
+    if (id.isEmpty || seenIds.contains(id)) continue;
+
+    final data = <String, dynamic>{};
+    for (final entry in rawHike.entries) {
+      final key = entry.key;
+      if (key is String && _upcomingHikePreviewFields.contains(key)) {
+        data[key] = entry.value;
+      }
+    }
+    data['departureTimeLocal'] ??= data['departureTime'];
+    data['expectedReturnTimeLocal'] ??= data['expectedReturnTime'];
+    data['createdAt'] ??= data['createdAtLocal'];
+    try {
+      hikes.add(UpcomingHike.fromFirestore(id, data));
+      seenIds.add(id);
+    } catch (_) {
+      // A malformed preview must not hide otherwise valid nearby hikes.
+    }
+  }
+  return hikes;
+}
+
 class HikerCircleFirebaseRepositoryException implements Exception {
-  const HikerCircleFirebaseRepositoryException(this.message);
+  const HikerCircleFirebaseRepositoryException(
+    this.message, {
+    this.allowsOfflineFallback = false,
+  });
 
   final String message;
+  final bool allowsOfflineFallback;
 
   @override
   String toString() => message;
+}
+
+@visibleForTesting
+bool activeHikeStartAllowsOfflineFallbackForFunctionsCode(String code) {
+  return const {
+    'aborted',
+    'cancelled',
+    'data-loss',
+    'deadline-exceeded',
+    'internal',
+    'unavailable',
+    'unknown',
+  }.contains(code.trim().toLowerCase());
+}
+
+@immutable
+class ActiveHikeCloudRestoreResult {
+  const ActiveHikeCloudRestoreResult({
+    required this.sessionId,
+    required this.ensured,
+    required this.terminal,
+    required this.status,
+  });
+
+  final String sessionId;
+  final bool ensured;
+  final bool terminal;
+  final String status;
+}
+
+@immutable
+class ActiveHikeCloudCompletionResult {
+  const ActiveHikeCloudCompletionResult({
+    required this.sessionId,
+    required this.completed,
+    required this.terminal,
+    required this.status,
+  });
+
+  final String sessionId;
+  final bool completed;
+  final bool terminal;
+  final String status;
+}
+
+@immutable
+class ActiveHikeEndResult {
+  const ActiveHikeEndResult({
+    required this.cloudSynced,
+    required this.sessionId,
+    required this.completed,
+    required this.status,
+  });
+
+  final bool cloudSynced;
+  final String sessionId;
+  final bool completed;
+  final String status;
+}
+
+class _ActiveHikePostCompletionSyncException implements Exception {
+  const _ActiveHikePostCompletionSyncException({
+    required this.completion,
+    required this.cause,
+  });
+
+  final ActiveHikeCloudCompletionResult completion;
+  final Object cause;
+
+  @override
+  String toString() => cause.toString();
+}
+
+const Set<String> _terminalActiveHikeStatuses = {
+  'completed',
+  'abandoned',
+  'cancelled',
+  'canceled',
+  'expired',
+};
+
+@visibleForTesting
+ActiveHikeCloudRestoreResult parseActiveHikeCloudRestoreResult(
+  Object? payload, {
+  required String requestedSessionId,
+}) {
+  final data = _callableMapFrom(payload);
+  final responseSessionId = _topLevelStringFrom(data['sessionId']).trim();
+  if (!_isValidCloudDocumentId(requestedSessionId) ||
+      !_isValidCloudDocumentId(responseSessionId)) {
+    throw const HikerCircleFirebaseRepositoryException(
+      'The hike server returned an invalid recovery session.',
+    );
+  }
+
+  final rawStatus = _topLevelStringFrom(data['status']).trim().toLowerCase();
+  final explicitTerminal = data['terminal'] == true;
+  final terminal =
+      explicitTerminal || _terminalActiveHikeStatuses.contains(rawStatus);
+  final ensured = data['ensured'] == true && !terminal;
+  final status = rawStatus.isNotEmpty
+      ? rawStatus
+      : terminal
+      ? 'completed'
+      : ensured
+      ? 'active'
+      : 'unknown';
+  return ActiveHikeCloudRestoreResult(
+    sessionId: responseSessionId,
+    ensured: ensured,
+    terminal: terminal,
+    status: status,
+  );
+}
+
+@visibleForTesting
+ActiveHikeCloudCompletionResult parseActiveHikeCloudCompletionResult(
+  Object? payload, {
+  required String requestedSessionId,
+}) {
+  final data = _callableMapFrom(payload);
+  final responseSessionId = _topLevelStringFrom(data['sessionId']).trim();
+  final status = _topLevelStringFrom(data['status']).trim().toLowerCase();
+  final terminal =
+      data['terminal'] == true || _terminalActiveHikeStatuses.contains(status);
+  if (!_isValidCloudDocumentId(requestedSessionId) ||
+      !_isValidCloudDocumentId(responseSessionId) ||
+      !terminal) {
+    throw const HikerCircleFirebaseRepositoryException(
+      'The hike server returned an invalid completion result.',
+    );
+  }
+  return ActiveHikeCloudCompletionResult(
+    sessionId: responseSessionId,
+    completed: data['completed'] == true || status == 'completed',
+    terminal: true,
+    status: status.isEmpty ? 'completed' : status,
+  );
+}
+
+@visibleForTesting
+String teamHikeCreationKeyFor({
+  required String appInstanceId,
+  required String trailId,
+  required DateTime departureTime,
+  required Iterable<String> inviteePhoneNumbers,
+  String sourceUpcomingHikeId = '',
+}) {
+  final canonicalInvitees =
+      inviteePhoneNumbers
+          .map((phoneNumber) => phoneNumber.trim())
+          .where((phoneNumber) => phoneNumber.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+  final canonicalInput = jsonEncode([
+    appInstanceId.trim(),
+    trailId.trim(),
+    departureTime.toUtc().toIso8601String(),
+    canonicalInvitees,
+    sourceUpcomingHikeId.trim(),
+  ]);
+  final digest = crypto.sha256.convert(utf8.encode(canonicalInput));
+  return 'team_create_$digest';
+}
+
+@visibleForTesting
+String upcomingHikeCreationKeyFor({
+  required String appInstanceId,
+  required String trailId,
+  required DateTime departureTime,
+  required DateTime expectedReturnTime,
+  required HikeType hikeType,
+  required String startPointName,
+  required String destinationName,
+  required Iterable<String> inviteePhoneNumbers,
+}) {
+  final canonicalInvitees =
+      inviteePhoneNumbers
+          .map((phoneNumber) => phoneNumber.trim())
+          .where((phoneNumber) => phoneNumber.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+  final canonicalInput = jsonEncode([
+    appInstanceId.trim(),
+    trailId.trim(),
+    departureTime.toUtc().toIso8601String(),
+    expectedReturnTime.toUtc().toIso8601String(),
+    hikeType.name,
+    startPointName.trim(),
+    destinationName.trim(),
+    canonicalInvitees,
+  ]);
+  final digest = crypto.sha256.convert(utf8.encode(canonicalInput));
+  return 'schedule_$digest';
+}
+
+@visibleForTesting
+Map<String, dynamic> buildActiveHikeCompletionPayload({
+  required ActiveHikeSession activeHike,
+  required DateTime endedAt,
+  HikeSummaryReport? summary,
+}) {
+  final sessionId = activeHike.sessionId.trim();
+  final trailId = activeHike.trail.trailId.trim();
+  final teamHikeSessionId = activeHike.teamHikeSessionId.trim();
+  final sourceUpcomingHikeId = activeHike.sourceUpcomingHikeId.trim();
+  final startedAtUtc = activeHike.startedAt.toUtc();
+  final endedAtUtc = endedAt.toUtc();
+  final duration = endedAtUtc.difference(startedAtUtc);
+  if (!_isValidCloudDocumentId(sessionId) ||
+      !_isValidCloudDocumentId(trailId) ||
+      (teamHikeSessionId.isNotEmpty &&
+          !_isValidCloudDocumentId(teamHikeSessionId)) ||
+      (sourceUpcomingHikeId.isNotEmpty &&
+          !_isValidCloudDocumentId(sourceUpcomingHikeId)) ||
+      duration.isNegative) {
+    throw const HikerCircleFirebaseRepositoryException(
+      'The saved hike completion data is invalid.',
+    );
+  }
+  final offlineMatch = RegExp(r'^session_([0-9]{13})$').firstMatch(sessionId);
+  if (offlineMatch != null) {
+    final encodedStart = int.tryParse(offlineMatch.group(1)!);
+    if (encodedStart == null ||
+        (startedAtUtc.millisecondsSinceEpoch - encodedStart).abs() >
+            const Duration(minutes: 10).inMilliseconds) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The saved offline hike does not match its start time.',
+      );
+    }
+  }
+
+  final effectiveSummary =
+      summary ??
+      HikeSummaryReport.fromActiveHike(
+        activeHike: activeHike,
+        endedAt: endedAtUtc,
+      );
+  final distanceKm = effectiveSummary.distanceKm.isFinite
+      ? effectiveSummary.distanceKm.clamp(0, 5000).toDouble()
+      : 0.0;
+  return {
+    'sessionId': sessionId,
+    'draft': activeHike.draft.toPersistence(),
+    'startedAtLocal': startedAtUtc.toIso8601String(),
+    'endedAtLocal': endedAtUtc.toIso8601String(),
+    if (teamHikeSessionId.isNotEmpty) 'teamHikeSessionId': teamHikeSessionId,
+    if (sourceUpcomingHikeId.isNotEmpty)
+      'sourceUpcomingHikeId': sourceUpcomingHikeId,
+    'summary': {
+      'distanceKm': distanceKm,
+      'checkIns': effectiveSummary.checkIns.clamp(0, 100000),
+      'manualPins': effectiveSummary.manualPins.clamp(0, 100000),
+      'routePointCount': effectiveSummary.routePointCount.clamp(0, 1000000),
+      'batteryStartPercent': effectiveSummary.batteryStartPercent.clamp(0, 100),
+      'batteryEndPercent': effectiveSummary.batteryEndPercent.clamp(0, 100),
+    },
+  };
+}
+
+@visibleForTesting
+List<HikeCoordinate> downsampleHikeRouteForCloud(
+  Iterable<HikeCoordinate> routePoints, {
+  int maxPoints = 1200,
+}) {
+  if (maxPoints <= 0) return const [];
+  final points = routePoints.where((point) => point.hasValidPosition).toList()
+    ..sort((left, right) => left.capturedAt.compareTo(right.capturedAt));
+  return _evenlyDownsample(points, maxPoints: maxPoints);
+}
+
+Map<String, dynamic> _callableMapFrom(Object? payload) {
+  if (payload is! Map) {
+    throw const HikerCircleFirebaseRepositoryException(
+      'The hike server returned an invalid response.',
+    );
+  }
+  return Map<String, dynamic>.from(payload);
+}
+
+String _topLevelStringFrom(Object? value) => value is String ? value : '';
+
+bool _isValidCloudDocumentId(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty ||
+      normalized.length > 200 ||
+      normalized.contains('/')) {
+    return false;
+  }
+  return !normalized.codeUnits.any((codeUnit) => codeUnit < 0x20);
+}
+
+List<T> _evenlyDownsample<T>(List<T> values, {required int maxPoints}) {
+  if (values.length <= maxPoints) return List<T>.unmodifiable(values);
+  if (maxPoints == 1) return List<T>.unmodifiable([values.last]);
+  final lastIndex = values.length - 1;
+  final step = lastIndex / (maxPoints - 1);
+  return List<T>.unmodifiable([
+    for (var index = 0; index < maxPoints; index++)
+      values[(index * step).round()],
+  ]);
 }
 
 class AdminTrailImageUpload {
@@ -43,6 +414,7 @@ class HikerCircleFirebaseRepository {
   HikerCircleFirebaseRepository({
     FirebaseFirestore? firestore,
     FirebaseStorage? storage,
+    FirebaseFunctions? functions,
     LocalSessionDatabase? localDatabase,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
@@ -52,11 +424,11 @@ class HikerCircleFirebaseRepository {
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
        _firebaseBootstrapResult = firebaseBootstrapResult,
        _openMeteoService = openMeteoService ?? const OpenMeteoService(),
-       _functions = FirebaseFunctions.instance;
+       _functions = functions;
 
   final FirebaseFirestore? _firestore;
   final FirebaseStorage? _storage;
-  final FirebaseFunctions _functions;
+  final FirebaseFunctions? _functions;
   final LocalSessionDatabase _localDatabase;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
   final OpenMeteoService _openMeteoService;
@@ -72,6 +444,11 @@ class HikerCircleFirebaseRepository {
   FirebaseFirestore get firestore => _resolvedFirestore;
 
   FirebaseStorage get _resolvedStorage => _storage ?? FirebaseStorage.instance;
+
+  FirebaseFunctions get _resolvedFunctions {
+    _throwIfFirebaseUnavailable();
+    return _functions ?? FirebaseFunctions.instance;
+  }
 
   Future<void> registerFcmToken({
     required AppSession session,
@@ -198,8 +575,6 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('hikeSessions');
   CollectionReference<Map<String, dynamic>> get _locationPoints =>
       _resolvedFirestore.collection('localLocationPoints');
-  CollectionReference<Map<String, dynamic>> get _checkIns =>
-      _resolvedFirestore.collection('checkIns');
   CollectionReference<Map<String, dynamic>> get _hazardReports =>
       _resolvedFirestore.collection('hazardReports');
   CollectionReference<Map<String, dynamic>> get _upcomingHikes =>
@@ -208,14 +583,12 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('teams');
   CollectionReference<Map<String, dynamic>> get _teamHikeSessions =>
       _resolvedFirestore.collection('teamHikeSessions');
-  CollectionReference<Map<String, dynamic>> get _fcmOutbox =>
-      _resolvedFirestore.collection('fcmOutbox');
   CollectionReference<Map<String, dynamic>> get _communityPosts =>
       _resolvedFirestore.collection('communityPosts');
   CollectionReference<Map<String, dynamic>> get _sosAlerts =>
       _resolvedFirestore.collection('sosAlerts');
-  CollectionReference<Map<String, dynamic>> get _whatsAppMessageLogs =>
-      _resolvedFirestore.collection('whatsAppMessageLogs');
+  CollectionReference<Map<String, dynamic>> get _sosWhatsAppDispatches =>
+      _resolvedFirestore.collection('sosWhatsAppDispatches');
   CollectionReference<Map<String, dynamic>> _communityCommentsFor(
     String postId,
   ) {
@@ -261,9 +634,9 @@ class HikerCircleFirebaseRepository {
       'iconName': 'map',
       'rewardPoints': 90,
       'rewardType': 'one_time',
-      'metricKey': 'hike_started',
+      'metricKey': 'offline_map_verified_at_hike_start',
       'targetCount': 1,
-      'isActive': true,
+      'isActive': false,
       'sortOrder': 20,
       'accentColorValue': 0xFF2F80ED,
     },
@@ -274,9 +647,9 @@ class HikerCircleFirebaseRepository {
       'iconName': 'health_and_safety',
       'rewardPoints': 100,
       'rewardType': 'one_time',
-      'metricKey': 'checklist_completed',
+      'metricKey': 'full_checklist_verified_at_departure',
       'targetCount': 1,
-      'isActive': true,
+      'isActive': false,
       'sortOrder': 30,
       'accentColorValue': 0xFFF2994A,
     },
@@ -384,8 +757,11 @@ class HikerCircleFirebaseRepository {
     final batch = _resolvedFirestore.batch();
     var hasChanges = false;
 
+    final documentsByTrailId = {
+      for (final document in docs) document.id: document,
+    };
     for (var i = 0; i < liveTrails.length; i++) {
-      final docData = i < docs.length ? docs[i].data() : null;
+      final docData = documentsByTrailId[liveTrails[i].trailId]?.data();
       final hasWeatherField = docData != null && docData.containsKey('weather');
       if (!hasWeatherField || liveTrails[i].weather.isStale) {
         fetchIndices.add(i);
@@ -413,8 +789,11 @@ class HikerCircleFirebaseRepository {
       final i = fetchIndices[j];
       liveTrails[i] = liveTrails[i].copyWith(weather: weather);
 
-      if (i < docs.length && docs[i].exists) {
-        batch.update(docs[i].reference, {'weather': weather.toFirestore()});
+      final matchingDocument = documentsByTrailId[liveTrails[i].trailId];
+      if (matchingDocument != null && matchingDocument.exists) {
+        batch.update(matchingDocument.reference, {
+          'weather': weather.toFirestore(),
+        });
         hasChanges = true;
       }
     }
@@ -468,7 +847,7 @@ class HikerCircleFirebaseRepository {
 
   Future<Trail> refreshTrailWeatherViaCloud(Trail trail) async {
     try {
-      final result = await _functions
+      final result = await _resolvedFunctions
           .httpsCallable('fetchWeatherForTrail')
           .call({'trailId': trail.trailId});
       final weatherMap = result.data['weather'] as Map<String, dynamic>;
@@ -483,11 +862,13 @@ class HikerCircleFirebaseRepository {
   Future<List<UpcomingHike>> loadUpcomingHikes() async {
     if (!_firebaseBootstrapResult.isAvailable) return const [];
     try {
-      final snapshot = await _upcomingHikes.get().timeout(_firebaseReadTimeout);
-      return snapshot.docs
-          .map((doc) => UpcomingHike.fromFirestore(doc.id, doc.data()))
-          .where(_shouldRenderUpcomingHike)
-          .toList();
+      final response = await _resolvedFunctions
+          .httpsCallable('listUpcomingHikePreviews')
+          .call(<String, dynamic>{})
+          .timeout(_firebaseReadTimeout);
+      return parseUpcomingHikePreviewPayload(
+        response.data,
+      ).where(_shouldRenderUpcomingHike).toList();
     } catch (_) {
       return const [];
     }
@@ -497,14 +878,18 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable || hikeId.trim().isEmpty) {
       return null;
     }
+    final normalizedHikeId = hikeId.trim();
     try {
-      final document = await _upcomingHikes.doc(hikeId.trim()).get();
-      final data = document.data();
-      if (!document.exists || data == null) {
-        return null;
+      final response = await _resolvedFunctions
+          .httpsCallable('listUpcomingHikePreviews')
+          .call(<String, dynamic>{'hikeId': normalizedHikeId})
+          .timeout(_firebaseReadTimeout);
+      for (final hike in parseUpcomingHikePreviewPayload(response.data)) {
+        if (hike.id == normalizedHikeId && _shouldRenderUpcomingHike(hike)) {
+          return hike;
+        }
       }
-      final hike = UpcomingHike.fromFirestore(document.id, data);
-      return _shouldRenderUpcomingHike(hike) ? hike : null;
+      return null;
     } catch (_) {
       return null;
     }
@@ -584,115 +969,16 @@ class HikerCircleFirebaseRepository {
     });
   }
 
-  Future<bool> joinUpcomingHike({
-    required String hikeId,
-    required String sessionId,
-    required String trailName,
-    required String creatorPhone,
-    required String phoneNumber,
-    String userName = '',
-  }) async {
+  Future<bool> joinUpcomingHike({required String hikeId}) async {
     if (!_firebaseBootstrapResult.isAvailable) return false;
     try {
-      final hikeReference = _upcomingHikes.doc(hikeId);
-      await _resolvedFirestore.runTransaction((transaction) async {
-        final snapshot = await transaction.get(hikeReference);
-        final data = snapshot.data();
-        if (!snapshot.exists || data == null) {
-          throw const HikerCircleFirebaseRepositoryException(
-            'This upcoming hike is no longer available.',
-          );
-        }
-        final hike = UpcomingHike.fromFirestore(snapshot.id, data);
-        if (!_shouldRenderUpcomingHike(hike)) {
-          throw const HikerCircleFirebaseRepositoryException(
-            'This upcoming hike is no longer available.',
-          );
-        }
-        final currentPhones = data['participantPhones'] is Iterable
-            ? (data['participantPhones'] as Iterable)
-                  .whereType<String>()
-                  .toSet()
-            : <String>{};
-        final storedCreatorPhone = _stringFrom(data['creatorPhone']);
-        if (storedCreatorPhone.isNotEmpty) {
-          currentPhones.add(storedCreatorPhone);
-        }
-        if (currentPhones.contains(phoneNumber)) {
-          return;
-        }
-        currentPhones.add(phoneNumber);
-        transaction.set(hikeReference, {
-          'participantPhones': currentPhones.toList(),
-          'participantCount': currentPhones.length,
-          'updatedAt': FieldValue.serverTimestamp(),
-          'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
-        }, SetOptions(merge: true));
-      });
-
-      final snapshot = await _upcomingHikes.doc(hikeId).get();
-      final data = snapshot.data();
-      if (data == null) return true;
-
-      final raw = data['participantPhones'];
-      final allPhones = raw is List
-          ? raw.whereType<String>().where((p) => p.isNotEmpty).toList()
-          : <String>[creatorPhone, phoneNumber];
-      if (allPhones.length < 2) return true;
-
-      await _groupChats.doc(sessionId).set({
-        'hikeSessionId': sessionId,
-        'trailName': trailName,
-        'participantPhones': FieldValue.arrayUnion(allPhones),
-        'creatorPhone': creatorPhone,
-        'createdAtLocal': DateTime.now().toUtc().toIso8601String(),
-      }, SetOptions(merge: true));
-
-      final displayName = userName.isNotEmpty ? userName : phoneNumber;
-      await sendSystemMessage(
-        chatId: sessionId,
-        text: '$displayName joined the hike',
-        senderPhone: phoneNumber,
-        senderName: displayName,
-        participantPhones: allPhones,
-      );
-      return true;
-    } catch (_) {
+      final callable = _resolvedFunctions.httpsCallable('joinUpcomingHike');
+      final result = await callable.call(<String, dynamic>{'hikeId': hikeId});
+      final data = result.data;
+      return data is Map && data['joined'] == true;
+    } on FirebaseFunctionsException {
       return false;
     }
-  }
-
-  Future<void> createGroupChat({
-    required String hikeSessionId,
-    required String trailName,
-    required List<String> participantPhones,
-    required String creatorPhone,
-    String teamHikeSessionId = '',
-    Map<String, String> participantNames = const {},
-    Map<String, String> participantPhotoURLs = const {},
-    DateTime? departureTime,
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return;
-    try {
-      final doc = _groupChats.doc();
-      final chat = GroupChat(
-        id: doc.id,
-        hikeSessionId: hikeSessionId,
-        trailName: trailName,
-        participantPhones: participantPhones,
-        creatorPhone: creatorPhone,
-        createdAt: DateTime.now(),
-        chatType: 'group',
-        participantNames: participantNames,
-        participantPhotoURLs: participantPhotoURLs,
-        departureTime: departureTime,
-      );
-      await doc.set({
-        ...chat.toFirestore(),
-        if (teamHikeSessionId.trim().isNotEmpty)
-          'teamHikeSessionId': teamHikeSessionId.trim(),
-      });
-    } catch (_) {}
   }
 
   Future<List<GroupChat>> loadUserGroupChats(String phoneNumber) async {
@@ -762,50 +1048,33 @@ class HikerCircleFirebaseRepository {
     required String otherDisplayName,
   }) async {
     _throwIfFirebaseUnavailable();
-    final ownPhone = session.phoneNumber.trim();
     final otherPhone = otherPhoneNumber.trim();
-    if (otherPhone.isEmpty || _samePhone(ownPhone, otherPhone)) {
+    if (otherPhone.isEmpty || _samePhone(session.phoneNumber, otherPhone)) {
       throw const HikerCircleFirebaseRepositoryException(
         'Choose another hiker to start a private conversation.',
       );
     }
-    final phoneKeys = [_phoneKeyFor(ownPhone), _phoneKeyFor(otherPhone)]
-      ..sort();
-    final chatId = 'direct_${phoneKeys.join('_')}';
-    final reference = _groupChats.doc(chatId);
-    final now = DateTime.now().toUtc();
-    final names = <String, String>{
-      _phoneKeyFor(ownPhone): session.username.trim().isEmpty
-          ? ownPhone
-          : session.username.trim(),
-      _phoneKeyFor(otherPhone): otherDisplayName.trim().isEmpty
-          ? otherPhone
-          : otherDisplayName.trim(),
-    };
-    final photoURLs = Map<String, String>.from(
-      await _photoURLsForPhones([ownPhone, otherPhone]),
-    );
-    final ownSessionPhoto = session.photoURL?.trim() ?? '';
-    if (ownSessionPhoto.isNotEmpty) {
-      photoURLs[_phoneKeyFor(ownPhone)] = ownSessionPhoto;
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('openDirectChat')
+          .call<Map<String, dynamic>>({'otherPhoneNumber': otherPhone});
+      final payload = Map<String, dynamic>.from(response.data);
+      final chatId = _stringFrom(payload['chatId']);
+      final rawChat = payload['chat'];
+      if (chatId.isEmpty || rawChat is! Map) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'The chat server returned an invalid conversation.',
+        );
+      }
+      return GroupChat.fromFirestore(
+        chatId,
+        Map<String, dynamic>.from(rawChat),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to start this conversation right now.',
+      );
     }
-    await reference.set({
-      'hikeSessionId': '',
-      'trailName': 'Private chat',
-      'chatType': 'direct',
-      'participantPhones': [ownPhone, otherPhone],
-      'participantNames': names,
-      if (photoURLs.isNotEmpty) 'participantPhotoURLs': photoURLs,
-      'creatorPhone': ownPhone,
-      'createdAt': FieldValue.serverTimestamp(),
-      'createdAtLocal': now.toIso8601String(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
-    final snapshot = await reference.get();
-    return _hydrateGroupChatWithPhotos(
-      GroupChat.fromFirestore(chatId, snapshot.data()!),
-    );
   }
 
   Future<List<Map<String, dynamic>>> loadCommunityProfiles({
@@ -815,40 +1084,10 @@ class HikerCircleFirebaseRepository {
       return const [];
     }
     try {
-      final snapshot = await _users
-          .limit(80)
-          .get()
-          .timeout(_firebaseReadTimeout);
       final ownId = _userIdFor(session);
-      return snapshot.docs
-          .where((document) => document.id != ownId)
-          .map((document) {
-            final data = document.data();
-            final profile = data['profile'] is Map
-                ? Map<String, dynamic>.from(data['profile'] as Map)
-                : const <String, dynamic>{};
-            final points = _intFrom(data['achievementPoints']);
-            final level = HikerLevel.fromPoints(points);
-            final username = _stringFrom(data['username']).trim().isNotEmpty
-                ? _stringFrom(data['username']).trim()
-                : _stringFrom(profile['username']).trim();
-            return <String, dynamic>{
-              'userId': document.id,
-              'phoneNumber': _stringFrom(data['phoneNumber']),
-              'displayName': username.isEmpty ? 'Hiker' : username,
-              'handle': _handleForPhone(_stringFrom(data['phoneNumber'])),
-              'photoURL': _photoURLFromUserData(data),
-              'gender': _stringFrom(profile['gender']),
-              'hikerExperience': _stringFrom(profile['hikerExperience']),
-              'hikeFrequency': _stringFrom(profile['hikeFrequency']),
-              'residentialLocation': _stringFrom(
-                profile['residentialLocation'],
-              ),
-              'achievementPoints': points,
-              'level': level.number,
-              'levelName': level.name,
-            };
-          })
+      final profiles = await _getPublicProfiles({'limit': 80});
+      return profiles
+          .where((profile) => _stringFrom(profile['userId']) != ownId)
           .where((profile) => _stringFrom(profile['phoneNumber']).isNotEmpty)
           .toList();
     } catch (_) {
@@ -863,50 +1102,56 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return null;
     }
-    DocumentSnapshot<Map<String, dynamic>> snapshot;
     try {
       if (userId.trim().isNotEmpty) {
-        snapshot = await _users
-            .doc(userId.trim())
-            .get()
-            .timeout(_firebaseReadTimeout);
+        final profiles = await _getPublicProfiles({'userId': userId.trim()});
+        return profiles.isEmpty ? null : profiles.first;
       } else if (phoneNumber.trim().isNotEmpty) {
-        snapshot = await _users
-            .doc(FirebaseUserRepository.documentIdForPhoneNumber(phoneNumber))
-            .get()
-            .timeout(_firebaseReadTimeout);
+        final profiles = await _getPublicProfiles({
+          'phoneNumber': phoneNumber.trim(),
+        });
+        return profiles.isEmpty ? null : profiles.first;
       } else {
         return null;
       }
     } catch (_) {
       return null;
     }
-    final data = snapshot.data();
-    if (data == null) {
-      return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _getPublicProfiles(
+    Map<String, dynamic> request,
+  ) async {
+    final result = await _resolvedFunctions
+        .httpsCallable('getPublicProfiles')
+        .call(request)
+        .timeout(_firebaseReadTimeout);
+    final payload = result.data;
+    final rawProfiles = payload is Map ? payload['profiles'] : null;
+    if (rawProfiles is! Iterable) {
+      return const [];
     }
-    final profile = data['profile'] is Map
-        ? Map<String, dynamic>.from(data['profile'] as Map)
-        : const <String, dynamic>{};
-    final points = _intFrom(data['achievementPoints']);
-    final level = HikerLevel.fromPoints(points);
-    final username = _stringFrom(data['username']).trim().isNotEmpty
-        ? _stringFrom(data['username']).trim()
-        : _stringFrom(profile['username']).trim();
-    return {
-      'userId': snapshot.id,
-      'phoneNumber': _stringFrom(data['phoneNumber']),
-      'displayName': username.isEmpty ? 'Hiker' : username,
-      'handle': _handleForPhone(_stringFrom(data['phoneNumber'])),
-      'photoURL': _photoURLFromUserData(data),
-      'gender': _stringFrom(profile['gender']),
-      'hikerExperience': _stringFrom(profile['hikerExperience']),
-      'hikeFrequency': _stringFrom(profile['hikeFrequency']),
-      'residentialLocation': _stringFrom(profile['residentialLocation']),
-      'achievementPoints': points,
-      'level': level.number,
-      'levelName': level.name,
-    };
+    return rawProfiles.whereType<Map>().map((raw) {
+      final profile = Map<String, dynamic>.from(raw);
+      final points = _intFrom(profile['achievementPoints']);
+      final level = HikerLevel.fromPoints(points);
+      return <String, dynamic>{
+        'userId': _stringFrom(profile['userId']),
+        'phoneNumber': _stringFrom(profile['phoneNumber']),
+        'displayName': _stringFrom(profile['displayName']).trim().isEmpty
+            ? 'Hiker'
+            : _stringFrom(profile['displayName']).trim(),
+        'handle': _stringFrom(profile['handle']),
+        'photoURL': _stringFrom(profile['photoURL']),
+        'gender': _stringFrom(profile['gender']),
+        'hikerExperience': _stringFrom(profile['hikerExperience']),
+        'hikeFrequency': _stringFrom(profile['hikeFrequency']),
+        'residentialLocation': _stringFrom(profile['residentialLocation']),
+        'achievementPoints': points,
+        'level': level.number,
+        'levelName': level.name,
+      };
+    }).toList();
   }
 
   Future<Set<String>> loadBuddyPhoneNumbers({
@@ -987,45 +1232,7 @@ class HikerCircleFirebaseRepository {
         _samePhone(session.phoneNumber, recipientPhone)) {
       return;
     }
-    final senderKey = _phoneKeyFor(session.phoneNumber);
-    final recipientKey = _phoneKeyFor(recipientPhone);
-    if (senderKey.isEmpty || recipientKey.isEmpty) {
-      return;
-    }
-    final senderReference = _users.doc(_userIdFor(session));
-    final recipientReference = _users.doc(
-      FirebaseUserRepository.documentIdForPhoneNumber(recipientPhone),
-    );
-    final senderSnapshot = await senderReference.get();
-    final senderData = senderSnapshot.data() ?? const <String, dynamic>{};
-    final senderPhotoURL = _photoURLFromUserData(senderData).isNotEmpty
-        ? _photoURLFromUserData(senderData)
-        : session.photoURL?.trim() ?? '';
-    final displayName = session.username.trim().isEmpty
-        ? _handleForPhone(session.phoneNumber)
-        : session.username.trim();
-    final now = DateTime.now().toUtc().toIso8601String();
-    final incomingPayload = {
-      'phoneNumber': session.phoneNumber,
-      'displayName': displayName,
-      'handle': _handleForPhone(session.phoneNumber),
-      if (senderPhotoURL.isNotEmpty) 'photoURL': senderPhotoURL,
-      'createdAtLocal': now,
-    };
-    final outgoingPayload = {
-      'phoneNumber': recipientPhone,
-      'createdAtLocal': now,
-    };
-    final batch = _resolvedFirestore.batch();
-    batch.set(recipientReference, {
-      'buddyRequestsIncoming.$senderKey': incomingPayload,
-      'buddyRequestsUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    batch.set(senderReference, {
-      'buddyRequestsOutgoing.$recipientKey': outgoingPayload,
-      'buddyRequestsUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    await batch.commit();
+    await _manageBuddyRequest(action: 'send', phoneNumber: recipientPhone);
   }
 
   Future<void> acceptBuddyRequest({
@@ -1039,22 +1246,7 @@ class HikerCircleFirebaseRepository {
     if (requesterPhone.isEmpty || requesterKey.isEmpty || ownKey.isEmpty) {
       return;
     }
-    final ownReference = _users.doc(_userIdFor(session));
-    final requesterReference = _users.doc(
-      FirebaseUserRepository.documentIdForPhoneNumber(requesterPhone),
-    );
-    final batch = _resolvedFirestore.batch();
-    batch.set(ownReference, {
-      'buddyPhoneNumbers': FieldValue.arrayUnion([requesterPhone]),
-      'buddyRequestsIncoming.$requesterKey': FieldValue.delete(),
-      'buddiesUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    batch.set(requesterReference, {
-      'buddyPhoneNumbers': FieldValue.arrayUnion([session.phoneNumber]),
-      'buddyRequestsOutgoing.$ownKey': FieldValue.delete(),
-      'buddiesUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    await batch.commit();
+    await _manageBuddyRequest(action: 'accept', phoneNumber: requesterPhone);
   }
 
   Future<void> declineBuddyRequest({
@@ -1068,22 +1260,23 @@ class HikerCircleFirebaseRepository {
     if (requesterPhone.isEmpty || requesterKey.isEmpty || ownKey.isEmpty) {
       return;
     }
-    final batch = _resolvedFirestore.batch();
-    batch.set(_users.doc(_userIdFor(session)), {
-      'buddyRequestsIncoming.$requesterKey': FieldValue.delete(),
-      'buddyRequestsUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    batch.set(
-      _users.doc(
-        FirebaseUserRepository.documentIdForPhoneNumber(requesterPhone),
-      ),
-      {
-        'buddyRequestsOutgoing.$ownKey': FieldValue.delete(),
-        'buddyRequestsUpdatedAt': FieldValue.serverTimestamp(),
-      },
-      SetOptions(merge: true),
-    );
-    await batch.commit();
+    await _manageBuddyRequest(action: 'decline', phoneNumber: requesterPhone);
+  }
+
+  Future<void> _manageBuddyRequest({
+    required String action,
+    required String phoneNumber,
+  }) async {
+    try {
+      await _resolvedFunctions.httpsCallable('manageBuddyRequest').call({
+        'action': action,
+        'phoneNumber': phoneNumber,
+      });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to update this buddy request.',
+      );
+    }
   }
 
   Future<bool> loadGroupChatNotificationsEnabled({
@@ -1109,6 +1302,40 @@ class HikerCircleFirebaseRepository {
       'groupChatNotificationsEnabled': enabled,
       'groupChatNotificationSettingsUpdatedAt': FieldValue.serverTimestamp(),
       'groupChatNotificationSettingsUpdatedAtLocal': DateTime.now()
+          .toUtc()
+          .toIso8601String(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<String?> loadPreferredTimeZone({required AppSession session}) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return null;
+    }
+    try {
+      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final value = snapshot.data()?['preferredTimeZone'];
+      return value is String && PreferredTimeZone.isValid(value)
+          ? value.trim()
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> savePreferredTimeZone({
+    required AppSession session,
+    required String preferredTimeZone,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    if (!PreferredTimeZone.isValid(preferredTimeZone)) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Select a valid timezone before saving.',
+      );
+    }
+    await _users.doc(_userIdFor(session)).set({
+      'preferredTimeZone': preferredTimeZone.trim(),
+      'preferredTimeZoneUpdatedAt': FieldValue.serverTimestamp(),
+      'preferredTimeZoneUpdatedAtLocal': DateTime.now()
           .toUtc()
           .toIso8601String(),
     }, SetOptions(merge: true));
@@ -1248,16 +1475,15 @@ class HikerCircleFirebaseRepository {
     required List<String> participantPhones,
   }) async {
     _throwIfFirebaseUnavailable();
-    await sendSystemMessage(
-      chatId: chatId,
-      text: '$senderName left the conversation',
-      senderPhone: session.phoneNumber,
-      senderName: senderName,
-      participantPhones: participantPhones,
-    );
-    await _groupChats.doc(chatId).update({
-      'participantPhones': FieldValue.arrayRemove([session.phoneNumber]),
-    });
+    try {
+      await _resolvedFunctions.httpsCallable('deleteChatForUser').call({
+        'chatId': chatId.trim(),
+      });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to leave this conversation right now.',
+      );
+    }
   }
 
   Future<void> sendGroupChatMessage({
@@ -1270,6 +1496,7 @@ class HikerCircleFirebaseRepository {
     ChatAttachment? attachment,
   }) async {
     final senderPhotoURL = await _photoURLForPhone(senderPhone);
+    final firestoreMessageId = _firestoreMessageIdForLocalId(localId);
     if (attachment == null) {
       await _localDatabase.insertPendingMessage(
         localId: localId,
@@ -1277,11 +1504,15 @@ class HikerCircleFirebaseRepository {
         senderPhone: senderPhone,
         senderName: senderName,
         text: text,
+        firestoreDocId: firestoreMessageId,
       );
     }
 
     try {
-      final msgDoc = _groupChatMessagesFor(chatId).doc();
+      // A retry must address the same Firestore document. Using a random ID
+      // here could duplicate a message when the offline write was accepted by
+      // the SDK but the subsequent server acknowledgement was unavailable.
+      final msgDoc = _groupChatMessagesFor(chatId).doc(firestoreMessageId);
       final msg = ChatMessage(
         id: msgDoc.id,
         chatId: chatId,
@@ -1344,7 +1575,11 @@ class HikerCircleFirebaseRepository {
       );
     }
 
-    final safeName = fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final sanitizedName = fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final extensionStart = sanitizedName.lastIndexOf('.');
+    final safeName = extensionStart <= 0
+        ? sanitizedName
+        : '${sanitizedName.substring(0, extensionStart)}${sanitizedName.substring(extensionStart).toLowerCase()}';
     final safePhone = senderPhone.replaceAll(RegExp(r'[^0-9+]'), '');
     final objectName =
         '${DateTime.now().microsecondsSinceEpoch}_${safePhone}_$safeName';
@@ -1458,82 +1693,6 @@ class HikerCircleFirebaseRepository {
         'Profile photo upload failed: ${error.message ?? error.code}',
       );
     }
-  }
-
-  Future<void> sendSystemMessage({
-    required String chatId,
-    required String text,
-    required String senderPhone,
-    required String senderName,
-    required List<String> participantPhones,
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return;
-    try {
-      final msgDoc = _groupChatMessagesFor(chatId).doc();
-      final msg = ChatMessage(
-        id: msgDoc.id,
-        chatId: chatId,
-        senderPhone: senderPhone,
-        senderName: senderName,
-        text: text,
-        sentAt: DateTime.now(),
-        isSystemMessage: true,
-        seenBy: participantPhones,
-      );
-      await msgDoc.set(msg.toFirestore());
-    } catch (_) {}
-  }
-
-  Future<void> _scheduleGroupChatRemoval({
-    required QueryDocumentSnapshot<Map<String, dynamic>> chatDoc,
-    required String messageText,
-    required String senderPhone,
-    required String senderName,
-    required DateTime startedAt,
-    String closureReason = 'hike_ended',
-  }) async {
-    final chatData = chatDoc.data();
-    if (chatData['isDeleted'] == true ||
-        _dateFromValue(chatData['chatRemovesAtLocal']) != null) {
-      return;
-    }
-    final removesAt = startedAt.toUtc().add(const Duration(hours: 1));
-    final chatPhones =
-        (chatData['participantPhones'] as Iterable?)
-            ?.map((e) => e is String ? e : '')
-            .where((e) => e.isNotEmpty)
-            .toList() ??
-        <String>[];
-
-    await chatDoc.reference.set({
-      'hikeEndedAtLocal': startedAt.toUtc().toIso8601String(),
-      'chatRemovesAtLocal': removesAt.toIso8601String(),
-      'closureReason': closureReason,
-      'isDeleted': false,
-      'lastMessage': messageText,
-      'lastMessageAtLocal': DateTime.now().toUtc().toIso8601String(),
-      'lastMessageSenderPhone': 'system',
-      'closureNoticeSentAt': FieldValue.serverTimestamp(),
-      'closureNoticeSentAtLocal': DateTime.now().toUtc().toIso8601String(),
-    }, SetOptions(merge: true));
-
-    if (chatPhones.isNotEmpty) {
-      await sendSystemMessage(
-        chatId: chatDoc.id,
-        text: messageText,
-        senderPhone: senderPhone,
-        senderName: senderName,
-        participantPhones: chatPhones,
-      );
-    }
-  }
-
-  String _formatLocalClock(DateTime value) {
-    final local = value.toLocal();
-    final rawHour = local.hour % 12;
-    final hour12 = rawHour == 0 ? 12 : rawHour;
-    final ampm = local.hour >= 12 ? 'PM' : 'AM';
-    return '$hour12:${local.minute.toString().padLeft(2, '0')}$ampm';
   }
 
   String _attachmentSummary(ChatAttachment? attachment) {
@@ -1679,7 +1838,13 @@ class HikerCircleFirebaseRepository {
       final senderName = row['sender_name'] as String? ?? '';
       final text = row['text'] as String;
       final retryCount = row['retry_count'] as int? ?? 0;
-      final firestoreDocId = row['firestore_doc_id'] as String? ?? '';
+      final storedFirestoreDocId = row['firestore_doc_id'] as String? ?? '';
+      final firestoreDocId = storedFirestoreDocId.isNotEmpty
+          ? storedFirestoreDocId
+          : _firestoreMessageIdForLocalId(localId);
+      final sentAt =
+          DateTime.tryParse(row['created_at'] as String? ?? '') ??
+          DateTime.now();
 
       if (retryCount > 5) {
         await _localDatabase.deletePendingMessage(localId);
@@ -1687,32 +1852,32 @@ class HikerCircleFirebaseRepository {
       }
 
       try {
-        if (firestoreDocId.isNotEmpty) {
-          final existing = await _groupChatMessagesFor(
-            chatId,
-          ).doc(firestoreDocId).get(const GetOptions(source: Source.server));
-          if (existing.exists) {
-            await _localDatabase.markPendingMessageSent(localId);
-            continue;
-          }
+        final existing = await _groupChatMessagesFor(
+          chatId,
+        ).doc(firestoreDocId).get(const GetOptions(source: Source.server));
+        if (existing.exists) {
+          await _localDatabase.updateLocalMessageStatus(
+            localId,
+            'sent',
+            firestoreDocId: firestoreDocId,
+          );
+          continue;
         }
 
-        final msgDoc = firestoreDocId.isNotEmpty
-            ? _groupChatMessagesFor(chatId).doc(firestoreDocId)
-            : _groupChatMessagesFor(chatId).doc();
+        final msgDoc = _groupChatMessagesFor(chatId).doc(firestoreDocId);
         final msg = ChatMessage(
           id: msgDoc.id,
           chatId: chatId,
           senderPhone: senderPhone,
           senderName: senderName,
           text: text,
-          sentAt: DateTime.now(),
+          sentAt: sentAt,
           seenBy: [senderPhone],
         );
         await msgDoc.set(msg.toFirestore());
         await _groupChats.doc(chatId).set({
           'lastMessage': text,
-          'lastMessageAtLocal': DateTime.now().toUtc().toIso8601String(),
+          'lastMessageAtLocal': sentAt.toUtc().toIso8601String(),
           'lastMessageSenderPhone': senderPhone,
         }, SetOptions(merge: true));
 
@@ -1732,6 +1897,16 @@ class HikerCircleFirebaseRepository {
         await _localDatabase.incrementPendingMessageRetry(localId);
       }
     }
+  }
+
+  String _firestoreMessageIdForLocalId(String localId) {
+    final normalized = localId.trim().replaceAll(RegExp(r'[/\\]'), '_');
+    if (normalized.isNotEmpty && normalized.length <= 512) {
+      return normalized;
+    }
+    final encoded =
+        'local_${base64Url.encode(utf8.encode(localId)).replaceAll('=', '')}';
+    return encoded.length <= 512 ? encoded : encoded.substring(0, 512);
   }
 
   ChatAttachment? _attachmentFromLocalRow(Map<String, dynamic> row) {
@@ -1775,73 +1950,29 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
     required HikeSessionDraft draft,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    _throwIfFirebaseUnavailable();
     try {
-      final now = DateTime.now().toUtc();
-      final upcomingDoc = _upcomingHikes.doc();
-      final participantPhones = [
-        session.phoneNumber,
-        ...draft.teamBuddies.map((b) => b.phoneNumber),
-      ];
-      final upcoming = UpcomingHike(
-        id: upcomingDoc.id,
-        sessionId: upcomingDoc.id,
+      final creationKey = upcomingHikeCreationKeyFor(
+        appInstanceId: session.appInstanceId,
         trailId: draft.trail.trailId,
-        trailName: draft.trail.name,
-        latitude: draft.trail.latitude,
-        longitude: draft.trail.longitude,
-        area: draft.trail.area,
-        state: draft.trail.state,
-        distanceKm: draft.trail.distanceKm,
-        durationMinutes: draft.trail.estimatedDurationMinutes,
-        difficulty: draft.trail.difficulty,
-        startPointName: draft.startPointName,
-        destinationName: draft.destinationName,
         departureTime: draft.departureTime,
         expectedReturnTime: draft.expectedReturnTime,
-        hikeType: draft.hikeType.name,
-        participantCount: participantPhones.length,
-        creatorPhone: session.phoneNumber,
-        creatorName: session.username.trim(),
-        createdAt: now,
-        participantPhones: participantPhones,
+        hikeType: draft.hikeType,
+        startPointName: draft.startPointName,
+        destinationName: draft.destinationName,
+        inviteePhoneNumbers: draft.teamBuddies.map(
+          (buddy) => buddy.phoneNumber,
+        ),
       );
-      await upcomingDoc.set({
-        ...upcoming.toFirestore(),
-        'creatorUserId': _userIdFor(session),
-        'creatorName': session.username.trim(),
-        'notificationRadiusKm': 20,
+      await _resolvedFunctions.httpsCallable('scheduleUpcomingHike').call({
+        'creationKey': creationKey,
+        'draft': draft.toPersistence(),
       });
-
-      if (participantPhones.length > 1) {
-        final names = <String, String>{
-          _phoneKeyFor(session.phoneNumber): session.username.trim().isEmpty
-              ? session.phoneNumber
-              : session.username.trim(),
-          for (final buddy in draft.teamBuddies)
-            _phoneKeyFor(buddy.phoneNumber): buddy.name.trim().isEmpty
-                ? buddy.phoneNumber
-                : buddy.name.trim(),
-        };
-        final photoURLs = Map<String, String>.from(
-          await _photoURLsForPhones(participantPhones),
-        );
-        final sessionPhotoURL = session.photoURL?.trim() ?? '';
-        if (sessionPhotoURL.isNotEmpty) {
-          photoURLs[_phoneKeyFor(session.phoneNumber)] = sessionPhotoURL;
-        }
-        await createGroupChat(
-          hikeSessionId: upcomingDoc.id,
-          trailName: draft.trail.name,
-          participantPhones: participantPhones,
-          creatorPhone: session.phoneNumber,
-          participantNames: names,
-          participantPhotoURLs: photoURLs,
-          departureTime: draft.departureTime,
-        );
-      }
-    } catch (_) {
-      // Best-effort: scheduling is non-critical.
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        'Unable to schedule this hike (${error.code}). '
+        '${error.message ?? 'Please try again.'}',
+      );
     }
   }
 
@@ -1886,188 +2017,36 @@ class HikerCircleFirebaseRepository {
       draft,
       teamHikeSessionId: teamHikeSessionId,
       teamHikeSession: teamHikeSession,
+      sourceUpcomingHikeId: sourceUpcomingHikeId.trim(),
     );
     if (!_firebaseBootstrapResult.isAvailable) {
       return localSession;
     }
 
     try {
-      final normalizedUpcomingHikeId = sourceUpcomingHikeId.trim();
-      final document = normalizedUpcomingHikeId.isEmpty
-          ? _hikeSessions.doc()
-          : _hikeSessions.doc(normalizedUpcomingHikeId);
-      final now = DateTime.now().toUtc();
-      final effectiveCheckpoints = draft.effectiveCheckpoints;
-      final checkpointData = effectiveCheckpoints
-          .map((c) => c.toFirestore())
-          .toList();
-
-      await document.set({
-        'sessionId': document.id,
-        if (teamHikeSessionId.isNotEmpty)
-          'teamHikeSessionId': teamHikeSessionId,
-        'userId': _userIdFor(session),
-        'userPhoneNumber': session.phoneNumber,
-        'status': 'active',
-        'hikeType': draft.hikeType.name,
-        'teamBuddies': draft.teamBuddies
-            .map((buddy) => buddy.toFirestore())
-            .toList(),
-        'trailId': draft.trail.trailId,
-        'trailName': draft.trail.name,
-        'trail': draft.trail.toFirestore(),
-        'checkpoints': checkpointData,
-        'startPointName': draft.startPointName,
-        'destinationName': draft.destinationName,
-        'plannedStartTimeLocal': draft.departureTime.toUtc().toIso8601String(),
-        'expectedArrivalTimeLocal': draft.expectedArrivalTime
-            .toUtc()
-            .toIso8601String(),
-        'expectedReturnTimeLocal': draft.expectedReturnTime
-            .toUtc()
-            .toIso8601String(),
-        'safetyCheckInIntervalMinutes': draft.safetyCheckInInterval.inMinutes,
-        'locationRecordingIntervalMinutes':
-            draft.locationRecordingInterval.inMinutes,
-        'locationRecordingIntervalSeconds':
-            draft.locationRecordingInterval.inSeconds,
-        'emergencyContactNames': draft.emergencyContactNames,
-        'shareLiveLocation': draft.shareLiveLocation,
-        'fallDetectionEnabled': draft.fallDetectionEnabled,
-        'fallDetectionSensorSensitivity':
-            draft.fallDetectionSettings.sensorSensitivity,
-        'fallDetectionResponseDurationSeconds':
-            draft.fallDetectionSettings.fallResponseDuration.inSeconds,
-        'fallDetectionLongestRestDurationSeconds':
-            draft.fallDetectionSettings.longestRestDuration.inSeconds,
-        'fallDetectionStillnessDurationSeconds':
-            draft.fallDetectionSettings.fallResponseDuration.inSeconds,
-        'pathDeviationEnabled': draft.pathDeviationEnabled,
-        'offlinePhysicalAlertEnabled': draft.offlinePhysicalAlertEnabled,
-        'duressEnabled': draft.duressEnabled,
-        'completedChecklistItems': draft.completedChecklistItems.toList(),
-        'startedAt': FieldValue.serverTimestamp(),
-        'startedAtLocal': now.toIso8601String(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedAtLocal': now.toIso8601String(),
-      });
-
-      await recordAchievementMetric(
-        session: session,
-        metricKey: 'hike_started',
-      );
-      if (draft.completedChecklistItems.isNotEmpty) {
-        await recordAchievementMetric(
-          session: session,
-          metricKey: 'checklist_completed',
-        );
-      }
-
-      if (normalizedUpcomingHikeId.isEmpty) {
-        try {
-          final upcomingDoc = _upcomingHikes.doc();
-          final participantPhones = [
-            session.phoneNumber,
-            ...draft.teamBuddies.map((b) => b.phoneNumber),
-          ];
-          final upcoming = UpcomingHike(
-            id: upcomingDoc.id,
-            sessionId: document.id,
-            trailId: draft.trail.trailId,
-            trailName: draft.trail.name,
-            latitude: draft.trail.latitude,
-            longitude: draft.trail.longitude,
-            area: draft.trail.area,
-            state: draft.trail.state,
-            distanceKm: draft.trail.distanceKm,
-            durationMinutes: draft.trail.estimatedDurationMinutes,
-            difficulty: draft.trail.difficulty,
-            startPointName: draft.startPointName,
-            destinationName: draft.destinationName,
-            departureTime: draft.departureTime,
-            expectedReturnTime: draft.expectedReturnTime,
-            hikeType: draft.hikeType.name,
-            participantCount: participantPhones.length,
-            creatorPhone: session.phoneNumber,
-            creatorName: session.username.trim(),
-            createdAt: now,
-            participantPhones: participantPhones,
-          );
-          await upcomingDoc.set({
-            ...upcoming.toFirestore(),
-            'creatorUserId': _userIdFor(session),
-            'creatorName': session.username.trim(),
-            'notificationRadiusKm': 20,
+      final response = await _resolvedFunctions
+          .httpsCallable('startActiveHikeSession')
+          .call<Map<String, dynamic>>({
+            'creationKey': localSession.sessionId,
+            'draft': draft.toPersistence(),
+            'startedAtLocal': localSession.startedAt.toUtc().toIso8601String(),
+            if (sourceUpcomingHikeId.trim().isNotEmpty)
+              'sourceUpcomingHikeId': sourceUpcomingHikeId.trim(),
+            if (teamHikeSessionId.trim().isNotEmpty)
+              'teamHikeSessionId': teamHikeSessionId.trim(),
           });
-        } catch (_) {
-          // Best-effort: upcoming hike listing is non-critical.
-        }
-      } else {
-        try {
-          await _upcomingHikes.doc(normalizedUpcomingHikeId).delete();
-        } catch (_) {
-          try {
-            await _upcomingHikes.doc(normalizedUpcomingHikeId).set({
-              'isDeleted': true,
-              'deletedReason': 'hike_started',
-              'deletedAt': FieldValue.serverTimestamp(),
-              'deletedAtLocal': now.toIso8601String(),
-            }, SetOptions(merge: true));
-          } catch (_) {
-            // Best-effort cleanup must not block the active hike start.
-          }
-        }
-      }
-
-      try {
-        final participantPhones = [
-          session.phoneNumber,
-          ...draft.teamBuddies.map((b) => b.phoneNumber),
-        ];
-        if (participantPhones.length > 1) {
-          final names = <String, String>{
-            _phoneKeyFor(session.phoneNumber): session.username.trim().isEmpty
-                ? session.phoneNumber
-                : session.username.trim(),
-            for (final buddy in draft.teamBuddies)
-              _phoneKeyFor(buddy.phoneNumber): buddy.name.trim().isEmpty
-                  ? buddy.phoneNumber
-                  : buddy.name.trim(),
-          };
-          final photoURLs = Map<String, String>.from(
-            await _photoURLsForPhones(participantPhones),
-          );
-          final sessionPhotoURL = session.photoURL?.trim() ?? '';
-          if (sessionPhotoURL.isNotEmpty) {
-            photoURLs[_phoneKeyFor(session.phoneNumber)] = sessionPhotoURL;
-          }
-          await createGroupChat(
-            hikeSessionId: document.id,
-            trailName: draft.trail.name,
-            participantPhones: participantPhones,
-            creatorPhone: session.phoneNumber,
-            teamHikeSessionId: teamHikeSessionId,
-            participantNames: names,
-            participantPhotoURLs: photoURLs,
-            departureTime: draft.departureTime,
-          );
-        }
-      } catch (_) {
-        // Best-effort: group chat creation is non-critical.
-      }
-
-      if (teamHikeSessionId.isNotEmpty) {
-        await attachActiveHikeToTeamSession(
-          session: session,
-          teamHikeSessionId: teamHikeSessionId,
-          activeHikeSessionId: document.id,
+      final sessionId = _stringFrom(response.data['sessionId']);
+      if (sessionId.isEmpty) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'The hike server returned an invalid session.',
         );
       }
-
-      return localSession.copyWith(sessionId: document.id);
-    } on FirebaseException catch (error) {
+      return localSession.copyWith(sessionId: sessionId);
+    } on FirebaseFunctionsException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
         'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
+        allowsOfflineFallback:
+            activeHikeStartAllowsOfflineFallbackForFunctionsCode(error.code),
       );
     }
   }
@@ -2075,73 +2054,34 @@ class HikerCircleFirebaseRepository {
   Future<TeamHikeSession> createTeamHikeSession({
     required AppSession session,
     required HikeSessionDraft draft,
+    String sourceUpcomingHikeId = '',
   }) async {
     _throwIfFirebaseUnavailable();
-
-    final now = DateTime.now().toUtc();
-    final document = _teamHikeSessions.doc();
-    final participantPhones = [
-      session.phoneNumber,
-      ...draft.teamBuddies.map((buddy) => buddy.phoneNumber),
-    ];
-    final photoURLs = Map<String, String>.from(
-      await _photoURLsForPhones(participantPhones),
-    );
-    final sessionPhotoURL = session.photoURL?.trim() ?? '';
-    if (sessionPhotoURL.isNotEmpty) {
-      photoURLs[_phoneKeyFor(session.phoneNumber)] = sessionPhotoURL;
-    }
-    final participants = _teamParticipantsFor(
-      session: session,
-      buddies: draft.teamBuddies,
-      now: now,
-      photoURLs: photoURLs,
-    );
-    final teamSession = TeamHikeSession(
-      id: document.id,
-      hostPhoneNumber: session.phoneNumber,
+    final invitedPhoneNumbers =
+        draft.teamBuddies
+            .map((buddy) => buddy.phoneNumber.trim())
+            .where((phoneNumber) => phoneNumber.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    final creationKey = teamHikeCreationKeyFor(
+      appInstanceId: session.appInstanceId,
       trailId: draft.trail.trailId,
-      trailName: draft.trail.name,
-      phase: TeamHikePhase.inviting,
-      participants: participants,
-      createdAt: now,
-      updatedAt: now,
+      departureTime: draft.departureTime,
+      inviteePhoneNumbers: invitedPhoneNumbers,
+      sourceUpcomingHikeId: sourceUpcomingHikeId,
     );
-
-    final batch = _resolvedFirestore.batch();
-    batch.set(document, {
-      ...teamSession.toFirestore(),
-      'hostUserId': _userIdFor(session),
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'startPointName': draft.startPointName,
-      'destinationName': draft.destinationName,
-      'plannedStartTimeLocal': draft.departureTime.toUtc().toIso8601String(),
-      'expectedArrivalTimeLocal': draft.expectedArrivalTime
-          .toUtc()
-          .toIso8601String(),
-      'expectedReturnTimeLocal': draft.expectedReturnTime
-          .toUtc()
-          .toIso8601String(),
-    });
-    for (final participant in participants.where((item) => !item.isHost)) {
-      batch.set(
-        _fcmOutbox.doc(),
-        _fcmOutboxPayload(
-          type: 'team_hike_invite',
-          recipientPhoneNumber: participant.phoneNumber,
-          senderPhoneNumber: session.phoneNumber,
-          title: 'Team hike invite',
-          body:
-              '${_handleForPhone(session.phoneNumber)} invited you to ${draft.trail.name}. Tap to join the readiness check.',
-          deepLink: 'hikercircle://team-hike/join?teamSessionId=${document.id}',
-          teamHikeSessionId: document.id,
-          data: {'trailId': draft.trail.trailId, 'trailName': draft.trail.name},
-        ),
-      );
-    }
-    await batch.commit();
-    return teamSession;
+    final response = await _callTeamHikeFunction(
+      callableName: 'createTeamHikeSession',
+      data: {
+        'creationKey': creationKey,
+        'draft': draft.toPersistence(),
+        'invitedPhoneNumbers': invitedPhoneNumbers,
+        if (sourceUpcomingHikeId.trim().isNotEmpty)
+          'sourceUpcomingHikeId': sourceUpcomingHikeId.trim(),
+      },
+    );
+    return _teamHikeSessionFromCallable(response);
   }
 
   Stream<TeamHikeSession?> watchTeamHikeSession(String teamHikeSessionId) {
@@ -2158,56 +2098,20 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
       return null;
     }
-    final snapshot = await _teamHikeSessions.doc(teamHikeSessionId).get();
-    return _teamHikeSessionFromDocument(snapshot);
+    return _manageTeamHikeAction(
+      action: 'read',
+      teamHikeSessionId: teamHikeSessionId,
+    );
   }
 
   Future<TeamHikeSession> acceptTeamHikeInvite({
     required AppSession session,
     required String teamHikeSessionId,
   }) async {
-    final ownPhotoURL = await _photoURLForPhone(session.phoneNumber);
-    final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
-      current,
-      now,
-    ) {
-      final participants = current.participants.map((participant) {
-        if (!_samePhone(participant.phoneNumber, session.phoneNumber)) {
-          return participant;
-        }
-        return participant.copyWith(
-          buddy: ownPhotoURL.isEmpty
-              ? participant.buddy
-              : participant.buddy.copyWith(photoURL: ownPhotoURL),
-          status: participant.status == TeamHikeParticipantStatus.invited
-              ? TeamHikeParticipantStatus.joined
-              : participant.status,
-          joinedAt: participant.joinedAt ?? now,
-          updatedAt: now,
-        );
-      }).toList();
-      final hasPendingInvite = participants.any(
-        (participant) =>
-            participant.status == TeamHikeParticipantStatus.invited,
-      );
-      return current.copyWith(
-        phase: hasPendingInvite
-            ? TeamHikePhase.inviting
-            : TeamHikePhase.readyCheck,
-        participants: participants,
-        updatedAt: now,
-      );
-    });
-    await _queueFcmOutbox(
-      type: 'team_hike_invite_accepted',
-      recipientPhoneNumber: updated.hostPhoneNumber,
-      senderPhoneNumber: session.phoneNumber,
-      title: 'Buddy joined',
-      body: '${_handleForPhone(session.phoneNumber)} joined the team hike.',
-      deepLink: 'hikercircle://team-hike/join?teamSessionId=$teamHikeSessionId',
+    return _manageTeamHikeAction(
+      action: 'accept',
       teamHikeSessionId: teamHikeSessionId,
     );
-    return updated;
   }
 
   Future<TeamHikeSession> markTeamParticipantReady({
@@ -2225,100 +2129,85 @@ class HikerCircleFirebaseRepository {
         'Complete the required team safety settings before marking ready.',
       );
     }
-    var shouldQueueCountdown = false;
-    final ownPhotoURL = await _photoURLForPhone(session.phoneNumber);
-    final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
-      current,
-      now,
-    ) {
-      final participants = current.participants.map((participant) {
-        if (!_samePhone(participant.phoneNumber, session.phoneNumber)) {
-          return participant;
-        }
-        return participant.copyWith(
-          buddy: ownPhotoURL.isEmpty
-              ? participant.buddy
-              : participant.buddy.copyWith(photoURL: ownPhotoURL),
-          status: TeamHikeParticipantStatus.ready,
-          joinedAt: participant.joinedAt ?? now,
-          readyAt: now,
-          updatedAt: now,
-          safetySettings: safetySettings,
-        );
-      }).toList();
-      final hasPendingInvite = participants.any(
-        (participant) =>
-            participant.status == TeamHikeParticipantStatus.invited,
+    return _manageTeamHikeAction(
+      action: 'ready',
+      teamHikeSessionId: teamHikeSessionId,
+      data: {'safetySettings': safetySettings},
+    );
+  }
+
+  Future<ActiveHikeCloudRestoreResult> ensureActiveHikeSessionInCloud({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return ActiveHikeCloudRestoreResult(
+        sessionId: activeHike.sessionId,
+        ensured: false,
+        terminal: false,
+        status: 'offline',
       );
-      final everyoneReady =
-          participants.isNotEmpty &&
-          participants.every(
-            (participant) => participant.status.isReadyForStart,
-          );
-      final nextPhase = everyoneReady
-          ? TeamHikePhase.countdown
-          : hasPendingInvite
-          ? TeamHikePhase.inviting
-          : TeamHikePhase.readyCheck;
-      shouldQueueCountdown =
-          nextPhase == TeamHikePhase.countdown &&
-          current.phase != TeamHikePhase.countdown;
-      return current.copyWith(
-        phase: nextPhase,
-        countdownStartedAt: shouldQueueCountdown
-            ? now
-            : current.countdownStartedAt,
-        participants: participants,
-        updatedAt: now,
-      );
-    });
-    if (shouldQueueCountdown) {
-      await _queueTeamCountdownOutbox(updated);
     }
-    return updated;
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('ensureActiveHikeSessionInCloud')
+          .call<Map<String, dynamic>>({
+            'sessionId': activeHike.sessionId,
+            'draft': activeHike.draft.toPersistence(),
+            'startedAtLocal': activeHike.startedAt.toUtc().toIso8601String(),
+            if (activeHike.teamHikeSessionId.isNotEmpty)
+              'teamHikeSessionId': activeHike.teamHikeSessionId,
+            if (activeHike.sourceUpcomingHikeId.trim().isNotEmpty)
+              'sourceUpcomingHikeId': activeHike.sourceUpcomingHikeId.trim(),
+          });
+      return parseActiveHikeCloudRestoreResult(
+        response.data,
+        requestedSessionId: activeHike.sessionId,
+      );
+    } on FirebaseFunctionsException catch (error) {
+      final terminalResult = _terminalRestoreResultFromException(
+        error,
+        requestedSessionId: activeHike.sessionId,
+      );
+      if (terminalResult != null) return terminalResult;
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to restore this hike in the cloud.',
+      );
+    } on TypeError {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The hike server returned an invalid recovery response.',
+      );
+    }
+  }
+
+  Future<TeamHikeSession> removePendingTeamInvitees({
+    required AppSession session,
+    required String teamHikeSessionId,
+  }) async {
+    return _manageTeamHikeAction(
+      action: 'removePending',
+      teamHikeSessionId: teamHikeSessionId,
+    );
+  }
+
+  Future<void> cancelTeamHikeSession({
+    required AppSession session,
+    required String teamHikeSessionId,
+  }) async {
+    await _manageTeamHikeAction(
+      action: 'cancel',
+      teamHikeSessionId: teamHikeSessionId,
+    );
   }
 
   Future<TeamHikeSession> activateTeamHikeSession({
     required AppSession session,
     required String teamHikeSessionId,
   }) async {
-    final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
-      current,
-      now,
-    ) {
-      if (!_samePhone(current.hostPhoneNumber, session.phoneNumber)) {
-        throw const HikerCircleFirebaseRepositoryException(
-          'Only the host can start this team hike.',
-        );
-      }
-      if (!current.everyoneReady) {
-        throw const HikerCircleFirebaseRepositoryException(
-          'Every participant must be ready before the host can start.',
-        );
-      }
-      final participants = current.participants.map((participant) {
-        if (!participant.status.isReadyForStart) {
-          return participant;
-        }
-        return participant.copyWith(
-          status: TeamHikeParticipantStatus.active,
-          updatedAt: now,
-        );
-      }).toList();
-      return current.copyWith(
-        phase: TeamHikePhase.active,
-        startedAt: current.startedAt ?? now,
-        participants: participants,
-        updatedAt: now,
-      );
-    });
-    await _queueTeamStatusOutbox(
-      teamSession: updated,
-      type: 'team_hike_started',
-      title: 'Team hike started',
-      body: '${updated.trailName} is now actively tracking.',
+    return _manageTeamHikeAction(
+      action: 'activate',
+      teamHikeSessionId: teamHikeSessionId,
     );
-    return updated;
   }
 
   Future<void> attachActiveHikeToTeamSession({
@@ -2329,27 +2218,11 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
       return;
     }
-    final reference = _teamHikeSessions.doc(teamHikeSessionId);
-    await _resolvedFirestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(reference);
-      final data = snapshot.data() ?? const <String, dynamic>{};
-      final sessionIds = data['activeHikeSessionIdsByPhone'] is Map
-          ? Map<String, dynamic>.from(
-              data['activeHikeSessionIdsByPhone'] as Map,
-            )
-          : <String, dynamic>{};
-      sessionIds[_phoneKeyFor(session.phoneNumber)] = activeHikeSessionId;
-      transaction.set(reference, {
-        if (_samePhone(
-          session.phoneNumber,
-          _stringFrom(data['hostPhoneNumber']),
-        ))
-          'activeHikeSessionId': activeHikeSessionId,
-        'activeHikeSessionIdsByPhone': sessionIds,
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
-      }, SetOptions(merge: true));
-    });
+    await _manageTeamHikeAction(
+      action: 'attach',
+      teamHikeSessionId: teamHikeSessionId,
+      data: {'activeHikeSessionId': activeHikeSessionId},
+    );
   }
 
   Future<TeamHikeSession?> syncTeamHikeParticipantLocation({
@@ -2363,92 +2236,17 @@ class HikerCircleFirebaseRepository {
     }
     final coordinate = HikeCoordinate.fromTriggerLocation(location);
     final progressMeters = _progressMetersFor(activeHike, coordinate);
-    final newlyIsolated = <TeamHikeParticipant>[];
-    final ownPhotoURL = await _photoURLForPhone(session.phoneNumber);
-    final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
-      current,
-      now,
-    ) {
-      var participants = current.participants.map((participant) {
-        if (!_samePhone(participant.phoneNumber, session.phoneNumber)) {
-          return participant;
-        }
-        return participant.copyWith(
-          buddy: ownPhotoURL.isEmpty
-              ? participant.buddy
-              : participant.buddy.copyWith(photoURL: ownPhotoURL),
-          status: TeamHikeParticipantStatus.active,
-          latestLocation: coordinate,
-          progressMeters: progressMeters,
-          updatedAt: now,
-        );
-      }).toList();
-      final leaderPhoneNumber = _leaderPhoneNumberFor(participants);
-      participants = participants.map((participant) {
-        return participant.copyWith(
-          isLeader: _samePhone(participant.phoneNumber, leaderPhoneNumber),
-        );
-      }).toList();
-      participants = participants.map((participant) {
-        final location = participant.latestLocation;
-        if (location == null || participants.length < 2) {
-          return participant;
-        }
-        final nearestDistance = participants
-            .where(
-              (other) =>
-                  !_samePhone(other.phoneNumber, participant.phoneNumber) &&
-                  other.latestLocation != null,
-            )
-            .map((other) => location.distanceTo(other.latestLocation!))
-            .fold<double>(
-              double.infinity,
-              (nearest, distance) => distance < nearest ? distance : nearest,
-            );
-        final threshold =
-            (participant.safetySettings['separationDistanceMeters'] as num?)
-                ?.toDouble() ??
-            150;
-        final graceSeconds =
-            (participant.safetySettings['isolationGraceSeconds'] as num?)
-                ?.toInt() ??
-            180;
-        if (!nearestDistance.isFinite || nearestDistance <= threshold) {
-          return participant.copyWith(
-            clearIsolatedSince: true,
-            separationAlertActive: false,
-          );
-        }
-        final isolatedSince = participant.isolatedSince ?? now;
-        final shouldAlert =
-            !participant.separationAlertActive &&
-            now.difference(isolatedSince).inSeconds >= graceSeconds;
-        final next = participant.copyWith(
-          isolatedSince: isolatedSince,
-          separationAlertActive:
-              participant.separationAlertActive || shouldAlert,
-        );
-        if (shouldAlert) {
-          newlyIsolated.add(next);
-        }
-        return next;
-      }).toList();
-      return current.copyWith(
-        phase: TeamHikePhase.active,
-        participants: participants,
-        updatedAt: now,
-      );
-    });
-    for (final participant in newlyIsolated) {
-      await _queueTeamStatusOutbox(
-        teamSession: updated,
-        type: 'team_hike_separation_alert',
-        title: 'Teammate separation alert',
-        body:
-            '${participant.buddy.shortName} may be isolated from the team. Check the team map and send an OK ping.',
-      );
-    }
-    return updated;
+    return _manageTeamHikeAction(
+      action: 'location',
+      teamHikeSessionId: teamHikeSessionId,
+      data: {
+        'activeHikeSessionId': activeHike.sessionId,
+        'latitude': coordinate.latitude,
+        'longitude': coordinate.longitude,
+        'accuracyMeters': location.accuracyMeters,
+        'progressMeters': progressMeters,
+      },
+    );
   }
 
   Future<TeamHikeSession> pingTeamParticipant({
@@ -2456,60 +2254,21 @@ class HikerCircleFirebaseRepository {
     required String teamHikeSessionId,
     required String participantPhoneNumber,
   }) async {
-    final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
-      current,
-      now,
-    ) {
-      final participants = current.participants.map((participant) {
-        if (!_samePhone(participant.phoneNumber, participantPhoneNumber)) {
-          return participant;
-        }
-        return participant.copyWith(lastPingAt: now, updatedAt: now);
-      }).toList();
-      return current.copyWith(participants: participants, updatedAt: now);
-    });
-    await _queueFcmOutbox(
-      type: 'team_hike_ping',
-      recipientPhoneNumber: participantPhoneNumber,
-      senderPhoneNumber: session.phoneNumber,
-      title: 'Team check ping',
-      body: 'Your hiking team is asking for an OK response.',
-      deepLink: 'hikercircle://team-hike/ping?teamSessionId=$teamHikeSessionId',
+    return _manageTeamHikeAction(
+      action: 'ping',
       teamHikeSessionId: teamHikeSessionId,
+      data: {'participantPhoneNumber': participantPhoneNumber},
     );
-    return updated;
   }
 
   Future<TeamHikeSession> respondToTeamPing({
     required AppSession session,
     required String teamHikeSessionId,
   }) async {
-    final updated = await _mutateTeamHikeSession(teamHikeSessionId, (
-      current,
-      now,
-    ) {
-      final participants = current.participants.map((participant) {
-        if (!_samePhone(participant.phoneNumber, session.phoneNumber)) {
-          return participant;
-        }
-        return participant.copyWith(
-          lastOkAt: now,
-          status: TeamHikeParticipantStatus.active,
-          updatedAt: now,
-        );
-      }).toList();
-      return current.copyWith(participants: participants, updatedAt: now);
-    });
-    await _queueFcmOutbox(
-      type: 'team_hike_ping_ok',
-      recipientPhoneNumber: updated.hostPhoneNumber,
-      senderPhoneNumber: session.phoneNumber,
-      title: 'Buddy responded OK',
-      body: '${_handleForPhone(session.phoneNumber)} responded OK.',
-      deepLink: 'hikercircle://team-hike/join?teamSessionId=$teamHikeSessionId',
+    return _manageTeamHikeAction(
+      action: 'respond',
       teamHikeSessionId: teamHikeSessionId,
     );
-    return updated;
   }
 
   Future<int> recordLocationPoint({
@@ -2520,6 +2279,7 @@ class HikerCircleFirebaseRepository {
     int? batteryLevel,
   }) async {
     await _localDatabase.insertLocationPoint(
+      ownerPhoneNumber: session.phoneNumber,
       sessionId: activeHike.sessionId,
       latitude: location.latitude,
       longitude: location.longitude,
@@ -2533,34 +2293,75 @@ class HikerCircleFirebaseRepository {
       return _localDatabase.countUnsentLocationPoints(activeHike.sessionId);
     }
 
-    try {
-      final now = DateTime.now().toUtc();
-      await _locationPoints.add({
-        'sessionId': activeHike.sessionId,
-        'userId': _userIdFor(session),
-        'userPhoneNumber': session.phoneNumber,
-        'trailId': activeHike.trail.trailId,
-        'pointType': pointType,
-        'latitude': location.latitude,
-        'longitude': location.longitude,
-        if (location.accuracyMeters != null)
-          'accuracyMeters': location.accuracyMeters,
-        'batteryLevel': batteryLevel ?? activeHike.batteryLevel,
-        'recordedAt': FieldValue.serverTimestamp(),
-        'recordedAtLocal': now.toIso8601String(),
-        'isSynced': true,
-      });
-      await _hikeSessions.doc(activeHike.sessionId).set({
-        'latestLocation': location.toFirestore(),
-        'latestLocationUpdatedAt': FieldValue.serverTimestamp(),
-        'latestLocationUpdatedAtLocal': now.toIso8601String(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+    return flushLocationPoints(session: session, activeHike: activeHike);
+  }
 
-      return _localDatabase.countUnsentLocationPoints(activeHike.sessionId);
-    } catch (_) {
+  Future<int> flushLocationPoints({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    int limit = 200,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
       return _localDatabase.countUnsentLocationPoints(activeHike.sessionId);
     }
+    final points = await _localDatabase.loadUnsentLocationPoints(
+      sessionId: activeHike.sessionId,
+      limit: limit,
+    );
+    if (points.isEmpty) {
+      return 0;
+    }
+    try {
+      final batch = _resolvedFirestore.batch();
+      for (final point in points) {
+        final documentId = '${activeHike.sessionId}_${point.id}'.replaceAll(
+          RegExp(r'[^A-Za-z0-9_-]'),
+          '_',
+        );
+        batch.set(_locationPoints.doc(documentId), {
+          'sessionId': activeHike.sessionId,
+          'userId': _userIdFor(session),
+          'userPhoneNumber': session.phoneNumber,
+          'trailId': activeHike.trail.trailId,
+          'pointType': point.pointType,
+          'latitude': point.latitude,
+          'longitude': point.longitude,
+          if (point.altitude != null) 'altitude': point.altitude,
+          if (point.accuracy != null) 'accuracyMeters': point.accuracy,
+          'batteryLevel': point.batteryLevel ?? activeHike.batteryLevel,
+          'recordedAtLocal': point.recordedAt.toUtc().toIso8601String(),
+          'isSynced': true,
+        }, SetOptions(merge: true));
+      }
+      final latest = points.last;
+      batch.set(_hikeSessions.doc(activeHike.sessionId), {
+        'latestLocation': {
+          'latitude': latest.latitude,
+          'longitude': latest.longitude,
+          if (latest.accuracy != null) 'accuracyMeters': latest.accuracy,
+          'capturedAtLocal': latest.recordedAt.toUtc().toIso8601String(),
+        },
+        'latestLocationUpdatedAt': FieldValue.serverTimestamp(),
+        'latestLocationUpdatedAtLocal': latest.recordedAt
+            .toUtc()
+            .toIso8601String(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await batch.commit();
+      await _localDatabase.markLocationPointsSynced(
+        points.map((point) => point.id),
+      );
+      await _localDatabase.deleteSyncedLocationPoints(
+        sessionId: activeHike.sessionId,
+        recordedBefore: DateTime.now().toUtc().subtract(
+          const Duration(days: 7),
+        ),
+      );
+    } catch (_) {
+      // Deterministic document IDs make a later retry idempotent even when the
+      // cloud commit succeeded but the local synced flag could not be saved.
+    }
+    return _localDatabase.countUnsentLocationPoints(activeHike.sessionId);
   }
 
   Future<void> recordCheckIn({
@@ -2571,134 +2372,288 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
     }
-
-    final now = DateTime.now().toUtc();
-    await _checkIns.add({
-      'sessionId': activeHike.sessionId,
-      'userId': _userIdFor(session),
-      'userPhoneNumber': session.phoneNumber,
-      'trailId': activeHike.trail.trailId,
-      'status': 'safe',
-      'batteryLevel': activeHike.batteryLevel,
-      if (location != null) 'location': location.toFirestore(),
-      'createdAt': FieldValue.serverTimestamp(),
-      'createdAtLocal': now.toIso8601String(),
-    });
-    await _hikeSessions.doc(activeHike.sessionId).set({
-      'lastCheckInStatus': 'safe',
-      'lastCheckInAt': FieldValue.serverTimestamp(),
-      'lastCheckInAtLocal': now.toIso8601String(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    await recordAchievementMetric(
-      session: session,
-      metricKey: 'check_in_completed',
-    );
+    try {
+      await _resolvedFunctions.httpsCallable('recordActiveHikeCheckIn').call({
+        'sessionId': activeHike.sessionId,
+        'idempotencyKey':
+            'checkin_${activeHike.sessionId}_${activeHike.checkIns + 1}',
+        'batteryLevel': activeHike.hasKnownBatteryLevel
+            ? activeHike.batteryLevel
+            : null,
+        if (location != null) 'location': location.toFirestore(),
+      });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to record this safety check-in.',
+      );
+    }
   }
 
-  Future<void> endHikeSession({
+  Future<void> recordPathDeviationAlert({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    required HikeCoordinate coordinate,
+    required double distanceMeters,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (activeHike.teamHikeSessionId.isNotEmpty) {
+      await _manageTeamHikeAction(
+        action: 'pathDeviation',
+        teamHikeSessionId: activeHike.teamHikeSessionId,
+        data: {
+          'activeHikeSessionId': activeHike.sessionId,
+          'latitude': coordinate.latitude,
+          'longitude': coordinate.longitude,
+          'distanceMeters': distanceMeters,
+        },
+      );
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    await _hikeSessions.doc(activeHike.sessionId).set({
+      'lastPathDeviation': {
+        'coordinate': coordinate.toFirestore(),
+        'distanceMeters': distanceMeters,
+        'detectedAtLocal': now.toIso8601String(),
+      },
+      'lastPathDeviationAt': FieldValue.serverTimestamp(),
+      'lastPathDeviationAtLocal': now.toIso8601String(),
+      'pathDeviationAlertCount': FieldValue.increment(1),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Ends a hike durably. When [ActiveHikeEndResult.cloudSynced] is false, the
+  /// cloud completion is queued locally for the next network connection.
+  Future<ActiveHikeEndResult> endHikeSession({
     required AppSession session,
     required ActiveHikeSession activeHike,
     HikeSummaryReport? summary,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return;
-    }
-
-    final now = DateTime.now().toUtc();
-    await _hikeSessions.doc(activeHike.sessionId).set({
-      'status': 'completed',
-      'monitoringExpected': false,
-      'monitoringLifecycleState': 'completed',
-      'endedAt': FieldValue.serverTimestamp(),
-      'endedAtLocal': now.toIso8601String(),
-      'distanceKm': summary?.distanceKm ?? activeHike.recordedDistanceKm,
-      'durationMinutes':
-          summary?.duration.inMinutes ??
-          DateTime.now().difference(activeHike.startedAt).inMinutes,
-      'checkIns': activeHike.checkIns,
-      'manualPins': activeHike.manualPins,
-      'routePointCount': activeHike.routePointCount,
-      if (summary != null) 'summaryReport': summary.toFirestore(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    await _saveActualHikeRouteCapture(
-      session: session,
-      activeHike: activeHike,
+    final canonicalActiveHike = await _withCanonicalTeamSource(activeHike);
+    final endedAt = summary?.endedAt.toUtc() ?? DateTime.now().toUtc();
+    await _localDatabase.queuePendingHikeEnd(
+      ownerPhoneNumber: session.phoneNumber,
+      activeHike: canonicalActiveHike,
       summary: summary,
-      capturedAt: now,
+      endedAt: endedAt,
     );
-
-    var shouldCloseAssociatedChat = activeHike.teamHikeSessionId.isEmpty;
-    final teamHikeSessionId = activeHike.teamHikeSessionId;
-    if (teamHikeSessionId.isNotEmpty) {
-      final updatedTeamSession = await _mutateTeamHikeSession(
-        teamHikeSessionId,
-        (current, mutationNow) {
-          final updatedParticipants = current.participants.map((participant) {
-            if (participant.phoneNumber == session.phoneNumber) {
-              return participant.copyWith(
-                status: TeamHikeParticipantStatus.ended,
-                updatedAt: mutationNow.toLocal(),
-              );
-            }
-            return participant;
-          }).toList();
-          final everyoneEnded =
-              updatedParticipants.isNotEmpty &&
-              updatedParticipants.every(
-                (participant) =>
-                    participant.status == TeamHikeParticipantStatus.ended,
-              );
-          shouldCloseAssociatedChat = everyoneEnded;
-          return current.copyWith(
-            phase: everyoneEnded ? TeamHikePhase.completed : current.phase,
-            participants: updatedParticipants,
-          );
-        },
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return ActiveHikeEndResult(
+        cloudSynced: false,
+        sessionId: canonicalActiveHike.sessionId,
+        completed: false,
+        status: 'pending',
       );
-      if (updatedTeamSession.phase == TeamHikePhase.completed) {
-        shouldCloseAssociatedChat = true;
-      }
     }
 
-    if (shouldCloseAssociatedChat) {
-      final chatSnapshots = <QuerySnapshot<Map<String, dynamic>>>[
-        await _groupChats
-            .where('hikeSessionId', isEqualTo: activeHike.sessionId)
-            .limit(1)
-            .get(),
-        if (teamHikeSessionId.isNotEmpty)
-          await _groupChats
-              .where('teamHikeSessionId', isEqualTo: teamHikeSessionId)
-              .limit(1)
-              .get(),
-      ];
-      final seenChatIds = <String>{};
-      for (final chatDoc in chatSnapshots.expand((snapshot) => snapshot.docs)) {
-        if (!seenChatIds.add(chatDoc.id)) {
-          continue;
-        }
-        final removesAt = now.add(const Duration(hours: 1));
-        await _scheduleGroupChatRemoval(
-          chatDoc: chatDoc,
-          messageText:
-              'Hike is ended, chat will be ended and removed on (${_formatLocalClock(removesAt)})',
-          senderPhone: session.phoneNumber,
-          senderName: session.username,
-          startedAt: now,
-          closureReason: 'hike_ended',
+    try {
+      final completion = await _syncEndedHikeToCloud(
+        session: session,
+        activeHike: canonicalActiveHike,
+        summary: summary,
+        endedAt: endedAt,
+      );
+      await _localDatabase.deletePendingHikeEnd(
+        ownerPhoneNumber: session.phoneNumber,
+        sessionId: canonicalActiveHike.sessionId,
+      );
+      return ActiveHikeEndResult(
+        cloudSynced: true,
+        sessionId: completion.sessionId,
+        completed: completion.completed,
+        status: completion.status,
+      );
+    } catch (error) {
+      await _localDatabase.markPendingHikeEndRetry(
+        ownerPhoneNumber: session.phoneNumber,
+        sessionId: canonicalActiveHike.sessionId,
+        lastError: error.toString(),
+      );
+      return ActiveHikeEndResult(
+        cloudSynced: false,
+        sessionId: error is _ActiveHikePostCompletionSyncException
+            ? error.completion.sessionId
+            : canonicalActiveHike.sessionId,
+        completed:
+            error is _ActiveHikePostCompletionSyncException &&
+            error.completion.completed,
+        status: error is _ActiveHikePostCompletionSyncException
+            ? error.completion.status
+            : 'pending',
+      );
+    }
+  }
+
+  Future<int> flushPendingHikeEnds({
+    required AppSession session,
+    int limit = 20,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return 0;
+    final pendingEnds = await _localDatabase.loadPendingHikeEnds(
+      ownerPhoneNumber: session.phoneNumber,
+      limit: limit,
+    );
+    var synced = 0;
+    for (final pending in pendingEnds) {
+      final savedHike = pending.activeHike;
+      if (savedHike == null) {
+        await _localDatabase.markPendingHikeEndRetry(
+          ownerPhoneNumber: session.phoneNumber,
+          sessionId: pending.sessionId,
+          lastError: 'The saved hike completion payload is invalid.',
+        );
+        continue;
+      }
+      final hike = await _withCanonicalTeamSource(savedHike);
+      final endedAt = pending.endedAt ?? DateTime.now().toUtc();
+      final report = HikeSummaryReport.fromActiveHike(
+        activeHike: hike,
+        endedAt: endedAt,
+      );
+      try {
+        await _syncEndedHikeToCloud(
+          session: session,
+          activeHike: hike,
+          summary: report,
+          endedAt: endedAt,
+        );
+        await _localDatabase.deletePendingHikeEnd(
+          ownerPhoneNumber: session.phoneNumber,
+          sessionId: pending.sessionId,
+        );
+        synced += 1;
+      } catch (error) {
+        await _localDatabase.markPendingHikeEndRetry(
+          ownerPhoneNumber: session.phoneNumber,
+          sessionId: pending.sessionId,
+          lastError: error.toString(),
         );
       }
     }
-    await recordAchievementMetric(
-      session: session,
-      metricKey: 'hike_completed',
+    return synced;
+  }
+
+  Future<ActiveHikeSession> _withCanonicalTeamSource(
+    ActiveHikeSession activeHike,
+  ) async {
+    if (!_firebaseBootstrapResult.isAvailable ||
+        activeHike.sourceUpcomingHikeId.trim().isNotEmpty ||
+        activeHike.teamHikeSessionId.trim().isEmpty) {
+      return activeHike;
+    }
+    try {
+      final teamSession = await loadTeamHikeSession(
+        activeHike.teamHikeSessionId,
+      );
+      final sourceUpcomingHikeId =
+          teamSession?.sourceUpcomingHikeId.trim() ?? '';
+      if (teamSession == null || sourceUpcomingHikeId.isEmpty) {
+        return activeHike;
+      }
+      return activeHike.copyWith(
+        sourceUpcomingHikeId: sourceUpcomingHikeId,
+        teamHikeSession: teamSession,
+      );
+    } catch (_) {
+      return activeHike;
+    }
+  }
+
+  Future<ActiveHikeCloudCompletionResult> _syncEndedHikeToCloud({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    required DateTime endedAt,
+    HikeSummaryReport? summary,
+  }) async {
+    final now = endedAt.toUtc();
+    final completion = await _completeActiveHikeSession(
+      activeHike: activeHike,
+      endedAt: now,
+      summary: summary,
     );
-    if (activeHike.teamHikeSessionId.isNotEmpty) {
-      await recordAchievementMetric(
+    try {
+      final cloudHike = completion.sessionId == activeHike.sessionId
+          ? activeHike
+          : activeHike.copyWith(sessionId: completion.sessionId);
+      final cloudSummary = summary == null
+          ? null
+          : HikeSummaryReport.fromActiveHike(
+              activeHike: cloudHike,
+              endedAt: summary.endedAt,
+            );
+      if (cloudHike.sessionId != activeHike.sessionId) {
+        await _localDatabase.migrateActiveHikeSessionId(
+          ownerPhoneNumber: session.phoneNumber,
+          activeHike: activeHike,
+          newSessionId: cloudHike.sessionId,
+        );
+      }
+      await _saveActualHikeRouteCapture(
         session: session,
-        metricKey: 'team_hike_completed',
+        activeHike: cloudHike,
+        summary: cloudSummary,
+        capturedAt: now,
+      );
+
+      final teamHikeSessionId = cloudHike.teamHikeSessionId;
+      if (teamHikeSessionId.isNotEmpty && completion.status == 'completed') {
+        await _manageTeamHikeAction(
+          action: 'end',
+          teamHikeSessionId: teamHikeSessionId,
+          data: {'activeHikeSessionId': cloudHike.sessionId},
+        );
+      }
+      await _localDatabase.discardHikeTrackingTelemetry(
+        sessionId: cloudHike.sessionId,
+      );
+      if (cloudHike.sessionId != activeHike.sessionId) {
+        await _localDatabase.discardHikeTrackingTelemetry(
+          sessionId: activeHike.sessionId,
+        );
+      }
+      return completion;
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        _ActiveHikePostCompletionSyncException(
+          completion: completion,
+          cause: error,
+        ),
+        stackTrace,
+      );
+    }
+  }
+
+  Future<ActiveHikeCloudCompletionResult> _completeActiveHikeSession({
+    required ActiveHikeSession activeHike,
+    required DateTime endedAt,
+    HikeSummaryReport? summary,
+  }) async {
+    final payload = buildActiveHikeCompletionPayload(
+      activeHike: activeHike,
+      endedAt: endedAt,
+      summary: summary,
+    );
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('completeActiveHikeSession')
+          .call<Map<String, dynamic>>(payload);
+      return parseActiveHikeCloudCompletionResult(
+        response.data,
+        requestedSessionId: activeHike.sessionId,
+      );
+    } on FirebaseFunctionsException catch (error) {
+      final terminalResult = _terminalCompletionResultFromException(
+        error,
+        requestedSessionId: activeHike.sessionId,
+      );
+      if (terminalResult != null) return terminalResult;
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to complete this hike in the cloud.',
+      );
+    } on TypeError {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The hike server returned an invalid completion response.',
       );
     }
   }
@@ -2769,45 +2724,6 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
-  Future<void> createTeamSchedule({required AppSession session}) async {
-    _throwIfFirebaseUnavailable();
-
-    final now = DateTime.now().toUtc();
-    final document = _teams.doc();
-    await document.set({
-      'teamId': document.id,
-      'teamName': 'Weekend Broga Trip',
-      'leaderId': _userIdFor(session),
-      'leaderPhoneNumber': session.phoneNumber,
-      'trailId': 'trail_broga_001',
-      'trailName': 'Broga Hill Trail',
-      'plannedStartTimeLocal': DateTime(
-        2026,
-        6,
-        6,
-        6,
-        30,
-      ).toUtc().toIso8601String(),
-      'expectedReturnTimeLocal': DateTime(
-        2026,
-        6,
-        6,
-        11,
-        30,
-      ).toUtc().toIso8601String(),
-      'memberIds': [_userIdFor(session)],
-      'safetyFeatures': {
-        'shareTeamLiveLocations': true,
-        'warnOnRouteExit': true,
-        'allowHazardReporting': true,
-        'alertTeamWhenHelpRequested': true,
-      },
-      'status': 'planned',
-      'createdAt': FieldValue.serverTimestamp(),
-      'createdAtLocal': now.toIso8601String(),
-    });
-  }
-
   Future<List<Map<String, dynamic>>> loadTeamSchedules({
     required AppSession session,
   }) async {
@@ -2869,10 +2785,12 @@ class HikerCircleFirebaseRepository {
       'manualPins': activeHike.manualPins,
       'routePointCount': routePoints.length,
       'routePreviewPoints': routePreviewPoints
-          .map((point) => point.toFirestore())
+          .map(_hikeCoordinateForCloud)
           .toList(),
-      if (routePoints.isNotEmpty) 'routeStart': routePoints.first.toFirestore(),
-      if (routePoints.isNotEmpty) 'routeEnd': routePoints.last.toFirestore(),
+      if (routePoints.isNotEmpty)
+        'routeStart': _hikeCoordinateForCloud(routePoints.first),
+      if (routePoints.isNotEmpty)
+        'routeEnd': _hikeCoordinateForCloud(routePoints.last),
       if (routeBounds != null) 'routeBounds': routeBounds,
       if (summary != null) 'summaryReport': summary.toFirestore(),
       'highestAltitudeMeters': null,
@@ -2882,10 +2800,6 @@ class HikerCircleFirebaseRepository {
       'createdAt': FieldValue.serverTimestamp(),
       'createdAtLocal': now.toIso8601String(),
     });
-    await recordAchievementMetric(
-      session: session,
-      metricKey: 'community_post_created',
-    );
   }
 
   Future<void> createCommunityPost({
@@ -2916,10 +2830,6 @@ class HikerCircleFirebaseRepository {
       'createdAt': FieldValue.serverTimestamp(),
       'createdAtLocal': now.toIso8601String(),
     });
-    await recordAchievementMetric(
-      session: session,
-      metricKey: 'community_post_created',
-    );
   }
 
   Future<List<Map<String, dynamic>>> loadCommunityPosts() async {
@@ -2929,12 +2839,16 @@ class HikerCircleFirebaseRepository {
 
     try {
       final snapshot = await _communityPosts
+          .where('visibility', isEqualTo: 'public')
           .orderBy('createdAtLocal', descending: true)
           .limit(20)
           .get()
           .timeout(_firebaseReadTimeout);
       return _hydrateCommunityAuthorLevels(
-        snapshot.docs.map((document) => document.data()).toList(),
+        snapshot.docs
+            .map((document) => document.data())
+            .where((post) => post['visibility'] == 'public')
+            .toList(),
       );
     } catch (_) {
       return const [];
@@ -2956,8 +2870,7 @@ class HikerCircleFirebaseRepository {
     final now = DateTime.now().toUtc();
     final comment = _communityCommentsFor(postId).doc();
     final author = await _communityAuthorSnapshot(session);
-    final batch = _resolvedFirestore.batch();
-    batch.set(comment, {
+    await comment.set({
       'commentId': comment.id,
       'postId': postId,
       'authorId': _userIdFor(session),
@@ -2967,12 +2880,6 @@ class HikerCircleFirebaseRepository {
       'createdAt': FieldValue.serverTimestamp(),
       'createdAtLocal': now.toIso8601String(),
     });
-    batch.set(_communityPosts.doc(postId), {
-      'commentCount': FieldValue.increment(1),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
-    await batch.commit();
   }
 
   Future<List<Map<String, dynamic>>> loadCommunityComments({
@@ -3216,12 +3123,16 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfAdminUnavailable(session);
     try {
-      final snapshot = await _whatsAppMessageLogs
-          .orderBy('sentAtLocal', descending: true)
+      final snapshot = await _sosWhatsAppDispatches
+          .orderBy('updatedAtLocal', descending: true)
           .limit(150)
           .get();
       return snapshot.docs.map((document) {
-        return {'messageLogId': document.id, ...document.data()};
+        return {
+          'messageLogId': document.id,
+          'authoritativeServerDispatch': true,
+          ...document.data(),
+        };
       }).toList();
     } on FirebaseException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
@@ -3281,13 +3192,6 @@ class HikerCircleFirebaseRepository {
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedAtLocal': now.toIso8601String(),
     }, SetOptions(merge: true));
-    final reporterUserId = _stringFrom(report['reportedBy']);
-    if (reporterUserId.isNotEmpty) {
-      await recordAchievementMetricForUserId(
-        userId: reporterUserId,
-        metricKey: 'hazard_report_approved',
-      );
-    }
   }
 
   Future<void> moderateCommunityPost({
@@ -3326,152 +3230,19 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
     required String achievementId,
     required String condition,
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return;
-    }
-
-    await ensureAchievementSeeds();
-    await _applyAchievementProgress(
-      userId: _userIdFor(session),
-      achievementId: achievementId,
-      increment: 1,
-      forceUnlock: true,
-      condition: condition,
-    );
-  }
+  }) async {}
 
   Future<void> recordAchievementMetric({
     required AppSession session,
     required String metricKey,
     int increment = 1,
-  }) {
-    return recordAchievementMetricForUserId(
-      userId: _userIdFor(session),
-      metricKey: metricKey,
-      increment: increment,
-    );
-  }
+  }) async {}
 
   Future<void> recordAchievementMetricForUserId({
     required String userId,
     required String metricKey,
     int increment = 1,
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable ||
-        userId.trim().isEmpty ||
-        metricKey.trim().isEmpty ||
-        increment <= 0) {
-      return;
-    }
-
-    await ensureAchievementSeeds();
-    final snapshot = await _achievements
-        .where('metricKey', isEqualTo: metricKey.trim())
-        .get();
-    for (final definition in snapshot.docs) {
-      if (definition.data()['isActive'] == false) {
-        continue;
-      }
-      await _applyAchievementProgress(
-        userId: userId.trim(),
-        achievementId: definition.id,
-        increment: increment,
-      );
-    }
-  }
-
-  Future<void> _applyAchievementProgress({
-    required String userId,
-    required String achievementId,
-    required int increment,
-    bool forceUnlock = false,
-    String condition = '',
-  }) async {
-    final definitionReference = _achievements.doc(achievementId);
-    final userAchievementId = '${userId}_$achievementId';
-    final progressReference = _userAchievements.doc(userAchievementId);
-    final userReference = _users.doc(userId);
-    final now = DateTime.now().toUtc();
-
-    await _resolvedFirestore.runTransaction((transaction) async {
-      final definitionSnapshot = await transaction.get(definitionReference);
-      final definition = definitionSnapshot.data();
-      if (!definitionSnapshot.exists ||
-          definition == null ||
-          definition['isActive'] == false) {
-        return;
-      }
-
-      final progressSnapshot = await transaction.get(progressReference);
-      final existing = progressSnapshot.data() ?? const <String, dynamic>{};
-      final wasUnlocked =
-          existing['isUnlocked'] == true ||
-          existing['awardedAt'] != null ||
-          existing['awardedAtLocal'] != null;
-      final rewardType = _stringFrom(definition['rewardType']) == 'cumulative'
-          ? 'cumulative'
-          : 'one_time';
-      final targetCount = rewardType == 'one_time'
-          ? 1
-          : _intFrom(definition['targetCount']).clamp(1, 1000000000);
-      final previousProgress = _intFrom(
-        existing['progressCount'],
-      ).clamp(0, targetCount);
-      final nextProgress =
-          wasUnlocked || forceUnlock || rewardType == 'one_time'
-          ? targetCount
-          : (previousProgress + increment).clamp(0, targetCount);
-      final isUnlocked = wasUnlocked || nextProgress >= targetCount;
-      final rewardPoints = _intFrom(
-        definition['rewardPoints'],
-      ).clamp(0, 1000000000);
-      final newlyUnlocked = !wasUnlocked && isUnlocked;
-      final existingPointsAwarded = _intFrom(existing['pointsAwarded']);
-      final userSnapshot = newlyUnlocked
-          ? await transaction.get(userReference)
-          : null;
-
-      transaction.set(progressReference, {
-        'userAchievementId': userAchievementId,
-        'userId': userId,
-        'achievementId': achievementId,
-        'achievementTitle': _stringFrom(definition['title']),
-        'rewardType': rewardType,
-        'metricKey': _stringFrom(definition['metricKey']),
-        'targetCount': targetCount,
-        'progressCount': nextProgress,
-        'isUnlocked': isUnlocked,
-        if (condition.trim().isNotEmpty) 'condition': condition.trim(),
-        if (newlyUnlocked) ...{
-          'pointsAwarded': rewardPoints,
-          'awardedAt': FieldValue.serverTimestamp(),
-          'awardedAtLocal': now.toIso8601String(),
-        } else if (wasUnlocked && existingPointsAwarded > 0)
-          'pointsAwarded': existingPointsAwarded,
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedAtLocal': now.toIso8601String(),
-      }, SetOptions(merge: true));
-
-      if (!newlyUnlocked) {
-        return;
-      }
-
-      final currentPoints = _intFrom(
-        userSnapshot?.data()?['achievementPoints'],
-      );
-      final totalPoints = currentPoints + rewardPoints;
-      final level = HikerLevel.fromPoints(totalPoints);
-      transaction.set(userReference, {
-        'achievementPoints': totalPoints,
-        'hikerLevel': level.number,
-        'hikerLevelName': level.name,
-        'hikerLevelBadge': level.badgeLabel,
-        'achievementSummaryUpdatedAt': FieldValue.serverTimestamp(),
-        'achievementSummaryUpdatedAtLocal': now.toIso8601String(),
-      }, SetOptions(merge: true));
-    });
-  }
+  }) async {}
 
   Future<List<Map<String, dynamic>>> loadUserAchievementProgress({
     required AppSession session,
@@ -3517,7 +3288,6 @@ class HikerCircleFirebaseRepository {
             : achievements,
         userAwardsByAchievementId: awardsByAchievementId,
       );
-      unawaited(_syncUserAchievementSummary(userId: userId, rows: rows));
       return rows;
     } catch (_) {
       return _achievementProgressFrom(
@@ -3533,39 +3303,11 @@ class HikerCircleFirebaseRepository {
     }
 
     try {
-      final snapshots = await Future.wait(
-        _achievementSeeds.keys.map(
-          (id) => _achievements.doc(id).get().timeout(_firebaseReadTimeout),
-        ),
-      ).timeout(_firebaseReadTimeout);
-      final batch = _resolvedFirestore.batch();
-      for (var index = 0; index < snapshots.length; index++) {
-        final entry = _achievementSeeds.entries.elementAt(index);
-        final snapshot = snapshots[index];
-        final existing = snapshot.data() ?? const <String, dynamic>{};
-        final missingValues = <String, Object>{
-          for (final value in entry.value.entries)
-            if (!existing.containsKey(value.key)) value.key: value.value,
-        };
-        if (!snapshot.exists) {
-          batch.set(_achievements.doc(entry.key), {
-            'achievementId': entry.key,
-            ...entry.value,
-            'rewardsSafeBehaviour': true,
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-        } else if (missingValues.isNotEmpty) {
-          batch.set(_achievements.doc(entry.key), {
-            ...missingValues,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-        }
-      }
-      await batch.commit().timeout(_firebaseWriteTimeout);
-    } catch (_) {
-      return;
-    }
+      await _resolvedFunctions
+          .httpsCallable('manageAchievementDefinition')
+          .call({'action': 'seed'})
+          .timeout(_firebaseWriteTimeout);
+    } catch (_) {}
   }
 
   Future<List<Map<String, dynamic>>> loadAdminAchievements({
@@ -3585,64 +3327,26 @@ class HikerCircleFirebaseRepository {
     String achievementId = '',
   }) async {
     _throwIfAdminUnavailable(session);
-    final title = _stringFrom(achievement['title']).trim();
-    final condition = _stringFrom(achievement['condition']).trim();
-    final metricKey = _stringFrom(achievement['metricKey']).trim();
-    if (title.isEmpty || condition.isEmpty || metricKey.isEmpty) {
-      throw const HikerCircleFirebaseRepositoryException(
-        'Title, requirement, and progress metric are required.',
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('manageAchievementDefinition')
+          .call<Map<String, dynamic>>({
+            'action': 'save',
+            'achievementId': achievementId.trim(),
+            'achievement': achievement,
+          });
+      final id = _stringFrom(response.data['achievementId']);
+      if (id.isEmpty) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'The achievement server returned an invalid id.',
+        );
+      }
+      return id;
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to save this achievement.',
       );
     }
-    final rewardType = _stringFrom(achievement['rewardType']) == 'cumulative'
-        ? 'cumulative'
-        : 'one_time';
-    final rewardPoints = _intFrom(
-      achievement['rewardPoints'],
-    ).clamp(1, 1000000);
-    final targetCount = rewardType == 'one_time'
-        ? 1
-        : _intFrom(achievement['targetCount']).clamp(1, 1000000000);
-    var id = achievementId.trim();
-    if (id.isEmpty) {
-      final slug = title
-          .toLowerCase()
-          .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-          .replaceAll(RegExp(r'^_+|_+$'), '');
-      id = slug.isEmpty ? 'achievement' : slug;
-      if ((await _achievements.doc(id).get()).exists) {
-        id = '${id}_${DateTime.now().millisecondsSinceEpoch}';
-      }
-    }
-    final now = DateTime.now().toUtc();
-    await _achievements.doc(id).set({
-      'achievementId': id,
-      'title': title,
-      'condition': condition,
-      'category': _stringFrom(achievement['category']).trim().isEmpty
-          ? 'Hiking'
-          : _stringFrom(achievement['category']).trim(),
-      'iconName': _stringFrom(achievement['iconName']).trim().isEmpty
-          ? 'emoji_events'
-          : _stringFrom(achievement['iconName']).trim(),
-      'rewardPoints': rewardPoints,
-      'rewardType': rewardType,
-      'metricKey': metricKey,
-      'targetCount': targetCount,
-      'isActive': achievement['isActive'] != false,
-      'sortOrder': _intFrom(achievement['sortOrder']),
-      'accentColorValue': _intFrom(achievement['accentColorValue']) == 0
-          ? 0xFF34A853
-          : _intFrom(achievement['accentColorValue']),
-      'rewardsSafeBehaviour': true,
-      'updatedByAdminId': _userIdFor(session),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': now.toIso8601String(),
-      if (achievementId.trim().isEmpty) ...{
-        'createdAt': FieldValue.serverTimestamp(),
-        'createdAtLocal': now.toIso8601String(),
-      },
-    }, SetOptions(merge: true));
-    return id;
   }
 
   Future<void> setAchievementActiveByAdmin({
@@ -3654,12 +3358,19 @@ class HikerCircleFirebaseRepository {
     if (achievementId.trim().isEmpty) {
       return;
     }
-    await _achievements.doc(achievementId.trim()).set({
-      'isActive': isActive,
-      'updatedByAdminId': _userIdFor(session),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
-    }, SetOptions(merge: true));
+    try {
+      await _resolvedFunctions
+          .httpsCallable('manageAchievementDefinition')
+          .call({
+            'action': 'setActive',
+            'achievementId': achievementId.trim(),
+            'isActive': isActive,
+          });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to update this achievement.',
+      );
+    }
   }
 
   List<Map<String, dynamic>> _achievementSeedRows() {
@@ -3748,33 +3459,6 @@ class HikerCircleFirebaseRepository {
     return rows;
   }
 
-  Future<void> _syncUserAchievementSummary({
-    required String userId,
-    required List<Map<String, dynamic>> rows,
-  }) async {
-    try {
-      final points = rows.fold<int>(
-        0,
-        (total, row) =>
-            total +
-            (row['isUnlocked'] == true ? _intFrom(row['pointsAwarded']) : 0),
-      );
-      final level = HikerLevel.fromPoints(points);
-      await _users.doc(userId).set({
-        'achievementPoints': points,
-        'hikerLevel': level.number,
-        'hikerLevelName': level.name,
-        'hikerLevelBadge': level.badgeLabel,
-        'achievementSummaryUpdatedAt': FieldValue.serverTimestamp(),
-        'achievementSummaryUpdatedAtLocal': DateTime.now()
-            .toUtc()
-            .toIso8601String(),
-      }, SetOptions(merge: true));
-    } catch (_) {
-      // The achievement list is still useful if the profile summary cannot sync.
-    }
-  }
-
   Future<Map<String, dynamic>> _communityAuthorSnapshot(
     AppSession session,
   ) async {
@@ -3827,28 +3511,23 @@ class HikerCircleFirebaseRepository {
       return rows;
     }
     try {
-      final snapshots = await Future.wait(
-        authorIds.map(
-          (id) => _users.doc(id).get().timeout(_firebaseReadTimeout),
-        ),
-      ).timeout(_firebaseReadTimeout);
-      final usersById = <String, Map<String, dynamic>>{
-        for (final snapshot in snapshots)
-          if (snapshot.data() != null) snapshot.id: snapshot.data()!,
+      final profiles = await _getPublicProfiles({
+        'userIds': authorIds.toList(),
+      });
+      final profilesById = <String, Map<String, dynamic>>{
+        for (final profile in profiles)
+          if (_stringFrom(profile['userId']).isNotEmpty)
+            _stringFrom(profile['userId']): profile,
       };
       return rows.map((row) {
-        final user = usersById[_stringFrom(row['authorId'])];
-        if (user == null) {
+        final profile = profilesById[_stringFrom(row['authorId'])];
+        if (profile == null) {
           return row;
         }
-        final points = _intFrom(user['achievementPoints']);
+        final points = _intFrom(profile['achievementPoints']);
         final level = HikerLevel.fromPoints(points);
-        var username = _stringFrom(user['username']).trim();
-        final profile = user['profile'];
-        if (username.isEmpty && profile is Map) {
-          username = _stringFrom(profile['username']).trim();
-        }
-        final photoURL = _photoURLFromUserData(user);
+        final username = _stringFrom(profile['displayName']).trim();
+        final photoURL = _stringFrom(profile['photoURL']).trim();
         return {
           ...row,
           if (username.isNotEmpty) 'authorName': username,
@@ -3917,22 +3596,13 @@ class HikerCircleFirebaseRepository {
       return const {};
     }
     try {
-      final snapshots = await Future.wait(
-        uniquePhones.map(
-          (phone) => _users
-              .doc(FirebaseUserRepository.documentIdForPhoneNumber(phone))
-              .get(),
-        ),
-      );
+      final profiles = await _getPublicProfiles({
+        'phoneNumbers': uniquePhones.toList(),
+      });
       final result = <String, String>{};
-      var index = 0;
-      for (final phone in uniquePhones) {
-        final data = snapshots[index].data();
-        index += 1;
-        if (data == null) {
-          continue;
-        }
-        final photoURL = _photoURLFromUserData(data);
+      for (final profile in profiles) {
+        final phone = _stringFrom(profile['phoneNumber']);
+        final photoURL = _stringFrom(profile['photoURL']).trim();
         if (photoURL.isNotEmpty) {
           result[_phoneKeyFor(phone)] = photoURL;
         }
@@ -3997,11 +3667,13 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<void> queueSosPayload({
+    required String ownerPhoneNumber,
     required ActiveHikeSession activeHike,
     required SosTriggerLocation triggerLocation,
     required Map<String, dynamic> payload,
   }) async {
     await _localDatabase.insertQueuedAlert(
+      ownerPhoneNumber: ownerPhoneNumber,
       sessionId: activeHike.sessionId,
       alertType: payload['alertType'] as String? ?? 'manual_sos',
       triggerLatitude: triggerLocation.latitude,
@@ -4010,210 +3682,54 @@ class HikerCircleFirebaseRepository {
     );
   }
 
-  List<TeamHikeParticipant> _teamParticipantsFor({
-    required AppSession session,
-    required List<TeamHikeBuddy> buddies,
-    required DateTime now,
-    Map<String, String> photoURLs = const {},
-  }) {
-    final participants = <TeamHikeParticipant>[];
-    final seenKeys = <String>{};
-    var nextTeammateColorIndex = 0;
-
-    void addParticipant(TeamHikeBuddy buddy, {required bool isHost}) {
-      final key = _participantKeyFor(buddy);
-      if (key.isEmpty || seenKeys.contains(key)) {
-        return;
-      }
-      seenKeys.add(key);
-      final resolvedPhotoURL = photoURLs[key]?.trim().isNotEmpty == true
-          ? photoURLs[key]!.trim()
-          : buddy.photoURL.trim();
-      final colorValue = isHost
-          ? 0xFF34A853
-          : _nonGreenTeamColor(
-              buddy.avatarColorValue,
-              nextTeammateColorIndex++,
-            );
-      final participantBuddy = buddy.copyWith(
-        photoURL: resolvedPhotoURL,
-        avatarColorValue: colorValue,
+  Future<Map<String, dynamic>> _callTeamHikeFunction({
+    required String callableName,
+    required Map<String, dynamic> data,
+  }) async {
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable(callableName)
+          .call<Map<String, dynamic>>(data);
+      return Map<String, dynamic>.from(response.data);
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to update the team hike right now.',
       );
-      participants.add(
-        TeamHikeParticipant(
-          buddy: participantBuddy,
-          status: isHost
-              ? TeamHikeParticipantStatus.joined
-              : TeamHikeParticipantStatus.invited,
-          isHost: isHost,
-          invitedAt: now,
-          joinedAt: isHost ? now : null,
-          updatedAt: now,
-        ),
+    } on TypeError {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The team hike server returned an invalid response.',
       );
     }
-
-    addParticipant(
-      TeamHikeBuddy(
-        name: session.username.trim().isEmpty
-            ? _handleForPhone(session.phoneNumber)
-            : session.username.trim(),
-        handle: _handleForPhone(session.phoneNumber),
-        phoneNumber: session.phoneNumber,
-        role: 'Host',
-        photoURL: session.photoURL?.trim() ?? '',
-        avatarColorValue: 0xFF34A853,
-      ),
-      isHost: true,
-    );
-    for (final buddy in buddies) {
-      addParticipant(buddy, isHost: false);
-    }
-    return participants;
   }
 
-  int _nonGreenTeamColor(int requestedColorValue, int fallbackIndex) {
-    const green = 0xFF34A853;
-    const fallbackColors = [
-      0xFF7C3AED,
-      0xFF0EA5E9,
-      0xFFEC4899,
-      0xFF14B8A6,
-      0xFFF97316,
-      0xFF8B5CF6,
-      0xFF06B6D4,
-      0xFFD946EF,
-      0xFFF43F5E,
-      0xFFF59E0B,
-    ];
-    if (requestedColorValue != green) {
-      return requestedColorValue;
-    }
-    return fallbackColors[fallbackIndex % fallbackColors.length];
-  }
-
-  Future<TeamHikeSession> _mutateTeamHikeSession(
-    String teamHikeSessionId,
-    TeamHikeSession Function(TeamHikeSession current, DateTime now) mutate,
-  ) async {
+  Future<TeamHikeSession> _manageTeamHikeAction({
+    required String action,
+    required String teamHikeSessionId,
+    Map<String, dynamic> data = const {},
+  }) async {
     _throwIfFirebaseUnavailable();
-    TeamHikeSession? updatedSession;
-    final document = _teamHikeSessions.doc(teamHikeSessionId);
-    await _resolvedFirestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(document);
-      final current = _teamHikeSessionFromDocument(snapshot);
-      if (current == null) {
-        throw const HikerCircleFirebaseRepositoryException(
-          'Team hike session was not found.',
-        );
-      }
-      final now = DateTime.now().toUtc();
-      final updated = mutate(current, now);
-      updatedSession = updated;
-      transaction.set(document, {
-        ...updated.toFirestore(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    });
-    return updatedSession!;
-  }
-
-  Future<void> _queueTeamCountdownOutbox(TeamHikeSession teamSession) async {
-    await _queueTeamStatusOutbox(
-      teamSession: teamSession,
-      type: 'team_hike_countdown',
-      title: 'Team hike starting',
-      body:
-          'Everyone is ready. ${teamSession.trailName} starts in ${teamSession.countdownSeconds} seconds.',
+    final response = await _callTeamHikeFunction(
+      callableName: 'manageTeamHikeSession',
+      data: {'action': action, 'teamHikeSessionId': teamHikeSessionId, ...data},
     );
+    return _teamHikeSessionFromCallable(response);
   }
 
-  Future<void> _queueTeamStatusOutbox({
-    required TeamHikeSession teamSession,
-    required String type,
-    required String title,
-    required String body,
-  }) async {
-    await Future.wait(
-      teamSession.participants.map((participant) {
-        return _queueFcmOutbox(
-          type: type,
-          recipientPhoneNumber: participant.phoneNumber,
-          senderPhoneNumber: teamSession.hostPhoneNumber,
-          title: title,
-          body: body,
-          deepLink:
-              'hikercircle://team-hike/join?teamSessionId=${teamSession.id}',
-          teamHikeSessionId: teamSession.id,
-          data: {
-            'trailId': teamSession.trailId,
-            'trailName': teamSession.trailName,
-            'phase': teamSession.phase.name,
-          },
-        );
-      }),
-    );
-  }
-
-  Future<void> _queueFcmOutbox({
-    required String type,
-    required String recipientPhoneNumber,
-    required String senderPhoneNumber,
-    required String title,
-    required String body,
-    required String deepLink,
-    required String teamHikeSessionId,
-    Map<String, dynamic> data = const {},
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable || recipientPhoneNumber.isEmpty) {
-      return;
+  TeamHikeSession _teamHikeSessionFromCallable(Map<String, dynamic> response) {
+    final rawSession = response['teamSession'];
+    if (rawSession is! Map) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The team hike server returned an invalid response.',
+      );
     }
-    await _fcmOutbox.add(
-      _fcmOutboxPayload(
-        type: type,
-        recipientPhoneNumber: recipientPhoneNumber,
-        senderPhoneNumber: senderPhoneNumber,
-        title: title,
-        body: body,
-        deepLink: deepLink,
-        teamHikeSessionId: teamHikeSessionId,
-        data: data,
-      ),
-    );
-  }
-
-  Map<String, dynamic> _fcmOutboxPayload({
-    required String type,
-    required String recipientPhoneNumber,
-    required String senderPhoneNumber,
-    required String title,
-    required String body,
-    required String deepLink,
-    required String teamHikeSessionId,
-    Map<String, dynamic> data = const {},
-  }) {
-    final now = DateTime.now().toUtc();
-    return {
-      'type': type,
-      'recipientPhoneNumber': recipientPhoneNumber,
-      'senderPhoneNumber': senderPhoneNumber,
-      'title': title,
-      'body': body,
-      'deepLink': deepLink,
-      'teamHikeSessionId': teamHikeSessionId,
-      'status': 'pending',
-      'attemptCount': 0,
-      'data': {
-        ...data,
-        'type': type,
-        'teamHikeSessionId': teamHikeSessionId,
-        'deepLink': deepLink,
-      },
-      'createdAt': FieldValue.serverTimestamp(),
-      'createdAtLocal': now.toIso8601String(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': now.toIso8601String(),
-    };
+    final data = Map<String, dynamic>.from(rawSession);
+    final teamHikeSessionId = _stringFrom(data['teamHikeSessionId']);
+    if (teamHikeSessionId.isEmpty) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The team hike server returned an invalid session.',
+      );
+    }
+    return TeamHikeSession.fromFirestore(data, id: teamHikeSessionId);
   }
 
   TeamHikeSession? _teamHikeSessionFromDocument(
@@ -4234,7 +3750,14 @@ class HikerCircleFirebaseRepository {
     String? communityPostId,
   }) async {
     final routePoints = _actualRoutePointsFor(activeHike);
+    final storedRoutePoints = downsampleHikeRouteForCloud(routePoints);
     final routeBounds = _routeBoundsFor(routePoints);
+    final validManualPins =
+        activeHike.manualPinLocations
+            .where((pin) => pin.coordinate.hasValidPosition)
+            .toList()
+          ..sort((left, right) => left.pinnedAt.compareTo(right.pinnedAt));
+    final storedManualPins = _evenlyDownsample(validManualPins, maxPoints: 250);
 
     await _hikeRouteCaptures.doc(activeHike.sessionId).set({
       'sessionId': activeHike.sessionId,
@@ -4244,15 +3767,20 @@ class HikerCircleFirebaseRepository {
       'trailName': activeHike.trail.name,
       'captureType': 'recorded_actual_trail',
       'anonymousRecommendationEligible': true,
-      'routePoints': routePoints.map((point) => point.toFirestore()).toList(),
+      'routePoints': storedRoutePoints.map(_hikeCoordinateForCloud).toList(),
       'routePointCount': routePoints.length,
-      if (routePoints.isNotEmpty) 'routeStart': routePoints.first.toFirestore(),
-      if (routePoints.isNotEmpty) 'routeEnd': routePoints.last.toFirestore(),
+      'storedRoutePointCount': storedRoutePoints.length,
+      'routePointsDownsampled': storedRoutePoints.length < routePoints.length,
+      if (routePoints.isNotEmpty)
+        'routeStart': _hikeCoordinateForCloud(routePoints.first),
+      if (routePoints.isNotEmpty)
+        'routeEnd': _hikeCoordinateForCloud(routePoints.last),
       if (routeBounds != null) 'routeBounds': routeBounds,
       if (communityPostId != null) 'communityPostId': communityPostId,
-      'manualPins': activeHike.manualPinLocations
-          .map((pin) => pin.toFirestore())
-          .toList(),
+      'manualPins': storedManualPins.map(_hikeManualPinForCloud).toList(),
+      'manualPinCount': validManualPins.length,
+      'storedManualPinCount': storedManualPins.length,
+      'manualPinsDownsampled': storedManualPins.length < validManualPins.length,
       if (summary != null) 'summaryReport': summary.toFirestore(),
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedAtLocal': capturedAt.toIso8601String(),
@@ -4262,14 +3790,38 @@ class HikerCircleFirebaseRepository {
   }
 
   List<HikeCoordinate> _actualRoutePointsFor(ActiveHikeSession activeHike) {
-    final points = List<HikeCoordinate>.of(activeHike.routePoints);
+    final points = activeHike.routePoints
+        .where((point) => point.hasValidPosition)
+        .toList();
     final latest = activeHike.latestLocation;
-    if (latest != null &&
-        (points.isEmpty || points.last.distanceTo(latest) > 2)) {
-      points.add(latest);
+    if (latest?.hasValidPosition == true &&
+        (points.isEmpty || points.last.distanceTo(latest!) > 2)) {
+      points.add(latest!);
     }
     points.sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
     return points;
+  }
+
+  Map<String, dynamic> _hikeCoordinateForCloud(HikeCoordinate coordinate) {
+    final accuracy = coordinate.accuracyMeters;
+    return {
+      'latitude': coordinate.latitude,
+      'longitude': coordinate.longitude,
+      if (accuracy != null && accuracy.isFinite && accuracy >= 0)
+        'accuracyMeters': accuracy,
+      'capturedAtLocal': coordinate.capturedAt.toUtc().toIso8601String(),
+    };
+  }
+
+  Map<String, dynamic> _hikeManualPinForCloud(HikeManualPin pin) {
+    final normalizedId = pin.id.trim();
+    return {
+      'pinId': normalizedId.length <= 200
+          ? normalizedId
+          : normalizedId.substring(0, 200),
+      'coordinate': _hikeCoordinateForCloud(pin.coordinate),
+      'pinnedAtLocal': pin.pinnedAt.toUtc().toIso8601String(),
+    };
   }
 
   List<HikeCoordinate> _routePreviewPointsFor(
@@ -4340,26 +3892,6 @@ class HikerCircleFirebaseRepository {
     return startCoordinate.distanceTo(coordinate);
   }
 
-  String _leaderPhoneNumberFor(List<TeamHikeParticipant> participants) {
-    if (participants.isEmpty) {
-      return '';
-    }
-    final leader = participants.reduce(
-      (front, participant) => front.progressMeters >= participant.progressMeters
-          ? front
-          : participant,
-    );
-    return leader.phoneNumber;
-  }
-
-  String _participantKeyFor(TeamHikeBuddy buddy) {
-    final phoneKey = _phoneKeyFor(buddy.phoneNumber);
-    if (phoneKey.isNotEmpty) {
-      return phoneKey;
-    }
-    return buddy.handle.trim().toLowerCase();
-  }
-
   bool _samePhone(String first, String second) {
     final firstKey = _phoneKeyFor(first);
     final secondKey = _phoneKeyFor(second);
@@ -4368,6 +3900,42 @@ class HikerCircleFirebaseRepository {
 
   String _phoneKeyFor(String phoneNumber) {
     return phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  ActiveHikeCloudRestoreResult? _terminalRestoreResultFromException(
+    FirebaseFunctionsException error, {
+    required String requestedSessionId,
+  }) {
+    if (error.code != 'failed-precondition' && error.code != 'already-exists') {
+      return null;
+    }
+    try {
+      final result = parseActiveHikeCloudRestoreResult(
+        error.details,
+        requestedSessionId: requestedSessionId,
+      );
+      return result.terminal ? result : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ActiveHikeCloudCompletionResult? _terminalCompletionResultFromException(
+    FirebaseFunctionsException error, {
+    required String requestedSessionId,
+  }) {
+    if (error.code != 'failed-precondition' && error.code != 'already-exists') {
+      return null;
+    }
+    try {
+      final result = parseActiveHikeCloudCompletionResult(
+        error.details,
+        requestedSessionId: requestedSessionId,
+      );
+      return result.terminal ? result : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   List<Map<String, dynamic>> _buddyRequestsFromRaw(Object? raw) {

@@ -27,6 +27,7 @@ class ActiveHikeWeatherSample {
     required this.precipitationMillimeters,
     required this.weatherCode,
     required this.observedAt,
+    this.isCached = false,
   });
 
   final String label;
@@ -40,6 +41,7 @@ class ActiveHikeWeatherSample {
   final double precipitationMillimeters;
   final int weatherCode;
   final DateTime observedAt;
+  final bool isCached;
 
   String get summary => activeHikeWeatherSummary(weatherCode);
 }
@@ -48,10 +50,12 @@ class ActiveHikeWeatherSnapshot {
   const ActiveHikeWeatherSnapshot({
     required this.samples,
     required this.fetchedAt,
+    this.isCachedFallback = false,
   });
 
   final List<ActiveHikeWeatherSample> samples;
   final DateTime fetchedAt;
+  final bool isCachedFallback;
 
   ActiveHikeWeatherSample? get current =>
       samples.isEmpty ? null : samples.first;
@@ -72,7 +76,10 @@ class ActiveHikeWeatherService {
       );
     }
 
-    final current = activeHike.latestLocation ?? route.first;
+    final latestLocation = activeHike.latestLocation;
+    final current = latestLocation?.hasValidPosition == true
+        ? latestLocation!
+        : route.first;
     final currentProgress = _progressAlongRoute(route, current);
     const targets = <({String label, String shortLabel, int meters})>[
       (label: 'Your location', shortLabel: 'Now', meters: 0),
@@ -103,6 +110,21 @@ class ActiveHikeWeatherService {
       return ActiveHikeWeatherSnapshot(
         samples: samples,
         fetchedAt: DateTime.now(),
+      );
+    } catch (error) {
+      final cachedSnapshot = _cachedTrailWeatherSnapshot(
+        activeHike: activeHike,
+        targets: targets,
+        positions: positions,
+      );
+      if (cachedSnapshot != null) {
+        return cachedSnapshot;
+      }
+      if (error is ActiveHikeWeatherException) {
+        rethrow;
+      }
+      throw const ActiveHikeWeatherException(
+        'Unable to fetch weather for this hike.',
       );
     } finally {
       if (_client == null) {
@@ -183,7 +205,8 @@ class ActiveHikeWeatherService {
 
     final checkpoints = [...activeHike.draft.effectiveCheckpoints]
       ..sort((a, b) => a.order.compareTo(b.order));
-    return checkpoints
+    final checkpointCoordinates = checkpoints
+        .where((checkpoint) => checkpoint.hasValidCoordinate)
         .map(
           (checkpoint) => HikeCoordinate(
             latitude: checkpoint.latitude,
@@ -192,41 +215,148 @@ class ActiveHikeWeatherService {
           ),
         )
         .toList();
+    if (checkpointCoordinates.isNotEmpty) {
+      return checkpointCoordinates;
+    }
+
+    final recordedRoute =
+        activeHike.routePoints
+            .where((coordinate) => coordinate.hasValidPosition)
+            .toList()
+          ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
+    if (recordedRoute.isNotEmpty) {
+      return recordedRoute;
+    }
+    final latest = activeHike.latestLocation;
+    return latest?.hasValidPosition == true ? [latest!] : const [];
   }
 
   List<HikeCoordinate> _decodePolyline(String encoded) {
-    final points = <HikeCoordinate>[];
-    var index = 0;
-    var latitude = 0;
-    var longitude = 0;
-    while (index < encoded.length) {
-      var shift = 0;
-      var result = 0;
-      int byte;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      latitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+    try {
+      final points = <HikeCoordinate>[];
+      var index = 0;
+      var latitude = 0;
+      var longitude = 0;
 
-      shift = 0;
-      result = 0;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20 && index < encoded.length);
-      longitude += (result & 1) == 1 ? ~(result >> 1) : result >> 1;
-      points.add(
-        HikeCoordinate(
+      int? readDelta() {
+        var shift = 0;
+        var result = 0;
+        while (true) {
+          if (index >= encoded.length || shift > 30) {
+            return null;
+          }
+          final byte = encoded.codeUnitAt(index++) - 63;
+          if (byte < 0 || byte > 0x3f) {
+            return null;
+          }
+          result |= (byte & 0x1f) << shift;
+          if (byte < 0x20) {
+            return (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+          }
+          shift += 5;
+        }
+      }
+
+      while (index < encoded.length) {
+        final latitudeDelta = readDelta();
+        final longitudeDelta = readDelta();
+        if (latitudeDelta == null || longitudeDelta == null) {
+          return const [];
+        }
+        latitude += latitudeDelta;
+        longitude += longitudeDelta;
+        final coordinate = HikeCoordinate(
           latitude: latitude / 100000,
           longitude: longitude / 100000,
           capturedAt: DateTime.now(),
-        ),
-      );
+        );
+        if (!coordinate.hasValidPosition) {
+          return const [];
+        }
+        points.add(coordinate);
+      }
+      return points;
+    } catch (_) {
+      return const [];
     }
-    return points;
+  }
+
+  ActiveHikeWeatherSnapshot? _cachedTrailWeatherSnapshot({
+    required ActiveHikeSession activeHike,
+    required List<({String label, String shortLabel, int meters})> targets,
+    required List<HikeCoordinate> positions,
+  }) {
+    final weather = activeHike.trail.weather;
+    final forecasts = [...weather.hourlyForecast]
+      ..sort((a, b) => a.time.compareTo(b.time));
+    final forecast = forecasts.isEmpty
+        ? null
+        : forecasts.reduce(
+            (a, b) =>
+                a.time.difference(DateTime.now()).abs() <=
+                    b.time.difference(DateTime.now()).abs()
+                ? a
+                : b,
+          );
+    final temperature =
+        forecast?.temperature ??
+        weather.feelsLike ??
+        _temperatureFromRange(weather.temperatureRange);
+    final cachedAt = weather.cachedAt.toUtc();
+    final hasRealCacheTimestamp =
+        cachedAt.isAfter(DateTime.utc(2000)) &&
+        cachedAt.isBefore(DateTime.now().toUtc().add(const Duration(days: 1)));
+    if (temperature == null ||
+        !temperature.isFinite ||
+        !hasRealCacheTimestamp ||
+        positions.length != targets.length) {
+      return null;
+    }
+    final humidity = (weather.humidity ?? 0).clamp(0, 100);
+    final windSpeed = weather.windSpeed?.isFinite == true
+        ? math.max(0, weather.windSpeed!).toDouble()
+        : 0.0;
+    final weatherCode =
+        forecast?.weatherCode ?? _weatherCodeFromSummary(weather.summary);
+    final observedAt = forecast?.time ?? cachedAt;
+    return ActiveHikeWeatherSnapshot(
+      samples: [
+        for (var index = 0; index < targets.length; index++)
+          ActiveHikeWeatherSample(
+            label: '${targets[index].label} (cached)',
+            shortLabel: '${targets[index].shortLabel}*',
+            distanceAheadMeters: targets[index].meters,
+            coordinate: positions[index],
+            temperatureCelsius: temperature,
+            apparentTemperatureCelsius: weather.feelsLike ?? temperature,
+            humidityPercent: humidity,
+            windSpeedKph: windSpeed,
+            precipitationMillimeters: 0,
+            weatherCode: weatherCode,
+            observedAt: observedAt,
+            isCached: true,
+          ),
+      ],
+      fetchedAt: cachedAt,
+      isCachedFallback: true,
+    );
+  }
+
+  double? _temperatureFromRange(String value) {
+    final match = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(value);
+    return match == null ? null : double.tryParse(match.group(0)!);
+  }
+
+  int _weatherCodeFromSummary(String summary) {
+    final normalized = summary.toLowerCase();
+    if (normalized.contains('thunder')) return 95;
+    if (normalized.contains('snow')) return 71;
+    if (normalized.contains('rain') || normalized.contains('drizzle')) {
+      return 61;
+    }
+    if (normalized.contains('fog') || normalized.contains('mist')) return 45;
+    if (normalized.contains('clear') || normalized.contains('sun')) return 0;
+    return 3;
   }
 
   List<HikeCoordinate> _orientRoute(
@@ -340,9 +470,11 @@ class ActiveHikeWeatherService {
     return route.last;
   }
 
-  double _doubleFrom(Object? value) => value is num ? value.toDouble() : 0;
+  double _doubleFrom(Object? value) =>
+      value is num && value.isFinite ? value.toDouble() : 0;
 
-  int _intFrom(Object? value) => value is num ? value.toInt() : 0;
+  int _intFrom(Object? value) =>
+      value is num && value.isFinite ? value.toInt() : 0;
 
   String _stringFrom(Object? value) => value is String ? value : '';
 }

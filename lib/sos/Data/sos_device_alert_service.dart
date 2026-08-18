@@ -38,7 +38,13 @@ class SosDeviceAlertService {
   }
 
   Future<void> stopManualSosPattern() async {
-    await _channel.invokeMethod<void>('stopManualSosPattern');
+    try {
+      await _channel.invokeMethod<void>('stopManualSosPattern');
+    } on MissingPluginException {
+      // Optional native cleanup.
+    } on PlatformException {
+      // Cleanup is best-effort when the native activity is already stopping.
+    }
   }
 
   Future<void> startFlashlightPattern() async {
@@ -46,7 +52,13 @@ class SosDeviceAlertService {
   }
 
   Future<void> stopFlashlightPattern() async {
-    await _channel.invokeMethod<void>('stopFlashlightPattern');
+    try {
+      await _channel.invokeMethod<void>('stopFlashlightPattern');
+    } on MissingPluginException {
+      // Optional native cleanup.
+    } on PlatformException {
+      // Cleanup is best-effort when the native activity is already stopping.
+    }
   }
 
   Future<void> startFallStillnessCountdownVibration() async {
@@ -62,6 +74,8 @@ class SosDeviceAlertService {
       await _channel.invokeMethod<void>('stopFallStillnessCountdownVibration');
     } on MissingPluginException {
       // Optional native helper. The fallback haptic call is one-shot only.
+    } on PlatformException {
+      // Cleanup is best-effort during lifecycle transitions.
     }
   }
 
@@ -73,6 +87,8 @@ class SosDeviceAlertService {
       }
       return batteryLevel.clamp(0, 100).toInt();
     } on MissingPluginException {
+      return null;
+    } on PlatformException {
       return null;
     }
   }
@@ -105,6 +121,8 @@ class SosDeviceAlertService {
       await _channel.invokeMethod<void>('beginOutputVolumeMonitoring');
     } on MissingPluginException {
       // Optional native helper. Platforms without it can still return volume.
+    } on PlatformException {
+      // Volume monitoring is advisory and must never block emergency actions.
     }
   }
 
@@ -113,6 +131,8 @@ class SosDeviceAlertService {
       await _channel.invokeMethod<void>('endOutputVolumeMonitoring');
     } on MissingPluginException {
       // Optional native helper.
+    } on PlatformException {
+      // Optional native cleanup.
     }
   }
 
@@ -123,7 +143,13 @@ class SosDeviceAlertService {
   }
 
   Future<void> stopSpokenPrompt() async {
-    await _channel.invokeMethod<void>('stopSpokenPrompt');
+    try {
+      await _channel.invokeMethod<void>('stopSpokenPrompt');
+    } on MissingPluginException {
+      // Optional native cleanup.
+    } on PlatformException {
+      // Cleanup is best-effort during lifecycle transitions.
+    }
   }
 
   Future<SosOutputVolumeStatus> getOutputVolumeStatus({
@@ -142,6 +168,10 @@ class SosDeviceAlertService {
       return SosOutputVolumeStatus.unsupported(
         minimumRequiredVolume: minimumRequiredVolume,
       );
+    } on PlatformException {
+      return SosOutputVolumeStatus.unsupported(
+        minimumRequiredVolume: minimumRequiredVolume,
+      );
     }
   }
 
@@ -156,7 +186,8 @@ class SosDeviceAlertService {
       return null;
     }
 
-    return SosTriggerLocation.fromPlatform(locationData);
+    final location = SosTriggerLocation.fromPlatform(locationData);
+    return location.hasValidPosition ? location : null;
   }
 
   Future<void> setPreciseLocationEnabled(bool enabled) async {

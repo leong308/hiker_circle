@@ -9,6 +9,16 @@ class ActiveHikeLiveStatusService {
     'hiker_circle/active_hike_live_status',
   );
 
+  void setNativeSafetyEventHandler(Future<void> Function()? handler) {
+    _channel.setMethodCallHandler(
+      handler == null
+          ? null
+          : (call) async {
+              if (call.method == 'onNativeSafetyEvent') await handler();
+            },
+    );
+  }
+
   Future<void> startOrUpdate(ActiveHikeSession activeHike) async {
     try {
       await _channel.invokeMethod<void>(
@@ -33,6 +43,121 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  Future<NativeHikeSafetyEvent?> consumePendingSafetyEvent() async {
+    try {
+      final data = await _channel.invokeMapMethod<Object?, Object?>(
+        'consumePendingSafetyEvent',
+      );
+      if (data == null) return null;
+      return NativeHikeSafetyEvent.fromPlatform(data);
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  Future<void> acknowledgeSafetyEvent(String eventId) async {
+    try {
+      await _channel.invokeMethod<void>('acknowledgeSafetyEvent', {
+        'eventId': eventId,
+      });
+    } on MissingPluginException {
+      // Native monitoring is Android-only.
+    } on PlatformException {
+      // The persisted event is idempotent and can be acknowledged next time.
+    }
+  }
+
+  Future<void> cancelNativeSafetyAlert() async {
+    try {
+      await _channel.invokeMethod<void>('cancelNativeSafetyAlert');
+    } on MissingPluginException {
+      // Native monitoring is Android-only.
+    } on PlatformException {
+      // The system notification keeps its own cancel action as a fallback.
+    }
+  }
+
+  Future<void> markSafetyEventDispatched(
+    String eventId, {
+    String? message,
+  }) async {
+    try {
+      await _channel.invokeMethod<void>('markSafetyEventDispatched', {
+        'eventId': eventId,
+        if (message != null) 'message': message,
+      });
+    } on MissingPluginException {
+      // Native iOS monitoring is optional on other platforms.
+    } on PlatformException {
+      // The persisted event remains available for recovery.
+    }
+  }
+
+  Future<void> requestIosSafetyPermissions() async {
+    try {
+      await _channel.invokeMethod<bool>('requestIosSafetyPermissions');
+    } on MissingPluginException {
+      // iOS-only permission surface.
+    } on PlatformException {
+      // The caller will re-read readiness and show Settings guidance.
+    }
+  }
+
+  Future<void> openIosSafetySettings() async {
+    try {
+      await _channel.invokeMethod<void>('openIosSafetySettings');
+    } on MissingPluginException {
+      // iOS-only settings surface.
+    } on PlatformException {
+      // Keep the in-app guidance visible if Settings cannot open.
+    }
+  }
+
+  Future<NativeHikeSafetyStatus> nativeSafetyStatus() async {
+    try {
+      final data = await _channel.invokeMapMethod<Object?, Object?>(
+        'getNativeSafetyStatus',
+      );
+      return NativeHikeSafetyStatus.fromPlatform(data);
+    } on MissingPluginException {
+      return const NativeHikeSafetyStatus.unsupported();
+    } on PlatformException {
+      return const NativeHikeSafetyStatus.unsupported();
+    }
+  }
+
+  Future<void> openBackgroundLocationSettings() async {
+    try {
+      await _channel.invokeMethod<void>('openBackgroundLocationSettings');
+    } on MissingPluginException {
+      // Native monitoring is Android-only.
+    } on PlatformException {
+      // The caller retains its in-app guidance when settings cannot open.
+    }
+  }
+
+  Future<void> openFullScreenIntentSettings() async {
+    try {
+      await _channel.invokeMethod<void>('openFullScreenIntentSettings');
+    } on MissingPluginException {
+      // Native monitoring is Android-only.
+    } on PlatformException {
+      // The caller retains its in-app guidance when settings cannot open.
+    }
+  }
+
+  Future<void> openOverlaySettings() async {
+    try {
+      await _channel.invokeMethod<void>('openOverlaySettings');
+    } on MissingPluginException {
+      // Native monitoring is Android-only.
+    } on PlatformException {
+      // The caller retains its in-app guidance when settings cannot open.
+    }
+  }
+
   Map<String, Object?> _activeHikeToPlatformMap(ActiveHikeSession activeHike) {
     return {
       'sessionId': activeHike.sessionId,
@@ -46,6 +171,132 @@ class ActiveHikeLiveStatusService {
       'batteryLevel': activeHike.batteryLevel,
       'distanceKm': activeHike.recordedDistanceKm,
       'routePointCount': activeHike.routePointCount,
+      'fallDetectionEnabled': activeHike.draft.fallDetectionEnabled,
+      'sensorSensitivity':
+          activeHike.draft.fallDetectionSettings.sensorSensitivity,
+      'fallResponseMillis': activeHike
+          .draft
+          .fallDetectionSettings
+          .fallResponseDuration
+          .inMilliseconds,
+      'longestRestMillis': activeHike
+          .draft
+          .fallDetectionSettings
+          .longestRestDuration
+          .inMilliseconds,
     };
   }
+}
+
+class NativeHikeSafetyEvent {
+  const NativeHikeSafetyEvent({
+    required this.eventId,
+    required this.sessionId,
+    required this.kind,
+    required this.phase,
+    this.dispatchMessage,
+    required this.detectedAt,
+    required this.deadlineAt,
+    required this.triggeredAt,
+  });
+
+  factory NativeHikeSafetyEvent.fromPlatform(Map<Object?, Object?> data) {
+    DateTime? dateFrom(Object? value) {
+      final millis = value is num ? value.toInt() : 0;
+      return millis > 0
+          ? DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true)
+          : null;
+    }
+
+    return NativeHikeSafetyEvent(
+      eventId: data['eventId']?.toString() ?? '',
+      sessionId: data['sessionId']?.toString() ?? '',
+      kind: data['kind']?.toString() ?? 'prolonged_stillness',
+      phase: data['phase']?.toString() ?? 'awaiting_response',
+      dispatchMessage: data['dispatchMessage']?.toString(),
+      detectedAt: dateFrom(data['detectedAtMillis']),
+      deadlineAt: dateFrom(data['deadlineAtMillis']),
+      triggeredAt: dateFrom(data['triggeredAtMillis']),
+    );
+  }
+
+  final String eventId;
+  final String sessionId;
+  final String kind;
+  final String phase;
+  final String? dispatchMessage;
+  final DateTime? detectedAt;
+  final DateTime? deadlineAt;
+  final DateTime? triggeredAt;
+
+  bool get isTriggering => phase == 'triggering';
+  bool get isDispatching => phase == 'dispatching';
+  bool get isDispatched => phase == 'dispatched';
+  bool get isDispatchFailed => phase == 'dispatch_failed';
+  bool get isReadyForFlutterDispatch => phase == 'ready_for_flutter_dispatch';
+  bool get isProlongedStillness => kind == 'prolonged_stillness';
+}
+
+class NativeHikeSafetyStatus {
+  const NativeHikeSafetyStatus({
+    required this.supported,
+    required this.configured,
+    required this.backgroundLocationGranted,
+    required this.fineLocationGranted,
+    required this.fullScreenIntentGranted,
+    required this.overlayGranted,
+    this.platform = 'unknown',
+    this.notificationAuthorizationStatus = 'unknown',
+    this.notificationsAuthorized = false,
+    this.timeSensitiveGranted = false,
+    this.liveActivitiesGranted = false,
+    this.motionAuthorizationStatus = 'unknown',
+    this.motionGranted = false,
+  });
+
+  const NativeHikeSafetyStatus.unsupported()
+    : this(
+        supported: false,
+        configured: false,
+        backgroundLocationGranted: false,
+        fineLocationGranted: false,
+        fullScreenIntentGranted: false,
+        overlayGranted: false,
+        platform: 'unsupported',
+      );
+
+  factory NativeHikeSafetyStatus.fromPlatform(Map<Object?, Object?>? data) {
+    if (data == null) return const NativeHikeSafetyStatus.unsupported();
+    return NativeHikeSafetyStatus(
+      supported: true,
+      configured: data['configured'] == true,
+      backgroundLocationGranted: data['backgroundLocationGranted'] == true,
+      fineLocationGranted: data['fineLocationGranted'] == true,
+      fullScreenIntentGranted: data['fullScreenIntentGranted'] == true,
+      overlayGranted: data['overlayGranted'] == true,
+      platform: data['platform']?.toString() ?? 'unknown',
+      notificationAuthorizationStatus:
+          data['notificationAuthorizationStatus']?.toString() ?? 'unknown',
+      notificationsAuthorized: data['notificationsAuthorized'] == true,
+      timeSensitiveGranted: data['timeSensitiveGranted'] == true,
+      liveActivitiesGranted: data['liveActivitiesGranted'] == true,
+      motionAuthorizationStatus:
+          data['motionAuthorizationStatus']?.toString() ?? 'unknown',
+      motionGranted: data['motionGranted'] == true,
+    );
+  }
+
+  final bool supported;
+  final bool configured;
+  final bool backgroundLocationGranted;
+  final bool fineLocationGranted;
+  final bool fullScreenIntentGranted;
+  final bool overlayGranted;
+  final String platform;
+  final String notificationAuthorizationStatus;
+  final bool notificationsAuthorized;
+  final bool timeSensitiveGranted;
+  final bool liveActivitiesGranted;
+  final String motionAuthorizationStatus;
+  final bool motionGranted;
 }

@@ -65,11 +65,9 @@ class GoogleRouteResult {
 }
 
 class GoogleRoutesService {
-  GoogleRoutesService({
-    http.Client? client,
-    String? apiKey,
-  })  : _client = client,
-        _apiKey = apiKey ?? GoogleApiConfig.routesApiKey;
+  GoogleRoutesService({http.Client? client, String? apiKey})
+    : _client = client,
+      _apiKey = apiKey ?? GoogleApiConfig.routesApiKey;
 
   final http.Client? _client;
   final String _apiKey;
@@ -170,14 +168,15 @@ class GoogleRoutesService {
 
       final route = Map<String, dynamic>.from(routes.first as Map);
       final polyline = route['polyline'];
-      final encodedPolyline = polyline is Map
-          ? polyline['encodedPolyline'] as String? ?? ''
+      final rawEncodedPolyline = polyline is Map
+          ? polyline['encodedPolyline']
+          : null;
+      final encodedPolyline = rawEncodedPolyline is String
+          ? rawEncodedPolyline
           : '';
 
       return GoogleRouteResult(
-        distanceMeters: route['distanceMeters'] is num
-            ? (route['distanceMeters'] as num).toInt()
-            : 0,
+        distanceMeters: _nonNegativeInt(route['distanceMeters']),
         duration: _durationFromGoogle(route['duration']),
         encodedPolyline: encodedPolyline,
       );
@@ -193,7 +192,20 @@ class GoogleRoutesService {
       return Duration.zero;
     }
 
-    final seconds = int.tryParse(value.substring(0, value.length - 1)) ?? 0;
-    return Duration(seconds: seconds);
+    final seconds = double.tryParse(value.substring(0, value.length - 1));
+    if (seconds == null ||
+        !seconds.isFinite ||
+        seconds <= 0 ||
+        seconds > const Duration(days: 30).inSeconds) {
+      return Duration.zero;
+    }
+    return Duration(milliseconds: (seconds * 1000).round());
+  }
+
+  int _nonNegativeInt(Object? value) {
+    if (value is! num || !value.isFinite || value < 0 || value > 100000000) {
+      return 0;
+    }
+    return value.toInt();
   }
 }

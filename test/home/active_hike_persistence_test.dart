@@ -5,6 +5,37 @@ import 'package:hiker_circle/home/Model/hike_session_models.dart';
 import 'package:hiker_circle/trail/Model/trail_models.dart';
 
 void main() {
+  test('legacy active hike snapshots retain safety monitoring by default', () {
+    final restoredLegacy = HikeSessionDraft.fromPersistence(const {});
+    final restoredLegacyFalse = HikeSessionDraft.fromPersistence(const {
+      'fallDetectionEnabled': false,
+    });
+    final restoredOptOut = HikeSessionDraft.fromPersistence(const {
+      'fallDetectionEnabled': false,
+      'fallDetectionPreferenceVersion': 1,
+    });
+
+    expect(restoredLegacy.fallDetectionEnabled, isTrue);
+    expect(restoredLegacyFalse.fallDetectionEnabled, isTrue);
+    expect(restoredOptOut.fallDetectionEnabled, isFalse);
+  });
+
+  test('fall detection settings use value equality for monitor stability', () {
+    const first = FallDetectionSettings(
+      sensorSensitivity: 6,
+      fallResponseDuration: Duration(seconds: 45),
+      longestRestDuration: Duration(minutes: 5),
+    );
+    const restoredEquivalent = FallDetectionSettings(
+      sensorSensitivity: 6,
+      fallResponseDuration: Duration(seconds: 45),
+      longestRestDuration: Duration(minutes: 5),
+    );
+
+    expect(first, restoredEquivalent);
+    expect(first.hashCode, restoredEquivalent.hashCode);
+  });
+
   test('active hike snapshot survives a JSON round trip', () {
     final trail = Trail(
       trailId: 'trail-persist',
@@ -84,6 +115,7 @@ void main() {
     );
     final teamSession = TeamHikeSession(
       id: 'team-1',
+      sourceUpcomingHikeId: 'upcoming-1',
       activeHikeSessionId: 'hike-1',
       hostPhoneNumber: '+60122222222',
       trailId: trail.trailId,
@@ -132,6 +164,7 @@ void main() {
       ],
       teamHikeSessionId: teamSession.id,
       teamHikeSession: teamSession,
+      sourceUpcomingHikeId: 'upcoming-1',
     );
 
     final encoded = jsonEncode(activeHike.toPersistence());
@@ -149,6 +182,8 @@ void main() {
     expect(restored.checkInRecords.single.id, 'check-in-1');
     expect(restored.latestLocation?.accuracyMeters, 4);
     expect(restored.teamHikeSession?.phase, TeamHikePhase.active);
+    expect(restored.teamHikeSession?.sourceUpcomingHikeId, 'upcoming-1');
+    expect(restored.sourceUpcomingHikeId, 'upcoming-1');
     expect(restored.draft.hikeType, HikeType.team);
     expect(
       restored.draft.fallDetectionSettings.fallResponseDuration,

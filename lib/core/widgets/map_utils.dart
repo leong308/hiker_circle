@@ -13,12 +13,12 @@ const eagerMapGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
 };
 
 const mapStyleUrls = [
+  'mapbox://styles/mapbox/outdoors-v12',
+  'mapbox://styles/mapbox/streets-v12',
+  'mapbox://styles/mapbox/satellite-streets-v12',
   'https://tiles.openfreemap.org/styles/liberty',
   'https://tiles.openfreemap.org/styles/positron',
   'https://tiles.openfreemap.org/styles/bright',
-  'mapbox://styles/mapbox/streets-v12',
-  'mapbox://styles/mapbox/outdoors-v12',
-  'mapbox://styles/mapbox/satellite-streets-v12',
 ];
 
 Future<void> enableTerrain3D(MapboxMap map) async {
@@ -38,15 +38,39 @@ Future<void> enableTerrain3D(MapboxMap map) async {
 }
 
 void schedulePitch(MapboxMap map, {double pitch = 50}) {
-  Future.delayed(const Duration(milliseconds: 300), () {
-    map
-        .flyTo(CameraOptions(pitch: pitch), MapAnimationOptions(duration: 800))
-        .catchError((_) {});
+  Future.delayed(const Duration(milliseconds: 300), () async {
+    try {
+      await map.flyTo(
+        CameraOptions(pitch: pitch),
+        MapAnimationOptions(duration: 800),
+      );
+    } catch (_) {
+      // The native map may have been disposed before the delayed camera move.
+    }
   });
 }
 
 const kMapMinZoom = 4.2;
 const kMapMaxZoom = 21.0;
+
+({double longitude, double latitude})? mapPointCoordinatesOrNull(Point point) {
+  final coordinates = point.coordinates;
+  if (coordinates.length < 2) return null;
+
+  final longitude = coordinates[0]?.toDouble();
+  final latitude = coordinates[1]?.toDouble();
+  if (longitude == null ||
+      latitude == null ||
+      !longitude.isFinite ||
+      !latitude.isFinite ||
+      longitude < -180 ||
+      longitude > 180 ||
+      latitude < -90 ||
+      latitude > 90) {
+    return null;
+  }
+  return (longitude: longitude, latitude: latitude);
+}
 
 Point centerFor(List<Point> points) {
   final bounds = boundsFor(points);
@@ -61,14 +85,22 @@ Point centerFor(List<Point> points) {
 ({double minLat, double maxLat, double minLon, double maxLon}) boundsFor(
   List<Point> points,
 ) {
-  double minLat = points.first.coordinates[1]!.toDouble();
-  double maxLat = points.first.coordinates[1]!.toDouble();
-  double minLon = points.first.coordinates[0]!.toDouble();
-  double maxLon = points.first.coordinates[0]!.toDouble();
+  final validCoordinates = points
+      .map(mapPointCoordinatesOrNull)
+      .whereType<({double longitude, double latitude})>()
+      .toList(growable: false);
+  if (validCoordinates.isEmpty) {
+    return (minLat: -0.0005, maxLat: 0.0005, minLon: -0.0005, maxLon: 0.0005);
+  }
 
-  for (final point in points.skip(1)) {
-    final lat = point.coordinates[1]!.toDouble();
-    final lon = point.coordinates[0]!.toDouble();
+  double minLat = validCoordinates.first.latitude;
+  double maxLat = validCoordinates.first.latitude;
+  double minLon = validCoordinates.first.longitude;
+  double maxLon = validCoordinates.first.longitude;
+
+  for (final coordinate in validCoordinates.skip(1)) {
+    final lat = coordinate.latitude;
+    final lon = coordinate.longitude;
     minLat = math.min(minLat, lat);
     maxLat = math.max(maxLat, lat);
     minLon = math.min(minLon, lon);
@@ -89,18 +121,37 @@ Point centerFor(List<Point> points) {
 
 double distanceMeters(Point a, Point b) {
   const earthRadiusMeters = 6371000.0;
-  final lat1 = a.coordinates[1]!.toDouble() * math.pi / 180;
-  final lat2 = b.coordinates[1]!.toDouble() * math.pi / 180;
-  final dLat =
-      (b.coordinates[1]!.toDouble() - a.coordinates[1]!.toDouble()) *
-      math.pi /
-      180;
-  final dLon =
-      (b.coordinates[0]!.toDouble() - a.coordinates[0]!.toDouble()) *
-      math.pi /
-      180;
+  if (a.coordinates.length < 2 || b.coordinates.length < 2) {
+    return double.infinity;
+  }
+  final aLatitude = a.coordinates[1]?.toDouble();
+  final aLongitude = a.coordinates[0]?.toDouble();
+  final bLatitude = b.coordinates[1]?.toDouble();
+  final bLongitude = b.coordinates[0]?.toDouble();
+  if (aLatitude == null ||
+      aLongitude == null ||
+      bLatitude == null ||
+      bLongitude == null ||
+      !aLatitude.isFinite ||
+      !aLongitude.isFinite ||
+      !bLatitude.isFinite ||
+      !bLongitude.isFinite ||
+      aLatitude < -90 ||
+      aLatitude > 90 ||
+      bLatitude < -90 ||
+      bLatitude > 90 ||
+      aLongitude < -180 ||
+      aLongitude > 180 ||
+      bLongitude < -180 ||
+      bLongitude > 180) {
+    return double.infinity;
+  }
+  final lat1 = aLatitude * math.pi / 180;
+  final lat2 = bLatitude * math.pi / 180;
+  final dLat = (bLatitude - aLatitude) * math.pi / 180;
+  final dLon = (bLongitude - aLongitude) * math.pi / 180;
   final h =
       math.sin(dLat / 2) * math.sin(dLat / 2) +
       math.cos(lat1) * math.cos(lat2) * math.sin(dLon / 2) * math.sin(dLon / 2);
-  return 2 * earthRadiusMeters * math.asin(math.sqrt(h));
+  return 2 * earthRadiusMeters * math.asin(math.sqrt(h.clamp(0.0, 1.0)));
 }

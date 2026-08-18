@@ -154,7 +154,9 @@ class _IosSosVolumeGuardDialogState extends State<_IosSosVolumeGuardDialog>
               color: canProceed
                   ? const Color(0xFF34A853)
                   : const Color(0xFFE11D48),
-              backgroundColor: const Color(0xFFE5E7EB),
+              backgroundColor: Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest,
             ),
             const SizedBox(height: 10),
             Text(

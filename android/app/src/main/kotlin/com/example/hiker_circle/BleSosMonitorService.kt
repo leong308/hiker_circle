@@ -12,6 +12,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Intent
@@ -21,15 +22,24 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.ParcelUuid
 import android.util.Log
 import android.util.SparseArray
+import org.json.JSONArray
+import org.json.JSONObject
 
 class BleSosMonitorService : Service() {
     companion object {
         const val ACTION_START = "com.leongziqi.hikercircle.ble_sos.START"
         const val ACTION_STOP = "com.leongziqi.hikercircle.ble_sos.STOP"
+        const val ACTION_ARM_PAIRED_TEST =
+            "com.leongziqi.hikercircle.ble_sos.ARM_PAIRED_TEST"
+        const val ACTION_CANCEL_PAIRED_TEST =
+            "com.leongziqi.hikercircle.ble_sos.CANCEL_PAIRED_TEST"
         const val ACTION_SOS_BUTTON_DETECTED =
             "com.leongziqi.hikercircle.ble_sos.SOS_BUTTON_DETECTED"
+        const val INTERNAL_BLE_SOS_PERMISSION =
+            "com.leongziqi.hikercircle.permission.INTERNAL_BLE_SOS"
         const val EXTRA_COUNTER = "counter"
         const val EXTRA_RSSI = "rssi"
         const val EXTRA_RECEIVED_AT_MILLIS = "receivedAtMillis"
@@ -42,9 +52,14 @@ class BleSosMonitorService : Service() {
         const val EXTRA_LONGITUDE = "longitude"
         const val EXTRA_ACCURACY_METERS = "accuracyMeters"
         const val EXTRA_CAPTURED_AT_MILLIS = "capturedAtMillis"
+        const val EXTRA_PENDING_OWNER_EVENT_STORED = "pendingOwnerEventStored"
+        const val EXTRA_PENDING_NEARBY_EVENT_STORED = "pendingNearbyEventStored"
+        const val EXTRA_TEST_DURATION_MILLIS = "testDurationMillis"
         const val EVENT_PAIRED_OWNER = "pairedOwner"
+        const val EVENT_PAIRED_TEST = "pairedTest"
         const val EVENT_PAIRED_NEARBY = "pairedNearby"
         const val EVENT_PAIRED_LOCATION = "pairedLocation"
+        const val EVENT_SOS_HELP = "sosHelp"
         private const val TAG = "HikerBleSosMonitor"
         private const val CHANNEL_ID = "hiker_circle_ble_sos"
         private const val NOTIFICATION_ID = 4211
@@ -52,11 +67,23 @@ class BleSosMonitorService : Service() {
         // Version the ID when changing sound/vibration defaults so upgrades receive them.
         private const val SOS_DETECTED_CHANNEL_ID = "hiker_circle_ble_sos_detected_v2"
         private const val SOS_DETECTED_NOTIFICATION_ID = 4213
+        private const val REGISTRY_ERROR_CHANNEL_ID = "hiker_circle_ble_registry_error"
+        private const val REGISTRY_ERROR_NOTIFICATION_ID = 4214
         private const val HELP_GATT_CONNECT_DEBOUNCE_MILLIS = 3000L
+        private const val READ_GATT_TIMEOUT_MILLIS = 10000L
         private const val MAX_HANDLED_EVENT_IDS = 128
+        private const val LEGACY_EVENT_DEBOUNCE_MILLIS = 10000L
+        private const val MAX_HELP_PACKET_AGE_MILLIS = 5 * 60 * 1000L
+        private const val MAX_HELP_PACKET_FUTURE_SKEW_MILLIS = 2 * 60 * 1000L
         private const val MAX_CANDIDATE_PACKAGE_LOGS = 40
         private const val MONITOR_PREFS = "hiker_circle_ble_monitor"
         private const val MONITOR_ENABLED = "enabled"
+        private const val PAIRED_TEST_DEVICE_ID = "pairedTestDeviceId"
+        private const val PAIRED_TEST_EXPIRES_AT_MILLIS = "pairedTestExpiresAtMillis"
+        const val PENDING_EVENT_PREFS = "hiker_circle_ble_pending_events"
+        const val PENDING_OWNER_EVENTS = "paired_owner_events"
+        const val PENDING_NEARBY_EVENTS = "paired_nearby_events"
+        const val PENDING_HELP_EVENTS = "nearby_help_events"
     }
 
     private val bluetoothManager: BluetoothManager?
@@ -64,9 +91,12 @@ class BleSosMonitorService : Service() {
     private val pairedButtonRegistry by lazy { PairedSosButtonRegistry(this) }
     private var scanCallback: ScanCallback? = null
     private var candidatePackageLogCount = 0
+    private var registryErrorNotified = false
     private val handledEventIds = mutableSetOf<String>()
     private val handledEventIdOrder = ArrayDeque<String>()
+    private val legacyEventHandledAtMillis = mutableMapOf<String, Long>()
     private val activeHelpGatts = mutableMapOf<String, BluetoothGatt>()
+    private val helpGattTimeouts = mutableMapOf<String, Runnable>()
     private val lastHelpConnectAtMillis = mutableMapOf<String, Long>()
     private val restartHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val restartRunnable = Runnable {
@@ -78,9 +108,38 @@ class BleSosMonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
-                .edit().putBoolean(MONITOR_ENABLED, false).apply()
+                .edit()
+                .putBoolean(MONITOR_ENABLED, false)
+                .remove(PAIRED_TEST_DEVICE_ID)
+                .remove(PAIRED_TEST_EXPIRES_AT_MILLIS)
+                .apply()
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_CANCEL_PAIRED_TEST) {
+            clearPairedButtonTest()
+        } else if (intent?.action == ACTION_ARM_PAIRED_TEST) {
+            val deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)
+                ?.trim()
+                ?.uppercase()
+                .orEmpty()
+            val durationMillis = intent.getLongExtra(
+                EXTRA_TEST_DURATION_MILLIS,
+                30_000L,
+            ).coerceIn(5_000L, 30_000L)
+            if (deviceId.matches(Regex("[0-9A-F]{12}"))) {
+                getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putString(PAIRED_TEST_DEVICE_ID, deviceId)
+                    .putLong(
+                        PAIRED_TEST_EXPIRES_AT_MILLIS,
+                        System.currentTimeMillis() + durationMillis,
+                    )
+                    .apply()
+            } else {
+                clearPairedButtonTest()
+            }
         }
 
         getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
@@ -115,8 +174,12 @@ class BleSosMonitorService : Service() {
             return
         }
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner ?: run {
-            Log.w(TAG, "BLE SOS scan stopped: scanner is unavailable")
-            stopSelf()
+            // Bluetooth may be toggled off temporarily while the monitor is
+            // enabled. Keep the foreground service alive and recover without
+            // requiring the user to reopen HikerCircle.
+            Log.w(TAG, "BLE SOS scanner is unavailable; retrying")
+            restartHandler.removeCallbacks(restartRunnable)
+            restartHandler.postDelayed(restartRunnable, 5000L)
             return
         }
         if (scanCallback != null) {
@@ -142,9 +205,60 @@ class BleSosMonitorService : Service() {
         scanCallback = callback
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+                }
+            }
             .build()
-        scanner.startScan(null, settings, callback)
-        Log.d(TAG, "BLE SOS scan started without hardware filters")
+        val packetMask = byteArrayOf(
+            0xff.toByte(),
+            0xff.toByte(),
+            0xff.toByte(),
+            0xff.toByte(),
+        )
+        val filters = listOf(
+            // Controller-side filters are required for reliable delivery when
+            // the screen is off on many Android Bluetooth stacks. Each filter
+            // is OR-ed; packet contents are still fully authenticated below.
+            ScanFilter.Builder().setManufacturerData(
+                HikerBleProtocol.MANUFACTURER_ID,
+                byteArrayOf(0x48, 0x43, 0x01, 0x01),
+                packetMask,
+            ).build(),
+            ScanFilter.Builder().setManufacturerData(
+                HikerBleProtocol.MANUFACTURER_ID,
+                byteArrayOf(0x48, 0x43, 0x01, 0x03),
+                packetMask,
+            ).build(),
+            ScanFilter.Builder().setManufacturerData(
+                HikerBleProtocol.MANUFACTURER_ID,
+                byteArrayOf(0x48, 0x43, 0x02, 0x04),
+                packetMask,
+            ).build(),
+            ScanFilter.Builder().setManufacturerData(
+                HikerBleProtocol.MANUFACTURER_ID,
+                byteArrayOf(0x48, 0x43, 0x02, 0x05),
+                packetMask,
+            ).build(),
+            ScanFilter.Builder()
+                .setServiceUuid(ParcelUuid(HikerBleProtocol.SOS_SERVICE_UUID))
+                .build(),
+            ScanFilter.Builder()
+                .setServiceUuid(ParcelUuid(HikerBleProtocol.SOS_HELP_SERVICE_UUID))
+                .build(),
+        )
+        runCatching { scanner.startScan(filters, settings, callback) }
+            .onSuccess {
+                Log.d(TAG, "BLE SOS scan started with locked-screen hardware filters")
+            }
+            .onFailure { error ->
+                scanCallback = null
+                Log.w(TAG, "BLE SOS scan could not start", error)
+                restartHandler.removeCallbacks(restartRunnable)
+                restartHandler.postDelayed(restartRunnable, 2000L)
+            }
     }
 
     private fun stopScan() {
@@ -209,11 +323,31 @@ class BleSosMonitorService : Service() {
             .joinToString(",") { it.uuid.toString() }
         val fingerprint = sosButtonFingerprint(result, eventId)
         val now = System.currentTimeMillis()
-        if (hasHandledEvent(fingerprint)) {
+        val isDuplicate = if (eventId == null) {
+            val debounceNow = android.os.SystemClock.elapsedRealtime()
+            val lastHandledAt = legacyEventHandledAtMillis[fingerprint]
+            val duplicate = lastHandledAt != null &&
+                debounceNow - lastHandledAt < LEGACY_EVENT_DEBOUNCE_MILLIS
+            if (!duplicate) {
+                legacyEventHandledAtMillis[fingerprint] = debounceNow
+            }
+            duplicate
+        } else {
+            hasHandledEvent(fingerprint)
+        }
+        if (isDuplicate) {
             Log.d(TAG, "BLE SOS button duplicate ignored: $fingerprint")
             return
         }
-        rememberHandledEvent(fingerprint)
+        if (eventId == null) {
+            if (legacyEventHandledAtMillis.size > MAX_HANDLED_EVENT_IDS) {
+                legacyEventHandledAtMillis.minByOrNull { it.value }?.key?.let {
+                    legacyEventHandledAtMillis.remove(it)
+                }
+            }
+        } else {
+            rememberHandledEvent(fingerprint)
+        }
         broadcastSosButtonDetected(eventId, result.rssi, now)
         val deepLink = Uri.Builder()
             .scheme("hikercircle")
@@ -249,7 +383,11 @@ class BleSosMonitorService : Service() {
     private fun handlePairedSosRemote(packet: HikerBleProtocol.PairedSosRemotePacket) {
         val fingerprint = "paired_sos:${packet.deviceIdHex}:${packet.eventId}"
         val now = System.currentTimeMillis()
-        val owner = pairedButtonRegistry.find(packet.deviceId)
+        val owner = runCatching { pairedButtonRegistry.find(packet.deviceId) }.getOrElse {
+            Log.e(TAG, "Unable to read paired SOS ownership; packet ignored safely", it)
+            postRegistryErrorNotification()
+            return
+        }
         if (owner == null) {
             Log.i(
                 TAG,
@@ -257,12 +395,21 @@ class BleSosMonitorService : Service() {
                     "event=${packet.eventId}",
             )
             if (hasHandledEvent(fingerprint)) return
+            val pendingStored = persistPendingNearbyEvent(
+                eventType = EVENT_PAIRED_NEARBY,
+                fingerprint = fingerprint,
+                deviceId = packet.deviceIdHex,
+                counter = packet.eventId,
+                rssi = packet.rssi,
+                receivedAtMillis = now,
+            )
             rememberHandledEvent(fingerprint)
             broadcastPairedSosEvent(
                 eventType = EVENT_PAIRED_NEARBY,
                 packet = packet,
                 receivedAtMillis = now,
                 displayName = null,
+                pendingNearbyEventStored = pendingStored,
             )
             launchNearbyPairedButtonPopup(packet, now)
             return
@@ -277,8 +424,46 @@ class BleSosMonitorService : Service() {
         if (pairedButtonRegistry.isReplay(owner, packet.eventId) || hasHandledEvent(fingerprint)) {
             return
         }
-        rememberHandledEvent(fingerprint)
-        pairedButtonRegistry.markSeen(packet.deviceId, packet.eventId, accepted = true)
+        if (isPairedButtonTestArmed(packet, now)) {
+            rememberHandledEvent(fingerprint)
+            val accepted = runCatching {
+                pairedButtonRegistry.markSeen(packet.deviceId, packet.eventId, accepted = true)
+            }.onFailure {
+                Log.e(TAG, "Unable to persist paired SOS test replay state", it)
+            }.isSuccess
+            if (accepted) {
+                clearPairedButtonTest()
+                broadcastPairedSosEvent(
+                    eventType = EVENT_PAIRED_TEST,
+                    packet = packet,
+                    receivedAtMillis = now,
+                    displayName = owner.displayName,
+                )
+                Log.i(
+                    TAG,
+                    "Authenticated owner button press consumed by local test mode",
+                )
+            }
+            return
+        }
+        // The durable owner inbox is the source of truth when Flutter is not
+        // running. Commit it before advancing replay state; otherwise a crash
+        // between those writes could make a genuine SOS permanently
+        // undeliverable. If the inbox write fails, leave replay state untouched
+        // so a later advertisement can retry.
+        val pendingStored = persistPendingOwnerEvent(packet, now, owner.displayName)
+        if (pendingStored) {
+            rememberHandledEvent(fingerprint)
+            runCatching {
+                pairedButtonRegistry.markSeen(packet.deviceId, packet.eventId, accepted = true)
+            }.onFailure {
+                // The durable event still survives. A duplicate after process
+                // death is safer than losing an emergency.
+                Log.e(TAG, "Unable to persist paired SOS replay state", it)
+            }
+        } else {
+            Log.e(TAG, "Owner SOS inbox commit failed; replay state was not advanced")
+        }
         Log.i(
             TAG,
             "Authenticated owner SOS accepted: device=${packet.deviceIdHex} " +
@@ -289,8 +474,31 @@ class BleSosMonitorService : Service() {
             packet = packet,
             receivedAtMillis = now,
             displayName = owner.displayName,
+            pendingOwnerEventStored = pendingStored,
         )
         launchOwnerPairedSos(packet, now)
+    }
+
+    private fun isPairedButtonTestArmed(
+        packet: HikerBleProtocol.PairedSosRemotePacket,
+        now: Long,
+    ): Boolean {
+        val preferences = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+        val expiresAt = preferences.getLong(PAIRED_TEST_EXPIRES_AT_MILLIS, 0L)
+        if (expiresAt <= now) {
+            if (expiresAt != 0L) clearPairedButtonTest()
+            return false
+        }
+        val deviceId = preferences.getString(PAIRED_TEST_DEVICE_ID, null)
+        return packet.mode == 1 && deviceId == packet.deviceIdHex
+    }
+
+    private fun clearPairedButtonTest() {
+        getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+            .edit()
+            .remove(PAIRED_TEST_DEVICE_ID)
+            .remove(PAIRED_TEST_EXPIRES_AT_MILLIS)
+            .apply()
     }
 
     private fun broadcastPairedSosEvent(
@@ -298,6 +506,8 @@ class BleSosMonitorService : Service() {
         packet: HikerBleProtocol.PairedSosRemotePacket,
         receivedAtMillis: Long,
         displayName: String?,
+        pendingOwnerEventStored: Boolean = false,
+        pendingNearbyEventStored: Boolean = false,
     ) {
         sendBroadcast(
             Intent(ACTION_SOS_BUTTON_DETECTED).apply {
@@ -309,9 +519,52 @@ class BleSosMonitorService : Service() {
                 putExtra(EXTRA_MODE, packet.mode)
                 putExtra(EXTRA_RSSI, packet.rssi)
                 putExtra(EXTRA_RECEIVED_AT_MILLIS, receivedAtMillis)
+                putExtra(EXTRA_PENDING_OWNER_EVENT_STORED, pendingOwnerEventStored)
+                putExtra(EXTRA_PENDING_NEARBY_EVENT_STORED, pendingNearbyEventStored)
                 if (displayName != null) putExtra(EXTRA_DISPLAY_NAME, displayName)
             },
+            INTERNAL_BLE_SOS_PERMISSION,
         )
+    }
+
+    private fun persistPendingOwnerEvent(
+        packet: HikerBleProtocol.PairedSosRemotePacket,
+        receivedAtMillis: Long,
+        displayName: String,
+    ): Boolean {
+        val ownerScope = pairedButtonRegistry.activeOwnerScopeToken() ?: return false
+        val preferences = getSharedPreferences(PENDING_EVENT_PREFS, MODE_PRIVATE)
+        return runCatching {
+            val pending = preferences.getString(PENDING_OWNER_EVENTS, null)
+                ?.let(::JSONArray)
+                ?: JSONArray()
+            val fingerprint = "${packet.deviceIdHex}:${packet.eventId}"
+            for (index in pending.length() - 1 downTo 0) {
+                val item = pending.optJSONObject(index) ?: continue
+                if (item.optString("fingerprint") == fingerprint &&
+                    item.optString("ownerScope") == ownerScope
+                ) {
+                    pending.remove(index)
+                }
+            }
+            pending.put(
+                JSONObject()
+                    .put("fingerprint", fingerprint)
+                    .put("ownerScope", ownerScope)
+                    .put("deviceId", packet.deviceIdHex)
+                    .put("displayName", displayName)
+                    .put("counter", packet.eventId)
+                    .put("mode", packet.mode)
+                    .put("rssi", packet.rssi)
+                    .put("receivedAtMillis", receivedAtMillis),
+            )
+            while (pending.length() > 16) pending.remove(0)
+            preferences.edit()
+                .putString(PENDING_OWNER_EVENTS, pending.toString())
+                .commit()
+        }.onFailure {
+            Log.e(TAG, "Unable to persist authenticated paired SOS event", it)
+        }.getOrDefault(false)
     }
 
     private fun handlePairedSosLocationRelay(
@@ -319,14 +572,32 @@ class BleSosMonitorService : Service() {
     ) {
         val fingerprint = "paired_sos_location:${packet.deviceIdHex}:${packet.eventId}"
         if (hasHandledEvent(fingerprint)) return
-        rememberHandledEvent(fingerprint)
         // The owner already received the authenticated type-4 event and has
         // its own SOS workflow. Do not show that same phone a second nearby
         // location popup; only unpaired/nearby phones need this relay.
-        if (pairedButtonRegistry.find(packet.deviceId) != null) {
+        val isOwned = runCatching {
+            pairedButtonRegistry.find(packet.deviceId) != null
+        }.getOrElse {
+            Log.e(TAG, "Unable to read paired SOS ownership; relay ignored safely", it)
+            postRegistryErrorNotification()
+            return
+        }
+        if (isOwned) {
             return
         }
         val now = System.currentTimeMillis()
+        val pendingStored = persistPendingNearbyEvent(
+            eventType = EVENT_PAIRED_LOCATION,
+            fingerprint = fingerprint,
+            deviceId = packet.deviceIdHex,
+            counter = packet.eventId,
+            rssi = packet.rssi,
+            receivedAtMillis = now,
+            latitude = packet.latitude,
+            longitude = packet.longitude,
+            accuracyMeters = packet.accuracyMeters,
+        )
+        rememberHandledEvent(fingerprint)
         sendBroadcast(
             Intent(ACTION_SOS_BUTTON_DETECTED).apply {
                 setPackage(packageName)
@@ -339,7 +610,9 @@ class BleSosMonitorService : Service() {
                 putExtra(EXTRA_ACCURACY_METERS, packet.accuracyMeters)
                 putExtra(EXTRA_RSSI, packet.rssi)
                 putExtra(EXTRA_RECEIVED_AT_MILLIS, now)
+                putExtra(EXTRA_PENDING_NEARBY_EVENT_STORED, pendingStored)
             },
+            INTERNAL_BLE_SOS_PERMISSION,
         )
         val deepLink = Uri.Builder()
             .scheme("hikercircle")
@@ -364,6 +637,54 @@ class BleSosMonitorService : Service() {
         }.onFailure { Log.w(TAG, "Unable to open nearby SOS location popup", it) }
     }
 
+    private fun persistPendingNearbyEvent(
+        eventType: String,
+        fingerprint: String,
+        deviceId: String,
+        counter: Long,
+        rssi: Int,
+        receivedAtMillis: Long,
+        latitude: Double? = null,
+        longitude: Double? = null,
+        accuracyMeters: Double? = null,
+    ): Boolean {
+        val ownerScope = pairedButtonRegistry.activeOwnerScopeToken() ?: return false
+        val preferences = getSharedPreferences(PENDING_EVENT_PREFS, MODE_PRIVATE)
+        return runCatching {
+            val pending = preferences.getString(PENDING_NEARBY_EVENTS, null)
+                ?.let(::JSONArray)
+                ?: JSONArray()
+            for (index in pending.length() - 1 downTo 0) {
+                val item = pending.optJSONObject(index) ?: continue
+                if (item.optString("fingerprint") == fingerprint &&
+                    item.optString("ownerScope") == ownerScope
+                ) {
+                    pending.remove(index)
+                }
+            }
+            val item = JSONObject()
+                .put("fingerprint", fingerprint)
+                .put("ownerScope", ownerScope)
+                .put("eventType", eventType)
+                .put("deviceId", deviceId)
+                .put("counter", counter)
+                .put("rssi", rssi)
+                .put("receivedAtMillis", receivedAtMillis)
+            if (latitude != null && longitude != null) {
+                item.put("latitude", latitude)
+                item.put("longitude", longitude)
+                if (accuracyMeters != null) item.put("accuracyMeters", accuracyMeters)
+            }
+            pending.put(item)
+            while (pending.length() > 16) pending.remove(0)
+            preferences.edit()
+                .putString(PENDING_NEARBY_EVENTS, pending.toString())
+                .commit()
+        }.onFailure {
+            Log.e(TAG, "Unable to persist nearby paired SOS event", it)
+        }.getOrDefault(false)
+    }
+
     private fun launchOwnerPairedSos(
         packet: HikerBleProtocol.PairedSosRemotePacket,
         receivedAtMillis: Long,
@@ -371,12 +692,8 @@ class BleSosMonitorService : Service() {
         val deepLink = Uri.Builder()
             .scheme("hikercircle")
             .authority("sos")
-            .path("paired")
-            .appendQueryParameter("source", "paired_ble_button")
-            .appendQueryParameter("deviceId", packet.deviceIdHex)
-            .appendQueryParameter("counter", packet.eventId.toString())
-            .appendQueryParameter("rssi", packet.rssi.toString())
-            .appendQueryParameter("receivedAt", receivedAtMillis.toString())
+            .path("active")
+            .appendQueryParameter("source", "trusted_ble_event_pending")
             .build()
         postSosDetectedNotification(deepLink)
         runCatching {
@@ -423,7 +740,7 @@ class BleSosMonitorService : Service() {
                 putExtra(EXTRA_COUNTER, eventId)
             }
         }
-        sendBroadcast(intent)
+        sendBroadcast(intent, INTERNAL_BLE_SOS_PERMISSION)
     }
 
     private fun logBleCandidatePackage(result: ScanResult) {
@@ -536,14 +853,24 @@ class BleSosMonitorService : Service() {
         }
 
         runCatching {
-            activeHelpGatts[address] = result.device.connectGatt(this, false, callback)
+            val gatt = result.device.connectGatt(this, false, callback)
+            activeHelpGatts[address] = gatt
+            val timeout = Runnable {
+                if (activeHelpGatts[address] === gatt) closeHelpGatt(gatt)
+            }
+            helpGattTimeouts[address] = timeout
+            restartHandler.postDelayed(timeout, READ_GATT_TIMEOUT_MILLIS)
         }.onFailure {
             activeHelpGatts.remove(address)
+            helpGattTimeouts.remove(address)?.let(restartHandler::removeCallbacks)
         }
     }
 
     private fun closeHelpGatt(gatt: BluetoothGatt) {
-        runCatching { gatt.device.address }.getOrNull()?.let(activeHelpGatts::remove)
+        runCatching { gatt.device.address }.getOrNull()?.let { address ->
+            activeHelpGatts.remove(address)
+            helpGattTimeouts.remove(address)?.let(restartHandler::removeCallbacks)
+        }
         runCatching {
             if (hasConnectPermission()) {
                 gatt.disconnect()
@@ -553,25 +880,36 @@ class BleSosMonitorService : Service() {
     }
 
     private fun handleHelpBeacon(packet: HikerBleProtocol.SosHelpBeaconPacket) {
-        val fingerprint = sosHelpFingerprint(packet)
         val now = System.currentTimeMillis()
+        if (packet.capturedAtMillis > now + MAX_HELP_PACKET_FUTURE_SKEW_MILLIS ||
+            now - packet.capturedAtMillis > MAX_HELP_PACKET_AGE_MILLIS
+        ) {
+            Log.w(
+                TAG,
+                "BLE SOS help packet outside the accepted time window; ignoring it.",
+            )
+            return
+        }
+        val fingerprint = sosHelpFingerprint(packet)
         if (hasHandledEvent(fingerprint)) {
             Log.d(TAG, "BLE SOS help duplicate ignored: $fingerprint")
             return
         }
         rememberHandledEvent(fingerprint)
+        persistPendingHelpEvent(packet, now, fingerprint)
+        sendBroadcast(
+            Intent(ACTION_SOS_BUTTON_DETECTED).apply {
+                setPackage(packageName)
+                putExtra(EXTRA_EVENT_TYPE, EVENT_SOS_HELP)
+                putExtra(EXTRA_SOURCE, "ble_sos_test")
+            },
+            INTERNAL_BLE_SOS_PERMISSION,
+        )
         val deepLink = Uri.Builder()
             .scheme("hikercircle")
             .authority("sos")
             .path("help")
-            .appendQueryParameter("source", "ble_sos_test")
-            .appendQueryParameter("lat", packet.latitude.toString())
-            .appendQueryParameter("lng", packet.longitude.toString())
-            .appendQueryParameter("accuracy", packet.accuracyMeters.toString())
-            .appendQueryParameter("sentAt", packet.capturedAtMillis.toString())
-            .appendQueryParameter("phoneHash", packet.phoneNumberHash.toString())
-            .appendQueryParameter("rssi", packet.rssi.toString())
-            .appendQueryParameter("receivedAt", now.toString())
+            .appendQueryParameter("source", "trusted_ble_event_pending")
             .build()
         val launchIntent = Intent(Intent.ACTION_VIEW).apply {
             data = deepLink
@@ -579,12 +917,52 @@ class BleSosMonitorService : Service() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         Log.d(TAG, "Launching BLE SOS help workflow: $deepLink")
-        startActivity(launchIntent)
+        runCatching { startActivity(launchIntent) }
+            .onFailure { Log.w(TAG, "Unable to foreground nearby SOS help", it) }
+        postSosDetectedNotification(deepLink)
+    }
+
+    private fun persistPendingHelpEvent(
+        packet: HikerBleProtocol.SosHelpBeaconPacket,
+        receivedAtMillis: Long,
+        fingerprint: String,
+    ) {
+        val preferences = getSharedPreferences(PENDING_EVENT_PREFS, MODE_PRIVATE)
+        runCatching {
+            val pending = preferences.getString(PENDING_HELP_EVENTS, null)
+                ?.let(::JSONArray)
+                ?: JSONArray()
+            for (index in pending.length() - 1 downTo 0) {
+                if (pending.optJSONObject(index)?.optString("fingerprint") == fingerprint) {
+                    pending.remove(index)
+                }
+            }
+            pending.put(
+                JSONObject()
+                    .put("fingerprint", fingerprint)
+                    .put("phoneNumberHash", packet.phoneNumberHash)
+                    .put("latitude", packet.latitude)
+                    .put("longitude", packet.longitude)
+                    .put("accuracyMeters", packet.accuracyMeters)
+                    .put("capturedAtMillis", packet.capturedAtMillis)
+                    .put("receivedAtMillis", receivedAtMillis)
+                    .put("rssi", packet.rssi),
+            )
+            while (pending.length() > 16) pending.remove(0)
+            check(
+                preferences.edit()
+                    .putString(PENDING_HELP_EVENTS, pending.toString())
+                    .commit(),
+            ) { "Unable to save nearby SOS help event." }
+        }.onFailure {
+            Log.e(TAG, "Unable to persist nearby SOS help event", it)
+        }
     }
 
     private fun sosButtonFingerprint(result: ScanResult, eventId: Long?): String {
-        return eventId?.let { "sos_button:event:$it" }
-            ?: result.device?.address?.let { "sos_button_legacy_device:$it" }
+        val address = result.device?.address
+        return eventId?.let { "sos_button:event:${address ?: "unknown"}:$it" }
+            ?: address?.let { "sos_button_legacy_device:$it" }
             ?: "sos_button_legacy_service:${HikerBleProtocol.SOS_SERVICE_UUID}"
     }
 
@@ -673,7 +1051,8 @@ class BleSosMonitorService : Service() {
     private fun postSosDetectedNotification(deepLink: Uri) {
         val notificationManager = getSystemService(NotificationManager::class.java)
         val isNearbyButton = deepLink.path == "/nearby-button" ||
-            deepLink.path == "/nearby-button-location"
+            deepLink.path == "/nearby-button-location" ||
+            deepLink.path == "/help"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             notificationManager.createNotificationChannel(
                 NotificationChannel(
@@ -697,7 +1076,7 @@ class BleSosMonitorService : Service() {
                 PendingIntent.FLAG_IMMUTABLE
             } else {
                 0
-            }
+        }
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, SOS_DETECTED_CHANNEL_ID)
         } else {
@@ -733,6 +1112,57 @@ class BleSosMonitorService : Service() {
                 )
                 .setAutoCancel(true)
                 .setCategory(Notification.CATEGORY_ALARM)
+                .build(),
+        )
+    }
+
+    private fun postRegistryErrorNotification() {
+        if (registryErrorNotified) return
+        registryErrorNotified = true
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notificationManager.createNotificationChannel(
+                NotificationChannel(
+                    REGISTRY_ERROR_CHANNEL_ID,
+                    "SOS button setup alerts",
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply {
+                    description = "Alerts when secure SOS button pairing data needs attention"
+                },
+            )
+        }
+        val launchIntent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("hikercircle://sos/device-settings?source=ble_registry_error")
+            setPackage(packageName)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+        }
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, REGISTRY_ERROR_CHANNEL_ID)
+        } else {
+            Notification.Builder(this).setPriority(Notification.PRIORITY_HIGH)
+        }
+        notificationManager.notify(
+            REGISTRY_ERROR_NOTIFICATION_ID,
+            builder
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle("SOS button needs attention")
+                .setContentText("Secure pairing data could not be read. Open HikerCircle and re-pair the button.")
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        this,
+                        REGISTRY_ERROR_NOTIFICATION_ID,
+                        launchIntent,
+                        flags,
+                    ),
+                )
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_ERROR)
                 .build(),
         )
     }

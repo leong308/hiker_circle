@@ -68,7 +68,9 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   }
 
   void _refresh() {
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _close() async {
@@ -245,7 +247,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
                     if (widget.onboardingRequired) ...[
                       const SizedBox(height: 10),
                       Text(
-                        'Step 2 of 2. Add at least one contact, then tap Continue.',
+                        'Step 3 of 3. Add at least one contact, then tap Continue.',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: _ContactsColors.secondaryTextFor(context),
                         ),
@@ -322,8 +324,8 @@ class _Header extends StatelessWidget {
               child: Container(
                 width: 36,
                 height: 36,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
+                decoration: BoxDecoration(
+                  color: _ContactsColors.surfaceFor(context),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(

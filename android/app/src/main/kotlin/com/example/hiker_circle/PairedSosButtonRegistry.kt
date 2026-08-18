@@ -28,6 +28,7 @@ class PairedSosButtonRegistry(context: Context) {
         private const val PREFS = "hiker_circle_paired_sos_buttons"
         private const val ENCRYPTED_ENTRIES = "encrypted_entries"
         private const val LEGACY_UNPAIRED_ENABLED = "legacy_unpaired_enabled"
+        private const val ACTIVE_OWNER_SCOPE = "active_owner_scope"
         private const val DEFAULT_DISPLAY_NAME = "HikerCircle Button"
         private const val KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "hiker_circle_paired_sos_buttons_v1"
@@ -46,6 +47,7 @@ class PairedSosButtonRegistry(context: Context) {
         val pairedAtMillis: Long,
         val lastSeenAtMillis: Long?,
         val lastAcceptedEventId: Long?,
+        val ownerScope: String?,
         internal val pairingSecret: ByteArray,
     )
 
@@ -61,15 +63,38 @@ class PairedSosButtonRegistry(context: Context) {
         )
     }
 
-    fun buttons(): List<Button> = readButtons().map { it.copy(pairingSecret = ByteArray(0)) }
+    fun setActiveOwnerScope(accountId: String?) {
+        val scope = accountId?.trim()?.takeIf { it.isNotEmpty() }?.let(::ownerScopeFor)
+        check(
+            preferences.edit().apply {
+                if (scope == null) {
+                    remove(ACTIVE_OWNER_SCOPE)
+                } else {
+                    putString(ACTIVE_OWNER_SCOPE, scope)
+                }
+            }.commit(),
+        ) { "Unable to persist the active SOS button account scope." }
+    }
+
+    fun hasActiveOwnerScope(): Boolean = activeOwnerScope() != null
+
+    fun activeOwnerScopeToken(): String? = activeOwnerScope()
+
+    fun buttons(): List<Button> = readButtons()
+        .filter(::belongsToActiveOwner)
+        .map { it.copy(pairingSecret = ByteArray(0)) }
 
     fun find(deviceId: ByteArray): Button? {
         val deviceIdHex = deviceId.hex()
-        return readButtons().firstOrNull { it.deviceIdHex == deviceIdHex }
+        return readButtons().firstOrNull {
+            it.deviceIdHex == deviceIdHex && belongsToActiveOwner(it)
+        }
     }
 
     fun find(deviceIdHex: String): Button? {
-        return readButtons().firstOrNull { it.deviceIdHex == deviceIdHex.trim().uppercase() }
+        return readButtons().firstOrNull {
+            it.deviceIdHex == deviceIdHex.trim().uppercase() && belongsToActiveOwner(it)
+        }
     }
 
     fun saveConfirmedPairing(
@@ -77,17 +102,29 @@ class PairedSosButtonRegistry(context: Context) {
         pairingSecret: ByteArray,
         displayName: String,
         address: String? = null,
+        expectedOwnerScope: String? = null,
     ) {
         require(deviceId.size == 6) { "Paired SOS device IDs must be six bytes." }
         require(pairingSecret.size == 32) { "Paired SOS secrets must be 32 bytes." }
-        val current = readButtons().filterNot { it.deviceIdHex == deviceId.hex() }.toMutableList()
+        val ownerScope = requireNotNull(activeOwnerScope()) {
+            "An app account must be active before an SOS button can be paired."
+        }
+        require(expectedOwnerScope == null || expectedOwnerScope == ownerScope) {
+            "The signed-in account changed during SOS button pairing."
+        }
+        val normalizedAddress = address?.trim()?.uppercase()
+        val current = readButtons().filterNot {
+            it.deviceIdHex == deviceId.hex() ||
+                (normalizedAddress != null && it.address == normalizedAddress)
+        }.toMutableList()
         current += Button(
             deviceIdHex = deviceId.hex(),
-            address = address?.trim()?.uppercase(),
+            address = normalizedAddress,
             displayName = displayName.trim().ifBlank { DEFAULT_DISPLAY_NAME },
             pairedAtMillis = System.currentTimeMillis(),
             lastSeenAtMillis = null,
             lastAcceptedEventId = null,
+            ownerScope = ownerScope,
             pairingSecret = pairingSecret.copyOf(),
         )
         writeButtons(current)
@@ -95,7 +132,9 @@ class PairedSosButtonRegistry(context: Context) {
 
     fun remove(deviceIdHex: String): Boolean {
         val current = readButtons()
-        val updated = current.filterNot { it.deviceIdHex == deviceIdHex.uppercase() }
+        val updated = current.filterNot {
+            it.deviceIdHex == deviceIdHex.uppercase() && belongsToActiveOwner(it)
+        }
         if (updated.size == current.size) return false
         writeButtons(updated)
         return true
@@ -104,7 +143,7 @@ class PairedSosButtonRegistry(context: Context) {
     fun markSeen(deviceId: ByteArray, eventId: Long? = null, accepted: Boolean = false) {
         val deviceIdHex = deviceId.hex()
         val updated = readButtons().map { button ->
-            if (button.deviceIdHex != deviceIdHex) {
+            if (button.deviceIdHex != deviceIdHex || !belongsToActiveOwner(button)) {
                 button
             } else {
                 button.copy(
@@ -119,9 +158,12 @@ class PairedSosButtonRegistry(context: Context) {
 
     fun isReplay(button: Button, eventId: Long): Boolean {
         val last = button.lastAcceptedEventId ?: return false
-        // The firmware persists and increments the uint32 press counter. A
-        // phone must not accept an old packet after a restart or replay.
-        return eventId <= last
+        // RFC-1982-style uint32 serial arithmetic permits the legitimate
+        // 0xffffffff -> 0 wrap, while a firmware reset back to a small value
+        // remains rejected. A reset button must be physically re-paired so an
+        // old authenticated advertisement can never become valid again.
+        val forwardDistance = (eventId - last).and(0xffffffffL)
+        return forwardDistance == 0L || forwardDistance >= 0x80000000L
     }
 
     fun hasValidTag(button: Button, packet: HikerBleProtocol.PairedSosRemotePacket): Boolean {
@@ -134,10 +176,36 @@ class PairedSosButtonRegistry(context: Context) {
     }
 
     fun isLegacyUnpairedEnabled(): Boolean =
-        preferences.getBoolean(LEGACY_UNPAIRED_ENABLED, false)
+        legacyUnpairedSettingKey()?.let { preferences.getBoolean(it, false) } ?: false
 
-    fun setLegacyUnpairedEnabled(enabled: Boolean) {
-        preferences.edit().putBoolean(LEGACY_UNPAIRED_ENABLED, enabled).apply()
+    fun setLegacyUnpairedEnabled(enabled: Boolean): Boolean {
+        val key = legacyUnpairedSettingKey() ?: return false
+        return preferences.edit()
+            .putBoolean(key, enabled)
+            // Never inherit the old process-global migration switch into a
+            // different signed-in account.
+            .remove(LEGACY_UNPAIRED_ENABLED)
+            .commit()
+    }
+
+    /**
+     * Drops only device-local pairing material so a registry restored without
+     * its Keystore key can recover in-app. The active account scope is kept so
+     * the user can immediately pair the physical button again.
+     */
+    fun resetRegistry() {
+        val editor = preferences.edit()
+            .remove(ENCRYPTED_ENTRIES)
+            .remove(LEGACY_UNPAIRED_ENABLED)
+        legacyUnpairedSettingKey()?.let(editor::remove)
+        check(
+            editor.commit(),
+        ) { "Unable to clear the paired SOS button registry." }
+
+        val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
+        if (keyStore.containsAlias(KEY_ALIAS)) {
+            keyStore.deleteEntry(KEY_ALIAS)
+        }
     }
 
     private fun readButtons(): List<Button> {
@@ -160,12 +228,19 @@ class PairedSosButtonRegistry(context: Context) {
                             lastSeenAtMillis = item.optLong("lastSeenAtMillis", 0).takeIf { it > 0 },
                             lastAcceptedEventId = item.optLong("lastAcceptedEventId", -1)
                                 .takeIf { it >= 0 },
+                            ownerScope = item.optString("ownerScope", "").trim()
+                                .takeIf { it.isNotEmpty() },
                             pairingSecret = Base64.decode(item.getString("pairingSecret"), Base64.NO_WRAP),
                         ),
                     )
                 }
             }
-        }.getOrElse { emptyList() }
+        }.getOrElse { error ->
+            throw IllegalStateException(
+                "Unable to decrypt the paired SOS button registry.",
+                error,
+            )
+        }
     }
 
     private fun writeButtons(buttons: List<Button>) {
@@ -179,11 +254,32 @@ class PairedSosButtonRegistry(context: Context) {
                     .put("pairedAtMillis", button.pairedAtMillis)
                     .put("lastSeenAtMillis", button.lastSeenAtMillis ?: 0)
                     .put("lastAcceptedEventId", button.lastAcceptedEventId ?: -1)
+                    .put("ownerScope", button.ownerScope ?: "")
                     .put("pairingSecret", Base64.encodeToString(button.pairingSecret, Base64.NO_WRAP)),
             )
         }
-        preferences.edit().putString(ENCRYPTED_ENTRIES, encrypt(array.toString())).apply()
+        check(
+            preferences.edit()
+                .putString(ENCRYPTED_ENTRIES, encrypt(array.toString()))
+                .commit(),
+        ) { "Unable to persist the paired SOS button registry." }
     }
+
+    private fun activeOwnerScope(): String? =
+        preferences.getString(ACTIVE_OWNER_SCOPE, null)?.takeIf { it.isNotBlank() }
+
+    private fun legacyUnpairedSettingKey(): String? =
+        activeOwnerScope()?.let { "$LEGACY_UNPAIRED_ENABLED.$it" }
+
+    private fun belongsToActiveOwner(button: Button): Boolean {
+        val active = activeOwnerScope() ?: return false
+        return button.ownerScope == active
+    }
+
+    private fun ownerScopeFor(accountId: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(accountId.trim().lowercase().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02X".format(it.toInt().and(0xff)) }
 
     private fun encrypt(value: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")

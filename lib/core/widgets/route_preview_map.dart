@@ -9,6 +9,10 @@ import '../../trail/Model/trail_models.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
 
+bool _isValidMapPoint(mapbox.Point point) {
+  return mapPointCoordinatesOrNull(point) != null;
+}
+
 class RoutePreviewMap extends StatefulWidget {
   const RoutePreviewMap({
     super.key,
@@ -62,6 +66,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PointAnnotationManager? _pointManager;
+  Future<bool>? _annotationManagersFuture;
   var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
@@ -76,14 +81,18 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   Timer? _fitRetryTimer;
   bool _isPaused = false;
   bool _isRendering = false;
+  bool _renderPending = false;
   bool _isFitting = false;
+  bool _fitPending = false;
   bool _initialFitComplete = false;
   int _renderGeneration = 0;
+  int _mapGeneration = 0;
+  bool _hasUsableGeometry = false;
 
   @override
   void initState() {
     super.initState();
-    _styleIndex = widget.initialStyleIndex;
+    _styleIndex = widget.initialStyleIndex.clamp(0, mapStyleUrls.length - 1);
     _routeAnimController = AnimationController(
       vsync: this,
       duration: widget.animationDuration,
@@ -127,7 +136,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _animatedPolyline!.geometry = mapbox.LineString(
       coordinates: partialCoordinates,
     );
-    _polylineManager?.update(_animatedPolyline!);
+    final manager = _polylineManager;
+    final annotation = _animatedPolyline;
+    if (manager != null && annotation != null) {
+      unawaited(manager.update(annotation).catchError((_) {}));
+    }
 
     // Check if we reached a checkpoint
     if (_checkpointIndices.contains(targetIndex)) {
@@ -183,8 +196,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
     final checkpoint = _checkpointPoints[checkpointIdx];
     // Small glow circle
-    _circleManager
-        ?.create(
+    final manager = _circleManager;
+    if (manager == null) return;
+    unawaited(() async {
+      try {
+        final annotation = await manager.create(
           mapbox.CircleAnnotationOptions(
             geometry: checkpoint,
             circleColor: const Color(0xFF34A853).toARGB32(),
@@ -193,14 +209,16 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             circleStrokeWidth: 1.5,
             circleOpacity: 1.0,
           ),
-        )
-        .then((annotation) {
-          if (!mounted) return;
-          Timer(const Duration(milliseconds: 500), () {
-            if (!mounted) return;
-            _circleManager?.delete(annotation);
-          });
+        );
+        if (!mounted || !identical(manager, _circleManager)) return;
+        Timer(const Duration(milliseconds: 500), () {
+          if (!mounted || !identical(manager, _circleManager)) return;
+          unawaited(manager.delete(annotation).catchError((_) {}));
         });
+      } catch (_) {
+        // Style replacement invalidates the old annotation manager.
+      }
+    }());
   }
 
   @override
@@ -210,6 +228,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _renderRetryTimer?.cancel();
     _fitRetryTimer?.cancel();
     _renderGeneration++;
+    _mapGeneration++;
+    _mapboxMap = null;
+    _annotationManagersFuture = null;
     _routeAnimController.removeListener(_onRouteAnimationTick);
     _routeAnimController.removeStatusListener(_onAnimationStatusChange);
     _routeAnimController.dispose();
@@ -217,20 +238,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   void _buildPoints() {
-    final checkpoints = [...widget.effectiveCheckpoints]
-      ..sort((a, b) => a.order.compareTo(b.order));
-    _startPoint = mapbox.Point(
-      coordinates: mapbox.Position(
-        checkpoints.first.longitude,
-        checkpoints.first.latitude,
-      ),
-    );
-    _endPoint = mapbox.Point(
-      coordinates: mapbox.Position(
-        checkpoints.last.longitude,
-        checkpoints.last.latitude,
-      ),
-    );
+    final checkpoints =
+        widget.effectiveCheckpoints
+            .where((checkpoint) => checkpoint.hasValidCoordinate)
+            .toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
     _checkpointPoints = checkpoints
         .map(
           (cp) => mapbox.Point(
@@ -239,14 +251,34 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         )
         .toList();
     final route = widget.route;
-    _routePoints = route == null
-        ? const []
-        : _orientRoutePoints(_decodePolyline(route.encodedPolyline));
+    final decodedRoute = route == null
+        ? const <mapbox.Point>[]
+        : _decodePolyline(route.encodedPolyline);
+    if (_checkpointPoints.isNotEmpty) {
+      _startPoint = _checkpointPoints.first;
+      _endPoint = _checkpointPoints.last;
+      _hasUsableGeometry = true;
+      _routePoints = _orientRoutePoints(decodedRoute);
+    } else if (decodedRoute.isNotEmpty) {
+      _startPoint = decodedRoute.first;
+      _endPoint = decodedRoute.last;
+      _hasUsableGeometry = true;
+      _routePoints = decodedRoute;
+    } else {
+      _startPoint = _zeroPoint;
+      _endPoint = _zeroPoint;
+      _hasUsableGeometry = false;
+      _routePoints = const [];
+    }
     _computeCheckpointIndices();
-    final center = centerFor(_visibleMapPoints);
     _currentZoom = 13.5;
-    _scaleLatitude = center.coordinates[1]!.toDouble();
+    final centerCoordinates = _hasUsableGeometry
+        ? mapPointCoordinatesOrNull(centerFor(_visibleMapPoints))
+        : null;
+    _scaleLatitude = centerCoordinates?.latitude ?? 0;
   }
+
+  static final _zeroPoint = mapbox.Point(coordinates: mapbox.Position(0, 0));
 
   void _computeCheckpointIndices() {
     _checkpointIndices.clear();
@@ -275,9 +307,26 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   @override
   void didUpdateWidget(covariant RoutePreviewMap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.effectiveCheckpoints != widget.effectiveCheckpoints ||
-        oldWidget.route != widget.route) {
+    final geometryChanged =
+        oldWidget.effectiveCheckpoints != widget.effectiveCheckpoints ||
+        oldWidget.route != widget.route;
+    final overlayPointsChanged =
+        oldWidget.pinnedPoints != widget.pinnedPoints ||
+        oldWidget.checkInPoints != widget.checkInPoints;
+    if (geometryChanged) {
+      final previouslyHadGeometry = _hasUsableGeometry;
       _buildPoints();
+      if (previouslyHadGeometry != _hasUsableGeometry) {
+        _mapGeneration++;
+        _styleLoaded = false;
+        _mapboxMap = null;
+        _polylineManager = null;
+        _circleManager = null;
+        _pointManager = null;
+        _annotationManagersFuture = null;
+      }
+    }
+    if (geometryChanged || overlayPointsChanged) {
       _routeRendered = false;
       _initialFitComplete = false;
       _animatedPolyline = null;
@@ -308,9 +357,28 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     } catch (_) {}
   }
 
-  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
+  bool _isCurrentMap(mapbox.MapboxMap map, int generation) {
+    return mounted &&
+        generation == _mapGeneration &&
+        identical(map, _mapboxMap);
+  }
+
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap, int generation) async {
+    if (!mounted || generation != _mapGeneration) return;
+    final replacingNativeMap =
+        _mapboxMap != null && !identical(_mapboxMap, mapboxMap);
     _mapboxMap = mapboxMap;
-    _scheduleStyleWatchdog();
+    if (replacingNativeMap) {
+      _styleLoaded = false;
+      _routeRendered = false;
+      _initialFitComplete = false;
+      _polylineManager = null;
+      _circleManager = null;
+      _pointManager = null;
+      _annotationManagersFuture = null;
+      _renderGeneration++;
+    }
+    _scheduleStyleWatchdog(generation);
     try {
       await mapboxMap.compass.updateSettings(
         mapbox.CompassSettings(enabled: false),
@@ -330,67 +398,104 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     } catch (_) {
       // The map channel can still be settling. Style/map callbacks retry setup.
     }
+    if (!_isCurrentMap(mapboxMap, generation)) return;
     unawaited(_renderRouteIfReady());
     unawaited(_syncScaleFromCamera());
   }
 
-  Future<void> _onStyleLoaded() async {
-    _styleWatchdogTimer?.cancel();
-    _styleLoaded = true;
-    _routeRendered = false;
-    _initialFitComplete = false;
-    _polylineManager = null;
-    _circleManager = null;
-    _pointManager = null;
-    _renderGeneration++;
-    await _ensureAnnotationManagers();
-    await _renderRouteIfReady();
+  Future<void> _onStyleLoaded(int generation) async {
     final map = _mapboxMap;
-    if (map != null) {
+    if (map == null || !_isCurrentMap(map, generation)) return;
+    _styleWatchdogTimer?.cancel();
+    if (!_styleLoaded) {
+      _styleLoaded = true;
+      _routeRendered = false;
+      _initialFitComplete = false;
+      _polylineManager = null;
+      _circleManager = null;
+      _pointManager = null;
+      _annotationManagersFuture = null;
+      _renderGeneration++;
+    }
+    if (!await _ensureAnnotationManagers(generation)) return;
+    await _renderRouteIfReady();
+    if (_isCurrentMap(map, generation)) {
       unawaited(enableTerrain3D(map));
     }
   }
 
-  Future<void> _onMapLoaded() async {
+  Future<void> _onMapLoaded(int generation) async {
+    final map = _mapboxMap;
+    if (map == null || !_isCurrentMap(map, generation)) return;
     _styleWatchdogTimer?.cancel();
     if (!_styleLoaded) {
       _styleLoaded = true;
       _routeRendered = false;
       _initialFitComplete = false;
     }
-    await _ensureAnnotationManagers();
+    await _ensureAnnotationManagers(generation);
     await _renderRouteIfReady();
   }
 
-  Future<bool> _ensureAnnotationManagers() async {
+  Future<bool> _ensureAnnotationManagers(int generation) {
     final map = _mapboxMap;
-    if (map == null || !_styleLoaded) {
-      return false;
+    if (map == null || !_styleLoaded || !_isCurrentMap(map, generation)) {
+      return Future.value(false);
     }
+    final existingFuture = _annotationManagersFuture;
+    if (existingFuture != null) return existingFuture;
+    final future = _createAnnotationManagers(map, generation);
+    _annotationManagersFuture = future;
+    return future.whenComplete(() {
+      if (identical(_annotationManagersFuture, future)) {
+        _annotationManagersFuture = null;
+      }
+    });
+  }
+
+  Future<bool> _createAnnotationManagers(
+    mapbox.MapboxMap map,
+    int generation,
+  ) async {
     try {
-      _polylineManager ??= await map.annotations
+      var polylineManager = _polylineManager;
+      var circleManager = _circleManager;
+      var pointManager = _pointManager;
+      polylineManager ??= await map.annotations
           .createPolylineAnnotationManager();
-      _circleManager ??= await map.annotations.createCircleAnnotationManager();
-      _pointManager ??= await map.annotations.createPointAnnotationManager();
+      if (!_isCurrentMap(map, generation)) return false;
+      circleManager ??= await map.annotations.createCircleAnnotationManager();
+      if (!_isCurrentMap(map, generation)) return false;
+      pointManager ??= await map.annotations.createPointAnnotationManager();
+      if (!_isCurrentMap(map, generation)) return false;
+      _polylineManager = polylineManager;
+      _circleManager = circleManager;
+      _pointManager = pointManager;
       return _polylineManager != null &&
           _circleManager != null &&
           _pointManager != null;
     } catch (_) {
-      _scheduleRenderRetry();
+      if (_isCurrentMap(map, generation)) {
+        _scheduleRenderRetry();
+      }
       return false;
     }
   }
 
   Future<void> _renderRouteIfReady() async {
+    if (_isRendering) {
+      _renderPending = true;
+      return;
+    }
     final map = _mapboxMap;
+    final mapGeneration = _mapGeneration;
     if (map == null ||
         _routeRendered ||
-        _isRendering ||
         !_styleLoaded ||
         _visibleMapPoints.length < 2) {
       return;
     }
-    if (!await _ensureAnnotationManagers()) {
+    if (!await _ensureAnnotationManagers(mapGeneration)) {
       return;
     }
 
@@ -403,7 +508,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       await _polylineManager!.deleteAll();
       await _circleManager!.deleteAll();
       await _pointManager!.deleteAll();
-      if (!mounted || generation != _renderGeneration) {
+      if (!_isCurrentMap(map, mapGeneration) ||
+          generation != _renderGeneration) {
         return;
       }
 
@@ -493,9 +599,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       ];
       await _circleManager!.createMulti(circleOptions);
 
-      if (widget.pinnedPoints.isNotEmpty) {
+      final validPinnedPoints = widget.pinnedPoints
+          .where(_isValidMapPoint)
+          .toList();
+      if (validPinnedPoints.isNotEmpty) {
         await _pointManager!.createMulti(
-          widget.pinnedPoints
+          validPinnedPoints
               .map(
                 (pin) => mapbox.PointAnnotationOptions(
                   geometry: pin,
@@ -508,9 +617,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         );
       }
 
-      if (widget.checkInPoints.isNotEmpty) {
+      final validCheckInPoints = widget.checkInPoints
+          .where(_isValidMapPoint)
+          .toList();
+      if (validCheckInPoints.isNotEmpty) {
         await _pointManager!.createMulti(
-          widget.checkInPoints
+          validCheckInPoints
               .map(
                 (ci) => mapbox.PointAnnotationOptions(
                   geometry: ci,
@@ -523,7 +635,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         );
       }
 
-      if (!mounted || generation != _renderGeneration) {
+      if (!_isCurrentMap(map, mapGeneration) ||
+          generation != _renderGeneration) {
         return;
       }
       setState(() {
@@ -541,6 +654,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       }
     } finally {
       _isRendering = false;
+      if (_renderPending && mounted) {
+        _renderPending = false;
+        _routeRendered = false;
+        unawaited(_renderRouteIfReady());
+      }
     }
   }
 
@@ -553,22 +671,24 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
-  void _scheduleStyleWatchdog() {
+  void _scheduleStyleWatchdog(int generation) {
     _styleWatchdogTimer?.cancel();
     _styleWatchdogTimer = Timer(const Duration(seconds: 15), () {
-      if (!mounted || _styleLoaded) {
+      if (!mounted || generation != _mapGeneration || _styleLoaded) {
         return;
       }
       setState(() {
+        _mapGeneration++;
         _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
         _routeRendered = false;
         _initialFitComplete = false;
         _polylineManager = null;
         _circleManager = null;
         _pointManager = null;
+        _annotationManagersFuture = null;
+        _mapboxMap = null;
         _renderGeneration++;
       });
-      _scheduleStyleWatchdog();
     });
   }
 
@@ -578,8 +698,13 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   Future<void> _fitRoute() async {
+    if (_isFitting) {
+      _fitPending = true;
+      return;
+    }
     final map = _mapboxMap;
-    if (map == null || _visibleMapPoints.length < 2 || _isFitting) return;
+    final mapGeneration = _mapGeneration;
+    if (map == null || _visibleMapPoints.length < 2) return;
 
     final bounds = boundsFor(_visibleMapPoints);
     if (bounds.minLon > bounds.maxLon || bounds.minLat > bounds.maxLat) {
@@ -604,19 +729,25 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         null,
         null,
       );
+      final cameraCenter = camera.center == null
+          ? null
+          : mapPointCoordinatesOrNull(camera.center!);
       if (camera.zoom == null ||
           !camera.zoom!.isFinite ||
-          camera.center == null ||
-          camera.center!.coordinates[0] == null ||
-          camera.center!.coordinates[1] == null) {
+          cameraCenter == null) {
         throw StateError('Mapbox did not return a valid route camera.');
       }
 
       await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 350));
       await Future.delayed(const Duration(milliseconds: 380));
+      if (!_isCurrentMap(map, mapGeneration)) return;
       final state = await map.getCameraState();
-      final centerLongitude = state.center.coordinates[0]!.toDouble();
-      final centerLatitude = state.center.coordinates[1]!.toDouble();
+      final settledCenter = mapPointCoordinatesOrNull(state.center);
+      if (settledCenter == null) {
+        throw StateError('Mapbox returned an invalid settled route camera.');
+      }
+      final centerLongitude = settledCenter.longitude;
+      final centerLatitude = settledCenter.latitude;
       final latitudeMargin = math.max(
         0.002,
         (bounds.maxLat - bounds.minLat) * 0.75,
@@ -636,12 +767,13 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       }
 
       _fitRetryTimer?.cancel();
-      if (mounted) {
+      if (_isCurrentMap(map, mapGeneration)) {
         setState(() {
           _initialFitComplete = true;
         });
       }
     } catch (_) {
+      if (!_isCurrentMap(map, mapGeneration)) return;
       try {
         final latitudeSpan = bounds.maxLat - bounds.minLat;
         final longitudeSpan = bounds.maxLon - bounds.minLon;
@@ -661,19 +793,19 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           mapbox.MapAnimationOptions(duration: 350),
         );
         _fitRetryTimer?.cancel();
-        if (mounted) {
+        if (_isCurrentMap(map, mapGeneration)) {
           setState(() {
             _initialFitComplete = true;
           });
         }
       } catch (_) {
-        if (mounted) {
+        if (_isCurrentMap(map, mapGeneration)) {
           setState(() {
             _initialFitComplete = false;
           });
           _fitRetryTimer?.cancel();
           _fitRetryTimer = Timer(const Duration(milliseconds: 800), () {
-            if (mounted) {
+            if (mounted && mapGeneration == _mapGeneration) {
               unawaited(_fitRoute());
             }
           });
@@ -681,6 +813,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       }
     } finally {
       _isFitting = false;
+      if (_fitPending && mounted) {
+        _fitPending = false;
+        unawaited(_fitRoute());
+      }
     }
     unawaited(_syncScaleFromCamera());
   }
@@ -698,6 +834,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   void _cycleStyle() {
     setState(() {
+      _mapGeneration++;
       _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
       _styleLoaded = false;
       _routeRendered = false;
@@ -705,9 +842,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _annotationManagersFuture = null;
+      _mapboxMap = null;
       _renderGeneration++;
     });
-    _scheduleStyleWatchdog();
   }
 
   void _onCameraChange(mapbox.CameraChangedEventData data) {
@@ -723,17 +861,32 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   Future<void> _syncScaleFromCamera() async {
     final map = _mapboxMap;
+    final generation = _mapGeneration;
     if (map == null) return;
-    final state = await map.getCameraState();
-    _updateScaleFromState(state);
+    try {
+      final state = await map.getCameraState();
+      if (_isCurrentMap(map, generation)) {
+        _updateScaleFromState(state);
+      }
+    } catch (_) {
+      // The native map may have been replaced while reading its camera.
+    }
   }
 
   void _updateScale(mapbox.CameraChangedEventData data) {
-    final nextZoom = data.cameraState.zoom;
-    final nextLatitude = data.cameraState.center.coordinates[1]!.toDouble();
-    if (!mounted ||
-        ((nextZoom - _currentZoom).abs() < 0.005 &&
-            (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
+    _updateScaleValues(data.cameraState.zoom, data.cameraState.center);
+  }
+
+  void _updateScaleFromState(mapbox.CameraState state) {
+    _updateScaleValues(state.zoom, state.center);
+  }
+
+  void _updateScaleValues(double nextZoom, mapbox.Point center) {
+    final coordinates = mapPointCoordinatesOrNull(center);
+    if (!mounted || !nextZoom.isFinite || coordinates == null) return;
+    final nextLatitude = coordinates.latitude;
+    if (((nextZoom - _currentZoom).abs() < 0.005 &&
+        (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
       return;
     }
     setState(() {
@@ -742,17 +895,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
-  void _updateScaleFromState(mapbox.CameraState state) {
-    final nextZoom = state.zoom;
-    final nextLatitude = state.center.coordinates[1]!.toDouble();
-    if (!mounted) return;
-    setState(() {
-      _currentZoom = nextZoom;
-      _scaleLatitude = nextLatitude;
-    });
-  }
-
   List<mapbox.Point> get _visibleMapPoints {
+    if (!_hasUsableGeometry) return const [];
     if (_routePoints.length >= 2) {
       return [..._routePoints, _startPoint, _endPoint];
     }
@@ -763,21 +907,46 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   List<mapbox.Point> _decodePolyline(String encoded) {
     try {
-      return PolylineCodec.decode(encoded)
-          .where((point) => point.latitude.isFinite && point.longitude.isFinite)
-          .map(
-            (point) => mapbox.Point(
-              coordinates: mapbox.Position(point.longitude, point.latitude),
-            ),
-          )
-          .toList();
+      final points = <mapbox.Point>[];
+      var index = 0;
+      var latitude = 0;
+      var longitude = 0;
+
+      int? readDelta() {
+        var shift = 0;
+        var result = 0;
+        while (true) {
+          if (index >= encoded.length || shift > 30) return null;
+          final byte = encoded.codeUnitAt(index++) - 63;
+          if (byte < 0 || byte > 0x3f) return null;
+          result |= (byte & 0x1f) << shift;
+          if (byte < 0x20) {
+            return (result & 1) == 1 ? ~(result >> 1) : result >> 1;
+          }
+          shift += 5;
+        }
+      }
+
+      while (index < encoded.length) {
+        final latitudeDelta = readDelta();
+        final longitudeDelta = readDelta();
+        if (latitudeDelta == null || longitudeDelta == null) return const [];
+        latitude += latitudeDelta;
+        longitude += longitudeDelta;
+        final point = mapbox.Point(
+          coordinates: mapbox.Position(longitude / 100000, latitude / 100000),
+        );
+        if (!_isValidMapPoint(point)) return const [];
+        points.add(point);
+      }
+      return points;
     } catch (_) {
       return const [];
     }
   }
 
   List<mapbox.Point> _orientRoutePoints(List<mapbox.Point> points) {
-    if (points.length < 2) {
+    if (points.length < 2 || !_hasUsableGeometry) {
       return points;
     }
 
@@ -796,8 +965,22 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   @override
   Widget build(BuildContext context) {
+    if (!_hasUsableGeometry) {
+      return ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        child: Center(
+          child: Text(
+            'Trail coordinates are unavailable',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      );
+    }
     final isPreparingMap =
         !_styleLoaded || !_routeRendered || !_initialFitComplete;
+    final mapGeneration = _mapGeneration;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -808,11 +991,19 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             gestureRecognizers: widget.captureAllGestures
                 ? eagerMapGestureRecognizers
                 : mapGestureRecognizers,
-            onMapCreated: _onMapCreated,
-            onStyleLoadedListener: (_) => _onStyleLoaded(),
-            onMapLoadedListener: (_) => _onMapLoaded(),
-            onCameraChangeListener: _onCameraChange,
-            onMapIdleListener: (_) => _onMapIdle(),
+            onMapCreated: (map) => _onMapCreated(map, mapGeneration),
+            onStyleLoadedListener: (_) => _onStyleLoaded(mapGeneration),
+            onMapLoadedListener: (_) => _onMapLoaded(mapGeneration),
+            onCameraChangeListener: (data) {
+              if (mapGeneration == _mapGeneration) {
+                _onCameraChange(data);
+              }
+            },
+            onMapIdleListener: (_) {
+              if (mapGeneration == _mapGeneration) {
+                _onMapIdle();
+              }
+            },
           ),
         ),
         Align(

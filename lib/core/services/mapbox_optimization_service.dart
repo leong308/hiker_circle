@@ -99,10 +99,17 @@ class MapboxOptimizationService {
           'Mapbox returned no route geometry.',
         );
       }
+      final distanceMeters = _roundedPositiveMetric(trip['distance']);
+      final durationSeconds = _roundedPositiveMetric(trip['duration']);
+      if (distanceMeters == 0 || durationSeconds == 0) {
+        throw const MapboxOptimizationException(
+          'Mapbox returned invalid route distance or duration.',
+        );
+      }
 
       return MapboxOptimizationResult(
-        distanceMeters: (trip['distance'] as num?)?.round() ?? 0,
-        durationSeconds: (trip['duration'] as num?)?.round() ?? 0,
+        distanceMeters: distanceMeters,
+        durationSeconds: durationSeconds,
         encodedPolyline: geometry,
       );
     } on MapboxOptimizationException {
@@ -120,5 +127,16 @@ class MapboxOptimizationService {
         client.close();
       }
     }
+  }
+
+  int _roundedPositiveMetric(Object? value) {
+    if (value is! num || !value.isFinite || value <= 0) {
+      return 0;
+    }
+    final metric = value.toDouble();
+    if (metric > 100000000) {
+      return 0;
+    }
+    return metric.round();
   }
 }

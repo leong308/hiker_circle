@@ -12,6 +12,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
   static const Duration passiveSnapshotInterval = Duration(minutes: 2);
   static const Duration liveSnapshotInterval = Duration(seconds: 30);
   static const Duration snapshotInterval = liveSnapshotInterval;
+  static const Duration maximumEmergencySnapshotAge = Duration(minutes: 5);
 
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
@@ -22,7 +23,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
   Duration _refreshInterval = passiveSnapshotInterval;
   bool _isStarted = false;
 
-  SosTriggerLocation? get latestLocation => _latestLocation;
+  SosTriggerLocation? get latestLocation => _freshLocation(_latestLocation);
 
   Map<String, Object?> get debugSnapshot => {
     'storageType': 'In-memory location snapshot service',
@@ -32,6 +33,8 @@ class LocationSnapshotService with WidgetsBindingObserver {
     'refreshInProgress': _refreshFuture != null,
     'refreshIntervalSeconds': _refreshInterval.inSeconds,
     'latestLocation': _latestLocation?.toFirestore(),
+    'latestLocationFresh': latestLocation != null,
+    'maximumEmergencySnapshotAgeSeconds': maximumEmergencySnapshotAge.inSeconds,
   };
 
   Future<void> start({Duration interval = passiveSnapshotInterval}) async {
@@ -85,16 +88,16 @@ class LocationSnapshotService with WidgetsBindingObserver {
       final location = await _deviceAlertService.getCurrentTriggerLocation(
         allowLastKnown: true,
       );
-      if (location != null) {
+      if (_isValidLocation(location) && _isNewerThanCached(location!)) {
         _latestLocation = location;
       }
     } catch (_) {
-      return _latestLocation;
+      return latestLocation;
     } finally {
       _refreshFuture = null;
     }
 
-    return _latestLocation;
+    return latestLocation;
   }
 
   @override
@@ -110,6 +113,10 @@ class LocationSnapshotService with WidgetsBindingObserver {
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
+        // Keep the schedule installed while mobile background-location modes
+        // are active. The OS may throttle Dart timers while suspended, but
+        // cancelling here guaranteed that SOS/live-hike snapshots went stale.
+        _startTimer();
       case AppLifecycleState.detached:
         _timer?.cancel();
         _timer = null;
@@ -131,5 +138,38 @@ class LocationSnapshotService with WidgetsBindingObserver {
       return liveSnapshotInterval;
     }
     return interval;
+  }
+
+  bool _isNewerThanCached(SosTriggerLocation location) {
+    final cachedAt = _latestLocation?.capturedAt;
+    final capturedAt = location.capturedAt;
+    return cachedAt == null ||
+        (capturedAt != null && capturedAt.isAfter(cachedAt));
+  }
+
+  bool _isValidLocation(SosTriggerLocation? location) {
+    if (location == null ||
+        !location.latitude.isFinite ||
+        !location.longitude.isFinite ||
+        location.latitude < -90 ||
+        location.latitude > 90 ||
+        location.longitude < -180 ||
+        location.longitude > 180) {
+      return false;
+    }
+    return location.capturedAt != null;
+  }
+
+  SosTriggerLocation? _freshLocation(SosTriggerLocation? location) {
+    if (!_isValidLocation(location)) {
+      return null;
+    }
+    final capturedAt = location!.capturedAt!.toUtc();
+    final now = DateTime.now().toUtc();
+    if (capturedAt.isAfter(now.add(const Duration(minutes: 2))) ||
+        now.difference(capturedAt) > maximumEmergencySnapshotAge) {
+      return null;
+    }
+    return location;
   }
 }
