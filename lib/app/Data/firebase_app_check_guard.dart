@@ -38,7 +38,7 @@ class FirebaseAppCheckUnavailable implements Exception {
   static const message =
       'App security verification failed. This installation is not authorized '
       'by Firebase App Check. Register the development debug token or install '
-      'the Play-signed production app.';
+      'the signed production app.';
 
   @override
   String toString() => message;

@@ -168,7 +168,7 @@ private struct HikeLiveActivityLockScreenView: View {
     if context.state.safetyPhase == "escalated" {
       return "SOS sent · Tap I'm Safe to stop the alarm"
     }
-    "GPS \(context.state.routePointCount) | Queue \(context.state.queuedUpdates) | ETA \(etaText(context.state.expectedReturnAt))"
+    return "GPS \(context.state.routePointCount) | Queue \(context.state.queuedUpdates) | ETA \(etaText(context.state.expectedReturnAt))"
   }
 
   private func metricTile(label: String, value: String) -> some View {
