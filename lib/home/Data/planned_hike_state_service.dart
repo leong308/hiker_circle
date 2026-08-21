@@ -155,6 +155,7 @@ class PlannedHikeStateResolver {
       longitude: draft.trail.longitude,
       area: draft.trail.area,
       state: draft.trail.state,
+      country: draft.trail.country,
       distanceKm: draft.trail.distanceKm,
       durationMinutes: draft.trail.estimatedDurationMinutes,
       difficulty: draft.trail.difficulty,
@@ -193,6 +194,7 @@ class PlannedHikeStateResolver {
       name: hike.trailName.trim().isEmpty ? trail.name : hike.trailName,
       area: hike.area.trim().isEmpty ? trail.area : hike.area,
       state: hike.state.trim().isEmpty ? trail.state : hike.state,
+      country: hike.country.trim().isEmpty ? trail.country : hike.country,
       latitude: _validLatitude(hike.latitude) ? hike.latitude : trail.latitude,
       longitude: _validLongitude(hike.longitude)
           ? hike.longitude
@@ -227,6 +229,7 @@ class PlannedHikeStateResolver {
       name: hike.trailName.trim().isEmpty ? 'Scheduled hike' : hike.trailName,
       area: hike.area,
       state: hike.state,
+      country: hike.country,
       latitude: _validLatitude(hike.latitude) ? hike.latitude : 0,
       longitude: _validLongitude(hike.longitude) ? hike.longitude : 0,
       distanceKm: hike.distanceKm < 0 ? 0 : hike.distanceKm,

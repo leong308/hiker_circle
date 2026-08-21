@@ -135,4 +135,46 @@ void main() {
       expect(calls.last.method, 'cancelPairedSosButtonTest');
     },
   );
+
+  test('readiness reports stale button and unhealthy monitor warnings', () {
+    final checkedAt = DateTime.utc(2026, 8, 20, 12);
+    final readiness = SosButtonReadiness.fromPlatform({
+      'supported': true,
+      'bluetoothEnabled': true,
+      'scanPermissionGranted': true,
+      'connectPermissionGranted': true,
+      'notificationPermissionGranted': true,
+      'notificationsEnabled': true,
+      'batteryOptimizationExempt': false,
+      'monitorEnabled': true,
+      'monitorHealthy': false,
+      'scanState': 'scan_failed',
+      'checkedAtMillis': checkedAt.millisecondsSinceEpoch,
+      'lostButtonWarningEnabled': true,
+      'lostButtonThresholdMillis': const Duration(minutes: 15).inMilliseconds,
+      'pairedButtons': [
+        {
+          'deviceId': 'AABBCCDDEEFF',
+          'displayName': 'Backpack SOS',
+          'pairedAtMillis': checkedAt
+              .subtract(const Duration(days: 1))
+              .millisecondsSinceEpoch,
+          'lastSeenAtMillis': checkedAt
+              .subtract(const Duration(minutes: 5))
+              .millisecondsSinceEpoch,
+        },
+      ],
+    });
+
+    expect(readiness.hasPairedButton, isTrue);
+    expect(readiness.buttonSeenRecently(), isFalse);
+    expect(
+      readiness.blockingWarnings,
+      contains('The background SOS monitor is not healthy.'),
+    );
+    expect(
+      readiness.blockingWarnings,
+      contains('The paired SOS button has not been seen recently.'),
+    );
+  });
 }

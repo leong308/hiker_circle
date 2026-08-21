@@ -1059,6 +1059,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   final _nameController = TextEditingController();
   final _areaController = TextEditingController();
   final _stateController = TextEditingController();
+  final _countryController = TextEditingController();
   final _distanceController = TextEditingController();
   final _durationController = TextEditingController(text: '120');
   final _elevationController = TextEditingController();
@@ -1083,6 +1084,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     _nameController.dispose();
     _areaController.dispose();
     _stateController.dispose();
+    _countryController.dispose();
     _distanceController.dispose();
     _durationController.dispose();
     _elevationController.dispose();
@@ -1407,6 +1409,9 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           if (_stateController.text.isEmpty) {
             _stateController.text = result.state;
           }
+          if (_countryController.text.isEmpty) {
+            _countryController.text = result.country;
+          }
         });
       }
       return;
@@ -1424,6 +1429,9 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
             }
             if (_stateController.text.isEmpty && result.state.isNotEmpty) {
               _stateController.text = result.state;
+            }
+            if (_countryController.text.isEmpty && result.country.isNotEmpty) {
+              _countryController.text = result.country;
             }
           });
         }
@@ -1444,6 +1452,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     final name = _nameController.text.trim();
     final area = _areaController.text.trim();
     final state = _stateController.text.trim();
+    final country = _countryController.text.trim();
     final checkpoints = _checkpointModels();
     final latitude = checkpoints.isEmpty ? null : checkpoints.first.latitude;
     final longitude = checkpoints.isEmpty ? null : checkpoints.first.longitude;
@@ -1453,6 +1462,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     if (name.isEmpty ||
         area.isEmpty ||
         state.isEmpty ||
+        country.isEmpty ||
         latitude == null ||
         longitude == null ||
         checkpoints.length < 3 ||
@@ -1509,6 +1519,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       name: name,
       area: area,
       state: state,
+      country: country,
       latitude: latitude,
       longitude: longitude,
       distance: distance,
@@ -1523,6 +1534,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     required String name,
     required String area,
     required String state,
+    required String country,
     required double latitude,
     required double longitude,
     required double distance,
@@ -1590,6 +1602,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         name: name,
         area: area,
         state: state,
+        country: country,
         latitude: latitude,
         longitude: longitude,
         distanceKm: distance,
@@ -1801,6 +1814,18 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _countryController,
+              readOnly: !_locationFailed,
+              decoration: InputDecoration(
+                labelText: 'Country',
+                hintText: _locationFailed ? 'Enter country manually' : null,
+                prefixIcon: _locationFailed
+                    ? const Icon(Icons.edit_rounded, size: 18)
+                    : const Icon(Icons.public_rounded, size: 18),
+              ),
+            ),
             if (_locationFailed)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -1815,7 +1840,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'Auto location unavailable — you can type area and state',
+                      'Auto location unavailable — enter area, state, and country',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: Theme.of(context).brightness == Brightness.dark
                             ? const Color(0xFFA8B8AE)
@@ -3518,6 +3543,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   late final _nameController = TextEditingController(text: widget.trail.name);
   late final _areaController = TextEditingController(text: widget.trail.area);
   late final _stateController = TextEditingController(text: widget.trail.state);
+  late final _countryController = TextEditingController(
+    text: widget.trail.country,
+  );
   late String _difficulty = _normalizeTrailDifficulty(widget.trail.difficulty);
   late final List<_CheckpointDraft> _checkpoints = widget.trail.checkpoints
       .map(
@@ -3537,6 +3565,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
     _nameController.dispose();
     _areaController.dispose();
     _stateController.dispose();
+    _countryController.dispose();
     for (final c in _checkpoints) {
       c.dispose();
     }
@@ -3795,6 +3824,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       state: _stateController.text.trim().isEmpty
           ? widget.trail.state
           : _stateController.text.trim(),
+      country: _countryController.text.trim().isEmpty
+          ? widget.trail.country
+          : _countryController.text.trim(),
       latitude: checkpoints.first.latitude,
       longitude: checkpoints.first.longitude,
       distanceKm: 0,
@@ -3912,6 +3944,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       state: _stateController.text.trim().isEmpty
           ? widget.trail.state
           : _stateController.text.trim(),
+      country: _countryController.text.trim().isEmpty
+          ? widget.trail.country
+          : _countryController.text.trim(),
       difficulty: _difficulty,
       checkpoints: models.length >= 3 && models.length <= 12
           ? models
@@ -3991,6 +4026,14 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _countryController,
+              decoration: const InputDecoration(
+                labelText: 'Country',
+                prefixIcon: Icon(Icons.public_rounded),
+              ),
             ),
             const SizedBox(height: 14),
             const _SectionTitle(label: 'Difficulty'),

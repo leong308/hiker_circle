@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../trail/Model/trail_models.dart';
+import '../../sos/Data/location_snapshot_service.dart';
+import '../../sos/Model/sos_models.dart';
 import '../Model/hike_session_models.dart';
 import '../ModelView/fall_stillness_monitor.dart';
 import 'active_tracking_map_view.dart';
@@ -96,9 +99,11 @@ class HomeDashboardPage extends StatelessWidget {
                             plannedHike: planned,
                             trails: trails,
                             isLoadingTrails: isLoadingTrails,
-                            onStartHike: () => unawaited(
-                              _confirmPreparationThenStart(context, planned),
-                            ),
+                            // Creating a new hike must never inherit or start
+                            // the next scheduled hike shown below. Scheduled
+                            // hikes have their own preparation/details flow.
+                            onStartHike: () =>
+                                unawaited(_startHikeFromDashboard(context)),
                             onFindHike: onFindHike,
                             onOpenTrailDetail: onOpenTrailDetail,
                             onTapUpcomingHike: onTapUpcomingHike,
@@ -144,47 +149,6 @@ class HomeDashboardPage extends StatelessWidget {
     }
 
     await _requestStartHike(context, null);
-  }
-
-  Future<void> _confirmPreparationThenStart(
-    BuildContext context,
-    PlannedHike plannedHike,
-  ) async {
-    final missingItems = plannedHike.missingPreparationItems;
-    if (missingItems.isEmpty) {
-      await _requestStartHike(context, plannedHike.trail);
-      return;
-    }
-
-    final shouldStart = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (context) {
-        return CupertinoAlertDialog(
-          title: const Text('Your safety preparation is incomplete.'),
-          content: Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              'Missing:\n${missingItems.map((item) => '- $item').join('\n')}',
-            ),
-          ),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            CupertinoDialogAction(
-              isDefaultAction: true,
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Start Anyway'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (shouldStart == true && context.mounted) {
-      await _requestStartHike(context, plannedHike.trail);
-    }
   }
 
   Future<void> _requestStartHike(BuildContext context, Trail? trail) async {
@@ -529,7 +493,23 @@ class _HomeDashboardHeader extends StatelessWidget {
   }
 }
 
-class _BestMatchesSection extends StatelessWidget {
+enum _BestMatchSort { recommended, nearest }
+
+enum _TrailRegionKind { country, state }
+
+class _TrailRegionFilter {
+  const _TrailRegionFilter({required this.kind, required this.value});
+
+  final _TrailRegionKind kind;
+  final String value;
+
+  String get label => switch (kind) {
+    _TrailRegionKind.country => value,
+    _TrailRegionKind.state => value,
+  };
+}
+
+class _BestMatchesSection extends StatefulWidget {
   const _BestMatchesSection({
     required this.trails,
     required this.isLoading,
@@ -547,48 +527,297 @@ class _BestMatchesSection extends StatelessWidget {
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
 
   @override
+  State<_BestMatchesSection> createState() => _BestMatchesSectionState();
+}
+
+class _BestMatchesSectionState extends State<_BestMatchesSection> {
+  _BestMatchSort _sort = _BestMatchSort.recommended;
+  _TrailRegionFilter? _region;
+  SosTriggerLocation? _userLocation;
+  bool _isLocating = false;
+
+  List<_TrailRegionFilter> get _regionOptions {
+    final countries = <String>{};
+    final states = <String>{};
+    for (final trail in widget.trails) {
+      final country = trail.country.trim();
+      final state = trail.state.trim();
+      if (country.isNotEmpty) countries.add(country);
+      if (state.isNotEmpty) states.add(state);
+    }
+    final sortedCountries = countries.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final sortedStates = states.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return [
+      for (final value in sortedCountries)
+        _TrailRegionFilter(kind: _TrailRegionKind.country, value: value),
+      for (final value in sortedStates)
+        _TrailRegionFilter(kind: _TrailRegionKind.state, value: value),
+    ];
+  }
+
+  bool _matchesRegion(Trail trail) {
+    final region = _region;
+    if (region == null) return true;
+    return switch (region.kind) {
+      _TrailRegionKind.country =>
+        trail.country.trim().toLowerCase() == region.value.toLowerCase(),
+      _TrailRegionKind.state =>
+        trail.state.trim().toLowerCase() == region.value.toLowerCase(),
+    };
+  }
+
+  Future<void> _useNearest() async {
+    if (_isLocating) return;
+    if (_userLocation != null) {
+      setState(() => _sort = _BestMatchSort.nearest);
+      return;
+    }
+    setState(() => _isLocating = true);
+    try {
+      final snapshots = LocationSnapshotService.instance;
+      final location = await snapshots.refresh() ?? snapshots.latestLocation;
+      if (!mounted) return;
+      if (location == null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Current location is unavailable. Enable location and try Nearest again.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        return;
+      }
+      setState(() {
+        _userLocation = location;
+        _sort = _BestMatchSort.nearest;
+      });
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
+  }
+
+  Future<void> _chooseRegion() async {
+    final options = _regionOptions;
+    final selected = await showModalBottomSheet<_TrailRegionFilter?>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: _HomeColors.surfaceFor(context),
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.72,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+                child: Text(
+                  'Filter by region',
+                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                    color: _HomeColors.textFor(sheetContext),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.public_rounded),
+                title: const Text('All regions'),
+                trailing: _region == null
+                    ? const Icon(Icons.check_rounded, color: _HomeColors.green)
+                    : null,
+                onTap: () => Navigator.of(sheetContext).pop(
+                  const _TrailRegionFilter(
+                    kind: _TrailRegionKind.country,
+                    value: '',
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: options.isEmpty
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text(
+                            'Region information is not available for these trails yet.',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: options.length,
+                        itemBuilder: (context, index) {
+                          final option = options[index];
+                          final selected =
+                              _region?.kind == option.kind &&
+                              _region?.value == option.value;
+                          return ListTile(
+                            leading: Icon(
+                              option.kind == _TrailRegionKind.country
+                                  ? Icons.public_rounded
+                                  : Icons.map_outlined,
+                            ),
+                            title: Text(option.value),
+                            subtitle: Text(
+                              option.kind == _TrailRegionKind.country
+                                  ? 'Country'
+                                  : 'State or region',
+                            ),
+                            trailing: selected
+                                ? const Icon(
+                                    Icons.check_rounded,
+                                    color: _HomeColors.green,
+                                  )
+                                : null,
+                            onTap: () => Navigator.of(sheetContext).pop(option),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    setState(() => _region = selected.value.isEmpty ? null : selected);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final visibleTrails = trails.take(5).toList();
+    final filteredTrails = widget.trails.where(_matchesRegion).toList();
+    final location = _userLocation;
+    if (_sort == _BestMatchSort.nearest && location != null) {
+      filteredTrails.sort(
+        (a, b) => _distanceFromTrail(
+          a,
+          location,
+        ).compareTo(_distanceFromTrail(b, location)),
+      );
+    }
+    final visibleTrails = filteredTrails.take(5).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _BestMatchesHeader(onAddTrailByAdmin: onAddTrailByAdmin),
+        _BestMatchesHeader(
+          onAddTrailByAdmin: widget.onAddTrailByAdmin,
+          hasActiveFilter: _sort == _BestMatchSort.nearest || _region != null,
+        ),
         const SizedBox(height: 8),
-        if (isLoading && visibleTrails.isEmpty)
+        Material(
+          type: MaterialType.transparency,
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('Recommended'),
+                selected: _sort == _BestMatchSort.recommended,
+                onSelected: (_) =>
+                    setState(() => _sort = _BestMatchSort.recommended),
+              ),
+              ChoiceChip(
+                avatar: _isLocating
+                    ? const SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.near_me_rounded, size: 17),
+                label: const Text('Nearest'),
+                selected: _sort == _BestMatchSort.nearest,
+                onSelected: (_) => unawaited(_useNearest()),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.public_rounded, size: 17),
+                label: Text(_region?.label ?? 'Region'),
+                onPressed: _chooseRegion,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (widget.isLoading && visibleTrails.isEmpty)
           const _BestMatchesLoading()
         else if (visibleTrails.isEmpty)
-          const _EmptyState(
-            message: 'No trails are available yet. Check again later.',
+          _EmptyState(
+            message: _region == null
+                ? 'No trails are available yet. Check again later.'
+                : 'No trails match ${_region!.label}. Try another region.',
           )
         else
           for (final trail in visibleTrails) ...[
             _BestMatchTrailCard(
               trail: trail,
-              onTap: () => onOpenTrail(trail),
-              onEditTrail: onEditTrailByAdmin == null
+              nearbyDistanceKm: location == null
                   ? null
-                  : () => onEditTrailByAdmin!(trail),
-              onDeleteTrail: onDeleteTrailByAdmin == null
+                  : _distanceFromTrail(trail, location),
+              onTap: () => widget.onOpenTrail(trail),
+              onEditTrail: widget.onEditTrailByAdmin == null
                   ? null
-                  : () => onDeleteTrailByAdmin!(trail),
+                  : () => widget.onEditTrailByAdmin!(trail),
+              onDeleteTrail: widget.onDeleteTrailByAdmin == null
+                  ? null
+                  : () => widget.onDeleteTrailByAdmin!(trail),
             ),
             const SizedBox(height: 12),
           ],
       ],
     );
   }
+
+  double _distanceFromTrail(Trail trail, SosTriggerLocation location) {
+    if (!trail.latitude.isFinite ||
+        !trail.longitude.isFinite ||
+        trail.latitude < -90 ||
+        trail.latitude > 90 ||
+        trail.longitude < -180 ||
+        trail.longitude > 180) {
+      return double.infinity;
+    }
+    const earthRadiusKm = 6371.0;
+    double radians(double degrees) => degrees * math.pi / 180;
+    final latitudeDelta = radians(trail.latitude - location.latitude);
+    final longitudeDelta = radians(trail.longitude - location.longitude);
+    final value =
+        math.sin(latitudeDelta / 2) * math.sin(latitudeDelta / 2) +
+        math.cos(radians(location.latitude)) *
+            math.cos(radians(trail.latitude)) *
+            math.sin(longitudeDelta / 2) *
+            math.sin(longitudeDelta / 2);
+    return earthRadiusKm * 2 * math.asin(math.sqrt(value.clamp(0.0, 1.0)));
+  }
 }
 
 class _BestMatchesHeader extends StatelessWidget {
-  const _BestMatchesHeader({this.onAddTrailByAdmin});
+  const _BestMatchesHeader({
+    this.onAddTrailByAdmin,
+    required this.hasActiveFilter,
+  });
 
   final VoidCallback? onAddTrailByAdmin;
+  final bool hasActiveFilter;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
         const Expanded(child: _SectionTitle(label: 'Best Matches')),
+        if (hasActiveFilter)
+          const Padding(
+            padding: EdgeInsets.only(right: 8),
+            child: Icon(
+              Icons.filter_alt_rounded,
+              size: 18,
+              color: _HomeColors.green,
+            ),
+          ),
         if (onAddTrailByAdmin != null)
           Tooltip(
             message: 'Add trail',
@@ -623,12 +852,14 @@ class _BestMatchTrailCard extends StatelessWidget {
   const _BestMatchTrailCard({
     required this.trail,
     required this.onTap,
+    this.nearbyDistanceKm,
     this.onEditTrail,
     this.onDeleteTrail,
   });
 
   final Trail trail;
   final VoidCallback onTap;
+  final double? nearbyDistanceKm;
   final Future<void> Function()? onEditTrail;
   final Future<void> Function()? onDeleteTrail;
 
@@ -678,6 +909,14 @@ class _BestMatchTrailCard extends StatelessWidget {
                             icon: Icons.route_rounded,
                             label: trail.distanceLabel,
                           ),
+                          if (nearbyDistanceKm != null &&
+                              nearbyDistanceKm!.isFinite)
+                            _TrailMeta(
+                              icon: Icons.near_me_rounded,
+                              label: nearbyDistanceKm! < 1
+                                  ? '${(nearbyDistanceKm! * 1000).round()} m away'
+                                  : '${nearbyDistanceKm!.toStringAsFixed(1)} km away',
+                            ),
                           _TrailMeta(
                             icon: Icons.signal_cellular_alt_rounded,
                             label: trail.difficulty,
@@ -2670,7 +2909,7 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                     _InfoLine(
                       label: 'Trail',
                       value:
-                          '${hike.distanceKm.toStringAsFixed(1)} km · ${hike.difficulty} · ${hike.area}, ${hike.state}',
+                          '${hike.distanceKm.toStringAsFixed(1)} km · ${hike.difficulty} · ${[hike.area, hike.state, hike.country].where((part) => part.trim().isNotEmpty).join(', ')}',
                     ),
                   ],
                 ),

@@ -46,9 +46,11 @@ class SosPage extends StatefulWidget {
     super.key,
     required this.session,
     this.manualSosRequestId = 0,
+    this.onManualSosRequestConsumed,
     this.immediateSosRequestId = 0,
     this.immediateSosMode,
     this.immediateSosTriggerSource,
+    this.onImmediateSosRequestConsumed,
     this.nearbySosEventRepository,
     this.sosAlertRepository,
     this.emergencyContactsRepository,
@@ -58,9 +60,11 @@ class SosPage extends StatefulWidget {
 
   final AppSession session;
   final int manualSosRequestId;
+  final ValueChanged<int>? onManualSosRequestConsumed;
   final int immediateSosRequestId;
   final SosAlertMode? immediateSosMode;
   final SosAlertTriggerSource? immediateSosTriggerSource;
+  final ValueChanged<int>? onImmediateSosRequestConsumed;
   final NearbySosEventRepository? nearbySosEventRepository;
   final SosAlertRepository? sosAlertRepository;
   final EmergencyContactsRepository? emergencyContactsRepository;
@@ -81,6 +85,7 @@ class _SosPageState extends State<SosPage> {
   late final SosViewModel viewModel;
   int _handledManualSosRequestId = 0;
   int _handledImmediateSosRequestId = 0;
+  String _handledSosAcknowledgementKey = '';
   bool _isManualSosPatternActive = false;
   Map<SosAlertMode, String> _customWhatsAppNotes = _defaultWhatsAppNotes();
   List<Map<String, dynamic>> _adminSosSystemLogs = const [];
@@ -170,8 +175,35 @@ class _SosPageState extends State<SosPage> {
   }
 
   void _refresh() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) return;
+    final acknowledgement = viewModel.latestSosAcknowledgement;
+    final acknowledgementKey = acknowledgement == null
+        ? ''
+        : '${acknowledgement.alert.id}:${acknowledgement.alert.status.firestoreValue}:${acknowledgement.queuedForRetry}:${acknowledgement.alert.sentCount}:${acknowledgement.alert.failedCount}';
+    final shouldReportAcknowledgementFailure =
+        acknowledgement != null &&
+        acknowledgementKey != _handledSosAcknowledgementKey &&
+        (acknowledgement.queuedForRetry ||
+            acknowledgement.alert.status == SosAlertStatus.failed ||
+            acknowledgement.alert.status == SosAlertStatus.partial ||
+            acknowledgement.alert.status == SosAlertStatus.queued);
+    if (acknowledgementKey.isNotEmpty) {
+      _handledSosAcknowledgementKey = acknowledgementKey;
+    }
+    setState(() {});
+    if (shouldReportAcknowledgementFailure) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(_messageForResult(acknowledgement)),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: _SosColors.destructiveFor(context),
+            ),
+          );
+      });
     }
   }
 
@@ -350,13 +382,18 @@ class _SosPageState extends State<SosPage> {
         immediateMode != null &&
         widget.immediateSosRequestId > 0 &&
         widget.immediateSosRequestId != _handledImmediateSosRequestId) {
-      _handledImmediateSosRequestId = widget.immediateSosRequestId;
+      final requestId = widget.immediateSosRequestId;
+      _handledImmediateSosRequestId = requestId;
       unawaited(
         _handleImmediateSos(
           immediateMode,
           widget.immediateSosTriggerSource ?? SosAlertTriggerSource.mobilePhone,
         ),
       );
+      // Claim the request synchronously after it has entered this page's
+      // dispatch queue. The home shell can then clear its pending latch so a
+      // later recreation of this widget cannot replay the same SOS.
+      widget.onImmediateSosRequestConsumed?.call(requestId);
       return;
     }
 
@@ -366,8 +403,13 @@ class _SosPageState extends State<SosPage> {
       return;
     }
 
-    _handledManualSosRequestId = widget.manualSosRequestId;
+    final requestId = widget.manualSosRequestId;
+    _handledManualSosRequestId = requestId;
     unawaited(_handleManualSos());
+    // The confirmation countdown is already presented before this callback
+    // runs. Clear the parent latch now so rebuilding the page cannot present
+    // another countdown for the same external request.
+    widget.onManualSosRequestConsumed?.call(requestId);
   }
 
   Future<void> _handleManualSos() async {
@@ -571,24 +613,36 @@ class _SosPageState extends State<SosPage> {
   }
 
   Future<SosTriggerLocation?> _captureTriggerLocation() async {
+    final snapshotService = LocationSnapshotService.instance;
+    final cached = snapshotService.latestLocation;
+    if (cached != null) {
+      // Do not hold emergency submission behind a new GPS fix. Refresh the
+      // shared snapshot for subsequent safety events in the background.
+      unawaited(snapshotService.refresh().catchError((_) => null));
+      return cached;
+    }
     try {
-      final snapshotService = LocationSnapshotService.instance;
-      return await snapshotService.refresh() ?? snapshotService.latestLocation;
+      return await snapshotService.refresh().timeout(
+            const Duration(milliseconds: 600),
+            onTimeout: () => snapshotService.latestLocation,
+          ) ??
+          snapshotService.latestLocation;
     } catch (_) {
-      return null;
+      return snapshotService.latestLocation;
     }
   }
 
   Future<void> _startManualSosPattern(SosAlertMode mode) async {
+    if (mounted) {
+      setState(() {
+        _isManualSosPatternActive = true;
+      });
+    }
     try {
       await _deviceAlertService.startSosPatternForMode(mode);
       if (!mounted) {
         return;
       }
-
-      setState(() {
-        _isManualSosPatternActive = true;
-      });
     } catch (_) {
       if (!mounted) {
         return;
@@ -1875,7 +1929,7 @@ class _EmergencySosControlCardState extends State<_EmergencySosControlCard>
   }
 
   void _handleTapDown(TapDownDetails details) {
-    if (widget.isSending) return;
+    if (widget.isSending && !widget.isAlarmActive) return;
     _duressTriggered = false;
     setState(() => _isPressing = true);
     if (!widget.isAlarmActive) {
@@ -1884,19 +1938,20 @@ class _EmergencySosControlCardState extends State<_EmergencySosControlCard>
   }
 
   void _handleTapUp(TapUpDetails details) {
+    final shouldStopAlarm = widget.isAlarmActive;
+    if (shouldStopAlarm) {
+      _cancelPress();
+      widget.onStopAlarm();
+      return;
+    }
     if (widget.isSending) {
       _cancelPress();
       return;
     }
     final didTriggerDuress = _duressTriggered;
-    final shouldStopAlarm = widget.isAlarmActive;
     _cancelPress();
     if (didTriggerDuress) return;
-    if (shouldStopAlarm) {
-      widget.onStopAlarm();
-    } else {
-      widget.onTrigger();
-    }
+    widget.onTrigger();
   }
 
   void _cancelPress() {

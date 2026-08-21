@@ -21,6 +21,16 @@ void main() {
     );
   });
 
+  test('routes configurable upcoming hike reminders to that hike', () {
+    expect(
+      FcmNotificationRouter.deepLinkFor({
+        'type': 'upcoming_hike_reminder',
+        'upcomingHikeId': 'hike-99',
+      }),
+      'hikercircle://upcoming-hike/view?upcomingHikeId=hike-99',
+    );
+  });
+
   test('does not route an arbitrary external URL', () {
     expect(
       FcmNotificationRouter.deepLinkFor({
@@ -28,5 +38,16 @@ void main() {
       }),
       isNull,
     );
+  });
+
+  test('notification SOS action links only open the existing SOS state', () {
+    for (final action in const ['manual', 'instant', 'medical', 'duress']) {
+      expect(
+        FcmNotificationRouter.deepLinkFor({
+          'deepLink': 'hikercircle://sos/$action?source=old-payload',
+        }),
+        'hikercircle://sos/active?source=notification',
+      );
+    }
   });
 }

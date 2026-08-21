@@ -647,6 +647,67 @@ service cloud.firestore {
     match /upcomingHikes/{hikeId} {
       allow read: if upcomingHikeParticipant(resource.data) || admin();
       allow write: if false;
+
+      match /reminderPreferences/{userId} {
+        function hike() {
+          return get(
+            /databases/$(database)/documents/upcomingHikes/$(hikeId)
+          );
+        }
+
+        function validConfig(data) {
+          return data.enabled is bool
+            && data.firstReminderMinutesBefore is int
+            && data.firstReminderMinutesBefore in [
+              15, 30, 60, 120, 180, 360, 720, 1440
+            ]
+            && data.repeatIntervalMinutes is int
+            && data.repeatIntervalMinutes in [0, 15, 30, 60, 120, 360]
+            && data.finalReminderMinutesBefore is int
+            && data.finalReminderMinutesBefore in [5, 10, 15, 30, 60]
+            && data.finalReminderMinutesBefore
+              <= data.firstReminderMinutesBefore
+            && data.maximumReminders is int
+            && data.maximumReminders in [1, 2, 3, 4, 5, 6, 7, 8];
+        }
+
+        function ownReminderPath() {
+          return signedIn()
+            && userId == request.auth.uid
+            && exists(
+              /databases/$(database)/documents/upcomingHikes/$(hikeId)
+            )
+            && upcomingHikeParticipant(hike().data);
+        }
+
+        function ownReminder(data) {
+          return ownReminderPath()
+            && data.ownerUserId == request.auth.uid
+            && data.ownerPhoneNumber == phoneNumber()
+            && data.hikeId == hikeId;
+        }
+
+        // Authorize the path rather than resource.data so a first read of a
+        // not-yet-created preference correctly returns "not found".
+        allow read: if ownReminderPath() || admin();
+        allow create: if ownReminder(request.resource.data)
+          && validConfig(request.resource.data)
+          && request.resource.data.keys().hasOnly([
+            'enabled', 'firstReminderMinutesBefore',
+            'repeatIntervalMinutes', 'finalReminderMinutesBefore',
+            'maximumReminders', 'hikeId', 'ownerUserId',
+            'ownerPhoneNumber', 'updatedAt', 'updatedAtLocal'
+          ]);
+        allow update: if ownReminder(resource.data)
+          && ownReminder(request.resource.data)
+          && validConfig(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'enabled', 'firstReminderMinutesBefore',
+            'repeatIntervalMinutes', 'finalReminderMinutesBefore',
+            'maximumReminders', 'updatedAt', 'updatedAtLocal'
+          ]);
+        allow delete: if false;
+      }
     }
 
     match /groupChats/{chatId} {

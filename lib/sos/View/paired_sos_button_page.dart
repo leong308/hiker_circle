@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/services/hiker_ble_service.dart';
 import 'sos_button_pairing_sheet.dart';
@@ -138,6 +139,204 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
+class _ReadinessCard extends StatelessWidget {
+  const _ReadinessCard({
+    required this.readiness,
+    required this.loading,
+    required this.onRefresh,
+    required this.onRestartMonitor,
+    required this.onOpenBluetooth,
+    required this.onOpenBatterySettings,
+    required this.onLostWarningChanged,
+    required this.onLostThresholdChanged,
+  });
+
+  final SosButtonReadiness? readiness;
+  final bool loading;
+  final VoidCallback onRefresh;
+  final VoidCallback onRestartMonitor;
+  final VoidCallback onOpenBluetooth;
+  final VoidCallback onOpenBatterySettings;
+  final ValueChanged<bool> onLostWarningChanged;
+  final ValueChanged<Duration> onLostThresholdChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = readiness;
+    final scheme = Theme.of(context).colorScheme;
+    final allReady = value != null && value.blockingWarnings.isEmpty;
+    return Card(
+      elevation: 0,
+      color: allReady
+          ? scheme.primaryContainer.withValues(alpha: 0.45)
+          : scheme.errorContainer.withValues(alpha: 0.55),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  allReady
+                      ? Icons.verified_user_rounded
+                      : Icons.warning_rounded,
+                  color: allReady ? scheme.primary : scheme.error,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    allReady ? 'SOS system ready' : 'Readiness needs attention',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                if (loading)
+                  const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    onPressed: onRefresh,
+                    tooltip: 'Refresh readiness',
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (value == null)
+              const Text('Checking Bluetooth and background monitoring…')
+            else ...[
+              _readinessLine('Bluetooth', value.bluetoothEnabled),
+              _readinessLine(
+                'Bluetooth permissions',
+                value.scanPermissionGranted && value.connectPermissionGranted,
+              ),
+              _readinessLine(
+                'Alert notifications',
+                value.notificationPermissionGranted &&
+                    value.notificationsEnabled,
+              ),
+              _readinessLine('Background monitor', value.monitorHealthy),
+              _readinessLine(
+                'Paired button seen recently',
+                !value.hasPairedButton || value.buttonSeenRecently(),
+              ),
+              _readinessLine(
+                'Battery optimization unrestricted',
+                value.batteryOptimizationExempt,
+                advisory: true,
+              ),
+              if (value.lastFailure case final failure?) ...[
+                const SizedBox(height: 6),
+                Text('Monitor report: $failure'),
+              ],
+              const Divider(height: 24),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Lost-button warning'),
+                subtitle: const Text(
+                  'Notify when the paired button stops appearing over BLE.',
+                ),
+                value: value.lostButtonWarningEnabled,
+                onChanged: onLostWarningChanged,
+              ),
+              if (value.lostButtonWarningEnabled)
+                DropdownButtonFormField<Duration>(
+                  initialValue: _supportedThreshold(value.lostButtonThreshold),
+                  decoration: const InputDecoration(
+                    labelText: 'Warn after not seen for',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: Duration(minutes: 5),
+                      child: Text('5 minutes'),
+                    ),
+                    DropdownMenuItem(
+                      value: Duration(minutes: 15),
+                      child: Text('15 minutes'),
+                    ),
+                    DropdownMenuItem(
+                      value: Duration(minutes: 30),
+                      child: Text('30 minutes'),
+                    ),
+                    DropdownMenuItem(
+                      value: Duration(hours: 1),
+                      child: Text('1 hour'),
+                    ),
+                  ],
+                  onChanged: (duration) {
+                    if (duration != null) onLostThresholdChanged(duration);
+                  },
+                ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: onRestartMonitor,
+                    icon: const Icon(Icons.restart_alt_rounded),
+                    label: const Text('Restart monitor'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: onOpenBluetooth,
+                    icon: const Icon(Icons.bluetooth_rounded),
+                    label: const Text('Bluetooth'),
+                  ),
+                  if (!value.batteryOptimizationExempt)
+                    OutlinedButton.icon(
+                      onPressed: onOpenBatterySettings,
+                      icon: const Icon(Icons.battery_saver_rounded),
+                      label: const Text('Battery settings'),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Duration _supportedThreshold(Duration value) {
+    const supported = [
+      Duration(minutes: 5),
+      Duration(minutes: 15),
+      Duration(minutes: 30),
+      Duration(hours: 1),
+    ];
+    return supported.contains(value) ? value : const Duration(minutes: 15);
+  }
+
+  Widget _readinessLine(String label, bool ready, {bool advisory = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(
+            ready
+                ? Icons.check_circle_rounded
+                : advisory
+                ? Icons.info_rounded
+                : Icons.cancel_rounded,
+            size: 18,
+            color: ready
+                ? Colors.green
+                : advisory
+                ? Colors.orange
+                : Colors.red,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+        ],
+      ),
+    );
+  }
+}
+
 class PairedSosButtonPage extends StatefulWidget {
   const PairedSosButtonPage({super.key, required this.accountId});
 
@@ -159,11 +358,17 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
   StreamSubscription<HikerBleEvent>? _buttonTestSubscription;
   Completer<_ButtonTestOutcome>? _buttonTestOutcome;
   String? _message;
+  SosButtonReadiness? _readiness;
+  bool _readinessLoading = false;
+  Timer? _readinessTimer;
 
   @override
   void initState() {
     super.initState();
     unawaited(_initialize());
+    _readinessTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(_refreshReadiness());
+    });
   }
 
   Future<void> _initialize() async {
@@ -172,6 +377,7 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
       if (!mounted) return;
       _accountReady = true;
       await _loadPaired();
+      await _refreshReadiness();
     } on HikerBleException catch (error) {
       if (!mounted) return;
       setState(() => _message = error.message);
@@ -181,6 +387,7 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
   @override
   void dispose() {
     _buttonTestCountdownTimer?.cancel();
+    _readinessTimer?.cancel();
     final testOutcome = _buttonTestOutcome;
     if (testOutcome != null && !testOutcome.isCompleted) {
       testOutcome.complete(const _ButtonTestOutcome.cancelled());
@@ -214,6 +421,37 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
       if (mounted) setState(() => _registryNeedsReset = true);
       rethrow;
     }
+  }
+
+  Future<void> _refreshReadiness() async {
+    if (_readinessLoading) return;
+    if (mounted) setState(() => _readinessLoading = true);
+    try {
+      final readiness = await _ble.getSosButtonReadiness();
+      if (mounted) setState(() => _readiness = readiness);
+    } on HikerBleException catch (error) {
+      if (mounted) setState(() => _message = error.message);
+    } finally {
+      if (mounted) setState(() => _readinessLoading = false);
+    }
+  }
+
+  Future<void> _restartMonitor() async {
+    await _ble.restartSosButtonMonitor();
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    await _refreshReadiness();
+  }
+
+  Future<void> _setLostWarning(bool enabled, {Duration? threshold}) async {
+    final current = _readiness;
+    await _ble.setLostButtonWarning(
+      enabled: enabled,
+      threshold:
+          threshold ??
+          current?.lostButtonThreshold ??
+          const Duration(minutes: 15),
+    );
+    await _refreshReadiness();
   }
 
   Future<void> _openPairingGuide() async {
@@ -323,13 +561,11 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
       builder: (context) => AlertDialog(
         title: const Text('Download button event log'),
         content: const Text(
-          'Pairing setup and RST are not required.\n\n'
-          'After tapping Start, immediately press the external SOS button '
-          'five times within 3 seconds. The app will wait for the read-only '
-          'log service, then authenticate with the existing pairing secret.\n\n'
-          'When all five presses are detected, the firmware suppresses SOS '
-          'and opens log download for 30 seconds. Complete all five presses: '
-          'an incomplete sequence is handled as a normal SOS press.',
+          'Keep the paired SOS button powered and nearby, then tap Start. '
+          'The app connects to its read-only maintenance service and '
+          'authenticates with the existing pairing secret.\n\n'
+          'Do not press the physical button for log download. One short '
+          'physical press always has priority and immediately starts SOS.',
         ),
         actions: [
           TextButton(
@@ -350,14 +586,6 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
     setState(() {
       _downloadingLogsFor = button.deviceId;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Now press the external button 5 times within 3 seconds.',
-        ),
-        duration: Duration(seconds: 5),
-      ),
-    );
     try {
       final records = await _ble.readPairedSosButtonLog(button.deviceId);
       if (!mounted) return;
@@ -369,39 +597,71 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
             width: 620,
             child: records.isEmpty
                 ? const Text('The button event log is empty.')
-                : ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: records.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final record = records[index];
-                      final absoluteTime = record.epochTime?.toLocal();
-                      final details = <String>[
-                        if (absoluteTime != null)
-                          absoluteTime.toString()
-                        else
-                          'Uptime ${_formatUptime(record.uptime)}',
-                        if (record.eventId != 0) 'Event ID ${record.eventId}',
-                        if (record.resetReason != 0)
-                          'Reset reason ${record.resetReason}',
-                        if (record.detail != 0) 'Detail ${record.detail}',
-                      ];
-                      return ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: CircleAvatar(
-                          child: Text(record.sequence.toString()),
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${records.length} retained events · '
+                        '${records.where((value) => value.type == 3).length} SOS · '
+                        '${records.where((value) => value.type == 16 || value.type == 17).length} warnings',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 8),
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: records.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final record = records[index];
+                            final absoluteTime = record.epochTime?.toLocal();
+                            final details = <String>[
+                              if (absoluteTime != null)
+                                absoluteTime.toString()
+                              else
+                                'Uptime ${_formatUptime(record.uptime)}',
+                              if (record.eventId != 0)
+                                'Event ID ${record.eventId}',
+                              if (record.resetReason != 0)
+                                'Reset reason ${record.resetReason}',
+                              if (record.detail != 0) 'Detail ${record.detail}',
+                            ];
+                            return ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: CircleAvatar(
+                                child: Text(record.sequence.toString()),
+                              ),
+                              title: Text(
+                                record.typeLabel,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle: Text(details.join(' · ')),
+                            );
+                          },
                         ),
-                        title: Text(
-                          record.typeLabel,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: Text(details.join(' · ')),
-                      );
-                    },
+                      ),
+                    ],
                   ),
           ),
           actions: [
+            if (records.isNotEmpty)
+              TextButton.icon(
+                onPressed: () async {
+                  final text = records.map(_formatLogRecord).join('\n');
+                  await Clipboard.setData(ClipboardData(text: text));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Event log copied.')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.copy_all_rounded),
+                label: const Text('Copy log'),
+              ),
             FilledButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Done'),
@@ -441,9 +701,9 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
           '${button.displayName} once. During this test window, an '
           'authenticated press from this button is consumed as a test on this '
           'phone and will not open SOS or notify your emergency contacts.\n\n'
-          'Test mode is local to this phone. Current button firmware still '
-          'broadcasts the normal radio packet, so nearby HikerCircle phones '
-          'may detect it.',
+          'The app first sends an authenticated test-arm request to the button. '
+          'The next press uses the protocol’s test mode, so other HikerCircle '
+          'phones ignore it and no nearby incident is forwarded.',
         ),
         actions: [
           TextButton(
@@ -656,8 +916,7 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
           'automatically.\n\n'
           'In Android Bluetooth settings, forget “HikerCircle Setup”. Then '
           'return here, enter button setup mode, pair it again, and retry the '
-          'history download by pressing the external button five times within '
-          '3 seconds.\n\n'
+          'history download while the button remains powered nearby.\n\n'
           'The installed ESP32 firmware already includes the authenticated log '
           'service. Pairing and live SOS alerts are unaffected.',
         ),
@@ -678,6 +937,15 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
     return '${hours}h ${minutes}m ${seconds}s';
   }
 
+  String _formatLogRecord(HikerBleButtonLogRecord record) {
+    final when =
+        record.epochTime?.toUtc().toIso8601String() ??
+        'uptime=${record.uptimeMillis}ms';
+    return 'seq=${record.sequence} type=${record.typeLabel} $when '
+        'event=${record.eventId} detail=${record.detail} '
+        'reset=${record.resetReason}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -695,6 +963,20 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
             enabled:
                 _accountReady && !_registryNeedsReset && !_pairingInProgress,
             onAdd: _openPairingGuide,
+          ),
+          const SizedBox(height: 12),
+          _ReadinessCard(
+            readiness: _readiness,
+            loading: _readinessLoading,
+            onRefresh: () => unawaited(_refreshReadiness()),
+            onRestartMonitor: () => unawaited(_restartMonitor()),
+            onOpenBluetooth: () => unawaited(_ble.openBluetoothSettings()),
+            onOpenBatterySettings: () =>
+                unawaited(_ble.openBatteryOptimizationSettings()),
+            onLostWarningChanged: (enabled) =>
+                unawaited(_setLostWarning(enabled)),
+            onLostThresholdChanged: (threshold) =>
+                unawaited(_setLostWarning(true, threshold: threshold)),
           ),
           if (_message != null) ...[
             const SizedBox(height: 12),
