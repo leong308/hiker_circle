@@ -1805,6 +1805,7 @@ class UpcomingHike {
     required this.longitude,
     required this.area,
     required this.state,
+    this.country = '',
     required this.distanceKm,
     required this.durationMinutes,
     required this.difficulty,
@@ -1831,6 +1832,7 @@ class UpcomingHike {
   final double longitude;
   final String area;
   final String state;
+  final String country;
   final double distanceKm;
   final int durationMinutes;
   final String difficulty;
@@ -1858,6 +1860,7 @@ class UpcomingHike {
     'longitude': longitude,
     'area': area,
     'state': state,
+    if (country.trim().isNotEmpty) 'country': country.trim(),
     'distanceKm': distanceKm,
     'durationMinutes': durationMinutes,
     'difficulty': difficulty,
@@ -1891,6 +1894,7 @@ class UpcomingHike {
       longitude: longitude,
       area: area,
       state: state,
+      country: country,
       distanceKm: distanceKm,
       durationMinutes: durationMinutes,
       difficulty: difficulty,
@@ -1927,6 +1931,7 @@ class UpcomingHike {
       longitude: _modelDoubleFrom(data['longitude']),
       area: _modelStringFrom(data['area']),
       state: _modelStringFrom(data['state']),
+      country: _modelStringFrom(data['country']),
       distanceKm: _modelDoubleFrom(data['distanceKm']),
       durationMinutes: _modelIntFrom(data['durationMinutes']),
       difficulty: _modelStringFrom(data['difficulty']),
@@ -1980,6 +1985,108 @@ class UpcomingHike {
   }
 
   static double _toRadians(double deg) => deg * 3.141592653589793 / 180;
+}
+
+class HikeReminderPreference {
+  const HikeReminderPreference({
+    this.enabled = true,
+    this.firstReminderMinutesBefore = 120,
+    this.repeatIntervalMinutes = 30,
+    this.finalReminderMinutesBefore = 15,
+    this.maximumReminders = 4,
+  });
+
+  factory HikeReminderPreference.fromFirestore(Map<String, dynamic> data) {
+    return HikeReminderPreference(
+      enabled: data['enabled'] != false,
+      firstReminderMinutesBefore: _modelIntFrom(
+        data['firstReminderMinutesBefore'],
+        fallback: 120,
+      ),
+      repeatIntervalMinutes: _modelIntFrom(
+        data['repeatIntervalMinutes'],
+        fallback: 30,
+      ),
+      finalReminderMinutesBefore: _modelIntFrom(
+        data['finalReminderMinutesBefore'],
+        fallback: 15,
+      ),
+      maximumReminders: _modelIntFrom(data['maximumReminders'], fallback: 4),
+    ).normalized();
+  }
+
+  static const firstReminderOptions = <int>[
+    15,
+    30,
+    60,
+    120,
+    180,
+    360,
+    720,
+    1440,
+  ];
+  static const repeatIntervalOptions = <int>[0, 15, 30, 60, 120, 360];
+  static const finalReminderOptions = <int>[5, 10, 15, 30, 60];
+  static const maximumReminderOptions = <int>[1, 2, 3, 4, 5, 6, 7, 8];
+
+  final bool enabled;
+  final int firstReminderMinutesBefore;
+  final int repeatIntervalMinutes;
+  final int finalReminderMinutesBefore;
+  final int maximumReminders;
+
+  HikeReminderPreference normalized() {
+    final first = firstReminderOptions.contains(firstReminderMinutesBefore)
+        ? firstReminderMinutesBefore
+        : 120;
+    final repeat = repeatIntervalOptions.contains(repeatIntervalMinutes)
+        ? repeatIntervalMinutes
+        : 30;
+    final finalBefore =
+        finalReminderOptions.contains(finalReminderMinutesBefore)
+        ? finalReminderMinutesBefore
+        : 15;
+    final maximum = maximumReminderOptions.contains(maximumReminders)
+        ? maximumReminders
+        : 4;
+    return HikeReminderPreference(
+      enabled: enabled,
+      firstReminderMinutesBefore: first,
+      repeatIntervalMinutes: repeat,
+      finalReminderMinutesBefore: finalBefore.clamp(5, first),
+      maximumReminders: repeat == 0 ? 1 : maximum,
+    );
+  }
+
+  HikeReminderPreference copyWith({
+    bool? enabled,
+    int? firstReminderMinutesBefore,
+    int? repeatIntervalMinutes,
+    int? finalReminderMinutesBefore,
+    int? maximumReminders,
+  }) {
+    return HikeReminderPreference(
+      enabled: enabled ?? this.enabled,
+      firstReminderMinutesBefore:
+          firstReminderMinutesBefore ?? this.firstReminderMinutesBefore,
+      repeatIntervalMinutes:
+          repeatIntervalMinutes ?? this.repeatIntervalMinutes,
+      finalReminderMinutesBefore:
+          finalReminderMinutesBefore ?? this.finalReminderMinutesBefore,
+      maximumReminders: maximumReminders ?? this.maximumReminders,
+    ).normalized();
+  }
+
+  Map<String, dynamic> toFirestore() {
+    final value = normalized();
+    return {
+      'enabled': value.enabled,
+      'firstReminderMinutesBefore': value.firstReminderMinutesBefore,
+      'repeatIntervalMinutes': value.repeatIntervalMinutes,
+      'finalReminderMinutesBefore': value.finalReminderMinutesBefore,
+      'maximumReminders': value.maximumReminders,
+    };
+  }
 }
 
 class GroupChat {

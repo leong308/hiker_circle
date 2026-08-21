@@ -69,6 +69,7 @@ function buildUpcomingHikePreview(
     longitude: boundedNumber(hike.longitude, -180, 180),
     area: safeText(hike.area, 160),
     state: safeText(hike.state, 160),
+    country: safeText(hike.country, 160),
     distanceKm: boundedNumber(hike.distanceKm, 0, 1000),
     durationMinutes: Math.round(
       boundedNumber(hike.durationMinutes, 0, 43200)

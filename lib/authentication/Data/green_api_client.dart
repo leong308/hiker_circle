@@ -1,8 +1,6 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import '../../app/Data/firebase_app_check_guard.dart';
-
 class GreenApiSendResult {
   const GreenApiSendResult({
     required this.wasSent,
@@ -23,14 +21,11 @@ class GreenApiClient {
   GreenApiClient({
     FirebaseFunctions? firebaseFunctions,
     FirebaseAuth? firebaseAuth,
-    FirebaseAppCheckGuard? appCheckGuard,
   }) : _firebaseFunctions = firebaseFunctions,
-       _firebaseAuth = firebaseAuth,
-       _appCheckGuard = appCheckGuard ?? FirebaseAppCheckGuard();
+       _firebaseAuth = firebaseAuth;
 
   final FirebaseFunctions? _firebaseFunctions;
   final FirebaseAuth? _firebaseAuth;
-  final FirebaseAppCheckGuard _appCheckGuard;
 
   FirebaseFunctions get _resolvedFunctions =>
       _firebaseFunctions ?? FirebaseFunctions.instance;
@@ -91,7 +86,6 @@ class GreenApiClient {
     }
 
     try {
-      await _appCheckGuard.ensureAuthorized();
       final user = _resolvedAuth.currentUser;
       if (user == null) {
         throw const GreenApiException(
@@ -99,10 +93,9 @@ class GreenApiClient {
           retryable: false,
         );
       }
-      // A restored local Firebase user can briefly retain an old ID token.
-      // Refresh it before the safety-critical callable so Cloud Functions
-      // receives the current UID and HikerCircle phone-number claims.
-      await user.getIdToken(true);
+      // The callable SDK attaches both Auth and App Check credentials. Avoid
+      // separate token lookups here: either can perform an extra network
+      // refresh before the emergency request even reaches Firebase.
       final response = await _resolvedFunctions
           .httpsCallable('sendSosWhatsAppMessage')
           .call(<String, dynamic>{
@@ -167,8 +160,6 @@ class GreenApiClient {
       );
     } on GreenApiException {
       rethrow;
-    } on FirebaseAppCheckUnavailable catch (error) {
-      throw GreenApiException(error.toString(), retryable: false);
     } catch (_) {
       throw const GreenApiException(
         'Emergency messaging is unavailable. Call emergency services directly.',

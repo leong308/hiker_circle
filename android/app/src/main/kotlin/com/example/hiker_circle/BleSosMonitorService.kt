@@ -71,19 +71,36 @@ class BleSosMonitorService : Service() {
         private const val REGISTRY_ERROR_NOTIFICATION_ID = 4214
         private const val HELP_GATT_CONNECT_DEBOUNCE_MILLIS = 3000L
         private const val READ_GATT_TIMEOUT_MILLIS = 10000L
-        private const val MAX_HANDLED_EVENT_IDS = 128
+        private const val MAX_HANDLED_EVENT_IDS = 256
+        private const val HANDLED_EVENT_RETENTION_MILLIS = 24 * 60 * 60 * 1000L
         private const val LEGACY_EVENT_DEBOUNCE_MILLIS = 10000L
         private const val MAX_HELP_PACKET_AGE_MILLIS = 5 * 60 * 1000L
         private const val MAX_HELP_PACKET_FUTURE_SKEW_MILLIS = 2 * 60 * 1000L
         private const val MAX_CANDIDATE_PACKAGE_LOGS = 40
-        private const val MONITOR_PREFS = "hiker_circle_ble_monitor"
-        private const val MONITOR_ENABLED = "enabled"
+        const val MONITOR_PREFS = "hiker_circle_ble_monitor"
+        const val MONITOR_ENABLED = "enabled"
+        const val MONITOR_HEARTBEAT_AT_MILLIS = "heartbeatAtMillis"
+        const val MONITOR_SCAN_STATE = "scanState"
+        const val MONITOR_LAST_SCAN_STARTED_AT_MILLIS = "lastScanStartedAtMillis"
+        const val MONITOR_LAST_RESULT_AT_MILLIS = "lastResultAtMillis"
+        const val MONITOR_LAST_FAILURE = "lastFailure"
+        const val MONITOR_RESTART_COUNT = "restartCount"
+        const val LOST_BUTTON_WARNING_ENABLED = "lostButtonWarningEnabled"
+        const val LOST_BUTTON_THRESHOLD_MILLIS = "lostButtonThresholdMillis"
+        private const val HANDLED_EVENTS = "handledEvents"
+        private const val DEFAULT_LOST_BUTTON_THRESHOLD_MILLIS = 15 * 60 * 1000L
+        private const val PRESENCE_WRITE_INTERVAL_MILLIS = 30_000L
+        private const val WATCHDOG_INTERVAL_MILLIS = 30_000L
         private const val PAIRED_TEST_DEVICE_ID = "pairedTestDeviceId"
         private const val PAIRED_TEST_EXPIRES_AT_MILLIS = "pairedTestExpiresAtMillis"
         const val PENDING_EVENT_PREFS = "hiker_circle_ble_pending_events"
         const val PENDING_OWNER_EVENTS = "paired_owner_events"
         const val PENDING_NEARBY_EVENTS = "paired_nearby_events"
         const val PENDING_HELP_EVENTS = "nearby_help_events"
+        private const val MONITOR_WARNING_CHANNEL_ID = "hiker_circle_ble_monitor_warning"
+        private const val MONITOR_WARNING_NOTIFICATION_ID = 4215
+        private const val LOST_BUTTON_CHANNEL_ID = "hiker_circle_ble_button_lost"
+        private const val LOST_BUTTON_NOTIFICATION_BASE_ID = 4300
     }
 
     private val bluetoothManager: BluetoothManager?
@@ -94,13 +111,30 @@ class BleSosMonitorService : Service() {
     private var registryErrorNotified = false
     private val handledEventIds = mutableSetOf<String>()
     private val handledEventIdOrder = ArrayDeque<String>()
+    private val handledEventTimes = mutableMapOf<String, Long>()
     private val legacyEventHandledAtMillis = mutableMapOf<String, Long>()
     private val activeHelpGatts = mutableMapOf<String, BluetoothGatt>()
     private val helpGattTimeouts = mutableMapOf<String, Runnable>()
     private val lastHelpConnectAtMillis = mutableMapOf<String, Long>()
     private val restartHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val lastPresenceWriteAtMillis = mutableMapOf<String, Long>()
+    private var consecutiveScanFailures = 0
     private val restartRunnable = Runnable {
         if (isMonitorEnabled()) startScan()
+    }
+    private val watchdogRunnable = object : Runnable {
+        override fun run() {
+            if (!isMonitorEnabled()) return
+            updateMonitorHealth()
+            checkLostButtons()
+            if (scanCallback == null) startScan()
+            restartHandler.postDelayed(this, WATCHDOG_INTERVAL_MILLIS)
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        loadHandledEvents()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -146,6 +180,7 @@ class BleSosMonitorService : Service() {
             .edit().putBoolean(MONITOR_ENABLED, true).apply()
 
         startForeground(NOTIFICATION_ID, notification())
+        updateMonitorHealth(state = "starting")
         // A setup scan/GATT pairing session can leave some Android Bluetooth
         // stacks with a registered callback that no longer receives results.
         // ACTION_START is also used after pairing and when the app resumes, so
@@ -154,12 +189,16 @@ class BleSosMonitorService : Service() {
             stopScan()
         }
         startScan()
+        restartHandler.removeCallbacks(watchdogRunnable)
+        restartHandler.postDelayed(watchdogRunnable, WATCHDOG_INTERVAL_MILLIS)
         return START_STICKY
     }
 
     override fun onDestroy() {
         restartHandler.removeCallbacks(restartRunnable)
+        restartHandler.removeCallbacks(watchdogRunnable)
         stopScan()
+        updateMonitorHealth(state = "stopped")
         super.onDestroy()
     }
 
@@ -170,6 +209,8 @@ class BleSosMonitorService : Service() {
     private fun startScan() {
         if (!hasScanPermission()) {
             Log.w(TAG, "BLE SOS scan stopped: scan permission is missing")
+            updateMonitorHealth(state = "permission_missing", failure = "Bluetooth scan permission is missing")
+            postMonitorWarning("Bluetooth scan permission is missing. Open HikerCircle to restore SOS monitoring.")
             stopSelf()
             return
         }
@@ -178,6 +219,7 @@ class BleSosMonitorService : Service() {
             // enabled. Keep the foreground service alive and recover without
             // requiring the user to reopen HikerCircle.
             Log.w(TAG, "BLE SOS scanner is unavailable; retrying")
+            updateMonitorHealth(state = "bluetooth_unavailable", failure = "Bluetooth is disabled or unavailable")
             restartHandler.removeCallbacks(restartRunnable)
             restartHandler.postDelayed(restartRunnable, 5000L)
             return
@@ -198,6 +240,12 @@ class BleSosMonitorService : Service() {
             override fun onScanFailed(errorCode: Int) {
                 Log.w(TAG, "BLE SOS scan failed with code $errorCode")
                 scanCallback = null
+                consecutiveScanFailures += 1
+                incrementMonitorRestartCount()
+                updateMonitorHealth(state = "scan_failed", failure = "Android BLE scan error $errorCode")
+                if (consecutiveScanFailures >= 3) {
+                    postMonitorWarning("SOS button monitoring is repeatedly failing. Open HikerCircle to retry.")
+                }
                 restartHandler.removeCallbacks(restartRunnable)
                 restartHandler.postDelayed(restartRunnable, 2000L)
             }
@@ -248,13 +296,22 @@ class BleSosMonitorService : Service() {
             ScanFilter.Builder()
                 .setServiceUuid(ParcelUuid(HikerBleProtocol.SOS_HELP_SERVICE_UUID))
                 .build(),
+            ScanFilter.Builder()
+                .setServiceUuid(ParcelUuid(HikerBleProtocol.PAIRED_BUTTON_MAINTENANCE_SERVICE_UUID))
+                .build(),
         )
         runCatching { scanner.startScan(filters, settings, callback) }
             .onSuccess {
+                consecutiveScanFailures = 0
+                updateMonitorHealth(state = "scanning", scanStarted = true)
+                cancelMonitorWarning()
                 Log.d(TAG, "BLE SOS scan started with locked-screen hardware filters")
             }
             .onFailure { error ->
                 scanCallback = null
+                consecutiveScanFailures += 1
+                incrementMonitorRestartCount()
+                updateMonitorHealth(state = "scan_failed", failure = error.message ?: "Unable to start BLE scan")
                 Log.w(TAG, "BLE SOS scan could not start", error)
                 restartHandler.removeCallbacks(restartRunnable)
                 restartHandler.postDelayed(restartRunnable, 2000L)
@@ -273,6 +330,15 @@ class BleSosMonitorService : Service() {
     }
 
     private fun handleScanResult(result: ScanResult) {
+        updateMonitorHealth(resultReceived = true)
+        val serviceUuids = result.scanRecord?.serviceUuids.orEmpty()
+        if (serviceUuids.any {
+                it.uuid == HikerBleProtocol.PAIRED_BUTTON_MAINTENANCE_SERVICE_UUID
+            }
+        ) {
+            handlePairedButtonPresence(result)
+            return
+        }
         logBleCandidatePackage(result)
         val helpBeacon = HikerBleProtocol.decodeSosHelpBeacon(result)
         if (helpBeacon != null) {
@@ -280,7 +346,6 @@ class BleSosMonitorService : Service() {
             handleHelpBeacon(helpBeacon)
             return
         }
-        val serviceUuids = result.scanRecord?.serviceUuids.orEmpty()
         if (serviceUuids.any { it.uuid == HikerBleProtocol.SOS_HELP_SERVICE_UUID }) {
             Log.d(TAG, "BLE SOS help service matched from ${result.device?.address}")
             connectForSosHelpPayload(result)
@@ -389,6 +454,13 @@ class BleSosMonitorService : Service() {
             return
         }
         if (owner == null) {
+            if (packet.mode == 2) {
+                // Firmware-authenticated test packets are deliberately silent
+                // on every non-owner phone and are never forwarded.
+                rememberHandledEvent(fingerprint)
+                Log.i(TAG, "Nearby paired-button test packet ignored safely")
+                return
+            }
             Log.i(
                 TAG,
                 "Paired SOS treated as nearby: device=${packet.deviceIdHex} " +
@@ -446,6 +518,16 @@ class BleSosMonitorService : Service() {
             }
             return
         }
+        if (packet.mode != 1) {
+            // A test packet without a matching local arm window must fail
+            // closed; it can neither open SOS nor become a nearby incident.
+            rememberHandledEvent(fingerprint)
+            runCatching {
+                pairedButtonRegistry.markSeen(packet.deviceId, packet.eventId, accepted = true)
+            }
+            Log.w(TAG, "Unexpected authenticated test packet ignored safely")
+            return
+        }
         // The durable owner inbox is the source of truth when Flutter is not
         // running. Commit it before advancing replay state; otherwise a crash
         // between those writes could make a genuine SOS permanently
@@ -490,7 +572,7 @@ class BleSosMonitorService : Service() {
             return false
         }
         val deviceId = preferences.getString(PAIRED_TEST_DEVICE_ID, null)
-        return packet.mode == 1 && deviceId == packet.deviceIdHex
+        return packet.mode == 2 && deviceId == packet.deviceIdHex
     }
 
     private fun clearPairedButtonTest() {
@@ -978,6 +1060,14 @@ class BleSosMonitorService : Service() {
     }
 
     private fun hasHandledEvent(fingerprint: String): Boolean {
+        val handledAt = handledEventTimes[fingerprint] ?: return false
+        if (System.currentTimeMillis() - handledAt > HANDLED_EVENT_RETENTION_MILLIS) {
+            handledEventTimes.remove(fingerprint)
+            handledEventIds.remove(fingerprint)
+            handledEventIdOrder.remove(fingerprint)
+            persistHandledEvents()
+            return false
+        }
         return handledEventIds.contains(fingerprint)
     }
 
@@ -986,9 +1076,172 @@ class BleSosMonitorService : Service() {
             return
         }
         handledEventIdOrder.addLast(fingerprint)
+        handledEventTimes[fingerprint] = System.currentTimeMillis()
         while (handledEventIdOrder.size > MAX_HANDLED_EVENT_IDS) {
-            handledEventIds.remove(handledEventIdOrder.removeFirst())
+            val removed = handledEventIdOrder.removeFirst()
+            handledEventIds.remove(removed)
+            handledEventTimes.remove(removed)
         }
+        persistHandledEvents()
+    }
+
+    private fun loadHandledEvents() {
+        val now = System.currentTimeMillis()
+        val stored = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+            .getString(HANDLED_EVENTS, null) ?: return
+        runCatching {
+            val objectValue = JSONObject(stored)
+            val keys = objectValue.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val handledAt = objectValue.optLong(key, 0L)
+                if (handledAt > 0L && now - handledAt <= HANDLED_EVENT_RETENTION_MILLIS) {
+                    handledEventIds.add(key)
+                    handledEventIdOrder.addLast(key)
+                    handledEventTimes[key] = handledAt
+                }
+            }
+        }.onFailure { Log.w(TAG, "Unable to restore BLE incident deduplication state", it) }
+    }
+
+    private fun persistHandledEvents() {
+        val payload = JSONObject()
+        handledEventIdOrder.forEach { key ->
+            handledEventTimes[key]?.let { payload.put(key, it) }
+        }
+        getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+            .edit().putString(HANDLED_EVENTS, payload.toString()).apply()
+    }
+
+    private fun handlePairedButtonPresence(result: ScanResult) {
+        val address = result.device?.address?.uppercase() ?: return
+        val now = System.currentTimeMillis()
+        val previous = lastPresenceWriteAtMillis[address] ?: 0L
+        if (now - previous < PRESENCE_WRITE_INTERVAL_MILLIS) return
+        lastPresenceWriteAtMillis[address] = now
+        runCatching { pairedButtonRegistry.markSeenByAddress(address) }
+            .onSuccess { deviceId ->
+                if (deviceId != null) {
+                    cancelLostButtonWarning(deviceId)
+                    Log.d(TAG, "Paired SOS button presence refreshed: $deviceId")
+                }
+            }
+            .onFailure { Log.w(TAG, "Unable to persist paired button presence", it) }
+    }
+
+    private fun updateMonitorHealth(
+        state: String? = null,
+        failure: String? = null,
+        scanStarted: Boolean = false,
+        resultReceived: Boolean = false,
+    ) {
+        val now = System.currentTimeMillis()
+        getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE).edit().apply {
+            putLong(MONITOR_HEARTBEAT_AT_MILLIS, now)
+            if (state != null) putString(MONITOR_SCAN_STATE, state)
+            if (scanStarted) putLong(MONITOR_LAST_SCAN_STARTED_AT_MILLIS, now)
+            if (resultReceived) putLong(MONITOR_LAST_RESULT_AT_MILLIS, now)
+            if (failure == null && state == "scanning") remove(MONITOR_LAST_FAILURE)
+            if (failure != null) putString(MONITOR_LAST_FAILURE, failure)
+        }.apply()
+    }
+
+    private fun incrementMonitorRestartCount() {
+        val prefs = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+        prefs.edit().putInt(
+            MONITOR_RESTART_COUNT,
+            prefs.getInt(MONITOR_RESTART_COUNT, 0) + 1,
+        ).apply()
+    }
+
+    private fun checkLostButtons() {
+        val prefs = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+        if (!prefs.getBoolean(LOST_BUTTON_WARNING_ENABLED, true)) return
+        val threshold = prefs.getLong(
+            LOST_BUTTON_THRESHOLD_MILLIS,
+            DEFAULT_LOST_BUTTON_THRESHOLD_MILLIS,
+        ).coerceIn(5 * 60 * 1000L, 24 * 60 * 60 * 1000L)
+        val now = System.currentTimeMillis()
+        runCatching { pairedButtonRegistry.buttons() }.getOrDefault(emptyList()).forEach { button ->
+            val reference = button.lastSeenAtMillis ?: button.pairedAtMillis
+            if (now - reference >= threshold) {
+                postLostButtonWarning(button.deviceIdHex, button.displayName, threshold)
+            }
+        }
+    }
+
+    private fun postMonitorWarning(message: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(NotificationChannel(
+                MONITOR_WARNING_CHANNEL_ID,
+                "SOS monitoring warnings",
+                NotificationManager.IMPORTANCE_HIGH,
+            ))
+        }
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("hikercircle://sos/device-settings?source=monitor_watchdog")
+            setPackage(packageName)
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, MONITOR_WARNING_CHANNEL_ID)
+        } else Notification.Builder(this).setPriority(Notification.PRIORITY_HIGH)
+        manager.notify(MONITOR_WARNING_NOTIFICATION_ID, builder
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("SOS button monitoring needs attention")
+            .setContentText(message)
+            .setContentIntent(PendingIntent.getActivity(this, MONITOR_WARNING_NOTIFICATION_ID, intent, flags))
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_ERROR)
+            .build())
+    }
+
+    private fun cancelMonitorWarning() {
+        getSystemService(NotificationManager::class.java).cancel(MONITOR_WARNING_NOTIFICATION_ID)
+    }
+
+    private fun lostNotificationId(deviceId: String): Int =
+        LOST_BUTTON_NOTIFICATION_BASE_ID + (deviceId.hashCode().and(0x3ff))
+
+    private fun postLostButtonWarning(deviceId: String, displayName: String, threshold: Long) {
+        val prefs = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+        val key = "lostNotified:$deviceId"
+        if (prefs.getBoolean(key, false)) return
+        prefs.edit().putBoolean(key, true).apply()
+        val manager = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(NotificationChannel(
+                LOST_BUTTON_CHANNEL_ID,
+                "SOS button lost warnings",
+                NotificationManager.IMPORTANCE_HIGH,
+            ))
+        }
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("hikercircle://sos/device-settings?source=lost_button")
+            setPackage(packageName)
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        val minutes = threshold / 60_000L
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, LOST_BUTTON_CHANNEL_ID)
+        } else Notification.Builder(this).setPriority(Notification.PRIORITY_HIGH)
+        manager.notify(lostNotificationId(deviceId), builder
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("$displayName has not been seen")
+            .setContentText("No BLE presence for $minutes minutes. Check its power and keep it nearby.")
+            .setContentIntent(PendingIntent.getActivity(this, lostNotificationId(deviceId), intent, flags))
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_ERROR)
+            .build())
+    }
+
+    private fun cancelLostButtonWarning(deviceId: String) {
+        getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
+            .edit().remove("lostNotified:$deviceId").apply()
+        getSystemService(NotificationManager::class.java).cancel(lostNotificationId(deviceId))
     }
 
     private fun hexString(bytes: ByteArray?): String {

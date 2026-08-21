@@ -21,7 +21,10 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     expect(find.text('Call emergency services'), findsOneWidget);
     expect(find.text('Malaysia ambulance service • 999'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Call 999'), findsOneWidget);
+    expect(
+      find.ancestor(of: find.text('999'), matching: find.byType(FilledButton)),
+      findsOneWidget,
+    );
   });
 }
 

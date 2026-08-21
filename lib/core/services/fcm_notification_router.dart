@@ -4,7 +4,27 @@ abstract final class FcmNotificationRouter {
       final value = data[key]?.toString().trim();
       if (value != null && value.isNotEmpty) {
         final uri = Uri.tryParse(value);
-        if (uri?.scheme == 'hikercircle') return uri.toString();
+        if (uri?.scheme == 'hikercircle') {
+          // Opening a notification must never create a fresh SOS. Older or
+          // misconfigured payloads may still contain an action deep link that
+          // was intended for a widget/shortcut. Route those notification taps
+          // to the existing SOS state instead.
+          if (uri!.host == 'sos' &&
+              const {
+                '/manual',
+                '/instant',
+                '/medical',
+                '/duress',
+              }.contains(uri.path)) {
+            return Uri(
+              scheme: 'hikercircle',
+              host: 'sos',
+              path: '/active',
+              queryParameters: const {'source': 'notification'},
+            ).toString();
+          }
+          return uri.toString();
+        }
       }
     }
 
@@ -18,6 +38,7 @@ abstract final class FcmNotificationRouter {
           value: data['chatId'],
         );
       case 'nearby_upcoming_hike':
+      case 'upcoming_hike_reminder':
       case 'upcoming_hike_30_minute_reminder':
         return _link(
           host: 'upcoming-hike',

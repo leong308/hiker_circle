@@ -2,6 +2,7 @@ package com.leongziqi.hikercircle
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -9,6 +10,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -25,6 +27,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import io.flutter.plugin.common.EventChannel
@@ -48,6 +51,7 @@ class HikerBleBridge(
         private const val PAIRING_CONFIRMATION_TIMEOUT_MILLIS = 15000L
         private const val MAX_PENDING_SOS_AGE_MILLIS = 5 * 60 * 1000L
         private const val MAX_PENDING_SOS_FUTURE_SKEW_MILLIS = 2 * 60 * 1000L
+        private const val GATT_INVALID_HANDLE_STATUS = 1
         private const val TAG = "HikerBleBridge"
     }
 
@@ -92,9 +96,24 @@ class HikerBleBridge(
     private var logPageCharacteristic: BluetoothGattCharacteristic? = null
     private var logDataCharacteristic: BluetoothGattCharacteristic? = null
     private var logServiceCacheRefreshAttempted = false
+    private var testArmGatt: BluetoothGatt? = null
+    private var testArmButton: PairedSosButtonRegistry.Button? = null
+    private var testArmResult: MethodChannel.Result? = null
+    private var testArmDurationMillis = 30_000L
+    private val testArmTimeout = Runnable {
+        finishPairedButtonTestArm(
+            success = false,
+            errorCode = "paired_button_test_arm_timeout",
+            errorMessage = "The authenticated SOS button test request timed out.",
+        )
+    }
     private val downloadedLogRecords = mutableListOf<HikerBleProtocol.LogRecord>()
     private var nextLogPage = 0
     private var expectedLogPages = 1
+    private var partialLogChallenge = ByteArray(0)
+    private val logPageBuffer = mutableListOf<Byte>()
+    private var nextLogChunk = 0
+    private var expectedLogPageBytes: Int? = null
     private val pairingOperationTimeout = Runnable {
         finishPairing(
             success = false,
@@ -605,6 +624,11 @@ class HikerBleBridge(
             errorCode = "paired_button_bridge_disposed",
             errorMessage = "The BLE bridge was disposed before the log was downloaded.",
         )
+        finishPairedButtonTestArm(
+            success = false,
+            errorCode = "paired_button_bridge_disposed",
+            errorMessage = "The BLE bridge was disposed before safe test mode was armed.",
+        )
         pendingPermissionResult?.error(
             "paired_button_bridge_disposed",
             "The BLE permission request was interrupted.",
@@ -656,6 +680,48 @@ class HikerBleBridge(
                         null,
                     )
                 }
+            }
+            "openBatteryOptimizationSettings" -> {
+                runCatching {
+                    activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }.onSuccess {
+                    result.success(null)
+                }.onFailure { error ->
+                    result.error(
+                        "battery_settings_unavailable",
+                        error.message ?: "Unable to open battery optimization settings.",
+                        null,
+                    )
+                }
+            }
+            "getSosButtonReadiness" -> runCatching {
+                buildSosButtonReadiness()
+            }.onSuccess(result::success).onFailure { error ->
+                result.error(
+                    "paired_button_readiness_failed",
+                    error.message ?: "Unable to inspect SOS button readiness.",
+                    null,
+                )
+            }
+            "setLostButtonWarning" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: true
+                val thresholdMillis = call.argument<Number>("thresholdMillis")
+                    ?.toLong()
+                    ?.coerceIn(5 * 60 * 1000L, 24 * 60 * 60 * 1000L)
+                    ?: 15 * 60 * 1000L
+                activity.getSharedPreferences(
+                    BleSosMonitorService.MONITOR_PREFS,
+                    Context.MODE_PRIVATE,
+                ).edit()
+                    .putBoolean(BleSosMonitorService.LOST_BUTTON_WARNING_ENABLED, enabled)
+                    .putLong(BleSosMonitorService.LOST_BUTTON_THRESHOLD_MILLIS, thresholdMillis)
+                    .apply()
+                startSosButtonMonitor()
+                result.success(null)
+            }
+            "restartSosButtonMonitor" -> {
+                startSosButtonMonitor()
+                result.success(null)
             }
             "startSosButtonMonitor" -> {
                 withBlePermissions(
@@ -756,8 +822,11 @@ class HikerBleBridge(
                                     result,
                                     includeAdvertisePermission = false,
                                 ) {
-                                    armPairedSosButtonTest(deviceId, durationMillis)
-                                    result.success(null)
+                                    beginPairedButtonTestArm(
+                                        button,
+                                        durationMillis,
+                                        result,
+                                    )
                                 }
                             }
                         }
@@ -775,7 +844,7 @@ class HikerBleBridge(
                 result.success(null)
             }
             "resetPairedSosButtonRegistry" -> {
-                if (pairingResult != null || locationResult != null || logResult != null) {
+                if (pairingResult != null || locationResult != null || logResult != null || testArmResult != null) {
                     result.error(
                         "paired_button_busy",
                         "Wait for the current SOS button operation to finish before resetting pairing data.",
@@ -984,6 +1053,87 @@ class HikerBleBridge(
         ) && bluetoothManager?.adapter != null
     }
 
+    private fun buildSosButtonReadiness(): Map<String, Any?> {
+        val now = System.currentTimeMillis()
+        val preferences = activity.getSharedPreferences(
+            BleSosMonitorService.MONITOR_PREFS,
+            Context.MODE_PRIVATE,
+        )
+        val heartbeatAt = preferences.getLong(
+            BleSosMonitorService.MONITOR_HEARTBEAT_AT_MILLIS,
+            0L,
+        )
+        val scanState = preferences.getString(
+            BleSosMonitorService.MONITOR_SCAN_STATE,
+            "unknown",
+        ) ?: "unknown"
+        val monitorEnabled = preferences.getBoolean(
+            BleSosMonitorService.MONITOR_ENABLED,
+            false,
+        )
+        val scanPermission = hasScanPermission()
+        val connectPermission = hasConnectPermission()
+        val notificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        val notificationsEnabled = activity
+            .getSystemService(NotificationManager::class.java)
+            ?.areNotificationsEnabled() != false
+        val powerManager = activity.getSystemService(PowerManager::class.java)
+        val batteryOptimizationExempt = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            powerManager?.isIgnoringBatteryOptimizations(activity.packageName) == true
+        val adapter = bluetoothManager?.adapter
+        val pairedButtons = pairedButtonRegistry.buttons().map { button ->
+            mapOf(
+                "deviceId" to button.deviceIdHex,
+                "displayName" to button.displayName,
+                "pairedAtMillis" to button.pairedAtMillis,
+                "lastSeenAtMillis" to button.lastSeenAtMillis,
+                "lastAcceptedEventId" to button.lastAcceptedEventId,
+            )
+        }
+        val heartbeatFresh = heartbeatAt > 0L && now - heartbeatAt <= 90_000L
+        return mapOf(
+            "supported" to isBleSupported(),
+            "bluetoothEnabled" to (connectPermission && adapter?.isEnabled == true),
+            "scanPermissionGranted" to scanPermission,
+            "connectPermissionGranted" to connectPermission,
+            "notificationPermissionGranted" to notificationPermission,
+            "notificationsEnabled" to notificationsEnabled,
+            "batteryOptimizationExempt" to batteryOptimizationExempt,
+            "monitorEnabled" to monitorEnabled,
+            "monitorHealthy" to (monitorEnabled && heartbeatFresh && scanState == "scanning"),
+            "monitorHeartbeatAtMillis" to heartbeatAt,
+            "scanState" to scanState,
+            "lastScanStartedAtMillis" to preferences.getLong(
+                BleSosMonitorService.MONITOR_LAST_SCAN_STARTED_AT_MILLIS,
+                0L,
+            ),
+            "lastScanResultAtMillis" to preferences.getLong(
+                BleSosMonitorService.MONITOR_LAST_RESULT_AT_MILLIS,
+                0L,
+            ),
+            "lastFailure" to preferences.getString(
+                BleSosMonitorService.MONITOR_LAST_FAILURE,
+                null,
+            ),
+            "restartCount" to preferences.getInt(
+                BleSosMonitorService.MONITOR_RESTART_COUNT,
+                0,
+            ),
+            "lostButtonWarningEnabled" to preferences.getBoolean(
+                BleSosMonitorService.LOST_BUTTON_WARNING_ENABLED,
+                true,
+            ),
+            "lostButtonThresholdMillis" to preferences.getLong(
+                BleSosMonitorService.LOST_BUTTON_THRESHOLD_MILLIS,
+                15 * 60 * 1000L,
+            ),
+            "checkedAtMillis" to now,
+            "pairedButtons" to pairedButtons,
+        )
+    }
+
     private fun startSosButtonMonitor() {
         val intent = Intent(activity, BleSosMonitorService::class.java).apply {
             action = BleSosMonitorService.ACTION_START
@@ -1019,6 +1169,11 @@ class HikerBleBridge(
     }
 
     private fun cancelPairedSosButtonTest() {
+        finishPairedButtonTestArm(
+            success = false,
+            errorCode = "paired_button_test_cancelled",
+            errorMessage = "SOS button test setup was cancelled.",
+        )
         val intent = Intent(activity, BleSosMonitorService::class.java).apply {
             action = BleSosMonitorService.ACTION_CANCEL_PAIRED_TEST
         }
@@ -1028,6 +1183,186 @@ class HikerBleBridge(
             activity.startService(intent)
         }
         emitStatus("paired_button_test_cancelled")
+    }
+
+    private fun beginPairedButtonTestArm(
+        button: PairedSosButtonRegistry.Button,
+        durationMillis: Long,
+        result: MethodChannel.Result,
+    ) {
+        if (testArmResult != null || logResult != null || pairingResult != null || locationResult != null) {
+            result.error(
+                "paired_button_busy",
+                "The SOS button is busy with another authenticated operation.",
+                null,
+            )
+            return
+        }
+        val address = button.address
+        val device = address?.let { runCatching { bluetoothManager?.adapter?.getRemoteDevice(it) }.getOrNull() }
+        if (device == null || button.pairingSecret.size != 32) {
+            result.error(
+                "paired_button_test_not_available",
+                "Pair this SOS button again before using safe test mode.",
+                null,
+            )
+            return
+        }
+        testArmButton = button
+        testArmResult = result
+        testArmDurationMillis = durationMillis
+        mainHandler.postDelayed(testArmTimeout, GATT_OPERATION_TIMEOUT_MILLIS)
+        testArmGatt = runCatching {
+            device.connectGatt(activity, false, testArmGattCallback)
+        }.getOrNull()
+        if (testArmGatt == null) {
+            finishPairedButtonTestArm(
+                false,
+                "paired_button_test_connect_failed",
+                "Unable to connect to the SOS button for authenticated test mode.",
+            )
+        }
+    }
+
+    private val testArmGattCallback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (gatt !== testArmGatt) return
+            if (status != BluetoothGatt.GATT_SUCCESS || newState != BluetoothProfile.STATE_CONNECTED) {
+                if (status != 0 || newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    finishPairedButtonTestArm(
+                        false,
+                        "paired_button_test_connect_failed",
+                        "Unable to connect to the SOS button for safe test mode.",
+                    )
+                }
+                return
+            }
+            if (hasConnectPermission()) {
+                if (!gatt.requestMtu(247)) gatt.discoverServices()
+            }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (gatt === testArmGatt && hasConnectPermission()) gatt.discoverServices()
+        }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (gatt !== testArmGatt || status != BluetoothGatt.GATT_SUCCESS || !hasConnectPermission()) {
+                finishPairedButtonTestArm(
+                    false,
+                    "paired_button_test_service_failed",
+                    "Unable to discover the SOS button test service.",
+                )
+                return
+            }
+            val service = gatt.getService(HikerBleProtocol.PAIRED_BUTTON_MAINTENANCE_SERVICE_UUID)
+                ?: gatt.getService(HikerBleProtocol.PAIRED_BUTTON_SETUP_SERVICE_UUID)
+            val characteristic = service?.getCharacteristic(
+                HikerBleProtocol.PAIRED_BUTTON_TEST_CONTROL_CHARACTERISTIC_UUID,
+            )
+            if (characteristic == null || !gatt.readCharacteristic(characteristic)) {
+                finishPairedButtonTestArm(
+                    false,
+                    "paired_button_test_firmware_incompatible",
+                    "Update the SOS button firmware before using safe test mode.",
+                )
+            }
+        }
+
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            handleTestArmChallenge(gatt, characteristic, characteristic.value, status)
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int,
+        ) {
+            handleTestArmChallenge(gatt, characteristic, value, status)
+        }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            if (gatt !== testArmGatt ||
+                characteristic.uuid != HikerBleProtocol.PAIRED_BUTTON_TEST_CONTROL_CHARACTERISTIC_UUID
+            ) return
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                finishPairedButtonTestArm(success = true)
+            } else {
+                finishPairedButtonTestArm(
+                    false,
+                    "paired_button_test_arm_rejected",
+                    "The SOS button rejected the authenticated test request.",
+                )
+            }
+        }
+    }
+
+    private fun handleTestArmChallenge(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray,
+        status: Int,
+    ) {
+        if (gatt !== testArmGatt ||
+            characteristic.uuid != HikerBleProtocol.PAIRED_BUTTON_TEST_CONTROL_CHARACTERISTIC_UUID
+        ) return
+        val button = testArmButton
+        val deviceId = button?.deviceIdHex?.chunked(2)?.mapNotNull {
+            it.toIntOrNull(16)?.toByte()
+        }?.toByteArray()
+        val request = if (status == BluetoothGatt.GATT_SUCCESS && button != null && deviceId != null) {
+            HikerBleProtocol.encodePairedButtonTestArm(value, button.pairingSecret, deviceId)
+        } else null
+        if (request == null || !startGattWrite(gatt, characteristic, request)) {
+            finishPairedButtonTestArm(
+                false,
+                "paired_button_test_challenge_invalid",
+                "The SOS button returned an invalid authenticated test challenge.",
+            )
+        }
+    }
+
+    private fun finishPairedButtonTestArm(
+        success: Boolean,
+        errorCode: String? = null,
+        errorMessage: String? = null,
+    ) {
+        mainHandler.removeCallbacks(testArmTimeout)
+        val gatt = testArmGatt
+        testArmGatt = null
+        runCatching { gatt?.disconnect() }
+        runCatching { gatt?.close() }
+        val armedDeviceId = testArmButton?.deviceIdHex
+        testArmButton = null
+        val result = testArmResult
+        testArmResult = null
+        if (success) {
+            if (armedDeviceId == null) {
+                result?.error(
+                    "paired_button_test_not_paired",
+                    "The paired SOS button registry changed during test setup.",
+                    null,
+                )
+                return
+            }
+            armPairedSosButtonTest(
+                deviceId = armedDeviceId,
+                durationMillis = testArmDurationMillis,
+            )
+            result?.success(null)
+        } else if (result != null && errorCode != null) {
+            result.error(errorCode, errorMessage, null)
+        }
     }
 
     private fun broadcastPhysicalSosTest(payload: Map<String, Any?>) {
@@ -1644,7 +1979,7 @@ class HikerBleBridge(
             )
             return
         }
-        if (pairingResult != null || locationResult != null) {
+        if (pairingResult != null || locationResult != null || testArmResult != null) {
             result.error(
                 "paired_button_busy",
                 "The SOS button is busy with another maintenance operation.",
@@ -1679,6 +2014,7 @@ class HikerBleBridge(
         downloadedLogRecords.clear()
         nextLogPage = 0
         expectedLogPages = 1
+        resetLogTransferBuffers()
         logServiceCacheRefreshAttempted = false
         mainHandler.postDelayed(logDownloadTimeout, 30000L)
         logGatt = runCatching {
@@ -1688,7 +2024,8 @@ class HikerBleBridge(
             finishLogDownload(
                 success = false,
                 errorCode = "paired_button_log_connect_failed",
-                errorMessage = "Unable to connect. Tap Start, then press the external button five times within 3 seconds.",
+                errorMessage =
+                    "Unable to connect. Keep the paired SOS button powered and nearby, then retry.",
             )
         }
     }
@@ -1708,7 +2045,7 @@ class HikerBleBridge(
                         success = false,
                         errorCode = "paired_button_log_connect_failed",
                         errorMessage =
-                            "Unable to connect. Tap Start, then press the external button five times within 3 seconds.",
+                            "Unable to connect. Keep the paired SOS button powered and nearby, then retry.",
                     )
                 }
                 return
@@ -1775,8 +2112,39 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            handleLogCharacteristicRead(
+                gatt = gatt,
+                characteristic = characteristic,
+                value = characteristic.value ?: ByteArray(0),
+                status = status,
+            )
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int,
+        ) {
+            handleLogCharacteristicRead(
+                gatt = gatt,
+                characteristic = characteristic,
+                value = value,
+                status = status,
+            )
+        }
+
+        private fun handleLogCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int,
+        ) {
             if (gatt !== logGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (recoverLogDownloadFromStaleGattCache(gatt, status, "read")) {
+                    return
+                }
                 finishLogDownload(
                     success = false,
                     errorCode = "paired_button_log_read_failed",
@@ -1786,40 +2154,58 @@ class HikerBleBridge(
             }
             when (characteristic.uuid) {
                 HikerBleProtocol.PAIRED_BUTTON_LOG_CHALLENGE_CHARACTERISTIC_UUID -> {
-                    val button = logButton ?: return
-                    val deviceId = runCatching {
-                        button.deviceIdHex.chunked(2)
-                            .map { it.toInt(16).toByte() }
-                            .toByteArray()
-                    }.getOrNull()
-                    val auth = runCatching {
-                        HikerBleProtocol.encodeLogAuthentication(
-                            challenge = characteristic.value,
-                            deviceId = deviceId ?: ByteArray(0),
-                            pairingSecret = button.pairingSecret,
-                        )
-                    }.getOrElse {
-                        finishLogDownload(
-                            success = false,
-                            errorCode = "paired_button_log_challenge_invalid",
-                            errorMessage = it.message ?: "The log challenge was invalid.",
-                        )
-                        return
-                    }
-                    val authCharacteristic = logAuthCharacteristic ?: return
-                    authCharacteristic.writeType =
-                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                    authCharacteristic.value = auth
-                    if (!gatt.writeCharacteristic(authCharacteristic)) {
-                        finishLogDownload(
-                            success = false,
-                            errorCode = "paired_button_log_auth_failed",
-                            errorMessage = "Unable to authenticate the log download.",
-                        )
+                    if (value.size < 26) {
+                        if (value.isEmpty()) {
+                            failInvalidLogChallenge(value.size)
+                            return
+                        }
+                        partialLogChallenge = value.copyOf()
+                        if (!writeLogSelector(gatt, byteArrayOf(value.size.toByte()))) {
+                            failInvalidLogChallenge(value.size)
+                        }
+                    } else {
+                        authenticateLogChallenge(gatt, value)
                     }
                 }
                 HikerBleProtocol.PAIRED_BUTTON_LOG_DATA_CHARACTERISTIC_UUID -> {
-                    val page = HikerBleProtocol.decodeLogPage(characteristic.value)
+                    if (partialLogChallenge.isNotEmpty()) {
+                        val challenge = partialLogChallenge + value
+                        if (challenge.size < 26) {
+                            partialLogChallenge = challenge
+                            if (!writeLogSelector(
+                                    gatt,
+                                    byteArrayOf(challenge.size.toByte()),
+                                )
+                            ) {
+                                failInvalidLogChallenge(challenge.size)
+                            }
+                        } else {
+                            partialLogChallenge = ByteArray(0)
+                            authenticateLogChallenge(gatt, challenge.copyOf(26))
+                        }
+                        return
+                    }
+
+                    logPageBuffer += value.toList()
+                    if (expectedLogPageBytes == null && logPageBuffer.size >= 8) {
+                        val recordCount = logPageBuffer[7].toInt().and(0xff)
+                        expectedLogPageBytes = 8 + recordCount * 20
+                    }
+                    val expectedBytes = expectedLogPageBytes
+                    if (expectedBytes == null || logPageBuffer.size < expectedBytes) {
+                        nextLogChunk += 1
+                        writeLogPageChunk(gatt, nextLogPage, nextLogChunk)
+                        return
+                    }
+                    if (logPageBuffer.size != expectedBytes) {
+                        finishLogDownload(
+                            success = false,
+                            errorCode = "paired_button_log_auth_failed",
+                            errorMessage = "The button returned a malformed log page.",
+                        )
+                        return
+                    }
+                    val page = HikerBleProtocol.decodeLogPage(logPageBuffer.toByteArray())
                     if (page == null || page.pageIndex != nextLogPage) {
                         finishLogDownload(
                             success = false,
@@ -1833,7 +2219,8 @@ class HikerBleBridge(
                     expectedLogPages = maxOf(1, (page.totalCount + 7) / 8)
                     nextLogPage += 1
                     if (nextLogPage < expectedLogPages) {
-                        writeLogPage(gatt, nextLogPage)
+                        resetLogPageBuffer()
+                        writeLogPageChunk(gatt, nextLogPage, 0)
                     } else {
                         finishLogDownload(success = true)
                     }
@@ -1848,16 +2235,21 @@ class HikerBleBridge(
         ) {
             if (gatt !== logGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (recoverLogDownloadFromStaleGattCache(gatt, status, "write")) {
+                    return
+                }
                 finishLogDownload(
                     success = false,
                     errorCode = "paired_button_log_write_failed",
-                    errorMessage = "The authenticated log request was rejected.",
+                    errorMessage =
+                        "The authenticated log request was rejected " +
+                            "(GATT status $status, characteristic ${characteristic.uuid}).",
                 )
                 return
             }
             when (characteristic.uuid) {
                 HikerBleProtocol.PAIRED_BUTTON_LOG_AUTH_CHARACTERISTIC_UUID ->
-                    writeLogPage(gatt, 0)
+                    writeLogPageChunk(gatt, 0, 0)
                 HikerBleProtocol.PAIRED_BUTTON_LOG_PAGE_CHARACTERISTIC_UUID -> {
                     val dataCharacteristic = logDataCharacteristic ?: return
                     if (!gatt.readCharacteristic(dataCharacteristic)) {
@@ -1888,6 +2280,10 @@ class HikerBleBridge(
         }
 
         logServiceCacheRefreshAttempted = true
+        downloadedLogRecords.clear()
+        nextLogPage = 0
+        expectedLogPages = 1
+        resetLogTransferBuffers()
         val cacheRefreshed = runCatching {
             val refresh = gatt.javaClass.getMethod("refresh")
             (refresh.invoke(gatt) as? Boolean) != false
@@ -1935,18 +2331,119 @@ class HikerBleBridge(
         }, 700L)
     }
 
-    @Suppress("DEPRECATION")
-    private fun writeLogPage(gatt: BluetoothGatt, page: Int) {
-        val characteristic = logPageCharacteristic ?: return
-        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        characteristic.value = byteArrayOf(page.toByte())
-        if (!gatt.writeCharacteristic(characteristic)) {
+    private fun recoverLogDownloadFromStaleGattCache(
+        gatt: BluetoothGatt,
+        status: Int,
+        operation: String,
+    ): Boolean {
+        if (status != GATT_INVALID_HANDLE_STATUS || logServiceCacheRefreshAttempted) {
+            return false
+        }
+        Log.w(
+            TAG,
+            "SOS log $operation used an invalid cached GATT handle; refreshing services.",
+        )
+        recoverFromIncompleteLogService(gatt)
+        return true
+    }
+
+    private fun authenticateLogChallenge(gatt: BluetoothGatt, challenge: ByteArray) {
+        val button = logButton ?: return
+        val deviceId = runCatching {
+            button.deviceIdHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        }.getOrNull()
+        val auth = runCatching {
+            HikerBleProtocol.encodeLogAuthentication(
+                challenge = challenge,
+                deviceId = deviceId ?: ByteArray(0),
+                pairingSecret = button.pairingSecret,
+            )
+        }.getOrElse {
+            finishLogDownload(
+                success = false,
+                errorCode = "paired_button_log_challenge_invalid",
+                errorMessage = it.message ?: "The log challenge was invalid.",
+            )
+            return
+        }
+        val characteristic = logAuthCharacteristic ?: return
+        writeGattCharacteristic(
+            gatt = gatt,
+            characteristic = characteristic,
+            value = auth,
+            errorCode = "paired_button_log_auth_failed",
+            errorMessage = "Unable to authenticate the log download.",
+        )
+    }
+
+    private fun failInvalidLogChallenge(receivedBytes: Int) {
+        finishLogDownload(
+            success = false,
+            errorCode = "paired_button_log_challenge_invalid",
+            errorMessage =
+                "The SOS button returned an incomplete log challenge " +
+                    "($receivedBytes of 26 bytes).",
+        )
+    }
+
+    private fun writeLogPageChunk(gatt: BluetoothGatt, page: Int, chunk: Int) {
+        writeLogSelector(gatt, byteArrayOf(page.toByte(), chunk.toByte()))
+    }
+
+    private fun writeLogSelector(gatt: BluetoothGatt, value: ByteArray): Boolean {
+        val characteristic = logPageCharacteristic ?: return false
+        if (!startGattWrite(gatt, characteristic, value)) {
             finishLogDownload(
                 success = false,
                 errorCode = "paired_button_log_page_failed",
                 errorMessage = "Unable to select the next SOS button log page.",
             )
+            return false
         }
+        return true
+    }
+
+    private fun writeGattCharacteristic(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray,
+        errorCode: String,
+        errorMessage: String,
+    ) {
+        if (!startGattWrite(gatt, characteristic, value)) {
+            finishLogDownload(false, errorCode, errorMessage)
+        }
+    }
+
+    private fun startGattWrite(
+        gatt: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        value: ByteArray,
+    ): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return gatt.writeCharacteristic(
+                characteristic,
+                value,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+            ) == BluetoothStatusCodes.SUCCESS
+        }
+        @Suppress("DEPRECATION")
+        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        @Suppress("DEPRECATION")
+        characteristic.value = value
+        @Suppress("DEPRECATION")
+        return gatt.writeCharacteristic(characteristic)
+    }
+
+    private fun resetLogPageBuffer() {
+        logPageBuffer.clear()
+        nextLogChunk = 0
+        expectedLogPageBytes = null
+    }
+
+    private fun resetLogTransferBuffers() {
+        partialLogChallenge = ByteArray(0)
+        resetLogPageBuffer()
     }
 
     private fun finishLogDownload(
@@ -1973,6 +2470,7 @@ class HikerBleBridge(
         downloadedLogRecords.clear()
         nextLogPage = 0
         expectedLogPages = 1
+        resetLogTransferBuffers()
     }
 
     private fun beginPairing(
@@ -1988,7 +2486,7 @@ class HikerBleBridge(
             )
             return
         }
-        if (locationResult != null || logResult != null) {
+        if (locationResult != null || logResult != null || testArmResult != null) {
             result.error(
                 "paired_button_busy",
                 "The SOS button is busy with another maintenance operation.",

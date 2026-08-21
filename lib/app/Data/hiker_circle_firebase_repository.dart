@@ -12,6 +12,7 @@ import '../../core/models/hiker_level.dart';
 import '../../core/services/open_meteo_service.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../sos/Model/sos_models.dart';
+import '../../sos/Model/nearby_sos_event.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/app_session.dart';
 import '../Model/preferred_time_zone.dart';
@@ -27,6 +28,7 @@ const Set<String> _upcomingHikePreviewFields = {
   'longitude',
   'area',
   'state',
+  'country',
   'distanceKm',
   'durationMinutes',
   'difficulty',
@@ -93,6 +95,18 @@ class HikerCircleFirebaseRepositoryException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class NearbySosForwardResult {
+  const NearbySosForwardResult({
+    required this.incidentId,
+    required this.deduplicated,
+    required this.reporterCount,
+  });
+
+  final String incidentId;
+  final bool deduplicated;
+  final int reporterCount;
 }
 
 @visibleForTesting
@@ -1946,7 +1960,7 @@ class HikerCircleFirebaseRepository {
         );
   }
 
-  Future<void> scheduleUpcomingHike({
+  Future<String> scheduleUpcomingHike({
     required AppSession session,
     required HikeSessionDraft draft,
   }) async {
@@ -1964,14 +1978,79 @@ class HikerCircleFirebaseRepository {
           (buddy) => buddy.phoneNumber,
         ),
       );
-      await _resolvedFunctions.httpsCallable('scheduleUpcomingHike').call({
-        'creationKey': creationKey,
-        'draft': draft.toPersistence(),
-      });
+      final response = await _resolvedFunctions
+          .httpsCallable('scheduleUpcomingHike')
+          .call<Map<String, dynamic>>({
+            'creationKey': creationKey,
+            'draft': draft.toPersistence(),
+          });
+      final hikeId = _stringFrom(response.data['hikeId']);
+      if (hikeId.isEmpty) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'The hike server returned an invalid reminder destination.',
+        );
+      }
+      return hikeId;
     } on FirebaseFunctionsException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
         'Unable to schedule this hike (${error.code}). '
         '${error.message ?? 'Please try again.'}',
+      );
+    }
+  }
+
+  Future<HikeReminderPreference> loadUpcomingHikeReminderPreference({
+    required AppSession session,
+    required String hikeId,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable || hikeId.trim().isEmpty) {
+      return const HikeReminderPreference();
+    }
+    try {
+      final snapshot = await _upcomingHikes
+          .doc(hikeId.trim())
+          .collection('reminderPreferences')
+          .doc(_userIdFor(session))
+          .get();
+      final data = snapshot.data();
+      return data == null
+          ? const HikeReminderPreference()
+          : HikeReminderPreference.fromFirestore(data);
+    } on FirebaseException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        'Unable to load hike reminders: ${error.message ?? error.code}',
+      );
+    }
+  }
+
+  Future<void> saveUpcomingHikeReminderPreference({
+    required AppSession session,
+    required String hikeId,
+    required HikeReminderPreference preference,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    final normalizedHikeId = hikeId.trim();
+    if (normalizedHikeId.isEmpty) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The upcoming hike is unavailable for reminders.',
+      );
+    }
+    try {
+      await _upcomingHikes
+          .doc(normalizedHikeId)
+          .collection('reminderPreferences')
+          .doc(_userIdFor(session))
+          .set({
+            ...preference.normalized().toFirestore(),
+            'hikeId': normalizedHikeId,
+            'ownerUserId': _userIdFor(session),
+            'ownerPhoneNumber': session.phoneNumber,
+            'updatedAt': FieldValue.serverTimestamp(),
+            'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+          }, SetOptions(merge: true));
+    } on FirebaseException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        'Unable to save hike reminders: ${error.message ?? error.code}',
       );
     }
   }
@@ -3680,6 +3759,61 @@ class HikerCircleFirebaseRepository {
       triggerLongitude: triggerLocation.longitude,
       payloadJson: jsonEncode(payload),
     );
+  }
+
+  /// Forwards a non-owner BLE observation as an explicitly unverified report.
+  /// The callable derives a deterministic incident ID and deduplicates reports
+  /// from the same signed-in phone; it never starts the reporter's own SOS.
+  Future<NearbySosForwardResult> forwardNearbySosIncident({
+    required NearbySosEvent event,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Nearby SOS forwarding is waiting for an internet connection.',
+        allowsOfflineFallback: true,
+      );
+    }
+    Map<String, Object?> locationPayload(SosTriggerLocation value) => {
+      'latitude': value.latitude,
+      'longitude': value.longitude,
+      if (value.accuracyMeters != null) 'accuracyMeters': value.accuracyMeters,
+      if (value.capturedAt != null)
+        'capturedAtMillis': value.capturedAt!.toUtc().millisecondsSinceEpoch,
+    };
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('forwardNearbySosIncident')
+          .call<Map<String, dynamic>>({
+            'deviceId': event.deviceId,
+            if (event.counter != null) 'counter': event.counter,
+            'receivedAtMillis': event.receivedAt.toUtc().millisecondsSinceEpoch,
+            if (event.rssi != null) 'rssi': event.rssi,
+            if (event.location case final location?)
+              'reportedLocation': locationPayload(location),
+            if (event.detectorLocation case final detector?)
+              'detectorLocation': locationPayload(detector),
+          });
+      final data = response.data;
+      final incidentId = (data['incidentId'] as String?)?.trim() ?? '';
+      if (incidentId.isEmpty) {
+        throw const FormatException('Missing incident ID');
+      }
+      return NearbySosForwardResult(
+        incidentId: incidentId,
+        deduplicated: data['deduplicated'] == true,
+        reporterCount: (data['reporterCount'] as num?)?.toInt() ?? 1,
+      );
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to forward the nearby SOS report.',
+        allowsOfflineFallback:
+            error.code == 'unavailable' || error.code == 'deadline-exceeded',
+      );
+    } on FormatException {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The nearby SOS server returned an invalid incident receipt.',
+      );
+    }
   }
 
   Future<Map<String, dynamic>> _callTeamHikeFunction({

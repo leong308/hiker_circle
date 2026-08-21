@@ -35,6 +35,8 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private static let legacyUnpairedEnabledKeyPrefix = "hiker_circle.legacy_unpaired_sos_enabled."
   private static let sosMonitorRequestedKey = "hiker_circle.sos_monitor_requested"
   private static let pendingEventsKey = "hiker_circle.pending_ble_sos_events"
+  private static let lostButtonWarningEnabledKey = "hiker_circle.lost_button_warning_enabled"
+  private static let lostButtonWarningThresholdKey = "hiker_circle.lost_button_warning_threshold_millis"
   private static let maxHelpPacketAgeMillis: Int64 = 5 * 60 * 1000
   private static let maxHelpPacketFutureSkewMillis: Int64 = 2 * 60 * 1000
   private static let maxPendingSosAgeMillis: Int64 = 5 * 60 * 1000
@@ -84,6 +86,11 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private var activeOwnerScope: String?
   private var pairedButtonTestDeviceId: String?
   private var pairedButtonTestExpiresAt: Date?
+  private var testArmPeripheral: CBPeripheral?
+  private var testArmOwner: PairedButtonRecord?
+  private var testArmResult: FlutterResult?
+  private var testArmTimeout: Timer?
+  private var testArmDurationMillis = 30_000
   private var isApplicationActive = UIApplication.shared.applicationState == .active
   private var pairingSetupRequested = false
   private var pairingPeripheral: CBPeripheral?
@@ -110,6 +117,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private var downloadedLogRecords: [HikerBleProtocol.LogRecord] = []
   private var nextLogPage = 0
   private var expectedLogPages = 1
+  private var lastPresenceWriteAt: [UUID: Int64] = [:]
 
   init(messenger: FlutterBinaryMessenger) {
     methodChannel = FlutterMethodChannel(
@@ -151,6 +159,10 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   deinit {
     NotificationCenter.default.removeObserver(self)
     pendingReadTimeouts.values.forEach { $0.invalidate() }
+    testArmTimeout?.invalidate()
+    if let testArmPeripheral {
+      centralManager.cancelPeripheralConnection(testArmPeripheral)
+    }
     connectedPeripherals.values.forEach { centralManager.cancelPeripheralConnection($0) }
     stopScanIfIdle()
     stopAdvertising()
@@ -174,12 +186,42 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     case "isSupported":
       _ = centralManager
       result(true)
+    case "openBatteryOptimizationSettings":
+      // iOS does not expose Android-style battery optimization exemptions.
+      result(nil)
+    case "getSosButtonReadiness":
+      buildSosButtonReadiness(result: result)
+    case "setLostButtonWarning":
+      let arguments = call.arguments as? [String: Any]
+      let enabled = arguments?["enabled"] as? Bool ?? true
+      let threshold = min(
+        max((arguments?["thresholdMillis"] as? NSNumber)?.int64Value ?? 900_000, 300_000),
+        86_400_000
+      )
+      UserDefaults.standard.set(enabled, forKey: Self.lostButtonWarningEnabledKey)
+      UserDefaults.standard.set(threshold, forKey: Self.lostButtonWarningThresholdKey)
+      if enabled {
+        buttonsForActiveOwner.forEach(scheduleLostButtonWarning)
+      } else {
+        let identifiers = buttonsForActiveOwner.map { lostButtonNotificationId($0.deviceIdHex) }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers)
+      }
+      result(nil)
+    case "restartSosButtonMonitor":
+      isSosMonitorRequested = true
+      UserDefaults.standard.set(true, forKey: Self.sosMonitorRequestedKey)
+      if centralManager.isScanning { centralManager.stopScan() }
+      startScanIfReady()
+      result(nil)
     case "startSosButtonMonitor":
       isSosMonitorRequested = true
       UserDefaults.standard.set(true, forKey: Self.sosMonitorRequestedKey)
       requestSosNotificationAuthorization()
       _ = centralManager
       startScanIfReady()
+      if isLostButtonWarningEnabled {
+        buttonsForActiveOwner.forEach(scheduleLostButtonWarning)
+      }
       result(nil)
     case "stopSosButtonMonitor":
       isSosMonitorRequested = false
@@ -235,7 +277,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
         30_000
       )
       guard deviceId.range(of: "^[0-9A-F]{12}$", options: .regularExpression) != nil,
-            buttonsForActiveOwner.contains(where: { $0.deviceIdHex == deviceId }) else {
+            let owner = buttonsForActiveOwner.first(where: { $0.deviceIdHex == deviceId }) else {
         result(FlutterError(
           code: "paired_button_test_not_paired",
           message: "This SOS button is not paired to the active account.",
@@ -243,14 +285,13 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
         ))
         return
       }
-      pairedButtonTestDeviceId = deviceId
-      pairedButtonTestExpiresAt = Date().addingTimeInterval(Double(durationMillis) / 1000.0)
-      isSosMonitorRequested = true
-      UserDefaults.standard.set(true, forKey: Self.sosMonitorRequestedKey)
-      _ = centralManager
-      startScanIfReady()
-      result(nil)
+      beginPairedButtonTestArm(owner: owner, durationMillis: durationMillis, result: result)
     case "cancelPairedSosButtonTest":
+      finishPairedButtonTestArm(
+        success: false,
+        errorCode: "paired_button_test_cancelled",
+        errorMessage: "SOS button test setup was cancelled."
+      )
       clearPairedButtonTest()
       result(nil)
     case "unpairSosButton":
@@ -359,7 +400,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     // A state-restored BLE central can be created before the device's first
     // unlock, when AfterFirstUnlock Keychain records are temporarily
     // unavailable. Reload now so paired buttons recover without a relaunch.
-    if pairingResult == nil, locationResult == nil, logResult == nil {
+    if pairingResult == nil, locationResult == nil, logResult == nil, testArmResult == nil {
       if let reloaded = loadPairedButtons() {
         pairedButtons = reloaded
       }
@@ -394,6 +435,8 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       if isSosMonitorRequested {
         services.append(HikerBleProtocol.sosServiceUUID)
         services.append(HikerBleProtocol.sosHelpServiceUUID)
+        services.append(HikerBleProtocol.activeSosServiceUUID)
+        services.append(HikerBleProtocol.pairedButtonMaintenanceServiceUUID)
       }
       if isTeamExchangeRequested {
         services.append(HikerBleProtocol.teamLocationServiceUUID)
@@ -420,6 +463,117 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     if centralManager.isScanning {
       centralManager.stopScan()
       emitStatus("ios_ble_scan_stopped")
+    }
+  }
+
+  private func buildSosButtonReadiness(result: @escaping FlutterResult) {
+    _ = centralManager
+    UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+      DispatchQueue.main.async {
+        guard let self else { return }
+        let now = Self.currentTimeMillis()
+        let bluetoothAuthorized: Bool
+        switch CBManager.authorization {
+        case .allowedAlways:
+          bluetoothAuthorized = true
+        case .notDetermined:
+          bluetoothAuthorized = false
+        case .restricted, .denied:
+          bluetoothAuthorized = false
+        @unknown default:
+          bluetoothAuthorized = false
+        }
+        let notificationsEnabled: Bool
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+          notificationsEnabled = true
+        case .notDetermined, .denied:
+          notificationsEnabled = false
+        @unknown default:
+          notificationsEnabled = false
+        }
+        result([
+          "supported": true,
+          "bluetoothEnabled": self.centralManager.state == .poweredOn,
+          "scanPermissionGranted": bluetoothAuthorized,
+          "connectPermissionGranted": bluetoothAuthorized,
+          "notificationPermissionGranted": notificationsEnabled,
+          "notificationsEnabled": notificationsEnabled,
+          "batteryOptimizationExempt": true,
+          "monitorEnabled": self.isSosMonitorRequested,
+          "monitorHealthy": self.isSosMonitorRequested && self.centralManager.isScanning,
+          "monitorHeartbeatAtMillis": self.centralManager.isScanning ? now : 0,
+          "scanState": self.centralManager.isScanning ? "scanning" : "stopped",
+          "scanStartedAtMillis": 0,
+          "lastScanResultAtMillis": 0,
+          "lastFailure": self.centralManager.state == .poweredOn
+            ? NSNull()
+            : self.centralStateMessage,
+          "restartCount": 0,
+          "lostButtonWarningEnabled": self.isLostButtonWarningEnabled,
+          "lostButtonThresholdMillis": self.lostButtonWarningThresholdMillis,
+          "checkedAtMillis": now,
+          "pairedButtons": self.buttonsForActiveOwner.map { button in
+            [
+              "deviceId": button.deviceIdHex,
+              "displayName": button.displayName,
+              "pairedAtMillis": button.pairedAtMillis,
+              "lastSeenAtMillis": button.lastSeenAtMillis ?? 0,
+              "lastAcceptedEventId": button.lastAcceptedEventId.map { Int($0) } ?? -1,
+            ]
+          },
+        ])
+      }
+    }
+  }
+
+  private var isLostButtonWarningEnabled: Bool {
+    let defaults = UserDefaults.standard
+    if defaults.object(forKey: Self.lostButtonWarningEnabledKey) == nil { return true }
+    return defaults.bool(forKey: Self.lostButtonWarningEnabledKey)
+  }
+
+  private var lostButtonWarningThresholdMillis: Int64 {
+    let stored = UserDefaults.standard.object(
+      forKey: Self.lostButtonWarningThresholdKey
+    ) as? NSNumber
+    return min(max(stored?.int64Value ?? 900_000, 300_000), 86_400_000)
+  }
+
+  private func lostButtonNotificationId(_ deviceId: String) -> String {
+    "hiker_circle.lost_sos_button.\(deviceId)"
+  }
+
+  private func scheduleLostButtonWarning(_ button: PairedButtonRecord) {
+    guard isLostButtonWarningEnabled else { return }
+    let content = UNMutableNotificationContent()
+    content.title = "SOS button not seen"
+    content.body = "HikerCircle has not detected \(button.displayName) recently. Check its power and keep it nearby."
+    content.sound = .default
+    let trigger = UNTimeIntervalNotificationTrigger(
+      timeInterval: TimeInterval(lostButtonWarningThresholdMillis) / 1000.0,
+      repeats: false
+    )
+    let request = UNNotificationRequest(
+      identifier: lostButtonNotificationId(button.deviceIdHex),
+      content: content,
+      trigger: trigger
+    )
+    UNUserNotificationCenter.current().add(request)
+  }
+
+  private func updatePairedButtonPresence(_ peripheral: CBPeripheral) {
+    let now = Self.currentTimeMillis()
+    if let previous = lastPresenceWriteAt[peripheral.identifier], now - previous < 30_000 {
+      return
+    }
+    guard let index = pairedButtons.firstIndex(where: {
+      $0.peripheralIdentifier == peripheral.identifier && belongsToActiveOwner($0)
+    }) else { return }
+    lastPresenceWriteAt[peripheral.identifier] = now
+    pairedButtons[index].lastSeenAtMillis = now
+    if savePairedButtons(pairedButtons) == nil {
+      scheduleLostButtonWarning(pairedButtons[index])
     }
   }
 
@@ -534,6 +688,10 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     rssi: NSNumber
   ) {
     let rssiValue = rssi.intValue
+    let serviceUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+    if serviceUUIDs.contains(HikerBleProtocol.pairedButtonMaintenanceServiceUUID) {
+      updatePairedButtonPresence(peripheral)
+    }
     var setupModeStatus: (state: Int, remainingSeconds: Int)?
     if let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
        let payload = HikerBleProtocol.manufacturerPayload(from: manufacturerData) {
@@ -578,6 +736,12 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
             emitPairedSosButtonTest(paired, displayName: owner.displayName)
             return
           }
+          guard paired.mode == 1 else {
+            // Authenticated mode-2 packets are safe-test events. Without the
+            // matching local authenticated arm window they fail closed.
+            markAccepted(ownerDeviceId: paired.deviceIdHex, eventId: paired.eventId)
+            return
+          }
           // Queue/deliver the verified emergency before advancing replay
           // state. A suspension or crash between the opposite ordering would
           // permanently consume an SOS that Flutter never received.
@@ -588,7 +752,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
           $0.deviceIdHex == paired.deviceIdHex
         }) {
           NSLog("HikerCircle rejected invalid paired SOS tag")
-        } else {
+        } else if paired.mode == 1 {
           emitNearbySosButton(paired)
         }
         return
@@ -807,7 +971,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private func isPairedButtonTestArmed(
     for packet: HikerBleProtocol.PairedSosRemotePacket
   ) -> Bool {
-    guard packet.mode == 1,
+    guard packet.mode == 2,
           pairedButtonTestDeviceId == packet.deviceIdHex,
           let expiresAt = pairedButtonTestExpiresAt else { return false }
     if expiresAt <= Date() {
@@ -1199,7 +1363,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   }
 
   private func resetPairedSosButtonRegistry(result: @escaping FlutterResult) {
-    guard pairingResult == nil, locationResult == nil, logResult == nil else {
+    guard pairingResult == nil, locationResult == nil, logResult == nil, testArmResult == nil else {
       result(FlutterError(
         code: "paired_button_busy",
         message: "Finish the current SOS button operation before resetting its secure registry.",
@@ -1257,7 +1421,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       result(FlutterError(code: "paired_button_pairing_active", message: "Another SOS button pairing operation is already active.", details: nil))
       return
     }
-    if locationResult != nil || logResult != nil {
+    if locationResult != nil || logResult != nil || testArmResult != nil {
       result(FlutterError(code: "paired_button_busy", message: "The SOS button is busy with another maintenance operation.", details: nil))
       return
     }
@@ -1566,7 +1730,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       result(FlutterError(code: "paired_button_location_active", message: "Another SOS button location handoff is already active.", details: nil))
       return
     }
-    if pairingResult != nil || logResult != nil {
+    if pairingResult != nil || logResult != nil || testArmResult != nil {
       result(FlutterError(code: "paired_button_busy", message: "The SOS button is busy with another maintenance operation.", details: nil))
       return
     }
@@ -1638,6 +1802,74 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     }
   }
 
+  private func beginPairedButtonTestArm(
+    owner: PairedButtonRecord,
+    durationMillis: Int,
+    result: @escaping FlutterResult
+  ) {
+    guard pairingResult == nil, locationResult == nil, logResult == nil, testArmResult == nil else {
+      result(FlutterError(
+        code: "paired_button_busy",
+        message: "The SOS button is busy with another authenticated operation.",
+        details: nil
+      ))
+      return
+    }
+    guard let peripheral = centralManager.retrievePeripherals(
+      withIdentifiers: [owner.peripheralIdentifier]
+    ).first else {
+      result(FlutterError(
+        code: "paired_button_test_not_available",
+        message: "Pair this SOS button again before using safe test mode.",
+        details: nil
+      ))
+      return
+    }
+    testArmOwner = owner
+    testArmPeripheral = peripheral
+    testArmResult = result
+    testArmDurationMillis = durationMillis
+    peripheral.delegate = self
+    centralManager.connect(peripheral, options: nil)
+    testArmTimeout = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) {
+      [weak self] _ in
+      self?.finishPairedButtonTestArm(
+        success: false,
+        errorCode: "paired_button_test_timeout",
+        errorMessage: "The authenticated SOS button test request timed out."
+      )
+    }
+  }
+
+  private func finishPairedButtonTestArm(
+    success: Bool,
+    errorCode: String? = nil,
+    errorMessage: String? = nil
+  ) {
+    testArmTimeout?.invalidate()
+    testArmTimeout = nil
+    let armedDeviceId = testArmOwner?.deviceIdHex
+    if let peripheral = testArmPeripheral {
+      centralManager.cancelPeripheralConnection(peripheral)
+    }
+    testArmPeripheral = nil
+    testArmOwner = nil
+    let result = testArmResult
+    testArmResult = nil
+    if success, let armedDeviceId {
+      pairedButtonTestDeviceId = armedDeviceId
+      pairedButtonTestExpiresAt = Date().addingTimeInterval(
+        Double(testArmDurationMillis) / 1000.0
+      )
+      isSosMonitorRequested = true
+      UserDefaults.standard.set(true, forKey: Self.sosMonitorRequestedKey)
+      startScanIfReady()
+      result?(nil)
+    } else if let errorCode {
+      result?(FlutterError(code: errorCode, message: errorMessage, details: nil))
+    }
+  }
+
   private func beginLogDownload(deviceId: String, result: @escaping FlutterResult) {
     if let loadFailure = pairedButtonsLoadFailure {
       result(FlutterError(code: "paired_button_registry_read_failed", message: loadFailure, details: nil))
@@ -1647,7 +1879,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       result(FlutterError(code: "paired_button_log_active", message: "Another SOS button log download is already active.", details: nil))
       return
     }
-    if pairingResult != nil || locationResult != nil {
+    if pairingResult != nil || locationResult != nil || testArmResult != nil {
       result(FlutterError(code: "paired_button_busy", message: "The SOS button is busy with another maintenance operation.", details: nil))
       return
     }
@@ -1744,6 +1976,13 @@ extension HikerBleBridge: CBCentralManagerDelegate {
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    if testArmPeripheral?.identifier == peripheral.identifier {
+      peripheral.discoverServices([
+        HikerBleProtocol.pairedButtonMaintenanceServiceUUID,
+        HikerBleProtocol.pairedButtonSetupServiceUUID,
+      ])
+      return
+    }
     if logPeripheral?.identifier == peripheral.identifier {
       peripheral.discoverServices([
         HikerBleProtocol.pairedButtonMaintenanceServiceUUID,
@@ -1776,6 +2015,14 @@ extension HikerBleBridge: CBCentralManagerDelegate {
     didFailToConnect peripheral: CBPeripheral,
     error: Error?
   ) {
+    if testArmPeripheral?.identifier == peripheral.identifier {
+      finishPairedButtonTestArm(
+        success: false,
+        errorCode: "paired_button_test_connect_failed",
+        errorMessage: "Unable to connect to the SOS button for safe test mode."
+      )
+      return
+    }
     if logPeripheral?.identifier == peripheral.identifier {
       finishLogDownload(success: false, errorCode: "paired_button_log_connect_failed", errorMessage: "Unable to connect. Tap Start, then press the external button five times within 3 seconds.")
       return
@@ -1799,6 +2046,14 @@ extension HikerBleBridge: CBCentralManagerDelegate {
     didDisconnectPeripheral peripheral: CBPeripheral,
     error: Error?
   ) {
+    if testArmPeripheral?.identifier == peripheral.identifier {
+      finishPairedButtonTestArm(
+        success: false,
+        errorCode: "paired_button_test_disconnected",
+        errorMessage: "The SOS button disconnected before safe test mode was armed."
+      )
+      return
+    }
     if logPeripheral?.identifier == peripheral.identifier {
       finishLogDownload(success: false, errorCode: "paired_button_log_disconnected", errorMessage: "The SOS button disconnected before its log was downloaded.")
       return
@@ -1821,11 +2076,25 @@ extension HikerBleBridge: CBCentralManagerDelegate {
 extension HikerBleBridge: CBPeripheralDelegate {
   func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
     guard error == nil, let services = peripheral.services else {
-      centralManager.cancelPeripheralConnection(peripheral)
+      if testArmPeripheral?.identifier == peripheral.identifier {
+        finishPairedButtonTestArm(
+          success: false,
+          errorCode: "paired_button_test_service_failed",
+          errorMessage: "Unable to discover the SOS button test service."
+        )
+      } else {
+        centralManager.cancelPeripheralConnection(peripheral)
+      }
       return
     }
     for service in services {
-      if logPeripheral?.identifier == peripheral.identifier,
+      if testArmPeripheral?.identifier == peripheral.identifier,
+         (service.uuid == HikerBleProtocol.pairedButtonMaintenanceServiceUUID ||
+          service.uuid == HikerBleProtocol.pairedButtonSetupServiceUUID) {
+        peripheral.discoverCharacteristics([
+          HikerBleProtocol.pairedButtonTestControlCharacteristicUUID,
+        ], for: service)
+      } else if logPeripheral?.identifier == peripheral.identifier,
          (service.uuid == HikerBleProtocol.pairedButtonMaintenanceServiceUUID ||
           service.uuid == HikerBleProtocol.pairedButtonSetupServiceUUID) {
         peripheral.discoverCharacteristics([
@@ -1859,12 +2128,25 @@ extension HikerBleBridge: CBPeripheralDelegate {
     error: Error?
   ) {
     guard error == nil, let characteristics = service.characteristics else {
-      centralManager.cancelPeripheralConnection(peripheral)
+      if testArmPeripheral?.identifier == peripheral.identifier {
+        finishPairedButtonTestArm(
+          success: false,
+          errorCode: "paired_button_test_characteristic_failed",
+          errorMessage: "Unable to discover the SOS button test control."
+        )
+      } else {
+        centralManager.cancelPeripheralConnection(peripheral)
+      }
       return
     }
     var logChallengeCharacteristic: CBCharacteristic?
+    var testControlCharacteristic: CBCharacteristic?
     for characteristic in characteristics {
-      if logPeripheral?.identifier == peripheral.identifier {
+      if testArmPeripheral?.identifier == peripheral.identifier {
+        if characteristic.uuid == HikerBleProtocol.pairedButtonTestControlCharacteristicUUID {
+          testControlCharacteristic = characteristic
+        }
+      } else if logPeripheral?.identifier == peripheral.identifier {
         if characteristic.uuid == HikerBleProtocol.pairedButtonLogAuthCharacteristicUUID {
           logAuthCharacteristic = characteristic
         } else if characteristic.uuid == HikerBleProtocol.pairedButtonLogDataCharacteristicUUID {
@@ -1898,7 +2180,17 @@ extension HikerBleBridge: CBPeripheralDelegate {
         peripheral.readValue(for: characteristic)
       }
     }
-    if logPeripheral?.identifier == peripheral.identifier {
+    if testArmPeripheral?.identifier == peripheral.identifier {
+      guard let testControlCharacteristic else {
+        finishPairedButtonTestArm(
+          success: false,
+          errorCode: "paired_button_test_firmware_incompatible",
+          errorMessage: "Update the SOS button firmware before using safe test mode."
+        )
+        return
+      }
+      peripheral.readValue(for: testControlCharacteristic)
+    } else if logPeripheral?.identifier == peripheral.identifier {
       guard let challenge = logChallengeCharacteristic,
             logAuthCharacteristic != nil,
             logDataCharacteristic != nil,
@@ -1975,6 +2267,28 @@ extension HikerBleBridge: CBPeripheralDelegate {
     didUpdateValueFor characteristic: CBCharacteristic,
     error: Error?
   ) {
+    if testArmPeripheral?.identifier == peripheral.identifier,
+       characteristic.uuid == HikerBleProtocol.pairedButtonTestControlCharacteristicUUID {
+      guard error == nil,
+            let challenge = characteristic.value,
+            let owner = testArmOwner,
+            let deviceId = Data(hexString: owner.deviceIdHex),
+            let request = HikerBleProtocol.encodePairedButtonTestArm(
+              challenge: challenge,
+              deviceId: deviceId,
+              pairingSecret: owner.pairingSecret
+            ),
+            request.count <= peripheral.maximumWriteValueLength(for: .withResponse) else {
+        finishPairedButtonTestArm(
+          success: false,
+          errorCode: "paired_button_test_challenge_invalid",
+          errorMessage: "The SOS button returned an invalid authenticated test challenge."
+        )
+        return
+      }
+      peripheral.writeValue(request, for: characteristic, type: .withResponse)
+      return
+    }
     if logPeripheral?.identifier == peripheral.identifier {
       guard error == nil, let data = characteristic.value else {
         finishLogDownload(success: false, errorCode: "paired_button_log_read_failed", errorMessage: "The SOS button log read failed.")
@@ -2045,6 +2359,19 @@ extension HikerBleBridge: CBPeripheralDelegate {
     didWriteValueFor characteristic: CBCharacteristic,
     error: Error?
   ) {
+    if testArmPeripheral?.identifier == peripheral.identifier,
+       characteristic.uuid == HikerBleProtocol.pairedButtonTestControlCharacteristicUUID {
+      if let error {
+        finishPairedButtonTestArm(
+          success: false,
+          errorCode: "paired_button_test_arm_rejected",
+          errorMessage: "The SOS button rejected the authenticated test request: \(error.localizedDescription)"
+        )
+      } else {
+        finishPairedButtonTestArm(success: true)
+      }
+      return
+    }
     if logPeripheral?.identifier == peripheral.identifier {
       guard error == nil else {
         finishLogDownload(success: false, errorCode: "paired_button_log_write_failed", errorMessage: "The authenticated log request was rejected.")
@@ -2160,6 +2487,7 @@ private enum HikerBleProtocol {
   static let pairedButtonLogDataCharacteristicUUID = CBUUID(string: "7e2a1d3e-8b10-4f4d-9f78-0c6f1d65cba1")
   static let pairedButtonLogPageCharacteristicUUID = CBUUID(string: "7e2a1d3f-8b10-4f4d-9f78-0c6f1d65cba1")
   static let pairedButtonMaintenanceServiceUUID = CBUUID(string: "7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1")
+  static let pairedButtonTestControlCharacteristicUUID = CBUUID(string: "7e2a1d41-8b10-4f4d-9f78-0c6f1d65cba1")
   static let activeSosServiceUUID = CBUUID(string: "7e2a1d3a-8b10-4f4d-9f78-0c6f1d65cba1")
   static let sosLocationCharacteristicUUID = CBUUID(string: "7e2a1d3b-8b10-4f4d-9f78-0c6f1d65cba1")
   static let manufacturerId: UInt16 = 0x02E5
@@ -2176,6 +2504,7 @@ private enum HikerBleProtocol {
   private static let typePairedButtonSetupStatus: UInt8 = 0x06
   private static let logChallengeType: UInt8 = 0x10
   private static let logDataType: UInt8 = 0x12
+  private static let testControlType: UInt8 = 0x13
 
   struct SosHelpPayload {
     let phoneNumberHash: UInt32
@@ -2312,7 +2641,7 @@ private enum HikerBleProtocol {
           data[1] == magicC,
           data[2] == pairedVersion,
           data[3] == typePairedSosRemote,
-          data[4] == 0x01 else {
+          data[4] == 0x01 || data[4] == 0x02 else {
       return nil
     }
     return PairedSosRemotePacket(
@@ -2380,6 +2709,30 @@ private enum HikerBleProtocol {
     var result = challenge
     result.append(contentsOf: tag.prefix(8))
     return result
+  }
+
+  static func encodePairedButtonTestArm(
+    challenge: Data,
+    deviceId: Data,
+    pairingSecret: Data
+  ) -> Data? {
+    guard challenge.count == 22,
+          deviceId.count == 6,
+          pairingSecret.count == 32,
+          challenge[0] == magicH,
+          challenge[1] == magicC,
+          challenge[2] == version,
+          challenge[3] == testControlType,
+          Data(challenge[4..<10]) == deviceId else {
+      return nil
+    }
+    let tag = HMAC<SHA256>.authenticationCode(
+      for: challenge,
+      using: SymmetricKey(data: pairingSecret)
+    )
+    var request = challenge
+    request.append(contentsOf: tag.prefix(8))
+    return request
   }
 
   static func decodeLogPage(_ data: Data) -> LogPage? {

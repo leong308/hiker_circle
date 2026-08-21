@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../app/Model/app_session.dart';
@@ -32,6 +34,7 @@ class SosViewModel extends ChangeNotifier {
   String? _emergencyContactsErrorMessage;
   String? _sosAlertErrorMessage;
   SosAlertResult? _latestSosAlertResult;
+  SosAlertResult? _latestSosAcknowledgement;
   Map<SosAlertMode, String> _customWhatsAppNotes = const {};
   List<SosAlert> _cloudAlertLogs = const [];
   int _queuedAlertCount = 0;
@@ -61,6 +64,7 @@ class SosViewModel extends ChangeNotifier {
   String? get emergencyContactsErrorMessage => _emergencyContactsErrorMessage;
   String? get sosAlertErrorMessage => _sosAlertErrorMessage;
   SosAlertResult? get latestSosAlertResult => _latestSosAlertResult;
+  SosAlertResult? get latestSosAcknowledgement => _latestSosAcknowledgement;
   List<SosAlert> get cloudAlertLogs => List.unmodifiable(_cloudAlertLogs);
   int get queuedAlertCount => _queuedAlertCount;
   bool get isFlushingQueuedAlerts => _isFlushingQueuedAlerts;
@@ -230,14 +234,13 @@ class SosViewModel extends ChangeNotifier {
     try {
       if (_emergencyContacts.isEmpty) {
         final contacts = await emergencyContactsRepository
-            .loadEmergencyContacts(session: _session);
+            .loadCachedEmergencyContacts(session: _session);
         if (_isDisposed) {
           return null;
         }
         _emergencyContacts = contacts;
-        _notifyListenersIfActive();
       }
-      final result = await _sosAlertRepository.triggerAlert(
+      final submission = await _sosAlertRepository.submitAlert(
         session: _session,
         mode: mode,
         triggeredAt: triggeredAt,
@@ -247,21 +250,18 @@ class SosViewModel extends ChangeNotifier {
         triggerSource: triggerSource,
       );
       if (_isDisposed) {
-        return result;
+        return submission.submittedResult;
       }
-      _latestSosAlertResult = result;
-      _queuedAlertCount = result.queuedAlertCount;
-      _cloudAlertLogs = [result.alert, ..._cloudAlertLogs].fold<List<SosAlert>>(
-        <SosAlert>[],
-        (logs, alert) {
-          if (logs.any((existing) => existing.id == alert.id)) {
-            return logs;
-          }
-          logs.add(alert);
-          return logs;
-        },
+      _applyAlertResult(submission.submittedResult);
+      _isSendingSosAlert = false;
+      _notifyListenersIfActive();
+      unawaited(
+        _observeAcknowledgement(
+          submission.acknowledgement,
+          submission.submittedResult.alert.id,
+        ),
       );
-      return result;
+      return submission.submittedResult;
     } on SosAlertRepositoryException catch (error) {
       if (!_isDisposed) {
         _sosAlertErrorMessage = error.message;
@@ -272,13 +272,80 @@ class SosViewModel extends ChangeNotifier {
             'Unable to send SOS alert. Please check your connection and try again.';
       }
     } finally {
-      if (!_isDisposed) {
+      if (!_isDisposed && _isSendingSosAlert) {
         _isSendingSosAlert = false;
         _notifyListenersIfActive();
       }
     }
 
     return null;
+  }
+
+  Future<void> _observeAcknowledgement(
+    Future<SosAlertResult> acknowledgement,
+    String submittedAlertId,
+  ) async {
+    try {
+      final result = await acknowledgement;
+      if (_isDisposed || result.alert.id != submittedAlertId) return;
+      _latestSosAcknowledgement = result;
+      _applyAlertResult(result);
+    } on SosAlertRepositoryException catch (error) {
+      if (_isDisposed) return;
+      _sosAlertErrorMessage = error.message;
+      await _recordAcknowledgementFailure(submittedAlertId);
+    } catch (_) {
+      if (_isDisposed) return;
+      _sosAlertErrorMessage =
+          'Firebase did not acknowledge the SOS dispatch. It remains in the pending retry queue.';
+      await _recordAcknowledgementFailure(submittedAlertId);
+    } finally {
+      _notifyListenersIfActive();
+    }
+  }
+
+  Future<void> _recordAcknowledgementFailure(String alertId) async {
+    await loadQueuedAlertCount();
+    if (_isDisposed) return;
+    final submitted = _cloudAlertLogs
+        .where((alert) => alert.id == alertId)
+        .firstOrNull;
+    if (submitted == null) return;
+    final failed = SosAlert(
+      id: submitted.id,
+      mode: submitted.mode,
+      status: SosAlertStatus.queued,
+      triggeredAt: submitted.triggeredAt,
+      triggeredByPhoneNumber: submitted.triggeredByPhoneNumber,
+      contactCount: submitted.contactCount,
+      sentCount: 0,
+      failedCount: submitted.contactCount,
+      dispatches: const [],
+      message: submitted.message,
+      triggerLocation: submitted.triggerLocation,
+      triggerSource: submitted.triggerSource,
+    );
+    final result = SosAlertResult(
+      alert: failed,
+      queuedForRetry: true,
+      queuedAlertCount: _queuedAlertCount,
+    );
+    _latestSosAcknowledgement = result;
+    _applyAlertResult(result);
+  }
+
+  void _applyAlertResult(SosAlertResult result) {
+    final current = _latestSosAlertResult;
+    if (current == null ||
+        result.alert.triggeredAt.isAfter(current.alert.triggeredAt) ||
+        result.alert.id == current.alert.id) {
+      _latestSosAlertResult = result;
+    }
+    _queuedAlertCount = result.queuedAlertCount;
+    _cloudAlertLogs = [
+      result.alert,
+      ..._cloudAlertLogs.where((alert) => alert.id != result.alert.id),
+    ]..sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
   }
 
   Future<List<SosContactDispatch>> sendWhatsAppTestMessage() async {

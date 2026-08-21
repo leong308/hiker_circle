@@ -160,15 +160,17 @@ class _HikerHomePageState extends State<HikerHomePage>
   final Set<String> _terminalCloudHikeSessionIds = <String>{};
   bool isRestoringActiveHike = true;
   int selectedTabIndex = 0;
-  int manualSosRequestId = 0;
-  int immediateSosRequestId = 0;
+  int _manualSosRequestSequence = 0;
+  int _pendingManualSosRequestId = 0;
+  int _immediateSosRequestSequence = 0;
+  int _pendingImmediateSosRequestId = 0;
   SosAlertMode? immediateSosRequestMode;
   SosAlertTriggerSource immediateSosRequestTriggerSource =
       SosAlertTriggerSource.mobilePhone;
   String? _lastHandledDeepLink;
   DateTime? _lastHandledDeepLinkAt;
   String? _lastHandledPairedSosKey;
-  String? _lastHandledNearbySosKey;
+  final Set<String> _presentedNearbySosKeys = <String>{};
   int _nearbySosRevision = 0;
   final List<DateTime> fallStillnessCancelTaps = <DateTime>[];
   List<EmergencyContact> emergencyContacts = const [];
@@ -461,6 +463,18 @@ class _HikerHomePageState extends State<HikerHomePage>
         contacts: emergencyContacts,
       ),
     );
+    await _runReconnectStep('nearby SOS forwarding', () async {
+      final events = await nearbySosEventRepository.load(
+        ownerPhoneNumber: widget.session.phoneNumber,
+        limit: 50,
+      );
+      final now = DateTime.now().toUtc();
+      for (final event in events.where(
+        (value) => value.ageAt(now) <= const Duration(hours: 1),
+      )) {
+        await hikerCircleRepository.forwardNearbySosIncident(event: event);
+      }
+    });
     await _runReconnectStep(
       'chat messages',
       hikerCircleRepository.flushPendingMessages,
@@ -1907,8 +1921,8 @@ class _HikerHomePageState extends State<HikerHomePage>
       return;
     }
 
-    final startedHike = await Navigator.of(context).push<ActiveHikeSession>(
-      MaterialPageRoute<ActiveHikeSession>(
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
         builder: (context) => StartHikeWizardPage(
           preselectedTrail: trail,
           availableTrails: trails,
@@ -1918,16 +1932,19 @@ class _HikerHomePageState extends State<HikerHomePage>
               .map((contact) => contact.name)
               .toList(),
           onScheduled: _cacheConfirmedScheduledDraft,
+          onStartNow: _startInstantHikeFromWizard,
         ),
       ),
     );
+  }
 
-    if (!mounted || startedHike == null) return;
-    var hikeToStart = startedHike;
+  Future<bool> _startInstantHikeFromWizard(HikeSessionDraft draft) async {
+    if (!mounted) return false;
+    var hikeToStart = ActiveHikeSession.fromDraft(draft);
     if (hikeToStart.draft.hikeType == HikeType.team) {
       final teamSession = await _coordinateTeamHikeStart(hikeToStart.draft);
       if (teamSession == null || !mounted) {
-        return;
+        return false;
       }
       final preparedDraft = _applyTeamSafetySettings(
         hikeToStart.draft,
@@ -1951,11 +1968,11 @@ class _HikerHomePageState extends State<HikerHomePage>
         proceedLabel: 'Create Hike',
       );
       if (!volumeReady || !mounted) {
-        return;
+        return false;
       }
     }
     if (!await _ensureBackgroundSafetyReady(hikeToStart.draft) || !mounted) {
-      return;
+      return false;
     }
 
     final startProgress = ValueNotifier<_HikeStartProgress>(
@@ -2001,6 +2018,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     ActiveHikeSession liveHike = hikeToStart;
+    final batteryFuture = _readBatteryLevel();
     try {
       startProgress.value = const _HikeStartProgress(
         title: 'Creating hike session',
@@ -2017,7 +2035,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       liveHike = liveHike.copyWith(
         teamHikeSession: hikeToStart.teamHikeSession,
       );
-      final batteryLevel = await _readBatteryLevel();
+      final batteryLevel = await batteryFuture;
       if (batteryLevel != null) {
         liveHike = liveHike.copyWith(
           batteryLevel: batteryLevel,
@@ -2050,7 +2068,7 @@ class _HikerHomePageState extends State<HikerHomePage>
               ),
             );
         }
-        return;
+        return false;
       }
       startProgress.value = const _HikeStartProgress(
         title: 'Starting offline mode',
@@ -2072,7 +2090,7 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     if (!mounted) {
       closeStartProgressDialog();
-      return;
+      return false;
     }
 
     startProgress.value = const _HikeStartProgress(
@@ -2086,10 +2104,10 @@ class _HikerHomePageState extends State<HikerHomePage>
       selectedTabIndex = 0;
     });
     _syncActiveHikeServices(liveHike, forceLiveStatus: true);
-    await _activeHikePersistenceQueue;
     tabController.animateTo(0);
     closeStartProgressDialog();
     unawaited(_recordInitialActiveHikeLocation(liveHike));
+    return true;
   }
 
   Future<TeamHikeSession?> _coordinateTeamHikeStart(
@@ -3288,7 +3306,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   void requestManualSos() {
     setState(() {
       selectedTabIndex = 1;
-      manualSosRequestId += 1;
+      _manualSosRequestSequence += 1;
+      _pendingManualSosRequestId = _manualSosRequestSequence;
     });
     tabController.animateTo(1);
   }
@@ -3301,9 +3320,26 @@ class _HikerHomePageState extends State<HikerHomePage>
       selectedTabIndex = 1;
       immediateSosRequestMode = mode;
       immediateSosRequestTriggerSource = triggerSource;
-      immediateSosRequestId += 1;
+      _immediateSosRequestSequence += 1;
+      _pendingImmediateSosRequestId = _immediateSosRequestSequence;
     });
     tabController.animateTo(1);
+  }
+
+  void _consumeManualSosRequest(int requestId) {
+    if (!mounted || requestId != _pendingManualSosRequestId) return;
+    setState(() {
+      _pendingManualSosRequestId = 0;
+    });
+  }
+
+  void _consumeImmediateSosRequest(int requestId) {
+    if (!mounted || requestId != _pendingImmediateSosRequestId) return;
+    setState(() {
+      _pendingImmediateSosRequestId = 0;
+      immediateSosRequestMode = null;
+      immediateSosRequestTriggerSource = SosAlertTriggerSource.mobilePhone;
+    });
   }
 
   Future<void> _showBleSosHelpPopupForLocation({
@@ -3422,24 +3458,22 @@ class _HikerHomePageState extends State<HikerHomePage>
   }) async {
     final key =
         '$deviceId:${counter ?? receivedAt.millisecondsSinceEpoch ~/ 1000}';
-    if (_lastHandledNearbySosKey == key) return;
-    _lastHandledNearbySosKey = key;
     await _recordNearbySosEvent(
       deviceId: deviceId,
       counter: counter,
       receivedAt: receivedAt,
       rssi: rssi,
     );
-    await _showNearbySosButtonPopup(rssi: rssi);
+    if (_presentedNearbySosKeys.add(key)) {
+      await _showNearbySosButtonPopup(rssi: rssi);
+    }
   }
 
   Future<void> _handleNearbySosLocationEvent(
     HikerBleNearbySosLocationEvent event,
   ) async {
     final key =
-        '${event.deviceId}:${event.counter ?? event.receivedAt.millisecondsSinceEpoch ~/ 1000}:location';
-    if (_lastHandledNearbySosKey == key) return;
-    _lastHandledNearbySosKey = key;
+        '${event.deviceId}:${event.counter ?? event.receivedAt.millisecondsSinceEpoch ~/ 1000}';
     final location =
         _isUsableBleCoordinate(
           event.location.latitude,
@@ -3454,7 +3488,9 @@ class _HikerHomePageState extends State<HikerHomePage>
       rssi: event.rssi,
       location: location,
     );
-    await _showNearbySosButtonPopup(rssi: event.rssi, location: location);
+    if (_presentedNearbySosKeys.add(key)) {
+      await _showNearbySosButtonPopup(rssi: event.rssi, location: location);
+    }
   }
 
   Future<void> _handleBleSosHelpEvent(HikerBleSosHelpEvent event) async {
@@ -3482,29 +3518,41 @@ class _HikerHomePageState extends State<HikerHomePage>
     int? rssi,
     SosTriggerLocation? location,
   }) async {
+    final event = NearbySosEvent(
+      ownerPhoneNumber: widget.session.phoneNumber,
+      eventKey: NearbySosEvent.eventKeyFor(
+        deviceId: deviceId,
+        counter: counter,
+        receivedAt: receivedAt,
+      ),
+      deviceId: deviceId,
+      counter: counter,
+      rssi: rssi,
+      receivedAt: receivedAt.toUtc(),
+      updatedAt: DateTime.now().toUtc(),
+      location: location,
+      detectorLocation: LocationSnapshotService.instance.latestLocation,
+    );
     try {
-      await nearbySosEventRepository.save(
-        NearbySosEvent(
-          ownerPhoneNumber: widget.session.phoneNumber,
-          eventKey: NearbySosEvent.eventKeyFor(
-            deviceId: deviceId,
-            counter: counter,
-            receivedAt: receivedAt,
-          ),
-          deviceId: deviceId,
-          counter: counter,
-          rssi: rssi,
-          receivedAt: receivedAt.toUtc(),
-          updatedAt: DateTime.now().toUtc(),
-          location: location,
-          detectorLocation: LocationSnapshotService.instance.latestLocation,
-        ),
-      );
+      await nearbySosEventRepository.save(event);
       if (mounted) {
         setState(() => _nearbySosRevision += 1);
       }
     } catch (error) {
       debugPrint('Unable to save nearby SOS event: $error');
+    }
+    unawaited(_forwardNearbySosEvent(event));
+  }
+
+  Future<void> _forwardNearbySosEvent(NearbySosEvent event) async {
+    try {
+      await hikerCircleRepository.forwardNearbySosIncident(event: event);
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      // The local SQLite record is the durable retry source. Reconnect sync
+      // replays it through the server's deterministic incident deduplicator.
+      debugPrint('Nearby SOS forwarding deferred: ${error.message}');
+    } catch (error) {
+      debugPrint('Unable to forward nearby SOS observation: $error');
     }
   }
 
@@ -3836,8 +3884,10 @@ class _HikerHomePageState extends State<HikerHomePage>
         'isFallStillnessLocalAlarmActive': isFallStillnessLocalAlarmActive,
         'fallStillnessCountdownWasBackgrounded':
             fallStillnessCountdownWasBackgrounded,
-        'manualSosRequestId': manualSosRequestId,
-        'immediateSosRequestId': immediateSosRequestId,
+        'manualSosRequestSequence': _manualSosRequestSequence,
+        'pendingManualSosRequestId': _pendingManualSosRequestId,
+        'immediateSosRequestSequence': _immediateSosRequestSequence,
+        'pendingImmediateSosRequestId': _pendingImmediateSosRequestId,
         'immediateSosRequestMode': immediateSosRequestMode?.name,
         'immediateSosRequestTriggerSource':
             immediateSosRequestTriggerSource.name,
@@ -4116,10 +4166,12 @@ class _HikerHomePageState extends State<HikerHomePage>
         return SosPage(
           session: widget.session,
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
-          manualSosRequestId: manualSosRequestId,
-          immediateSosRequestId: immediateSosRequestId,
+          manualSosRequestId: _pendingManualSosRequestId,
+          onManualSosRequestConsumed: _consumeManualSosRequest,
+          immediateSosRequestId: _pendingImmediateSosRequestId,
           immediateSosMode: immediateSosRequestMode,
           immediateSosTriggerSource: immediateSosRequestTriggerSource,
+          onImmediateSosRequestConsumed: _consumeImmediateSosRequest,
           nearbySosEventRepository: nearbySosEventRepository,
           nearbySosRevision: _nearbySosRevision,
         );
@@ -4418,11 +4470,20 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<SosTriggerLocation?> _captureTriggerLocation() async {
+    final snapshotService = LocationSnapshotService.instance;
+    final cached = snapshotService.latestLocation;
+    if (cached != null) {
+      unawaited(snapshotService.refresh().catchError((_) => null));
+      return cached;
+    }
     try {
-      final snapshotService = LocationSnapshotService.instance;
-      return await snapshotService.refresh() ?? snapshotService.latestLocation;
+      return await snapshotService.refresh().timeout(
+            const Duration(milliseconds: 600),
+            onTimeout: () => snapshotService.latestLocation,
+          ) ??
+          snapshotService.latestLocation;
     } catch (_) {
-      return null;
+      return snapshotService.latestLocation;
     }
   }
 
@@ -9338,7 +9399,11 @@ class _UpcomingHikeDetailSheet extends StatelessWidget {
             _DetailRow(
               icon: Icons.place_rounded,
               label: 'Location',
-              value: '${hike.area}, ${hike.state}',
+              value: [
+                hike.area,
+                hike.state,
+                hike.country,
+              ].where((part) => part.trim().isNotEmpty).join(', '),
             ),
             _DetailRow(
               icon: Icons.group_rounded,

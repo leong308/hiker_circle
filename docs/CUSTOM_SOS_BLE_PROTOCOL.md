@@ -47,7 +47,7 @@ bytes:
 | 0-1 | `HC` | Magic |
 | 2 | `0x02` | Protocol version |
 | 3 | `0x04` | Paired SOS remote packet |
-| 4 | `0x01` | Manual SOS mode |
+| 4 | `0x01` or `0x02` | Manual SOS or authenticated local test mode |
 | 5-10 | 6 bytes | Stable random button device ID |
 | 11-14 | uint32 BE | Persisted press/event counter |
 | 15-22 | 8 bytes | First 8 bytes of HMAC-SHA-256 over bytes 0-14 |
@@ -57,6 +57,13 @@ and the button. The owner phone starts Manual SOS only after verification. A
 phone without that device ID shows a nearby-button popup and never starts its
 own SOS workflow. Legacy v1/type-1 packets are disabled by default and are
 available only through the explicit migration setting.
+
+Mode `0x02` is reserved for a physical-button test explicitly armed by the
+paired owner app through the authenticated test-control characteristic below.
+It consumes the normal monotonic event counter and carries the normal HMAC, but
+must never start Manual SOS, show a nearby-help popup, or be forwarded by an
+unpaired phone. An owner phone without the matching live arm window ignores it
+safely. Mode `0x01` remains the only production emergency mode.
 
 ### Pairing GATT payloads
 
@@ -240,11 +247,16 @@ GPS accuracy, not an RSSI-derived distance or radius.
 ## Authenticated event-log maintenance
 
 The owner can download the button's 32-record NVS event log without entering
-pairing setup. The app begins waiting, then the user presses the external button
-five times within three seconds. The first press wakes a button in deep sleep;
-a completed sequence suppresses SOS and advertises read-only maintenance service
-`7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1` for 30 seconds. The service cannot
-change button ownership.
+pairing setup or performing a physical gesture. While paired and idle, the
+firmware continuously advertises read-only maintenance service
+`7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1`. The app connects directly and proves
+possession of the pairing secret. The service cannot change button ownership.
+
+One physical short press never means “logs.” It stops any idle maintenance
+session and starts the SOS path immediately after release and debounce. This
+removes the former three-second multi-press recognition delay. The tradeoff is
+that always-ready BLE maintenance keeps the button awake and increases battery
+consumption compared with deep sleep.
 
 The pairing service retains the same characteristics for compatibility. The
 pairing secret remains in the Android encrypted registry or iOS Keychain and
@@ -258,16 +270,21 @@ The maintenance service exposes these characteristics:
 | Authentication | `7e2a1d3d-8b10-4f4d-9f78-0c6f1d65cba1` | Write |
 | Log data | `7e2a1d3e-8b10-4f4d-9f78-0c6f1d65cba1` | Read |
 | Page selection | `7e2a1d3f-8b10-4f4d-9f78-0c6f1d65cba1` | Write |
+| Test control | `7e2a1d41-8b10-4f4d-9f78-0c6f1d65cba1` | Read challenge, write authenticated arm request |
 
 The 26-byte challenge is `HC 01 10`, followed by the six-byte button device ID
-and a fresh 16-byte random nonce. The authentication write repeats those 26
-bytes and appends the first eight bytes of HMAC-SHA-256 over the challenge,
-keyed by the pairing secret.
+and a fresh 16-byte random nonce. The current Android authentication write is
+the first eight bytes of HMAC-SHA-256 over the challenge, keyed by the pairing
+secret. Firmware also accepts the legacy 34-byte `challenge || tag` request.
+When a platform returns only a challenge prefix, Android writes the prefix
+length to the page characteristic and reads the remaining challenge bytes from
+the data characteristic.
 
 Successful authentication is bound to the current BLE connection for 30
 seconds. The firmware immediately rotates the nonce, preventing the accepted
-response from being replayed by another connection. Page writes are one
-zero-based page-index byte and are ignored for unauthenticated connections.
+response from being replayed by another connection. Legacy page writes contain
+one zero-based page-index byte. Android page writes contain `[page, chunk]` and
+return at most 18 bytes per read; the app concatenates and validates the page.
 
 Each log page starts with this eight-byte header:
 
@@ -279,3 +296,35 @@ HC 01 12 record-size total-count page-index page-record-count
 (`sequence`, `uptimeMillis`, `epochSeconds`, and `eventId`), followed by
 `type` uint8, `resetReason` uint8, and `detail` uint16 big-endian. Pages contain
 at most eight records and are returned oldest first.
+
+### Authenticated physical-button test
+
+The app reads 22 bytes from Test control:
+
+```text
+HC 01 13 device-id[6] next-event-id[4] nonce[8]
+```
+
+It writes those 22 bytes unchanged followed by the first eight bytes of
+`HMAC-SHA-256(pairing-secret, challenge)`. The request is exactly 30 bytes.
+The challenge is single-use. A valid write arms only the encoded next event ID
+for 30 seconds. The next short press is sent as type 4, mode `0x02`; after that
+press or expiry, normal mode `0x01` behavior is restored. Android and iOS arm
+the button first and only then open their local test window, preventing an
+ordinary emergency packet from being consumed as a test.
+
+## Software reliability services
+
+- The readiness dashboard reports Bluetooth, permissions, notification state,
+  scan health, recent button presence, and battery-policy risks.
+- Android uses a foreground-monitor heartbeat and restarts a failed scan. iOS
+  includes the maintenance and active-SOS UUIDs in background service filters.
+- Idle maintenance advertisements refresh `last seen`; configurable lost-button
+  alerts notify the owner when sightings stop.
+- Native replay state and Flutter popup state deduplicate an incident by
+  `(device ID, event counter)` across repeated type-4/type-5 advertisements.
+- Nearby phones persist observations locally and may forward an unverified
+  report to the backend. The callable uses a deterministic incident ID so
+  several phones converge on one incident without triggering their own SOS.
+- The pre-hike check warns about degraded monitoring and requires an explicit
+  override; it never disables the phone's normal SOS controls.

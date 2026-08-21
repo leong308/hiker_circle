@@ -12,6 +12,7 @@ const privateHike = {
   longitude: 101.6,
   area: 'Gombak',
   state: 'Selangor',
+  country: 'Malaysia',
   distanceKm: 7,
   durationMinutes: 180,
   difficulty: 'Moderate',

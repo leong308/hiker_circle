@@ -156,6 +156,23 @@ class PairedSosButtonRegistry(context: Context) {
         writeButtons(updated)
     }
 
+    /** Updates passive presence without exposing pairing material to callers. */
+    fun markSeenByAddress(address: String): String? {
+        val normalizedAddress = address.trim().uppercase()
+        if (normalizedAddress.isEmpty()) return null
+        var matchedDeviceId: String? = null
+        val updated = readButtons().map { button ->
+            if (button.address != normalizedAddress || !belongsToActiveOwner(button)) {
+                button
+            } else {
+                matchedDeviceId = button.deviceIdHex
+                button.copy(lastSeenAtMillis = System.currentTimeMillis())
+            }
+        }
+        if (matchedDeviceId != null) writeButtons(updated)
+        return matchedDeviceId
+    }
+
     fun isReplay(button: Button, eventId: Long): Boolean {
         val last = button.lastAcceptedEventId ?: return false
         // RFC-1982-style uint32 serial arithmetic permits the legitimate

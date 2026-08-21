@@ -9,11 +9,13 @@ import 'package:flutter/material.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/services/hiking_route_service.dart';
+import '../../core/services/hiker_ble_service.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
+import 'hike_reminder_preferences_sheet.dart';
 
-enum _StartHikeWizardStep { type, timing, trail, safety }
+enum _StartHikeWizardStep { type, timing, trail, reminder, safety }
 
 class StartHikeWizardPage extends StatefulWidget {
   const StartHikeWizardPage({
@@ -24,6 +26,7 @@ class StartHikeWizardPage extends StatefulWidget {
     this.session,
     this.emergencyContactNames = const [],
     this.onScheduled,
+    this.onStartNow,
   });
 
   final Trail? preselectedTrail;
@@ -32,17 +35,21 @@ class StartHikeWizardPage extends StatefulWidget {
   final AppSession? session;
   final List<String> emergencyContactNames;
   final Future<void> Function(HikeSessionDraft draft)? onScheduled;
+  final Future<bool> Function(HikeSessionDraft draft)? onStartNow;
 
   @override
   State<StartHikeWizardPage> createState() => _StartHikeWizardPageState();
 }
 
 class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
+  final HikerBleService _bleService = const HikerBleService();
   late final List<Trail> _trails;
   late HikeSessionDraft _draft;
   int _stepIndex = 0;
   bool _startNow = true;
   bool _isScheduling = false;
+  bool _isStarting = false;
+  HikeReminderPreference _reminderPreference = const HikeReminderPreference();
 
   bool get _isUpcomingHike => !_startNow;
 
@@ -50,6 +57,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     _StartHikeWizardStep.type,
     _StartHikeWizardStep.timing,
     _StartHikeWizardStep.trail,
+    if (_isUpcomingHike) _StartHikeWizardStep.reminder,
     if (!_isUpcomingHike) _StartHikeWizardStep.safety,
   ];
 
@@ -88,7 +96,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   void _next() {
-    if (_isScheduling) return;
+    if (_isScheduling || _isStarting) return;
     final currentStep = _steps[_stepIndex];
 
     if (currentStep == _StartHikeWizardStep.timing &&
@@ -128,6 +136,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
         unawaited(_scheduleAndFinish());
         return;
       }
+      if (widget.onStartNow != null) {
+        unawaited(_startNowAndFinish());
+        return;
+      }
       Navigator.of(context).pop(ActiveHikeSession.fromDraft(_draftForNow()));
       return;
     }
@@ -135,6 +147,129 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     setState(() {
       _stepIndex += 1;
     });
+  }
+
+  Future<void> _startNowAndFinish() async {
+    if (_isStarting) return;
+    setState(() => _isStarting = true);
+    try {
+      final safetyAccepted = await _confirmPreHikeSafety();
+      if (!safetyAccepted || !mounted) return;
+      final started = await widget.onStartNow!.call(_draftForNow());
+      if (started && mounted) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isStarting = false);
+      }
+    }
+  }
+
+  Future<bool> _confirmPreHikeSafety() async {
+    SosButtonReadiness? readiness;
+    String? inspectionError;
+    try {
+      await _bleService.restartSosButtonMonitor();
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      readiness = await _bleService.getSosButtonReadiness();
+    } on HikerBleException catch (error) {
+      inspectionError = error.message;
+    }
+    if (!mounted) return false;
+
+    final value = readiness;
+    final warnings = <String>[
+      if (inspectionError != null) inspectionError,
+      if (value != null) ...value.blockingWarnings,
+      if (value != null && !value.batteryOptimizationExempt)
+        'Android battery optimization may interrupt background monitoring.',
+      if (value != null && !value.hasPairedButton)
+        'No SOS button is paired. Phone SOS remains available.',
+    ];
+    final ready = warnings.isEmpty;
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            icon: Icon(
+              ready
+                  ? Icons.verified_user_rounded
+                  : Icons.health_and_safety_rounded,
+              color: ready
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.error,
+            ),
+            title: Text(
+              ready
+                  ? 'Pre-hike safety check passed'
+                  : 'Review safety readiness',
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _preHikeCheckLine('Bluetooth', value?.bluetoothEnabled == true),
+                _preHikeCheckLine(
+                  'Background SOS monitor',
+                  value?.monitorHealthy == true,
+                ),
+                _preHikeCheckLine(
+                  'Alert notifications',
+                  value != null &&
+                      value.notificationPermissionGranted &&
+                      value.notificationsEnabled,
+                ),
+                _preHikeCheckLine(
+                  'Paired button recently seen',
+                  value != null &&
+                      value.hasPairedButton &&
+                      value.buttonSeenRecently(),
+                ),
+                if (warnings.isNotEmpty) ...[
+                  const Divider(height: 24),
+                  for (final warning in warnings)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text('• $warning'),
+                    ),
+                ],
+                const SizedBox(height: 8),
+                const Text(
+                  'Starting the hike never disables the phone’s built-in SOS controls.',
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Go back'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(ready ? 'Start hike' : 'Start anyway'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Widget _preHikeCheckLine(String label, bool passed) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(
+            passed ? Icons.check_circle_rounded : Icons.cancel_rounded,
+            color: passed ? Colors.green : Colors.red,
+            size: 19,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+        ],
+      ),
+    );
   }
 
   Future<void> _scheduleAndFinish() async {
@@ -156,7 +291,15 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       final safeDraft = _withPlatformSafetyPolicy(
         _withSafeRecordingInterval(_draft),
       );
-      await repo.scheduleUpcomingHike(session: session, draft: safeDraft);
+      final hikeId = await repo.scheduleUpcomingHike(
+        session: session,
+        draft: safeDraft,
+      );
+      await repo.saveUpcomingHikeReminderPreference(
+        session: session,
+        hikeId: hikeId,
+        preference: _reminderPreference,
+      );
       try {
         await widget.onScheduled?.call(safeDraft);
       } catch (error) {
@@ -290,7 +433,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _Header(onBack: _back),
+                  _Header(onBack: _isScheduling || _isStarting ? () {} : _back),
                   const SizedBox(height: 16),
                   _StepProgress(
                     currentStep: _visibleStepIndex,
@@ -304,7 +447,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                       Expanded(
                         flex: 2,
                         child: OutlinedButton(
-                          onPressed: _back,
+                          onPressed: _isScheduling || _isStarting
+                              ? null
+                              : _back,
                           child: Text(_stepIndex <= 0 ? 'Cancel' : 'Back'),
                         ),
                       ),
@@ -312,8 +457,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                       Expanded(
                         flex: 3,
                         child: FilledButton.icon(
-                          onPressed: _isScheduling ? null : _next,
-                          icon: _isScheduling
+                          onPressed: _isScheduling || _isStarting
+                              ? null
+                              : _next,
+                          icon: _isScheduling || _isStarting
                               ? const SizedBox.square(
                                   dimension: 18,
                                   child: CircularProgressIndicator(
@@ -330,6 +477,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                           label: Text(
                             _isScheduling
                                 ? 'Scheduling...'
+                                : _isStarting
+                                ? 'Starting...'
                                 : _isFinalStep
                                 ? _isUpcomingHike
                                       ? 'Schedule Hike'
@@ -365,6 +514,21 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           draft: _draft,
           trails: _trails,
           onChanged: _updateDraft,
+        );
+      case _StartHikeWizardStep.reminder:
+        return _StepCard(
+          title: 'Your Hike Reminders',
+          subtitle:
+              'These choices apply only to you. Every invited hiker can choose their own reminder schedule after joining.',
+          children: [
+            HikeReminderPreferencesEditor(
+              preference: _reminderPreference,
+              departureTime: _draft.departureTime,
+              onChanged: (value) {
+                setState(() => _reminderPreference = value);
+              },
+            ),
+          ],
         );
       case _StartHikeWizardStep.safety:
         return _SafetySettingsStep(draft: _draft, onChanged: _updateDraft);

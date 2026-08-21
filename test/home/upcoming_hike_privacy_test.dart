@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/app/Data/firebase_bootstrap.dart';
 import 'package:hiker_circle/app/Data/hiker_circle_firebase_repository.dart';
+import 'package:hiker_circle/app/Model/app_session.dart';
 import 'package:hiker_circle/home/Model/hike_session_models.dart';
 import 'package:hiker_circle/home/View/find_hike_page.dart';
 
@@ -71,7 +72,7 @@ void main() {
           body: SingleChildScrollView(
             child: UpcomingHikeCard(
               hike: hike,
-              phoneNumber: '+60999999999',
+              session: AppSession(phoneNumber: '+60999999999', signedInAt: now),
               repository: repository,
               onJoin: () {},
             ),

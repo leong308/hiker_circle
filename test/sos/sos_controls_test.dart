@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/app/Data/firebase_bootstrap.dart';
 import 'package:hiker_circle/app/Model/app_session.dart';
@@ -196,12 +199,127 @@ void main() {
     await tester.pumpAndSettle();
     await disposePage(tester);
   });
+
+  testWidgets(
+    'acknowledged immediate request is not replayed after page recreation',
+    (tester) async {
+      final repository = _FakeSosAlertRepository();
+      var pendingRequestId = 41;
+      var showSosPage = true;
+      final consumedRequestIds = <int>[];
+      late StateSetter updateHost;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                updateHost = setState;
+                if (!showSosPage) return const SizedBox.shrink();
+                return SosPage(
+                  session: session,
+                  immediateSosRequestId: pendingRequestId,
+                  immediateSosMode: pendingRequestId == 0
+                      ? null
+                      : SosAlertMode.manual,
+                  onImmediateSosRequestConsumed: (requestId) {
+                    if (requestId != pendingRequestId) return;
+                    consumedRequestIds.add(requestId);
+                    updateHost(() => pendingRequestId = 0);
+                  },
+                  sosAlertRepository: repository,
+                  emergencyContactsRepository:
+                      const _FakeEmergencyContactsRepository(),
+                  nearbySosEventRepository: _EmptyNearbySosRepository(),
+                  firebaseBootstrapResult:
+                      const FirebaseBootstrapResult.unavailable('Offline test'),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(pendingRequestId, 0);
+      expect(consumedRequestIds, [41]);
+
+      updateHost(() => showSosPage = false);
+      await tester.pump();
+      updateHost(() => showSosPage = true);
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(consumedRequestIds, [41]);
+      await disposePage(tester);
+    },
+  );
+
+  testWidgets('local SOS alarm can stop while Firebase ACK is pending', (
+    tester,
+  ) async {
+    final acknowledgement = Completer<SosAlertResult>();
+    final repository = _FakeSosAlertRepository(
+      acknowledgementCompleter: acknowledgement,
+    );
+    final nativeCalls = <String>[];
+    const channel = MethodChannel('hiker_circle/sos_device_alerts');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          nativeCalls.add(call.method);
+          return null;
+        });
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SosPage(
+              session: session,
+              immediateSosRequestId: 52,
+              immediateSosMode: SosAlertMode.manual,
+              sosAlertRepository: repository,
+              emergencyContactsRepository:
+                  const _FakeEmergencyContactsRepository(),
+              nearbySosEventRepository: _EmptyNearbySosRepository(),
+              firebaseBootstrapResult:
+                  const FirebaseBootstrapResult.unavailable('Offline test'),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(nativeCalls, contains('startManualSosPattern'));
+      expect(find.text('STOP'), findsOneWidget);
+      expect(acknowledgement.isCompleted, isFalse);
+
+      final emergencyButton = find.byKey(const Key('sos-emergency-button'));
+      await tester.ensureVisible(emergencyButton);
+      await tester.tap(emergencyButton);
+      await tester.pump();
+
+      expect(nativeCalls, contains('stopManualSosPattern'));
+      expect(find.text('STOP'), findsNothing);
+      expect(acknowledgement.isCompleted, isFalse);
+
+      acknowledgement.complete(repository.resultFor(SosAlertMode.manual));
+      await tester.pump();
+      await disposePage(tester);
+    } finally {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    }
+  });
 }
 
 class _FakeSosAlertRepository extends SosAlertRepository {
-  _FakeSosAlertRepository({this.queuedDispatches = const []});
+  _FakeSosAlertRepository({
+    this.queuedDispatches = const [],
+    this.acknowledgementCompleter,
+  });
 
   final List<SosQueuedDispatch> queuedDispatches;
+  final Completer<SosAlertResult>? acknowledgementCompleter;
   final List<SosAlertMode> triggeredModes = [];
 
   @override
@@ -247,13 +365,50 @@ class _FakeSosAlertRepository extends SosAlertRepository {
     SosAlertTriggerSource? triggerSource,
   }) async {
     triggeredModes.add(mode);
+    return resultFor(
+      mode,
+      triggeredAt: triggeredAt,
+      triggerLocation: triggerLocation,
+      triggerSource: triggerSource,
+    );
+  }
+
+  @override
+  Future<SosAlertSubmission> submitAlert({
+    required AppSession session,
+    required SosAlertMode mode,
+    required DateTime triggeredAt,
+    required SosTriggerLocation? triggerLocation,
+    required List<EmergencyContact> contacts,
+    String? customMessageNote,
+    SosAlertTriggerSource? triggerSource,
+  }) async {
+    triggeredModes.add(mode);
+    final result = resultFor(
+      mode,
+      triggeredAt: triggeredAt,
+      triggerLocation: triggerLocation,
+      triggerSource: triggerSource,
+    );
+    return SosAlertSubmission(
+      submittedResult: result,
+      acknowledgement: acknowledgementCompleter?.future ?? Future.value(result),
+    );
+  }
+
+  SosAlertResult resultFor(
+    SosAlertMode mode, {
+    DateTime? triggeredAt,
+    SosTriggerLocation? triggerLocation,
+    SosAlertTriggerSource? triggerSource,
+  }) {
     return SosAlertResult(
       alert: SosAlert(
         id: 'test-${mode.firestoreValue}',
         mode: mode,
         status: SosAlertStatus.noContacts,
-        triggeredAt: triggeredAt,
-        triggeredByPhoneNumber: session.phoneNumber,
+        triggeredAt: triggeredAt ?? DateTime.utc(2026, 8, 20),
+        triggeredByPhoneNumber: '+60111111111',
         contactCount: 0,
         sentCount: 0,
         failedCount: 0,
@@ -272,6 +427,11 @@ class _FakeEmergencyContactsRepository extends EmergencyContactsRepository {
 
   @override
   Future<List<EmergencyContact>> loadEmergencyContacts({
+    required AppSession session,
+  }) async => const [];
+
+  @override
+  Future<List<EmergencyContact>> loadCachedEmergencyContacts({
     required AppSession session,
   }) async => const [];
 }

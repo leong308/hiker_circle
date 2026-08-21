@@ -36,25 +36,44 @@ class SosQueueFlushResult {
   bool get didFlushAny => sent > 0;
 }
 
+/// A durable local SOS submission and its eventual Firebase/provider result.
+///
+/// [submittedResult] is safe to show immediately after the local retry row is
+/// created. [acknowledgement] later replaces that optimistic state with the
+/// authoritative sent, failed, or queued result.
+class SosAlertSubmission {
+  const SosAlertSubmission({
+    required this.submittedResult,
+    required this.acknowledgement,
+  });
+
+  final SosAlertResult submittedResult;
+  final Future<SosAlertResult> acknowledgement;
+}
+
 class SosAlertRepository {
-  static const int _maxImmediateSendAttempts = 2;
-  static const Duration _sendAttemptTimeout = Duration(seconds: 15);
-  static const Duration _cloudWriteTimeout = Duration(seconds: 5);
+  static const int _maxImmediateSendAttempts = 1;
 
   SosAlertRepository({
     FirebaseFirestore? firestore,
     GreenApiClient? greenApiClient,
     LocalSessionDatabase? localDatabase,
+    Duration sendAttemptTimeout = const Duration(seconds: 4),
+    Duration cloudWriteTimeout = const Duration(seconds: 4),
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
        _greenApiClient = greenApiClient ?? GreenApiClient(),
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
+       _sendAttemptTimeout = sendAttemptTimeout,
+       _cloudWriteTimeout = cloudWriteTimeout,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   final FirebaseFirestore? _firestore;
   final GreenApiClient _greenApiClient;
   final LocalSessionDatabase _localDatabase;
+  final Duration _sendAttemptTimeout;
+  final Duration _cloudWriteTimeout;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
   FirebaseFirestore get _resolvedFirestore =>
@@ -164,6 +183,27 @@ class SosAlertRepository {
     String? customMessageNote,
     SosAlertTriggerSource? triggerSource,
   }) async {
+    final submission = await submitAlert(
+      session: session,
+      mode: mode,
+      triggeredAt: triggeredAt,
+      triggerLocation: triggerLocation,
+      contacts: contacts,
+      customMessageNote: customMessageNote,
+      triggerSource: triggerSource,
+    );
+    return submission.acknowledgement;
+  }
+
+  Future<SosAlertSubmission> submitAlert({
+    required AppSession session,
+    required SosAlertMode mode,
+    required DateTime triggeredAt,
+    required SosTriggerLocation? triggerLocation,
+    required List<EmergencyContact> contacts,
+    String? customMessageNote,
+    SosAlertTriggerSource? triggerSource,
+  }) async {
     final resolvedTriggerSource =
         triggerSource ?? SosAlertTriggerSource.mobilePhone;
     final alertId = _alertIdFor(triggeredAt, mode);
@@ -205,31 +245,89 @@ class SosAlertRepository {
       // Emergency delivery still takes priority if local storage is unavailable.
     }
 
-    final dispatches = <SosContactDispatch>[];
-    String? immediateQueueReason;
-    if (contacts.isNotEmpty) {
-      final network = await _retryNetworkReachability();
-      if (!network.isOnline) {
-        immediateQueueReason =
-            'No internet after $_maxImmediateSendAttempts retries. ${network.message ?? ''}'
-                .trim();
-        dispatches.addAll(
-          contacts.map(
-            (contact) => _failedDispatch(contact, immediateQueueReason!),
+    var queuedCount = 0;
+    try {
+      queuedCount = await countQueuedAlerts(session: session);
+    } catch (_) {
+      // A local counter failure must not prevent the emergency submission.
+    }
+    final previouslyQueuedCount = durableQueueId == null
+        ? queuedCount
+        : (queuedCount - 1).clamp(0, queuedCount);
+    final optimisticDispatches = contacts
+        .map(
+          (contact) => SosContactDispatch(
+            contactName: contact.name,
+            phoneNumber: contact.phoneNumber,
+            wasSent: true,
+            retryable: false,
           ),
-        );
-        await _checkpointQueuedAlert(
-          queueId: durableQueueId,
-          alert: pendingAlert,
-          contacts: _contactsRequiringRetry(contacts, dispatches),
-          dispatches: dispatches,
-          customMessageNote: customMessageNote,
-          failureReason: immediateQueueReason,
-        );
-      } else {
-        for (final contact in contacts) {
-          dispatches.add(
-            await _sendToContact(
+        )
+        .toList(growable: false);
+    final submittedAlert = SosAlert(
+      id: alertId,
+      mode: mode,
+      status: contacts.isEmpty
+          ? SosAlertStatus.noContacts
+          : SosAlertStatus.sent,
+      triggeredAt: triggeredAt,
+      triggeredByPhoneNumber: session.phoneNumber,
+      contactCount: contacts.length,
+      sentCount: contacts.length,
+      failedCount: 0,
+      dispatches: optimisticDispatches,
+      message: message,
+      triggerLocation: triggerLocation,
+      triggerSource: resolvedTriggerSource,
+    );
+    final acknowledgement = _completeSubmittedAlert(
+      session: session,
+      mode: mode,
+      triggeredAt: triggeredAt,
+      triggerLocation: triggerLocation,
+      contacts: contacts,
+      customMessageNote: customMessageNote,
+      resolvedTriggerSource: resolvedTriggerSource,
+      alertId: alertId,
+      message: message,
+      pendingAlert: pendingAlert,
+      durableQueueId: durableQueueId,
+    );
+    return SosAlertSubmission(
+      submittedResult: SosAlertResult(
+        alert: submittedAlert,
+        // The just-created durability row is an in-flight submission, not a
+        // visible retry. It becomes Queued only if acknowledgement fails.
+        queuedAlertCount: previouslyQueuedCount,
+      ),
+      acknowledgement: acknowledgement,
+    );
+  }
+
+  Future<SosAlertResult> _completeSubmittedAlert({
+    required AppSession session,
+    required SosAlertMode mode,
+    required DateTime triggeredAt,
+    required SosTriggerLocation? triggerLocation,
+    required List<EmergencyContact> contacts,
+    required String? customMessageNote,
+    required SosAlertTriggerSource resolvedTriggerSource,
+    required String alertId,
+    required String message,
+    required SosAlert pendingAlert,
+    required int? durableQueueId,
+  }) async {
+    var queueId = durableQueueId;
+
+    final dispatches = <SosContactDispatch>[];
+    if (contacts.isNotEmpty) {
+      // Submit immediately instead of blocking on a separate connectivity
+      // probe. Firebase is the source of truth, and the bounded callable ACK
+      // below decides whether this row is completed or remains retryable.
+      dispatches.addAll(
+        await Future.wait(
+          contacts.map(
+            (contact) => _sendToContact(
               contact: contact,
               alertId: alertId,
               mode: mode,
@@ -238,17 +336,17 @@ class SosAlertRepository {
               customMessageNote: customMessageNote,
               triggerSource: resolvedTriggerSource,
             ),
-          );
-          await _checkpointQueuedAlert(
-            queueId: durableQueueId,
-            alert: pendingAlert,
-            contacts: _contactsRequiringRetry(contacts, dispatches),
-            dispatches: dispatches,
-            customMessageNote: customMessageNote,
-            failureReason: 'SOS contact dispatch is in progress.',
-          );
-        }
-      }
+          ),
+        ),
+      );
+      await _checkpointQueuedAlert(
+        queueId: queueId,
+        alert: pendingAlert,
+        contacts: _contactsRequiringRetry(contacts, dispatches),
+        dispatches: dispatches,
+        customMessageNote: customMessageNote,
+        failureReason: 'Waiting for the Firebase SOS acknowledgement.',
+      );
     }
 
     final sentCount = dispatches.where((dispatch) => dispatch.wasSent).length;
@@ -276,9 +374,6 @@ class SosAlertRepository {
 
     Object? cloudSaveError;
     try {
-      if (immediateQueueReason != null) {
-        throw SosAlertRepositoryException(immediateQueueReason);
-      }
       _throwIfFirebaseUnavailable();
       await _saveAlert(session: session, alert: alert);
     } catch (error) {
@@ -297,8 +392,8 @@ class SosAlertRepository {
       final failureReason = cloudSaveError == null
           ? 'One or more SOS contact dispatches failed.'
           : _queueFailureMessage(cloudSaveError);
-      if (durableQueueId == null) {
-        durableQueueId = await _queueAlertForRetry(
+      if (queueId == null) {
+        queueId = await _queueAlertForRetry(
           session: session,
           alert: alert,
           contacts: contactsRequiringRetry,
@@ -308,7 +403,7 @@ class SosAlertRepository {
         );
       } else {
         await _checkpointQueuedAlert(
-          queueId: durableQueueId,
+          queueId: queueId,
           alert: alert,
           contacts: contactsRequiringRetry,
           dispatches: dispatches,
@@ -317,8 +412,8 @@ class SosAlertRepository {
           sendStatus: 'retry',
         );
       }
-    } else if (durableQueueId != null) {
-      await _localDatabase.markQueuedAlertSent(durableQueueId);
+    } else if (queueId != null) {
+      await _localDatabase.markQueuedAlertSent(queueId);
     }
 
     final queuedCount = await countQueuedAlerts(session: session);
@@ -963,28 +1058,25 @@ class SosAlertRepository {
     required SosAlert alert,
   }) async {
     try {
-      await _userDocumentFor(session)
-          .set({
-            'latest_sos_alert': alert.toFirestore(),
-            'sos_alerts': FieldValue.arrayUnion([alert.toFirestore()]),
-            'sosAlertsCount': FieldValue.increment(1),
-            'sosAlertsUpdatedAt': FieldValue.serverTimestamp(),
-            'sosAlertsUpdatedAtLocal': alert.triggeredAt.toIso8601String(),
-            'phoneNumber': session.phoneNumber,
-          }, SetOptions(merge: true))
-          .timeout(_cloudWriteTimeout);
-      await _sosAlerts
-          .doc(alert.id)
-          .set({
-            ...alert.toFirestore(),
-            'userId': FirebaseUserRepository.documentIdForPhoneNumber(
-              session.phoneNumber,
-            ),
-            'phoneNumber': session.phoneNumber,
-            'cloudLogPath': 'sosAlerts/${alert.id}',
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true))
-          .timeout(_cloudWriteTimeout);
+      await Future.wait([
+        _userDocumentFor(session).set({
+          'latest_sos_alert': alert.toFirestore(),
+          'sos_alerts': FieldValue.arrayUnion([alert.toFirestore()]),
+          'sosAlertsCount': FieldValue.increment(1),
+          'sosAlertsUpdatedAt': FieldValue.serverTimestamp(),
+          'sosAlertsUpdatedAtLocal': alert.triggeredAt.toIso8601String(),
+          'phoneNumber': session.phoneNumber,
+        }, SetOptions(merge: true)),
+        _sosAlerts.doc(alert.id).set({
+          ...alert.toFirestore(),
+          'userId': FirebaseUserRepository.documentIdForPhoneNumber(
+            session.phoneNumber,
+          ),
+          'phoneNumber': session.phoneNumber,
+          'cloudLogPath': 'sosAlerts/${alert.id}',
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)),
+      ]).timeout(_cloudWriteTimeout);
     } on FirebaseException catch (error) {
       throw SosAlertRepositoryException(
         'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',

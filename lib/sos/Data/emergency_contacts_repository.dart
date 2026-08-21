@@ -44,7 +44,10 @@ class EmergencyContactsRepository {
     return _resolvedFirestore.collection('users');
   }
 
-  Future<List<EmergencyContact>> loadEmergencyContacts({
+  /// Returns the device copy without waiting for a Firestore round trip.
+  /// Emergency dispatch uses this fast path when the SOS screen is still
+  /// loading its cloud-refreshed contact list.
+  Future<List<EmergencyContact>> loadCachedEmergencyContacts({
     required AppSession session,
   }) async {
     final rawLocalContacts = await _resolvedLocalDatabase.loadEmergencyContacts(
@@ -61,6 +64,13 @@ class EmergencyContactsRepository {
         localContacts.add(normalized);
       }
     }
+    return localContacts;
+  }
+
+  Future<List<EmergencyContact>> loadEmergencyContacts({
+    required AppSession session,
+  }) async {
+    final localContacts = await loadCachedEmergencyContacts(session: session);
     if (!_firebaseBootstrapResult.isAvailable) {
       return localContacts;
     }

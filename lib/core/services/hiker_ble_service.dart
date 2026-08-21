@@ -41,6 +41,8 @@ class HikerBleService {
       '7e2a1d3f-8b10-4f4d-9f78-0c6f1d65cba1';
   static const String pairedButtonMaintenanceServiceUuid =
       '7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1';
+  static const String pairedButtonTestControlCharacteristicUuid =
+      '7e2a1d41-8b10-4f4d-9f78-0c6f1d65cba1';
   static const int manufacturerId = 0x02e5;
   static const int pairedSosProtocolVersion = 2;
   static const int pairedSosPacketType = 4;
@@ -100,6 +102,73 @@ class HikerBleService {
     } on PlatformException catch (error) {
       throw HikerBleException(
         error.message ?? 'Unable to open Android Bluetooth settings.',
+        code: error.code,
+      );
+    }
+  }
+
+  Future<void> openBatteryOptimizationSettings() async {
+    try {
+      await _methodChannel.invokeMethod<void>(
+        'openBatteryOptimizationSettings',
+      );
+    } on MissingPluginException {
+      throw const HikerBleException(
+        'Battery optimization settings are not available here.',
+      );
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to open battery optimization settings.',
+        code: error.code,
+      );
+    }
+  }
+
+  Future<SosButtonReadiness> getSosButtonReadiness() async {
+    try {
+      final raw = await _methodChannel.invokeMethod<Map<Object?, Object?>>(
+        'getSosButtonReadiness',
+      );
+      return SosButtonReadiness.fromPlatform(raw ?? const {});
+    } on MissingPluginException {
+      return SosButtonReadiness.unsupported();
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to inspect SOS button readiness.',
+        code: error.code,
+      );
+    }
+  }
+
+  Future<void> restartSosButtonMonitor() async {
+    try {
+      await _methodChannel.invokeMethod<void>('restartSosButtonMonitor');
+    } on MissingPluginException {
+      // Optional native BLE bridge.
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to restart SOS button monitoring.',
+        code: error.code,
+      );
+    }
+  }
+
+  Future<void> setLostButtonWarning({
+    required bool enabled,
+    required Duration threshold,
+  }) async {
+    try {
+      await _methodChannel.invokeMethod<void>('setLostButtonWarning', {
+        'enabled': enabled,
+        'thresholdMillis': threshold.inMilliseconds,
+      });
+    } on MissingPluginException {
+      throw const HikerBleException(
+        'Lost-button warnings are not available here.',
+      );
+    } on PlatformException catch (error) {
+      throw HikerBleException(
+        error.message ?? 'Unable to update lost-button warnings.',
         code: error.code,
       );
     }
@@ -586,6 +655,154 @@ class PairedSosButton {
   final int? lastAcceptedEventId;
 }
 
+class SosButtonReadiness {
+  const SosButtonReadiness({
+    required this.supported,
+    required this.bluetoothEnabled,
+    required this.scanPermissionGranted,
+    required this.connectPermissionGranted,
+    required this.notificationPermissionGranted,
+    required this.notificationsEnabled,
+    required this.batteryOptimizationExempt,
+    required this.monitorEnabled,
+    required this.monitorHealthy,
+    required this.monitorHeartbeatAt,
+    required this.scanState,
+    required this.lastScanStartedAt,
+    required this.lastScanResultAt,
+    required this.lastFailure,
+    required this.restartCount,
+    required this.lostButtonWarningEnabled,
+    required this.lostButtonThreshold,
+    required this.checkedAt,
+    required this.pairedButtons,
+  });
+
+  factory SosButtonReadiness.unsupported() => SosButtonReadiness(
+    supported: false,
+    bluetoothEnabled: false,
+    scanPermissionGranted: false,
+    connectPermissionGranted: false,
+    notificationPermissionGranted: false,
+    notificationsEnabled: false,
+    batteryOptimizationExempt: false,
+    monitorEnabled: false,
+    monitorHealthy: false,
+    monitorHeartbeatAt: null,
+    scanState: 'unsupported',
+    lastScanStartedAt: null,
+    lastScanResultAt: null,
+    lastFailure: null,
+    restartCount: 0,
+    lostButtonWarningEnabled: false,
+    lostButtonThreshold: const Duration(minutes: 15),
+    checkedAt: DateTime.now().toUtc(),
+    pairedButtons: const [],
+  );
+
+  factory SosButtonReadiness.fromPlatform(Map<Object?, Object?> data) {
+    final rawButtons = data['pairedButtons'];
+    return SosButtonReadiness(
+      supported: data['supported'] == true,
+      bluetoothEnabled: data['bluetoothEnabled'] == true,
+      scanPermissionGranted: data['scanPermissionGranted'] == true,
+      connectPermissionGranted: data['connectPermissionGranted'] == true,
+      notificationPermissionGranted:
+          data['notificationPermissionGranted'] == true,
+      notificationsEnabled: data['notificationsEnabled'] == true,
+      batteryOptimizationExempt: data['batteryOptimizationExempt'] == true,
+      monitorEnabled: data['monitorEnabled'] == true,
+      monitorHealthy: data['monitorHealthy'] == true,
+      monitorHeartbeatAt: _nullableDateFromMillis(
+        data['monitorHeartbeatAtMillis'],
+      ),
+      scanState: _stringFrom(data['scanState'], fallback: 'unknown')!,
+      lastScanStartedAt: _nullableDateFromMillis(
+        data['lastScanStartedAtMillis'],
+      ),
+      lastScanResultAt: _nullableDateFromMillis(data['lastScanResultAtMillis']),
+      lastFailure: _stringFrom(data['lastFailure']),
+      restartCount: _intFrom(data['restartCount']) ?? 0,
+      lostButtonWarningEnabled: data['lostButtonWarningEnabled'] != false,
+      lostButtonThreshold: Duration(
+        milliseconds:
+            _intFrom(data['lostButtonThresholdMillis']) ??
+            const Duration(minutes: 15).inMilliseconds,
+      ),
+      checkedAt: _dateFromMillis(data['checkedAtMillis']),
+      pairedButtons: rawButtons is List
+          ? rawButtons
+                .whereType<Map>()
+                .map(
+                  (value) => PairedSosButton.fromPlatform(
+                    Map<Object?, Object?>.from(value),
+                  ),
+                )
+                .toList(growable: false)
+          : const [],
+    );
+  }
+
+  final bool supported;
+  final bool bluetoothEnabled;
+  final bool scanPermissionGranted;
+  final bool connectPermissionGranted;
+  final bool notificationPermissionGranted;
+  final bool notificationsEnabled;
+  final bool batteryOptimizationExempt;
+  final bool monitorEnabled;
+  final bool monitorHealthy;
+  final DateTime? monitorHeartbeatAt;
+  final String scanState;
+  final DateTime? lastScanStartedAt;
+  final DateTime? lastScanResultAt;
+  final String? lastFailure;
+  final int restartCount;
+  final bool lostButtonWarningEnabled;
+  final Duration lostButtonThreshold;
+  final DateTime checkedAt;
+  final List<PairedSosButton> pairedButtons;
+
+  bool get hasPairedButton => pairedButtons.isNotEmpty;
+
+  PairedSosButton? get freshestButton {
+    PairedSosButton? freshest;
+    for (final button in pairedButtons) {
+      if (freshest == null ||
+          (button.lastSeenAt != null &&
+              (freshest.lastSeenAt == null ||
+                  button.lastSeenAt!.isAfter(freshest.lastSeenAt!)))) {
+        freshest = button;
+      }
+    }
+    return freshest;
+  }
+
+  bool buttonSeenRecently({Duration maximumAge = const Duration(minutes: 2)}) {
+    final lastSeen = freshestButton?.lastSeenAt;
+    return lastSeen != null && checkedAt.difference(lastSeen) <= maximumAge;
+  }
+
+  List<String> get blockingWarnings {
+    final warnings = <String>[];
+    if (!supported) warnings.add('Bluetooth Low Energy is unavailable.');
+    if (!bluetoothEnabled) warnings.add('Bluetooth is turned off.');
+    if (!scanPermissionGranted || !connectPermissionGranted) {
+      warnings.add('Required Bluetooth permission is missing.');
+    }
+    if (!notificationPermissionGranted || !notificationsEnabled) {
+      warnings.add('SOS notifications are disabled.');
+    }
+    if (!monitorEnabled || !monitorHealthy) {
+      warnings.add('The background SOS monitor is not healthy.');
+    }
+    if (hasPairedButton && !buttonSeenRecently()) {
+      warnings.add('The paired SOS button has not been seen recently.');
+    }
+    return warnings;
+  }
+}
+
 class HikerBleButtonLogRecord {
   const HikerBleButtonLogRecord({
     required this.sequence,
@@ -646,6 +863,12 @@ class HikerBleButtonLogRecord {
     12 => 'SOS session finished',
     13 => 'Log download authorized',
     14 => 'Maintenance started',
+    15 => 'Maintenance stopped',
+    16 => 'Authentication rejected',
+    17 => 'Button input fault',
+    18 => 'SOS press queued',
+    19 => 'Test mode armed',
+    20 => 'Test request rejected',
     _ => 'Unknown event ($type)',
   };
 }

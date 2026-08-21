@@ -8,6 +8,7 @@ import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/hike_session_models.dart';
+import 'hike_reminder_preferences_sheet.dart';
 
 Future<void> showUpcomingHikePopup(
   BuildContext context, {
@@ -29,8 +30,7 @@ Future<void> showUpcomingHikePopup(
           hike: hike,
           userLat: userLat,
           userLng: userLng,
-          phoneNumber: session.phoneNumber,
-          userName: session.username,
+          session: session,
           repository: repository,
           onJoin: onJoin ?? () {},
         ),
@@ -211,10 +211,11 @@ class _FindHikePageState extends State<FindHikePage> {
         hike: _hikes[index],
         userLat: _userLat,
         userLng: _userLng,
-        phoneNumber: widget.session.phoneNumber,
-        userName: widget.session.username,
+        session: widget.session,
         repository: widget.repository,
-        onJoin: () => unawaited(_load()),
+        // The card updates immediately after joining. Avoid replacing the
+        // discovery list with a full-page reload while reminder setup opens.
+        onJoin: () {},
       ),
     );
   }
@@ -226,8 +227,7 @@ class UpcomingHikeCard extends StatefulWidget {
     required this.hike,
     this.userLat,
     this.userLng,
-    required this.phoneNumber,
-    this.userName = '',
+    required this.session,
     required this.repository,
     required this.onJoin,
   });
@@ -235,8 +235,7 @@ class UpcomingHikeCard extends StatefulWidget {
   final UpcomingHike hike;
   final double? userLat;
   final double? userLng;
-  final String phoneNumber;
-  final String userName;
+  final AppSession session;
   final HikerCircleFirebaseRepository repository;
   final VoidCallback onJoin;
 
@@ -249,7 +248,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
   bool _joinedLocally = false;
 
   bool get _isParticipating {
-    final phone = widget.phoneNumber;
+    final phone = widget.session.phoneNumber;
     return _joinedLocally ||
         phone == widget.hike.creatorPhone ||
         widget.hike.participantPhones.contains(phone);
@@ -295,6 +294,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
       if (!mounted) return;
       if (ok) {
         setState(() => _joinedLocally = true);
+        await _editReminders(showJoinedConfirmation: true);
         widget.onJoin();
       } else {
         _showError('Unable to join this hike.');
@@ -308,7 +308,59 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
     }
   }
 
+  Future<void> _editReminders({bool showJoinedConfirmation = false}) async {
+    HikeReminderPreference initial = const HikeReminderPreference();
+    try {
+      initial = await widget.repository.loadUpcomingHikeReminderPreference(
+        session: widget.session,
+        hikeId: widget.hike.id,
+      );
+    } catch (_) {
+      // A newly joined hike may take a moment to become readable locally.
+      // The safe defaults still let the user configure and save immediately.
+    }
+    if (!mounted) return;
+    final preference = await showHikeReminderPreferencesSheet(
+      context,
+      hikeName: widget.hike.trailName,
+      departureTime: widget.hike.departureTime,
+      initialPreference: initial,
+    );
+    if (!mounted) return;
+    if (preference == null) {
+      if (showJoinedConfirmation) {
+        _showMessage('Hike joined. You can set reminders from this card.');
+      }
+      return;
+    }
+    try {
+      await widget.repository.saveUpcomingHikeReminderPreference(
+        session: widget.session,
+        hikeId: widget.hike.id,
+        preference: preference,
+      );
+      _showMessage(
+        preference.enabled
+            ? 'Your reminders for this hike are saved.'
+            : 'Reminders are off for this hike.',
+      );
+    } catch (_) {
+      _showError(
+        'The hike was joined, but reminder settings could not be saved. Try again from this card.',
+      );
+    }
+  }
+
   void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+  }
+
+  void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -333,7 +385,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
         '${departureTime.hour.toString().padLeft(2, '0')}:${departureTime.minute.toString().padLeft(2, '0')}';
 
     final participating = _isParticipating;
-    final isCreator = widget.phoneNumber == widget.hike.creatorPhone;
+    final isCreator = widget.session.phoneNumber == widget.hike.creatorPhone;
 
     return _InsetGroup(
       child: Padding(
@@ -363,7 +415,14 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${widget.hike.area}, ${widget.hike.state}',
+                        [
+                              widget.hike.area,
+                              widget.hike.state,
+                              widget.hike.country,
+                            ]
+                            .map((part) => part.trim())
+                            .where((part) => part.isNotEmpty)
+                            .join(', '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -497,6 +556,12 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0,
                     ),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _editReminders,
+                    icon: const Icon(Icons.notifications_outlined, size: 17),
+                    label: const Text('Reminders'),
                   ),
                 ],
               ),

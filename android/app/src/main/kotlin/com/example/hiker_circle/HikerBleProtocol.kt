@@ -34,6 +34,8 @@ object HikerBleProtocol {
         UUID.fromString("7e2a1d3f-8b10-4f4d-9f78-0c6f1d65cba1")
     val PAIRED_BUTTON_MAINTENANCE_SERVICE_UUID: UUID =
         UUID.fromString("7e2a1d40-8b10-4f4d-9f78-0c6f1d65cba1")
+    val PAIRED_BUTTON_TEST_CONTROL_CHARACTERISTIC_UUID: UUID =
+        UUID.fromString("7e2a1d41-8b10-4f4d-9f78-0c6f1d65cba1")
     val ACTIVE_SOS_SERVICE_UUID: UUID =
         UUID.fromString("7e2a1d3a-8b10-4f4d-9f78-0c6f1d65cba1")
     val SOS_LOCATION_CHARACTERISTIC_UUID: UUID =
@@ -96,7 +98,7 @@ object HikerBleProtocol {
             data[1] != MAGIC_C ||
             data[2].toInt() != 2 ||
             data[3].toInt() != TYPE_PAIRED_SOS_REMOTE ||
-            data[4].toInt().and(0xff) != 1
+            data[4].toInt().and(0xff) !in 1..2
         ) {
             return null
         }
@@ -113,6 +115,24 @@ object HikerBleProtocol {
             signedPayload = data.copyOfRange(0, 15),
             rssi = rssi,
         )
+    }
+
+    fun encodePairedButtonTestArm(
+        challenge: ByteArray,
+        pairingSecret: ByteArray,
+        expectedDeviceId: ByteArray,
+    ): ByteArray? {
+        if (challenge.size != 22 || pairingSecret.size != 32 || expectedDeviceId.size != 6 ||
+            challenge[0] != MAGIC_H || challenge[1] != MAGIC_C ||
+            challenge[2].toInt().and(0xff) != 1 ||
+            challenge[3].toInt().and(0xff) != 0x13 ||
+            !challenge.copyOfRange(4, 10).contentEquals(expectedDeviceId)
+        ) return null
+        val tag = Mac.getInstance("HmacSHA256")
+            .apply { init(SecretKeySpec(pairingSecret, "HmacSHA256")) }
+            .doFinal(challenge)
+            .copyOfRange(0, 8)
+        return challenge + tag
     }
 
     /**
@@ -242,7 +262,8 @@ object HikerBleProtocol {
         pairingSecret: ByteArray,
     ): ByteArray {
         require(challenge.size == LOG_CHALLENGE_BYTES) {
-            "The SOS button returned an invalid log challenge."
+            "The SOS button returned an invalid log challenge " +
+                "(expected $LOG_CHALLENGE_BYTES bytes, received ${challenge.size})."
         }
         require(deviceId.size == 6) { "Paired button device IDs must be six bytes." }
         require(pairingSecret.size == 32) { "Paired button secrets must be 32 bytes." }
@@ -259,7 +280,10 @@ object HikerBleProtocol {
             .apply { init(SecretKeySpec(pairingSecret, "HmacSHA256")) }
             .doFinal(challenge)
             .copyOfRange(0, 8)
-        return challenge + tag
+        // The button already owns this fresh challenge. Sending only its tag
+        // keeps authentication inside one conservative ATT packet; firmware
+        // still accepts the original challenge+tag format for older clients.
+        return tag
     }
 
     fun decodeLogPage(data: ByteArray): LogPage? {

@@ -36,6 +36,12 @@ const {
   buildUpcomingHikePreview,
 } = require('./upcoming_hike_helpers');
 const {
+  upcomingHikeReminderDue,
+} = require('./upcoming_hike_reminder_helpers');
+const {
+  normalizeNearbySosReport,
+} = require('./nearby_sos_helpers');
+const {
   SHARED_HIKE_PLAN_PRIVACY_VERSION,
   projectSharedHikePlan,
   sharedHikePlanNeedsRedaction,
@@ -64,6 +70,77 @@ admin.messaging = () => getMessaging();
 
 const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
+
+// Accepts an explicitly unverified observation from a signed-in nearby phone.
+// A deterministic device/counter incident ID and one report per account prevent
+// repeated BLE advertisements or reconnect retries from creating emergencies.
+exports.forwardNearbySosIncident = onCall(
+  { enforceAppCheck: true },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Sign in before forwarding a nearby SOS.');
+    }
+    let report;
+    try {
+      report = normalizeNearbySosReport(request.data);
+    } catch (error) {
+      logger.warn('Rejected invalid nearby SOS forwarding report', {
+        uid,
+        reason: error?.message || 'invalid-report',
+      });
+      throw new HttpsError('invalid-argument', 'The nearby SOS report is invalid or stale.');
+    }
+
+    const firestore = admin.firestore();
+    const incidentRef = firestore.collection('nearbySosIncidents').doc(report.incidentId);
+    const reporterHash = crypto.createHash('sha256').update(uid).digest('hex');
+    const reporterRef = incidentRef.collection('reports').doc(reporterHash);
+    let reporterCount = 1;
+    let deduplicated = false;
+    await firestore.runTransaction(async (transaction) => {
+      const [incidentSnapshot, reporterSnapshot] = await Promise.all([
+        transaction.get(incidentRef),
+        transaction.get(reporterRef),
+      ]);
+      deduplicated = incidentSnapshot.exists;
+      const existing = incidentSnapshot.data() || {};
+      reporterCount = Number(existing.reporterCount || 0)
+        + (reporterSnapshot.exists ? 0 : 1);
+      const nowIso = new Date().toISOString();
+      const location = report.reportedLocation || report.detectorLocation;
+      transaction.set(incidentRef, {
+        incidentId: report.incidentId,
+        deviceIdHash: report.deviceIdHash,
+        counter: report.counter,
+        verificationState: 'unverified_nearby_ble',
+        status: 'active',
+        reporterCount,
+        firstReceivedAtLocal: existing.firstReceivedAtLocal
+          || new Date(report.receivedAtMillis).toISOString(),
+        lastReceivedAtLocal: new Date(report.receivedAtMillis).toISOString(),
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+        ...(location ? {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          accuracyMeters: location.accuracyMeters,
+          locationSource: report.reportedLocation ? 'button_relay' : 'detector_phone',
+        } : {}),
+      }, { merge: true });
+      transaction.set(reporterRef, {
+        reporterHash,
+        receivedAtLocal: new Date(report.receivedAtMillis).toISOString(),
+        rssi: report.rssi,
+        reportedLocation: report.reportedLocation,
+        detectorLocation: report.detectorLocation,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+      }, { merge: true });
+    });
+    return { incidentId: report.incidentId, deduplicated, reporterCount };
+  },
+);
 
 const achievementSeedDefinitions = Object.freeze({
   first_safe_hike: {
@@ -861,7 +938,10 @@ exports.sendSosWhatsAppMessage = onCall(
 
     let credentials;
     try {
-      credentials = await requireGreenApiReady();
+      // SOS is the latency-critical path. Sending directly avoids a separate
+      // GreenAPI state request before every emergency message; the structured
+      // send response below remains the authoritative provider ACK.
+      credentials = greenApiCredentials();
     } catch (error) {
       logger.error('GreenAPI SOS readiness failed', {
         uid,
@@ -2283,6 +2363,7 @@ exports.scheduleUpcomingHike = onCall(
         longitude: boundedNumber(trail.longitude, -180, 180, 0),
         area: String(trail.area || '').slice(0, 160),
         state: String(trail.state || '').slice(0, 160),
+        country: String(trail.country || '').slice(0, 160),
         distanceKm: boundedNumber(trail.distanceKm, 0, 1000, 0),
         durationMinutes: Math.round(
           boundedNumber(trail.estimatedDurationMinutes, 1, 43200, 1)
@@ -7802,7 +7883,26 @@ exports.sendReminderOnActiveHikeTerminationSignal = onDocumentUpdated(
   }
 );
 
-async function sendUpcomingHikeReminderToPhone(db, hikeId, hike, phoneNumber) {
+function upcomingHikeReminderWindowLabel(minutesUntil) {
+  const minutes = Math.max(1, Math.round(Number(minutesUntil) || 1));
+  if (minutes >= 1440 && minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return `${days} day${days === 1 ? '' : 's'}`;
+  }
+  if (minutes >= 60 && minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hour${hours === 1 ? '' : 's'}`;
+  }
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+async function sendUpcomingHikeReminderToPhone(
+  db,
+  hikeId,
+  hike,
+  phoneNumber,
+  minutesUntil
+) {
   const phone = String(phoneNumber || '').trim();
   if (!phone) {
     return { successCount: 0, failureCount: 0, skipped: true };
@@ -7822,6 +7922,7 @@ async function sendUpcomingHikeReminderToPhone(db, hikeId, hike, phoneNumber) {
   const creatorPhone = String(hike.creatorPhone || '');
   const isHost = phoneKeyFor(phone) === phoneKeyFor(creatorPhone);
   const trailName = String(hike.trailName || 'your hike');
+  const windowLabel = upcomingHikeReminderWindowLabel(minutesUntil);
   const deepLink =
     `hikercircle://upcoming-hike/view?upcomingHikeId=` +
     encodeURIComponent(hikeId);
@@ -7833,11 +7934,11 @@ async function sendUpcomingHikeReminderToPhone(db, hikeId, hike, phoneNumber) {
       notification: {
         title: isHost ? 'Prepare to start your hike' : 'Upcoming hike reminder',
         body: isHost
-          ? `${trailName} starts in about 30 minutes. Open HikerCircle to prepare.`
-          : `${trailName} starts in about 30 minutes. Get ready to join.`,
+          ? `${trailName} starts in about ${windowLabel}. Open HikerCircle to prepare.`
+          : `${trailName} starts in about ${windowLabel}. Get ready to join.`,
       },
       data: {
-        type: 'upcoming_hike_30_minute_reminder',
+        type: 'upcoming_hike_reminder',
         upcomingHikeId: hikeId,
         deepLink,
         role: isHost ? 'host' : 'participant',
@@ -7858,6 +7959,73 @@ async function sendUpcomingHikeReminderToPhone(db, hikeId, hike, phoneNumber) {
     failureCount += response.failureCount;
   }
   return { successCount, failureCount, skipped: false };
+}
+
+async function claimUpcomingHikeReminder({
+  db,
+  hikeReference,
+  hikeId,
+  hike,
+  phoneNumber,
+  departureMillis,
+  nowMillis,
+}) {
+  const userId = userDocumentIdForPhone(phoneNumber);
+  const preferenceReference = hikeReference
+    .collection('reminderPreferences')
+    .doc(userId);
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(preferenceReference);
+    if (!snapshot.exists && (
+      hike.reminder30SentAt
+      || hike.reminder30SentAtLocal
+      || hike.reminder30ClaimedAt
+      || hike.reminder30ClaimedAtLocal
+    )) {
+      return null;
+    }
+    const rawPreference = snapshot.data() || {};
+    const due = upcomingHikeReminderDue({
+      rawPreference,
+      departureMillis,
+      nowMillis,
+      legacy: !snapshot.exists,
+    });
+    if (!due.due) return null;
+
+    const lastClaimedMillis = dateMillis(
+      rawPreference.deliveryClaimedAtLocal
+      || rawPreference.deliveryClaimedAt
+    );
+    if (
+      Number.isFinite(lastClaimedMillis)
+      && nowMillis - lastClaimedMillis < 10 * 60 * 1000
+    ) {
+      return null;
+    }
+    const nextSentCount = (due.sentCount || 0) + 1;
+    transaction.set(
+      preferenceReference,
+      {
+        ...due.preference,
+        hikeId,
+        ownerUserId: userId,
+        ownerPhoneNumber: phoneNumber,
+        departureTimeLocal: new Date(departureMillis).toISOString(),
+        deliveryClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        deliveryClaimedAtLocal: new Date(nowMillis).toISOString(),
+        deliveryClaimSequence: nextSentCount,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: new Date(nowMillis).toISOString(),
+      },
+      { merge: true }
+    );
+    return {
+      preferenceReference,
+      minutesUntil: due.minutesUntil,
+      nextSentCount,
+    };
+  });
 }
 
 // Legacy scheduled/team documents may predate the shared-plan projection and
@@ -7983,7 +8151,6 @@ exports.processUpcomingHikeLifecycle = onSchedule(
   async () => {
     const db = admin.firestore();
     const now = Date.now();
-    const reminderWindowEnd = now + 30 * 60 * 1000;
     const expiredBefore = now - 60 * 60 * 1000;
     const snapshot = await db.collection('upcomingHikes').get();
 
@@ -8018,67 +8185,13 @@ exports.processUpcomingHikeLifecycle = onSchedule(
         continue;
       }
 
-      if (
-        hike.reminder30SentAt ||
-        hike.reminder30SentAtLocal ||
-        hike.reminder30ClaimedAt ||
-        hike.reminder30ClaimedAtLocal ||
-        departureMillis <= now ||
-        departureMillis > reminderWindowEnd
-      ) {
-        continue;
-      }
-
-      // Claim before contacting FCM. Scheduled functions may overlap, and a
-      // send can succeed even when its response is lost. A permanent claim
-      // deliberately favours at-most-once delivery over duplicate reminders.
-      const claimedHike = await db.runTransaction(async (transaction) => {
-        const freshSnapshot = await transaction.get(document.ref);
-        const current = freshSnapshot.data() || {};
-        const currentDepartureMillis = dateMillis(
-          current.departureTimeLocal || current.departureTime
-        );
-        const hasRecipient = Boolean(String(current.creatorPhone || '').trim())
-          || (Array.isArray(current.participantPhones)
-            && current.participantPhones.some(
-              (phone) => Boolean(String(phone || '').trim())
-            ));
-        if (
-          !freshSnapshot.exists
-          || current.isDeleted === true
-          || current.reminder30SentAt
-          || current.reminder30SentAtLocal
-          || current.reminder30ClaimedAt
-          || current.reminder30ClaimedAtLocal
-          || !hasRecipient
-          || !Number.isFinite(currentDepartureMillis)
-          || currentDepartureMillis <= now
-          || currentDepartureMillis > reminderWindowEnd
-        ) {
-          return null;
-        }
-        transaction.set(
-          document.ref,
-          {
-            reminder30ClaimedAt:
-              admin.firestore.FieldValue.serverTimestamp(),
-            reminder30ClaimedAtLocal: new Date(now).toISOString(),
-          },
-          { merge: true }
-        );
-        return current;
-      });
-      if (!claimedHike) {
-        continue;
-      }
-
       const phones = new Set();
-      const creatorPhone = String(claimedHike.creatorPhone || '').trim();
+      const creatorPhone = String(hike.creatorPhone || '').trim();
       if (creatorPhone) {
         phones.add(creatorPhone);
       }
-      if (Array.isArray(claimedHike.participantPhones)) {
-        for (const phone of claimedHike.participantPhones) {
+      if (Array.isArray(hike.participantPhones)) {
+        for (const phone of hike.participantPhones) {
           const normalized = String(phone || '').trim();
           if (normalized) {
             phones.add(normalized);
@@ -8089,26 +8202,49 @@ exports.processUpcomingHikeLifecycle = onSchedule(
         continue;
       }
 
+      let hikeHadDueReminder = false;
       for (const phone of phones) {
+        const claim = await claimUpcomingHikeReminder({
+          db,
+          hikeReference: document.ref,
+          hikeId: document.id,
+          hike,
+          phoneNumber: phone,
+          departureMillis,
+          nowMillis: now,
+        });
+        if (!claim) continue;
+        hikeHadDueReminder = true;
         const result = await sendUpcomingHikeReminderToPhone(
           db,
           document.id,
-          claimedHike,
-          phone
+          hike,
+          phone,
+          claim.minutesUntil
         );
         reminderSuccessCount += result.successCount;
         reminderFailureCount += result.failureCount;
+        await claim.preferenceReference.set(
+          {
+            sentCount: claim.nextSentCount,
+            lastSentAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastSentAtLocal: new Date(now).toISOString(),
+            lastDeliveryStatus: result.skipped
+              ? 'no_registered_device'
+              : result.failureCount > 0 && result.successCount === 0
+                ? 'failed'
+                : result.failureCount > 0
+                  ? 'partial'
+                  : 'sent',
+            lastDeliverySuccessCount: result.successCount,
+            lastDeliveryFailureCount: result.failureCount,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAtLocal: new Date(now).toISOString(),
+          },
+          { merge: true }
+        );
       }
-      await document.ref.set(
-        {
-          reminder30SentAt: admin.firestore.FieldValue.serverTimestamp(),
-          reminder30SentAtLocal: new Date(now).toISOString(),
-          reminder30TargetCount: phones.size,
-          reminder30DeliveryStatus: 'sent',
-        },
-        { merge: true }
-      );
-      reminderHikeCount++;
+      if (hikeHadDueReminder) reminderHikeCount++;
     }
 
     logger.log(

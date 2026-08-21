@@ -227,6 +227,7 @@ class Trail {
     required this.name,
     required this.area,
     required this.state,
+    this.country = '',
     required this.latitude,
     required this.longitude,
     required this.distanceKm,
@@ -270,6 +271,7 @@ class Trail {
       name: _trailStringFrom(data['name']),
       area: _trailStringFrom(data['area']),
       state: _trailStringFrom(data['state']),
+      country: _trailStringFrom(data['country']),
       latitude: _trailDoubleFrom(data['latitude']),
       longitude: _trailDoubleFrom(data['longitude']),
       distanceKm: _trailDoubleFrom(data['distanceKm']),
@@ -301,6 +303,7 @@ class Trail {
   final String name;
   final String area;
   final String state;
+  final String country;
   final double latitude;
   final double longitude;
   final double distanceKm;
@@ -329,6 +332,7 @@ class Trail {
       'name': name,
       'area': area,
       'state': state,
+      if (country.trim().isNotEmpty) 'country': country.trim(),
       'latitude': latitude,
       'longitude': longitude,
       'distanceKm': distanceKm,
@@ -360,7 +364,11 @@ class Trail {
     return {...toFirestore(), 'difficulty': difficulty};
   }
 
-  String get locationLabel => '$area, $state';
+  String get locationLabel => [
+    area,
+    state,
+    country,
+  ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(', ');
 
   String get durationLabel {
     final hours = estimatedDurationMinutes ~/ 60;
@@ -381,6 +389,7 @@ class Trail {
     String? name,
     String? area,
     String? state,
+    String? country,
     double? latitude,
     double? longitude,
     double? distanceKm,
@@ -405,6 +414,7 @@ class Trail {
       name: name ?? this.name,
       area: area ?? this.area,
       state: state ?? this.state,
+      country: country ?? this.country,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       distanceKm: distanceKm ?? this.distanceKm,
