@@ -8,6 +8,7 @@ import '../../core/services/hiking_route_service.dart';
 import '../../trail/Model/trail_models.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
+import 'route_endpoint_marker.dart';
 
 bool _isValidMapPoint(mapbox.Point point) {
   return mapPointCoordinatesOrNull(point) != null;
@@ -468,6 +469,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       if (!_isCurrentMap(map, generation)) return false;
       pointManager ??= await map.annotations.createPointAnnotationManager();
       if (!_isCurrentMap(map, generation)) return false;
+      await pointManager.setIconAllowOverlap(true);
+      await pointManager.setTextAllowOverlap(true);
+      if (!_isCurrentMap(map, generation)) return false;
       _polylineManager = polylineManager;
       _circleManager = circleManager;
       _pointManager = pointManager;
@@ -582,22 +586,28 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
             circleStrokeWidth: 1.2,
           ),
-        mapbox.CircleAnnotationOptions(
-          geometry: _startPoint,
-          circleColor: const Color(0xFF7BC90E).toARGB32(),
-          circleRadius: 6.5,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
-        mapbox.CircleAnnotationOptions(
-          geometry: _endPoint,
-          circleColor: const Color(0xFFE94B42).toARGB32(),
-          circleRadius: 6.5,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
       ];
-      await _circleManager!.createMulti(circleOptions);
+      if (circleOptions.isNotEmpty) {
+        await _circleManager!.createMulti(circleOptions);
+      }
+
+      final endpointPin = await routeEndpointPinImage();
+      if (!_isCurrentMap(map, mapGeneration) ||
+          generation != _renderGeneration) {
+        return;
+      }
+      await _pointManager!.createMulti([
+        routeEndpointAnnotation(
+          geometry: _startPoint,
+          label: 'Start',
+          pinImage: endpointPin,
+        ),
+        routeEndpointAnnotation(
+          geometry: _endPoint,
+          label: 'End',
+          pinImage: endpointPin,
+        ),
+      ]);
 
       final validPinnedPoints = widget.pinnedPoints
           .where(_isValidMapPoint)

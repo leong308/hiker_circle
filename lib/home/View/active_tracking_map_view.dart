@@ -6,6 +6,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../core/widgets/route_endpoint_marker.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Data/active_hike_weather_service.dart';
 import '../Model/hike_session_models.dart';
@@ -89,6 +90,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   mapbox.MapboxMap? _mapboxMap;
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
+  mapbox.PointAnnotationManager? _pointManager;
   Future<bool>? _annotationManagersFuture;
   List<Offset?> _weatherScreenPositions = const [];
   Map<String, Offset?> _teamScreenPositions = const {};
@@ -137,6 +139,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     _mapboxMap = null;
     _polylineManager = null;
     _circleManager = null;
+    _pointManager = null;
     _annotationManagersFuture = null;
     super.dispose();
   }
@@ -488,6 +491,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         _mapboxMap = null;
         _polylineManager = null;
         _circleManager = null;
+        _pointManager = null;
         _annotationManagersFuture = null;
         _weatherScreenPositions = const [];
         _teamScreenPositions = const {};
@@ -530,6 +534,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _routeRendered = false;
       _polylineManager = null;
       _circleManager = null;
+      _pointManager = null;
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -573,6 +578,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _routeRendered = false;
       _polylineManager = null;
       _circleManager = null;
+      _pointManager = null;
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -613,13 +619,20 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     try {
       var polylineManager = _polylineManager;
       var circleManager = _circleManager;
+      var pointManager = _pointManager;
       polylineManager ??= await map.annotations
           .createPolylineAnnotationManager();
       if (!_isCurrentMap(map, generation)) return false;
       circleManager ??= await map.annotations.createCircleAnnotationManager();
       if (!_isCurrentMap(map, generation)) return false;
+      pointManager ??= await map.annotations.createPointAnnotationManager();
+      if (!_isCurrentMap(map, generation)) return false;
+      await pointManager.setIconAllowOverlap(true);
+      await pointManager.setTextAllowOverlap(true);
+      if (!_isCurrentMap(map, generation)) return false;
       _polylineManager = polylineManager;
       _circleManager = circleManager;
+      _pointManager = pointManager;
       return true;
     } catch (error) {
       if (_isCurrentMap(map, generation)) {
@@ -684,9 +697,15 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
 
     final polylineManager = _polylineManager;
     final circleManager = _circleManager;
-    if (polylineManager == null || circleManager == null) return;
+    final pointManager = _pointManager;
+    if (polylineManager == null ||
+        circleManager == null ||
+        pointManager == null) {
+      return;
+    }
     await polylineManager.deleteAll();
     await circleManager.deleteAll();
+    await pointManager.deleteAll();
     if (!_isCurrentMap(map, mapGeneration) ||
         renderGeneration != _renderGeneration) {
       return;
@@ -772,14 +791,6 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
           circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
           circleStrokeWidth: 2,
         ),
-      if (recordedRoute.isNotEmpty)
-        mapbox.CircleAnnotationOptions(
-          geometry: recordedRoute.first,
-          circleColor: const Color(0xFF7BC90E).toARGB32(),
-          circleRadius: 6,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
       if (hasCheckpoints)
         for (final cp
             in _checkpointPoints
@@ -793,26 +804,31 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
             circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
             circleStrokeWidth: 1.2,
           ),
-      if (hasCheckpoints)
-        mapbox.CircleAnnotationOptions(
-          geometry: _checkpointPoints.first,
-          circleColor: const Color(0xFF7BC90E).toARGB32(),
-          circleRadius: 6.5,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
-      if (hasCheckpoints)
-        mapbox.CircleAnnotationOptions(
-          geometry: _checkpointPoints.last,
-          circleColor: const Color(0xFFE94B42).toARGB32(),
-          circleRadius: 6.5,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
     ];
 
     if (circleAnnotations.isNotEmpty) {
       await circleManager.createMulti(circleAnnotations);
+      created = true;
+    }
+
+    if (_hasReferenceEndpoints) {
+      final endpointPin = await routeEndpointPinImage();
+      if (!_isCurrentMap(map, mapGeneration) ||
+          renderGeneration != _renderGeneration) {
+        return;
+      }
+      await pointManager.createMulti([
+        routeEndpointAnnotation(
+          geometry: _startPoint,
+          label: 'Start',
+          pinImage: endpointPin,
+        ),
+        routeEndpointAnnotation(
+          geometry: _endPoint,
+          label: 'End',
+          pinImage: endpointPin,
+        ),
+      ]);
       created = true;
     }
 
@@ -1055,6 +1071,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _mapboxMap = null;
       _polylineManager = null;
       _circleManager = null;
+      _pointManager = null;
       _annotationManagersFuture = null;
       _weatherScreenPositions = const [];
       _teamScreenPositions = const {};
