@@ -19,6 +19,9 @@ class FirebaseBootstrapResult {
 }
 
 abstract final class FirebaseBootstrap {
+  static const bool _useAppleDebugProviderInRelease = bool.fromEnvironment(
+    'FIREBASE_APP_CHECK_DEBUG',
+  );
   static const MethodChannel _buildConfigChannel = MethodChannel(
     'hiker_circle/build_config',
   );
@@ -38,7 +41,7 @@ abstract final class FirebaseBootstrap {
           providerAndroid: useAndroidDebugProvider
               ? const AndroidDebugProvider()
               : const AndroidPlayIntegrityProvider(),
-          providerApple: kDebugMode
+          providerApple: !kReleaseMode || _useAppleDebugProviderInRelease
               ? const AppleDebugProvider()
               : const AppleAppAttestWithDeviceCheckFallbackProvider(),
         );

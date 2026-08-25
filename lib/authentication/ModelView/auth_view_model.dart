@@ -161,6 +161,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('loginWithPassword')
           .call(<String, Object?>{
