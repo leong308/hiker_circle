@@ -7,7 +7,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('route endpoints use a red pin with the label above it', () async {
+  test('route endpoints keep the red label close above the pin', () async {
     final imageBytes = await routeEndpointPinImage();
     final codec = await ui.instantiateImageCodec(imageBytes);
     final frame = await codec.getNextFrame();
@@ -29,6 +29,6 @@ void main() {
     expect(annotation.textField, 'Start');
     expect(annotation.textColor, routeEndpointRed);
     expect(annotation.textAnchor, mapbox.TextAnchor.BOTTOM);
-    expect(annotation.textOffset?[1], lessThan(0));
+    expect(annotation.textOffset, const [0.0, -3.2]);
   });
 }

@@ -29,7 +29,7 @@ mapbox.PointAnnotationOptions routeEndpointAnnotation({
     textColor: routeEndpointRed,
     textHaloColor: 0xFFFFFFFF,
     textHaloWidth: 2.4,
-    textOffset: const [0.0, -3.75],
+    textOffset: const [0.0, -3.2],
     textAnchor: mapbox.TextAnchor.BOTTOM,
   );
 }

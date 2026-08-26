@@ -27,7 +27,6 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 flutter_ios_podfile_setup
 
 target 'Runner' do
-  pod 'FirebaseAppCheck', :modular_headers => true
   pod 'FirebaseAppCheckInterop', :modular_headers => true
   pod 'FirebaseAuth', :modular_headers => true
   pod 'FirebaseAuthInterop', :modular_headers => true
@@ -62,15 +61,6 @@ post_install do |installer|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
     end
 
-    if target.name == 'FirebaseAppCheck'
-      target.build_configurations.each do |config|
-        paths = config.build_settings['HEADER_SEARCH_PATHS'] || '$(inherited)'
-        paths = [paths] unless paths.is_a?(Array)
-        app_check_swift_header_path = '"${PODS_CONFIGURATION_BUILD_DIR}/AppCheckCore/Swift Compatibility Header"'
-        paths << app_check_swift_header_path unless paths.include?(app_check_swift_header_path)
-        config.build_settings['HEADER_SEARCH_PATHS'] = paths
-      end
-    end
   end
 
   Dir.glob(File.join(installer.sandbox.root.to_s, 'Target Support Files', 'Pods-Runner', 'Pods-Runner.*.xcconfig')).each do |path|

@@ -48,25 +48,11 @@ Before deploying the mobile backend:
 
 1. Configure the `GREEN_API_INSTANCE_ID` and `GREEN_API_TOKEN` Firebase
    Functions secrets.
-2. Register the Android app with Firebase App Check using Play Integrity.
-3. Enable App Attest for the iOS bundle id in Apple Developer and Firebase,
-   then regenerate the development and distribution provisioning profiles.
-4. For a local development-signed Android APK, add
-   `com.leongziqi.hikercircle` plus the debug signing certificate SHA-1 to the
-   Android API-key application restrictions, explicitly allow the Firebase App
-   Check API (`firebaseappcheck.googleapis.com`) in the key's API restrictions,
-   and register the debug token printed by Logcat in Firebase Console > App
-   Check > Android app > Manage debug tokens. Never use that debug token or
-   provider for the Play-signed production build.
-5. Deploy Firestore rules/indexes, Storage rules, and Functions together. The
+2. Deploy Firestore rules/indexes, Storage rules, and Functions together. The
    Functions project uses the supported Node.js 22 runtime.
-6. Grant the Firebase Rules service agent
+3. Grant the Firebase Rules service agent
    `roles/firebaserules.firestoreServiceAgent`; Storage attachment rules use
    Firestore membership lookups.
-
-Observe App Check provider metrics before enabling product-level Firestore,
-Storage, and Authentication enforcement in Firebase Console. Cloud callables
-also enforce App Check in code.
 
 GreenAPI sends now call `getStateInstance` before every login-code,
 password-reset, or SOS dispatch. The instance must report `authorized`, and a

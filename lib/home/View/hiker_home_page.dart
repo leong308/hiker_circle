@@ -49,6 +49,7 @@ import '../ModelView/fall_stillness_monitor.dart';
 import '../ModelView/stationary_location_policy.dart';
 import 'active_hike_map_page.dart';
 import 'home_dashboard_page.dart';
+import 'hike_share_preview_page.dart';
 import 'first_aid_guide_page.dart';
 import 'start_hike_wizard_page.dart';
 
@@ -3841,20 +3842,21 @@ class _HikerHomePageState extends State<HikerHomePage>
       MaterialPageRoute<void>(
         builder: (context) {
           return _HikeSummaryReportPage(
+            session: widget.session,
             report: completedReport,
             activeHike: completedHike,
             initialMapStyleIndex: _lastMapStyleIndex,
-            onShareReportText: () => _sosDeviceAlertService.shareText(
+            onShareReportText: (text) => _sosDeviceAlertService.shareText(
               subject: 'Hike summary: ${completedReport.trailName}',
-              text: completedReport.shareText,
+              text: text,
             ),
             onShareToCommunity: endResult.completed
-                ? () async {
+                ? (caption) async {
                     await hikerCircleRepository.createCompletedHikePost(
                       session: widget.session,
                       activeHike: completedHike,
                       summary: completedReport,
-                      caption: completedReport.shareText,
+                      caption: caption,
                     );
                   }
                 : null,
@@ -7576,6 +7578,7 @@ class _PulsingHikeIconState extends State<_PulsingHikeIcon>
 
 class _HikeSummaryReportPage extends StatefulWidget {
   const _HikeSummaryReportPage({
+    required this.session,
     required this.report,
     required this.activeHike,
     required this.onShareReportText,
@@ -7583,10 +7586,11 @@ class _HikeSummaryReportPage extends StatefulWidget {
     this.initialMapStyleIndex = 0,
   });
 
+  final AppSession session;
   final HikeSummaryReport report;
   final ActiveHikeSession activeHike;
-  final Future<void> Function()? onShareToCommunity;
-  final Future<void> Function() onShareReportText;
+  final Future<void> Function(String caption)? onShareToCommunity;
+  final Future<void> Function(String text) onShareReportText;
   final int initialMapStyleIndex;
 
   @override
@@ -7594,8 +7598,6 @@ class _HikeSummaryReportPage extends StatefulWidget {
 }
 
 class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
-  bool _isSharingCommunity = false;
-
   List<mapbox.Point> get _actualPinPoints => widget
       .activeHike
       .manualPinLocations
@@ -7624,77 +7626,28 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
       )
       .toList();
 
-  Future<void> _shareToCommunity() async {
-    final shareToCommunity = widget.onShareToCommunity;
-    if (_isSharingCommunity || shareToCommunity == null) {
-      return;
-    }
-
-    setState(() {
-      _isSharingCommunity = true;
-    });
-    try {
-      await shareToCommunity();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Hike summary shared to community.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(error.message),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Unable to share this summary right now.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSharingCommunity = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _shareReportText() async {
-    try {
-      await widget.onShareReportText();
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Sharing is unavailable on this device.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    }
+  Future<void> _openSharePreview() async {
+    final posted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (context) => HikeSharePreviewPage(
+          session: widget.session,
+          report: widget.report,
+          activeHike: widget.activeHike,
+          initialMapStyleIndex: widget.initialMapStyleIndex,
+          onPostToCommunity: widget.onShareToCommunity,
+          onShareExternally: widget.onShareReportText,
+        ),
+      ),
+    );
+    if (!mounted || posted != true) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Hike shared to community.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   HikingRouteResult? get _summaryRouteResult {
@@ -8008,23 +7961,16 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  if (widget.onShareToCommunity != null) ...[
-                    FilledButton.icon(
-                      onPressed: _isSharingCommunity ? null : _shareToCommunity,
-                      icon: _isSharingCommunity
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.groups_2_rounded),
-                      label: const Text('Share to Community'),
+                  FilledButton.icon(
+                    key: const Key('preview-and-share-hike'),
+                    onPressed: () => unawaited(_openSharePreview()),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _SummaryColors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    const SizedBox(height: 10),
-                  ],
-                  OutlinedButton.icon(
-                    onPressed: () => unawaited(_shareReportText()),
                     icon: const Icon(Icons.ios_share_rounded),
-                    label: const Text('Share Report Text'),
+                    label: const Text('Preview & Share Hike'),
                   ),
                 ],
               ),

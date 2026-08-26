@@ -75,7 +75,7 @@ const greenApiToken = defineSecret('GREEN_API_TOKEN');
 // A deterministic device/counter incident ID and one report per account prevent
 // repeated BLE advertisements or reconnect retries from creating emergencies.
 exports.forwardNearbySosIncident = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
@@ -424,7 +424,7 @@ async function updateTeamParticipantForHike(hike, nextStatus) {
 }
 
 exports.sendGreenApiLoginCode = onCall(
-  { secrets: [greenApiInstanceId, greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiInstanceId, greenApiToken] },
   async (request) => {
     const phoneNumber = String(request.data?.phoneNumber || '').trim();
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
@@ -716,7 +716,6 @@ function greenApiReadinessHttpsError(error) {
 exports.sendSosWhatsAppMessage = onCall(
   {
     secrets: [greenApiInstanceId, greenApiToken],
-    enforceAppCheck: true,
     timeoutSeconds: 30,
   },
   async (request) => {
@@ -1119,7 +1118,7 @@ exports.sendSosWhatsAppMessage = onCall(
   }
 );
 
-exports.manageBuddyRequest = onCall({ enforceAppCheck: true }, async (request) => {
+exports.manageBuddyRequest = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
   const action = String(request.data?.action || '');
@@ -1270,7 +1269,7 @@ exports.manageBuddyRequest = onCall({ enforceAppCheck: true }, async (request) =
 // and route-planning fields never cross the trust boundary. Full documents
 // remain readable only by their participants and administrators.
 exports.listUpcomingHikePreviews = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -1333,7 +1332,7 @@ exports.listUpcomingHikePreviews = onCall(
 // Joining changes another user's upcoming-hike document, so membership and
 // chat creation are performed together by trusted server code. The caller's
 // phone number is always derived from the verified Firebase token.
-exports.joinUpcomingHike = onCall({ enforceAppCheck: true }, async (request) => {
+exports.joinUpcomingHike = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
   const hikeId = String(request.data?.hikeId || '').trim();
@@ -1521,7 +1520,7 @@ function publicProfileFromUserDocument(document) {
 // User documents contain authentication hashes, device bindings, emergency
 // contacts, and push tokens. Mobile clients receive only this explicit public
 // projection instead of being allowed to read other users' full documents.
-exports.getPublicProfiles = onCall({ enforceAppCheck: true }, async (request) => {
+exports.getPublicProfiles = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
   if (
@@ -2224,7 +2223,7 @@ async function ensureTeamChatDocument(db, teamId, team) {
 }
 
 exports.scheduleUpcomingHike = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber: ownerPhone, uid } = authenticatedPhoneFor(
       request,
@@ -2426,7 +2425,7 @@ exports.scheduleUpcomingHike = onCall(
 );
 
 exports.openDirectChat = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber: callerPhone, uid } = authenticatedPhoneFor(
       request,
@@ -2522,7 +2521,7 @@ exports.openDirectChat = onCall(
 );
 
 exports.deleteChatForUser = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber: callerPhone, uid } = authenticatedPhoneFor(
       request,
@@ -2608,7 +2607,7 @@ exports.deleteChatForUser = onCall(
 );
 
 exports.startActiveHikeSession = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -2910,7 +2909,7 @@ exports.startActiveHikeSession = onCall(
 );
 
 exports.ensureActiveHikeSessionInCloud = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -3515,7 +3514,7 @@ function completedHikeSummaryData({
 // IDs are remapped into a caller-scoped deterministic namespace to prevent
 // another account from pre-claiming a predictable document ID.
 exports.completeActiveHikeSession = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -3812,7 +3811,7 @@ exports.completeActiveHikeSession = onCall(
 );
 
 exports.recordActiveHikeCheckIn = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -3931,7 +3930,7 @@ exports.recordActiveHikeCheckIn = onCall(
   }
 );
 
-exports.createTeamHikeSession = onCall({ enforceAppCheck: true }, async (request) => {
+exports.createTeamHikeSession = onCall({}, async (request) => {
   const { phoneNumber: ownerPhone, uid } = authenticatedPhoneFor(
     request,
     'Sign in to create a team hike.'
@@ -4290,7 +4289,7 @@ exports.createTeamHikeSession = onCall({ enforceAppCheck: true }, async (request
   return { teamSession: teamSessionForCallable(sessionReference.id, team) };
 });
 
-exports.manageTeamHikeSession = onCall({ enforceAppCheck: true }, async (request) => {
+exports.manageTeamHikeSession = onCall({}, async (request) => {
   const { phoneNumber: callerPhone, uid } = authenticatedPhoneFor(
     request,
     'Sign in to update this team hike.'
@@ -5144,7 +5143,7 @@ exports.cleanExpiredTeamHikeInvitations = onSchedule(
 );
 
 exports.verifyGreenApiLoginCode = onCall(
-  { secrets: [greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
     const code = String(request.data?.code || '').trim();
@@ -5230,7 +5229,7 @@ exports.verifyGreenApiLoginCode = onCall(
 );
 
 exports.registerWithGreenApiAndPassword = onCall(
-  { secrets: [greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
     const code = String(request.data?.code || '').trim();
@@ -5368,7 +5367,7 @@ const SAFETY_QUESTIONS = [
 ];
 
 exports.registerSafetyQuestions = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     const phoneNumber = authenticatedPhoneClaim(request);
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
@@ -5421,7 +5420,7 @@ exports.registerSafetyQuestions = onCall(
 );
 
 exports.sendPasswordResetCode = onCall(
-  { secrets: [greenApiInstanceId, greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiInstanceId, greenApiToken] },
   async (request) => {
     const phoneNumber = String(request.data?.phoneNumber || '').trim();
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
@@ -5578,7 +5577,7 @@ exports.sendPasswordResetCode = onCall(
 );
 
 exports.verifyPasswordResetOtp = onCall(
-  { secrets: [greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
     const code = String(request.data?.code || '').trim();
@@ -5704,7 +5703,7 @@ exports.verifyPasswordResetOtp = onCall(
 );
 
 exports.checkSafetyAnswer = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
     const answer = String(request.data?.answer || '');
@@ -5782,7 +5781,7 @@ exports.checkSafetyAnswer = onCall(
 );
 
 exports.resetPassword = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
     const answer = String(request.data?.answer || '');
@@ -5869,7 +5868,7 @@ exports.resetPassword = onCall(
   }
 );
 
-exports.loginWithPassword = onCall({ enforceAppCheck: true }, async (request) => {
+exports.loginWithPassword = onCall({}, async (request) => {
   const phoneNumber = String(request.data?.phoneNumber || '').trim();
   if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
     throw new HttpsError(
@@ -5972,7 +5971,7 @@ exports.loginWithPassword = onCall({ enforceAppCheck: true }, async (request) =>
   return { customToken, phoneNumber };
 });
 
-exports.linkPasswordToAccount = onCall({ enforceAppCheck: true }, async (request) => {
+exports.linkPasswordToAccount = onCall({}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError(
@@ -6037,7 +6036,7 @@ exports.linkPasswordToAccount = onCall({ enforceAppCheck: true }, async (request
   return { customToken, phoneNumber };
 });
 
-exports.authenticateAppSession = onCall({ enforceAppCheck: true }, async (request) => {
+exports.authenticateAppSession = onCall({}, async (request) => {
   const phoneNumber = String(request.data?.phoneNumber || '').trim();
   const appInstanceId = String(request.data?.appInstanceId || '').trim();
   if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber) || appInstanceId.length < 20) {
@@ -6330,7 +6329,7 @@ function buildWeatherFromApi(body) {
 }
 
 exports.fetchWeatherForTrail = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     authenticatedPhoneFor(request, 'Sign in to refresh trail weather.');
     const trailId = String(request.data?.trailId || '').trim();
@@ -6926,7 +6925,7 @@ async function applyAchievementMetricServer({
 }
 
 exports.manageAchievementDefinition = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { uid } = authenticatedPhoneFor(
       request,
