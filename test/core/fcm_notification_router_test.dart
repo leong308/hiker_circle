@@ -31,6 +31,17 @@ void main() {
     );
   });
 
+  test('routes a host join-request notification to its confirmation link', () {
+    final requestId = 'join_${List.filled(48, 'a').join()}';
+    expect(
+      FcmNotificationRouter.deepLinkFor({
+        'type': 'upcoming_hike_join_request',
+        'requestId': requestId,
+      }),
+      'hikercircle://upcoming-hike/join-request?requestId=$requestId',
+    );
+  });
+
   test('does not route an arbitrary external URL', () {
     expect(
       FcmNotificationRouter.deepLinkFor({

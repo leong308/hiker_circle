@@ -1310,7 +1310,7 @@ class _TimingStep extends StatelessWidget {
         ],
         const SizedBox(height: 12),
         _DurationPickerField(
-          label: 'Expected Hours and Minutes Needed',
+          label: 'Estimated Hike Duration',
           value: draft.expectedArrivalTime.difference(draft.departureTime),
           onChanged: (duration) {
             final arrival = draft.departureTime.add(duration);
@@ -1324,13 +1324,13 @@ class _TimingStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _ReadOnlyField(
-          label: 'Expected Arrival at Destination',
+          label: 'Estimated Time of Arrival',
           value: _formatTime(draft.expectedArrivalTime),
           icon: Icons.flag_rounded,
         ),
         const SizedBox(height: 12),
         _ReadOnlyField(
-          label: 'Expected Return Time',
+          label: 'Estimated Return Time',
           value: _formatTime(draft.expectedReturnTime),
           icon: Icons.assignment_return_rounded,
         ),
@@ -2194,7 +2194,7 @@ class _DurationPickerField extends StatelessWidget {
       onTap: () => _showPicker(context),
       child: InputDecorator(
         decoration: const InputDecoration(
-          labelText: 'Expected Hours and Minutes Needed',
+          labelText: 'Estimated Hike Duration',
           prefixIcon: Icon(Icons.timer_rounded),
         ),
         child: Row(

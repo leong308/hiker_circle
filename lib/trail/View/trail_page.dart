@@ -1063,7 +1063,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   final _distanceController = TextEditingController();
   final _durationController = TextEditingController(text: '120');
   final _elevationController = TextEditingController();
-  final _ratingController = TextEditingController(text: '4.5');
   final _coverImageController = TextEditingController();
   final List<_CheckpointDraft> _checkpoints = [];
   String _difficulty = 'Moderate';
@@ -1088,7 +1087,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     _distanceController.dispose();
     _durationController.dispose();
     _elevationController.dispose();
-    _ratingController.dispose();
     _coverImageController.dispose();
     for (final checkpoint in _checkpoints) {
       checkpoint.dispose();
@@ -1355,7 +1353,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         difficulty: _difficulty,
         estimatedDurationMinutes: 0,
         elevationGainMeters: 0,
-        ratingAverage: 4.5,
+        ratingAverage: 0,
         offlineMapAvailable: false,
         offlineMapDownloaded: false,
         isVerifiedTrail: true,
@@ -1456,7 +1454,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     final checkpoints = _checkpointModels();
     final latitude = checkpoints.isEmpty ? null : checkpoints.first.latitude;
     final longitude = checkpoints.isEmpty ? null : checkpoints.first.longitude;
-    final rating = double.tryParse(_ratingController.text.trim()) ?? 4.5;
     final imageUrl = _validatedImageUrl();
 
     if (name.isEmpty ||
@@ -1525,7 +1522,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       distance: distance,
       duration: duration,
       elevation: elevation,
-      rating: rating,
       checkpoints: checkpoints,
     );
   }
@@ -1540,7 +1536,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     required double distance,
     required int duration,
     required int elevation,
-    required double rating,
     required List<TrailCheckpoint> checkpoints,
   }) async {
     final polyline = _routeResult?.encodedPolyline;
@@ -1609,7 +1604,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         difficulty: _difficulty,
         estimatedDurationMinutes: duration,
         elevationGainMeters: elevation,
-        ratingAverage: rating.clamp(0, 5).toDouble(),
+        ratingAverage: 0,
         offlineMapAvailable: false,
         offlineMapDownloaded: false,
         isVerifiedTrail: true,
@@ -3288,8 +3283,7 @@ class _TrailCard extends StatelessWidget {
                         runSpacing: 6,
                         children: [
                           _StatusPill(
-                            label:
-                                '${trail.ratingAverage.toStringAsFixed(1)} rating',
+                            label: trail.ratingLabel,
                             color: _TrailColors.green,
                           ),
                         ],
@@ -3431,10 +3425,7 @@ class _TrailDetailHero extends StatelessWidget {
                         _HeroPill(label: trail.difficulty),
                         if (trail.isVerifiedTrail)
                           const _HeroPill(label: 'Verified trail'),
-                        _HeroPill(
-                          label:
-                              '${trail.ratingAverage.toStringAsFixed(1)} rating',
-                        ),
+                        _HeroPill(label: trail.ratingLabel),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -4117,7 +4108,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                       context,
                       Icons.star_rounded,
                       'Rating',
-                      widget.trail.ratingAverage.toStringAsFixed(1),
+                      widget.trail.ratingLabel,
                     ),
                     const SizedBox(height: 8),
                     Text(

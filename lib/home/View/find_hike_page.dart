@@ -246,6 +246,16 @@ class UpcomingHikeCard extends StatefulWidget {
 class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
   bool _joining = false;
   bool _joinedLocally = false;
+  late String _joinRequestStatus = widget.hike.joinRequestStatus;
+
+  @override
+  void didUpdateWidget(covariant UpcomingHikeCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.hike.id != widget.hike.id ||
+        oldWidget.hike.joinRequestStatus != widget.hike.joinRequestStatus) {
+      _joinRequestStatus = widget.hike.joinRequestStatus;
+    }
+  }
 
   bool get _isParticipating {
     final phone = widget.session.phoneNumber;
@@ -288,6 +298,32 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
     if (_joining) return;
     setState(() => _joining = true);
     try {
+      if (widget.hike.hikeType != 'team') {
+        final status = await widget.repository.requestToJoinUpcomingHike(
+          hikeId: widget.hike.id,
+        );
+        if (!mounted) return;
+        setState(() => _joinRequestStatus = status);
+        widget.onJoin();
+        switch (status) {
+          case 'pending':
+            _showMessage(
+              'Request sent. The host has been notified by app and WhatsApp.',
+            );
+            break;
+          case 'accepted':
+            setState(() => _joinedLocally = true);
+            _showMessage('Your request was already accepted.');
+            break;
+          case 'rejected':
+            _showError('The host declined this join request.');
+            break;
+          default:
+            _showError('This join request is no longer available.');
+            break;
+        }
+        return;
+      }
       final ok = await widget.repository.joinUpcomingHike(
         hikeId: widget.hike.id,
       );
@@ -299,8 +335,10 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
       } else {
         _showError('Unable to join this hike.');
       }
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      _showError(error.message);
     } catch (_) {
-      _showError('Unable to join this hike.');
+      _showError('Unable to join this hike right now.');
     } finally {
       if (mounted) {
         setState(() => _joining = false);
@@ -435,7 +473,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                 ),
                 const SizedBox(width: 8),
                 _StatusPill(
-                  label: widget.hike.hikeType == 'team' ? 'Team' : 'Solo',
+                  label: widget.hike.hikeType == 'team' ? 'Group' : 'Solo',
                   color: widget.hike.hikeType == 'team'
                       ? _AppColors.green
                       : _AppColors.secondaryTextFor(context),
@@ -572,7 +610,12 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: _joining ? null : _join,
+                  onPressed:
+                      _joining ||
+                          (widget.hike.hikeType != 'team' &&
+                              _joinRequestStatus.isNotEmpty)
+                      ? null
+                      : _join,
                   icon: _joining
                       ? const SizedBox.square(
                           dimension: 16,
@@ -581,8 +624,33 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
                             color: Colors.white,
                           ),
                         )
-                      : const Icon(Icons.person_add_rounded, size: 18),
-                  label: Text(_joining ? 'Joining...' : 'Join Hike'),
+                      : Icon(
+                          widget.hike.hikeType == 'team'
+                              ? Icons.person_add_rounded
+                              : _joinRequestStatus == 'pending'
+                              ? Icons.hourglass_top_rounded
+                              : _joinRequestStatus == 'accepted'
+                              ? Icons.check_circle_rounded
+                              : _joinRequestStatus == 'rejected'
+                              ? Icons.block_rounded
+                              : Icons.how_to_reg_rounded,
+                          size: 18,
+                        ),
+                  label: Text(
+                    _joining
+                        ? widget.hike.hikeType == 'team'
+                              ? 'Joining...'
+                              : 'Sending request...'
+                        : widget.hike.hikeType == 'team'
+                        ? 'Join Group Hike'
+                        : switch (_joinRequestStatus) {
+                            'pending' => 'Request pending',
+                            'accepted' => 'Request accepted',
+                            'rejected' => 'Request declined',
+                            'expired' => 'Request expired',
+                            _ => 'Request to join',
+                          },
+                  ),
                 ),
               ),
             ],

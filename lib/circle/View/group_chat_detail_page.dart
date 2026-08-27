@@ -2894,7 +2894,7 @@ class _HikeDetailSheet extends StatelessWidget {
                   const SizedBox(height: 10),
                   _DetailRow(
                     icon: Icons.timer_rounded,
-                    label: 'Expected return',
+                    label: 'Estimated return',
                     value: returnStr,
                   ),
                   const SizedBox(height: 10),

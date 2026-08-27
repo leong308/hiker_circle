@@ -32,6 +32,11 @@ class MeRepository {
         title: 'Circle',
         items: [
           MeActionItem(
+            icon: Icons.history_rounded,
+            title: 'Hike history',
+            subtitle: 'Your completed routes and recorded hike details',
+          ),
+          MeActionItem(
             icon: Icons.forum_rounded,
             title: 'My posts',
             subtitle: 'Trail updates, stories, and photos',

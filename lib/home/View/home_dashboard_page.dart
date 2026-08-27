@@ -937,7 +937,9 @@ class _BestMatchTrailCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 3),
                           Text(
-                            trail.ratingAverage.toStringAsFixed(1),
+                            trail.ratingCount <= 0
+                                ? 'New'
+                                : trail.ratingAverage.toStringAsFixed(1),
                             style: Theme.of(context).textTheme.labelLarge
                                 ?.copyWith(
                                   color: _HomeColors.textFor(context),
@@ -1243,7 +1245,7 @@ class _UpcomingHikeCard extends StatelessWidget {
                   '${_formatDate(plannedHike.plannedStartTime)} | ${_formatTime(plannedHike.plannedStartTime)}',
             ),
             _InfoLine(
-              label: 'Expected Return',
+              label: 'Estimated Return',
               value: _formatTime(plannedHike.expectedReturnTime),
             ),
             _InfoLine(
@@ -1549,7 +1551,7 @@ class _PreparationReminderPage extends StatelessWidget {
                                 '${_formatDate(plannedHike.plannedStartTime)} | ${_formatTime(plannedHike.plannedStartTime)}',
                           ),
                           _InfoLine(
-                            label: 'Expected return',
+                            label: 'Estimated return',
                             value: _formatTime(plannedHike.expectedReturnTime),
                           ),
                           _InfoLine(
@@ -2005,7 +2007,7 @@ class _ActiveMetrics extends StatelessWidget {
                 const _VerticalSeparator(),
                 Expanded(
                   child: _MetricCell(
-                    label: 'Expected Return',
+                    label: 'Estimated Return',
                     value: _formatTime(expectedReturn),
                   ),
                 ),
@@ -2903,7 +2905,7 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                           '${_formatDate(hike.departureTime)} | ${_formatTime(hike.departureTime)}',
                     ),
                     _InfoLine(
-                      label: 'Expected Return',
+                      label: 'Estimated Return',
                       value: _formatTime(hike.expectedReturnTime),
                     ),
                     _InfoLine(
