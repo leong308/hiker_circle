@@ -22,6 +22,7 @@ import '../../me/Data/live_location_sharing_service.dart';
 import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
 import '../../core/services/device_notification_log_service.dart';
+import '../../core/models/hike_route_analysis.dart';
 import '../../core/services/fcm_notification_router.dart';
 import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/hiking_route_service.dart';
@@ -7808,6 +7809,21 @@ class _HikeSummaryReportPage extends StatefulWidget {
 }
 
 class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
+  HikeRouteAnalysis get _routeAnalysis => analyzeHikeRoute(
+    routePoints: widget.activeHike.routePoints,
+    fallbackStartedAt: widget.activeHike.startedAt,
+    checkpoints: widget.activeHike.trail.checkpoints
+        .map(
+          (checkpoint) => HikeAnalysisCheckpoint(
+            name: checkpoint.name,
+            order: checkpoint.order,
+            latitude: checkpoint.latitude,
+            longitude: checkpoint.longitude,
+          ),
+        )
+        .toList(),
+  );
+
   List<mapbox.Point> get _actualPinPoints => widget
       .activeHike
       .manualPinLocations
@@ -8046,6 +8062,38 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                       ],
                     ),
                   ),
+                  if (_routeAnalysis.checkpoints.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      'CHECKPOINT PERFORMANCE',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: _SummaryColors.secondaryTextFor(context),
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SummaryCard(
+                      child: Column(
+                        children: [
+                          for (
+                            var index = 0;
+                            index < _routeAnalysis.checkpoints.length;
+                            index++
+                          ) ...[
+                            if (index > 0)
+                              Divider(
+                                height: 1,
+                                color: _SummaryColors.separatorFor(context),
+                              ),
+                            _SummaryCheckpointPerformanceRow(
+                              checkpoint: _routeAnalysis.checkpoints[index],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   Text(
                     'CHECK-INS',
@@ -8282,6 +8330,94 @@ class _SummaryEventRow extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: _SummaryColors.secondaryTextFor(context),
               letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryCheckpointPerformanceRow extends StatelessWidget {
+  const _SummaryCheckpointPerformanceRow({required this.checkpoint});
+
+  final HikeCheckpointAnalysis checkpoint;
+
+  @override
+  Widget build(BuildContext context) {
+    String clock(DateTime? value) {
+      if (value == null) return 'Not reached';
+      final local = value.toLocal();
+      return '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}:'
+          '${local.second.toString().padLeft(2, '0')}';
+    }
+
+    String elapsed(Duration? value) {
+      if (value == null) return 'Start';
+      final hours = value.inHours;
+      final minutes = value.inMinutes.remainder(60);
+      return hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(13),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: checkpoint.reached
+                  ? _SummaryColors.green
+                  : _SummaryColors.secondaryTextFor(
+                      context,
+                    ).withValues(alpha: 0.13),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              checkpoint.reached
+                  ? Icons.check_rounded
+                  : Icons.horizontal_rule_rounded,
+              color: checkpoint.reached
+                  ? Colors.white
+                  : _SummaryColors.secondaryTextFor(context),
+              size: 17,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  checkpoint.name,
+                  style: TextStyle(
+                    color: _SummaryColors.textFor(context),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  checkpoint.reached
+                      ? '${clock(checkpoint.reachedAt)} · ${elapsed(checkpoint.timeFromPrevious)} · ${checkpoint.distanceFromPreviousKm.toStringAsFixed(2)} km'
+                      : 'No GPS sample within 100 m',
+                  style: TextStyle(
+                    color: _SummaryColors.secondaryTextFor(context),
+                    fontSize: 11,
+                  ),
+                ),
+                if (checkpoint.reached && checkpoint.paceMinutesPerKm > 0)
+                  Text(
+                    '${checkpoint.paceMinutesPerKm.toStringAsFixed(1)} min/km · ${checkpoint.speedKmh.toStringAsFixed(1)} km/h',
+                    style: const TextStyle(
+                      color: _SummaryColors.green,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+              ],
             ),
           ),
         ],

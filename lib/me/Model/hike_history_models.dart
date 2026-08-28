@@ -134,6 +134,27 @@ class HikeHistoryCheckIn {
   final HikeCoordinate? coordinate;
 }
 
+class HikeHistoryMemberTrack {
+  const HikeHistoryMemberTrack({
+    required this.name,
+    required this.isCurrentUser,
+    required this.routePoints,
+  });
+
+  factory HikeHistoryMemberTrack.fromMap(Map<String, dynamic> data) =>
+      HikeHistoryMemberTrack(
+        name: _text(data['name']).isEmpty ? 'Hiker' : _text(data['name']),
+        isCurrentUser: data['isCurrentUser'] == true,
+        routePoints: _maps(
+          data['routePoints'],
+        ).map(HikeCoordinate.tryFromFirestore).nonNulls.toList(),
+      );
+
+  final String name;
+  final bool isCurrentUser;
+  final List<HikeCoordinate> routePoints;
+}
+
 class HikeHistoryDetail {
   const HikeHistoryDetail({
     required this.summary,
@@ -171,11 +192,13 @@ class HikeHistoryDetail {
     required this.batteryUsedPercent,
     required this.lowestRecordedBatteryPercent,
     required this.teamBuddyNames,
+    required this.memberTracks,
     required this.insights,
     required this.ratingStars,
     required this.ratingComment,
     required this.sourceUpcomingHikeId,
     required this.teamHikeSessionId,
+    required this.groupChatId,
     required this.routeCaptureAvailable,
   });
 
@@ -257,6 +280,10 @@ class HikeHistoryDetail {
           .map((buddy) => _text(buddy['name']))
           .where((name) => name.isNotEmpty)
           .toList(),
+      memberTracks: _maps(team['memberTracks'])
+          .map(HikeHistoryMemberTrack.fromMap)
+          .where((track) => track.routePoints.isNotEmpty)
+          .toList(),
       insights: data['insights'] is Iterable
           ? List<String>.from(data['insights'])
           : const [],
@@ -264,6 +291,7 @@ class HikeHistoryDetail {
       ratingComment: _text(rating['comment']),
       sourceUpcomingHikeId: _text(source['sourceUpcomingHikeId']),
       teamHikeSessionId: _text(source['teamHikeSessionId']),
+      groupChatId: _text(source['groupChatId']),
       routeCaptureAvailable: source['routeCaptureAvailable'] == true,
     );
   }
@@ -303,11 +331,13 @@ class HikeHistoryDetail {
   final int batteryUsedPercent;
   final int? lowestRecordedBatteryPercent;
   final List<String> teamBuddyNames;
+  final List<HikeHistoryMemberTrack> memberTracks;
   final List<String> insights;
   final int ratingStars;
   final String ratingComment;
   final String sourceUpcomingHikeId;
   final String teamHikeSessionId;
+  final String groupChatId;
   final bool routeCaptureAvailable;
 }
 

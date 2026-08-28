@@ -93,6 +93,7 @@ flutter:
     - assets/guides/first_aid_guide.json
     - assets/animations/hiker_circle_loading.json
     - assets/animations/file_transfer.gif
+    - assets/icons/AppIcon-Default-1024.png
 
   fonts:
     - family: Inter

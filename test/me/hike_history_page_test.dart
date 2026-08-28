@@ -41,6 +41,7 @@ void main() {
           repository: repository,
           loadHistory: () async => [summary],
           loadDetail: (_) async => detail,
+          enableInteractiveRoute: false,
         ),
       ),
     );
@@ -92,6 +93,7 @@ void main() {
           repository: repository,
           loadHistory: () => completer.future,
           loadDetail: (_) async => detail,
+          enableInteractiveRoute: false,
         ),
       ),
     );
@@ -115,6 +117,7 @@ void main() {
         home: HikeHistoryDetailPage(
           summary: summary,
           loadDetail: (_) => completer.future,
+          enableInteractiveRoute: false,
         ),
       ),
     );

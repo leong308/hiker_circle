@@ -1329,6 +1329,7 @@ class HikeCoordinate {
     required this.longitude,
     required this.capturedAt,
     this.accuracyMeters,
+    this.altitudeMeters,
   });
 
   factory HikeCoordinate.fromTriggerLocation(SosTriggerLocation location) {
@@ -1360,6 +1361,9 @@ class HikeCoordinate {
       latitude: latitude,
       longitude: longitude,
       accuracyMeters: _validAccuracyFrom(data['accuracyMeters']),
+      altitudeMeters: _validAltitudeFrom(
+        data['altitudeMeters'] ?? data['altitude'],
+      ),
       capturedAt: capturedAt is String
           ? DateTime.tryParse(capturedAt) ??
                 DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
@@ -1370,6 +1374,7 @@ class HikeCoordinate {
   final double latitude;
   final double longitude;
   final double? accuracyMeters;
+  final double? altitudeMeters;
   final DateTime capturedAt;
 
   bool get hasValidPosition =>
@@ -1385,6 +1390,7 @@ class HikeCoordinate {
       'latitude': latitude,
       'longitude': longitude,
       if (accuracyMeters != null) 'accuracyMeters': accuracyMeters,
+      if (altitudeMeters != null) 'altitudeMeters': altitudeMeters,
       'capturedAtLocal': capturedAt.toUtc().toIso8601String(),
     };
   }
@@ -1434,6 +1440,13 @@ class HikeCoordinate {
 
   static double? _validAccuracyFrom(Object? value) {
     if (value is num && value.isFinite && value >= 0) {
+      return value.toDouble();
+    }
+    return null;
+  }
+
+  static double? _validAltitudeFrom(Object? value) {
+    if (value is num && value.isFinite && value >= -500 && value <= 10000) {
       return value.toDouble();
     }
     return null;
@@ -2376,7 +2389,9 @@ class GroupChat {
       lastMessageSenderPhone: data['lastMessageSenderPhone'] is String
           ? data['lastMessageSenderPhone'] as String
           : null,
-      hikeEndedAt: _modelDateFromValue(data['hikeEndedAt']),
+      hikeEndedAt: _modelDateFromValue(
+        data['hikeEndedAtLocal'] ?? data['hikeEndedAt'],
+      ),
       chatRemovesAt: _modelDateFromValue(data['chatRemovesAtLocal']),
       isDeleted: data['isDeleted'] == true,
       closureReason: _modelStringFrom(data['closureReason']),

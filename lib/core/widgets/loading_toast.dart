@@ -3,9 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:lottie/lottie.dart';
 
 /// HikerCircle's shared loading treatment, based on SenzoCG's animated
-/// [LoadingToast]. The original animation's SENZO text layer is replaced at
-/// render time so the animation remains reusable and carries HikerCircle's
-/// name instead.
+/// [LoadingToast]. The original animation's word layer is removed at render
+/// time and the real HikerCircle app icon is placed inside the animation.
 class HikerCircleLoadingToast extends StatefulWidget {
   const HikerCircleLoadingToast({
     super.key,
@@ -87,13 +86,11 @@ class _HikerCircleLoadingToastState extends State<HikerCircleLoadingToast> {
                         )
                       : Lottie.asset(
                           'assets/animations/hiker_circle_loading.json',
+                          key: const Key(
+                            'hiker-circle-loading-branded-animation',
+                          ),
                           fit: BoxFit.contain,
                           repeat: true,
-                          delegates: LottieDelegates(
-                            text: (initialText) => initialText == 'SENZO'
-                                ? 'HIKER CIRCLE'
-                                : initialText,
-                          ),
                         ),
                 ),
               ),

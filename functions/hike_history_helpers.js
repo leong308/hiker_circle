@@ -142,7 +142,16 @@ function sanitizedBuddy(value) {
   };
 }
 
-function detailData({ sessionId, session, capture, checkIns, locationPoints, rating }) {
+function detailData({
+  sessionId,
+  session,
+  capture,
+  checkIns,
+  locationPoints,
+  rating,
+  groupChatId = '',
+  memberTracks = [],
+}) {
   const raw = plainMap(session);
   const trail = plainMap(raw.trail);
   const report = plainMap(raw.summaryReport);
@@ -277,6 +286,18 @@ function detailData({ sessionId, session, capture, checkIns, locationPoints, rat
       hikeType: summary.hikeType,
       memberCount: summary.teamMemberCount,
       buddies: teamBuddies,
+      memberTracks: (Array.isArray(memberTracks) ? memberTracks : [])
+        .slice(0, 50)
+        .map((member, index) => ({
+          name: stringValue(member?.name || `Hiker ${index + 1}`, 80),
+          isCurrentUser: member?.isCurrentUser === true,
+          routePoints: (Array.isArray(member?.routePoints)
+            ? member.routePoints : [])
+            .map((point) => safeCoordinate(point))
+            .filter(Boolean)
+            .slice(0, 5000),
+        }))
+        .filter((member) => member.routePoints.length > 0),
     },
     routePoints,
     telemetryPointCount: telemetry.length,
@@ -290,6 +311,7 @@ function detailData({ sessionId, session, capture, checkIns, locationPoints, rat
     source: {
       sourceUpcomingHikeId: stringValue(raw.sourceUpcomingHikeId, 200),
       teamHikeSessionId: stringValue(raw.teamHikeSessionId, 200),
+      groupChatId: stringValue(groupChatId, 200),
       routeCaptureAvailable: Object.keys(routeCapture).length > 0,
       sessionId: summary.sessionId,
     },

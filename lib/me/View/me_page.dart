@@ -178,8 +178,10 @@ class _MePageState extends State<MePage> {
       case 'Hike history':
         Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (context) =>
-                HikeHistoryPage(repository: firebaseRepository),
+            builder: (context) => HikeHistoryPage(
+              repository: firebaseRepository,
+              session: widget.session,
+            ),
           ),
         );
       case 'My posts':

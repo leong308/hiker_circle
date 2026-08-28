@@ -77,12 +77,24 @@ test('history detail combines route, safety, telemetry, and rating data', () => 
       recordedAtLocal: '2026-08-20T01:10:00Z',
     }],
     rating: { rating: 5, comment: 'Excellent route.' },
+    groupChatId: 'team_team_1',
+    memberTracks: [{
+      name: 'Aisha',
+      isCurrentUser: false,
+      routePoints: [
+        { latitude: 3.1, longitude: 101.6, capturedAtLocal: '2026-08-20T01:00:00Z' },
+        { latitude: 3.2, longitude: 101.7, capturedAtLocal: '2026-08-20T03:00:00Z' },
+      ],
+    }],
   });
   assert.equal(detail.routePoints.length, 2);
   assert.equal(detail.safety.manualPins.length, 1);
   assert.equal(detail.safety.checkIns.length, 1);
   assert.equal(detail.performance.minAltitudeMeters, 120);
   assert.deepEqual(detail.rating, { stars: 5, comment: 'Excellent route.' });
+  assert.equal(detail.source.groupChatId, 'team_team_1');
+  assert.equal(detail.team.memberTracks[0].name, 'Aisha');
+  assert.equal(detail.team.memberTracks[0].routePoints.length, 2);
   const encoded = JSON.stringify(detail);
   assert.equal(encoded.includes('Must not be returned'), false);
   assert.equal(encoded.includes('must-not-leak'), false);

@@ -4162,11 +4162,13 @@ class HikerCircleFirebaseRepository {
 
   Map<String, dynamic> _hikeCoordinateForCloud(HikeCoordinate coordinate) {
     final accuracy = coordinate.accuracyMeters;
+    final altitude = coordinate.altitudeMeters;
     return {
       'latitude': coordinate.latitude,
       'longitude': coordinate.longitude,
       if (accuracy != null && accuracy.isFinite && accuracy >= 0)
         'accuracyMeters': accuracy,
+      if (altitude != null && altitude.isFinite) 'altitudeMeters': altitude,
       'capturedAtLocal': coordinate.capturedAt.toUtc().toIso8601String(),
     };
   }

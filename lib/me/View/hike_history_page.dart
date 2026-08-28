@@ -1,11 +1,20 @@
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../app/Model/app_session.dart';
+import '../../circle/View/group_chat_detail_page.dart';
+import '../../core/models/hike_route_analysis.dart';
+import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/route_preview_map.dart';
 import '../../home/Model/hike_session_models.dart';
+import '../../trail/Model/trail_models.dart';
 import '../Model/hike_history_models.dart';
 
 typedef HikeHistoryListLoader = Future<List<HikeHistorySummary>> Function();
@@ -16,13 +25,17 @@ class HikeHistoryPage extends StatefulWidget {
   const HikeHistoryPage({
     super.key,
     required this.repository,
+    this.session,
     this.loadHistory,
     this.loadDetail,
+    this.enableInteractiveRoute = true,
   });
 
   final HikerCircleFirebaseRepository repository;
+  final AppSession? session;
   final HikeHistoryListLoader? loadHistory;
   final HikeHistoryDetailLoader? loadDetail;
+  final bool enableInteractiveRoute;
 
   @override
   State<HikeHistoryPage> createState() => _HikeHistoryPageState();
@@ -53,6 +66,9 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
           summary: hike,
           loadDetail:
               widget.loadDetail ?? widget.repository.loadMyHikeHistoryDetail,
+          repository: widget.repository,
+          session: widget.session,
+          enableInteractiveRoute: widget.enableInteractiveRoute,
         ),
       ),
     );
@@ -167,10 +183,16 @@ class HikeHistoryDetailPage extends StatefulWidget {
     super.key,
     required this.summary,
     required this.loadDetail,
+    this.repository,
+    this.session,
+    this.enableInteractiveRoute = true,
   });
 
   final HikeHistorySummary summary;
   final HikeHistoryDetailLoader loadDetail;
+  final HikerCircleFirebaseRepository? repository;
+  final AppSession? session;
+  final bool enableInteractiveRoute;
 
   @override
   State<HikeHistoryDetailPage> createState() => _HikeHistoryDetailPageState();
@@ -237,6 +259,9 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
           final content = _HikeHistoryDetailBody(
             detail: snapshot.data!,
             onRefresh: _refresh,
+            repository: widget.repository,
+            session: widget.session,
+            enableInteractiveRoute: widget.enableInteractiveRoute,
           );
           return Stack(
             children: [
@@ -255,21 +280,33 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
 }
 
 class _HikeHistoryDetailBody extends StatelessWidget {
-  const _HikeHistoryDetailBody({required this.detail, required this.onRefresh});
+  const _HikeHistoryDetailBody({
+    required this.detail,
+    required this.onRefresh,
+    this.repository,
+    this.session,
+    this.enableInteractiveRoute = true,
+  });
 
   final HikeHistoryDetail detail;
   final Future<void> Function() onRefresh;
+  final HikerCircleFirebaseRepository? repository;
+  final AppSession? session;
+  final bool enableInteractiveRoute;
 
   @override
   Widget build(BuildContext context) {
     final summary = detail.summary;
-    return RefreshIndicator(
+    final overview = RefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 6, 16, 36),
         children: [
-          _RecordedRouteCard(detail: detail),
+          _RecordedRouteCard(
+            detail: detail,
+            enableInteractiveRoute: enableInteractiveRoute,
+          ),
           const SizedBox(height: 14),
           _MetricGrid(
             metrics: [
@@ -561,7 +598,787 @@ class _HikeHistoryDetailBody extends StatelessWidget {
         ],
       ),
     );
+    final tabs = <Tab>[
+      const Tab(text: 'Overview'),
+      const Tab(text: 'Analysis'),
+      const Tab(text: 'Safety'),
+      if (summary.isTeam) const Tab(text: 'Team'),
+    ];
+    return DefaultTabController(
+      length: tabs.length,
+      child: Column(
+        children: [
+          Material(
+            color: _HistoryColors.backgroundFor(context),
+            child: TabBar(
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              indicatorColor: summary.isTeam
+                  ? const Color(0xFF6C63D9)
+                  : _HistoryColors.green,
+              labelColor: _HistoryColors.textFor(context),
+              unselectedLabelColor: _HistoryColors.secondaryFor(context),
+              tabs: tabs,
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                overview,
+                _HistoryAnalysisTab(detail: detail, onRefresh: onRefresh),
+                _HistorySafetyTab(detail: detail, onRefresh: onRefresh),
+                if (summary.isTeam)
+                  _HistoryTeamTab(
+                    detail: detail,
+                    onRefresh: onRefresh,
+                    repository: repository,
+                    session: session,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
+}
+
+HikeRouteAnalysis _analysisForHistory(HikeHistoryDetail detail) {
+  return analyzeHikeRoute(
+    routePoints: detail.routePoints,
+    fallbackStartedAt: detail.summary.startedAt,
+    checkpoints: detail.checkpoints
+        .map(
+          (checkpoint) => HikeAnalysisCheckpoint(
+            name: checkpoint.name,
+            order: checkpoint.order,
+            latitude: checkpoint.latitude,
+            longitude: checkpoint.longitude,
+          ),
+        )
+        .toList(),
+  );
+}
+
+class _HistoryAnalysisTab extends StatelessWidget {
+  const _HistoryAnalysisTab({required this.detail, required this.onRefresh});
+
+  final HikeHistoryDetail detail;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final analysis = _analysisForHistory(detail);
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
+        children: [
+          _MetricGrid(
+            metrics: [
+              _Metric(
+                Icons.directions_walk_rounded,
+                'Moving time',
+                _formatDuration(analysis.movingDuration),
+              ),
+              _Metric(
+                Icons.pause_circle_outline_rounded,
+                'Stopped time',
+                _formatDuration(analysis.stoppedDuration),
+              ),
+              _Metric(
+                Icons.bolt_rounded,
+                'Fastest pace',
+                analysis.fastestPaceMinutesPerKm > 0
+                    ? '${analysis.fastestPaceMinutesPerKm.toStringAsFixed(1)} min/km'
+                    : 'No data',
+              ),
+              _Metric(
+                Icons.radar_rounded,
+                'GPS distance',
+                '${analysis.totalDistanceKm.toStringAsFixed(2)} km',
+              ),
+            ],
+          ),
+          _DetailSection(
+            title: 'Pace profile',
+            icon: Icons.show_chart_rounded,
+            rows: const [],
+            child: _PaceChart(samples: analysis.samples),
+          ),
+          _DetailSection(
+            title: 'Checkpoint analysis',
+            icon: Icons.flag_circle_rounded,
+            rows: const [],
+            child: analysis.checkpoints.isEmpty
+                ? const Text('No checkpoints were saved for this hike.')
+                : Column(
+                    children: [
+                      for (
+                        var index = 0;
+                        index < analysis.checkpoints.length;
+                        index++
+                      ) ...[
+                        _CheckpointAnalysisRow(
+                          checkpoint: analysis.checkpoints[index],
+                          index: index,
+                        ),
+                        if (index < analysis.checkpoints.length - 1)
+                          Divider(
+                            height: 1,
+                            color: _HistoryColors.separatorFor(context),
+                          ),
+                      ],
+                    ],
+                  ),
+          ),
+          _DetailSection(
+            title: 'Recording quality',
+            icon: Icons.gps_fixed_rounded,
+            rows: [
+              _RowData('Recorded GPS points', '${detail.routePoints.length}'),
+              _RowData('Raw telemetry points', '${detail.telemetryPointCount}'),
+              _RowData(
+                'Cloud route',
+                detail.routeCaptureAvailable ? 'Available' : 'Summary only',
+              ),
+              _RowData(
+                'Storage resolution',
+                detail.routePointsDownsampled
+                    ? 'Optimized copy'
+                    : 'Full capture',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaceChart extends StatelessWidget {
+  const _PaceChart({required this.samples});
+
+  final List<HikePaceSample> samples;
+
+  @override
+  Widget build(BuildContext context) {
+    if (samples.length < 2) {
+      return Container(
+        height: 150,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: _HistoryColors.backgroundFor(context),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Text(
+          'More timestamped GPS samples are needed for a pace graph.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: _HistoryColors.secondaryFor(context)),
+        ),
+      );
+    }
+    final maxPace = samples
+        .map((sample) => sample.paceMinutesPerKm)
+        .reduce(math.max)
+        .clamp(10.0, 90.0);
+    return SizedBox(
+      height: 210,
+      child: LineChart(
+        LineChartData(
+          minX: 0,
+          maxX: math.max(0.1, samples.last.distanceKm),
+          minY: 0,
+          maxY: maxPace * 1.12,
+          gridData: FlGridData(
+            drawVerticalLine: false,
+            getDrawingHorizontalLine: (_) => FlLine(
+              color: _HistoryColors.separatorFor(context),
+              strokeWidth: 1,
+            ),
+          ),
+          borderData: FlBorderData(show: false),
+          titlesData: FlTitlesData(
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            leftTitles: AxisTitles(
+              axisNameWidget: const Text('min/km'),
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 36,
+                getTitlesWidget: (value, _) => Text(
+                  value.round().toString(),
+                  style: TextStyle(
+                    color: _HistoryColors.secondaryFor(context),
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ),
+            bottomTitles: AxisTitles(
+              axisNameWidget: const Text('distance (km)'),
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 28,
+                getTitlesWidget: (value, _) => Text(
+                  value.toStringAsFixed(1),
+                  style: TextStyle(
+                    color: _HistoryColors.secondaryFor(context),
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          lineTouchData: LineTouchData(
+            touchTooltipData: LineTouchTooltipData(
+              getTooltipItems: (spots) => spots
+                  .map(
+                    (spot) => LineTooltipItem(
+                      '${spot.y.toStringAsFixed(1)} min/km\n${spot.x.toStringAsFixed(2)} km',
+                      const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: samples
+                  .map(
+                    (sample) => FlSpot(
+                      sample.distanceKm,
+                      sample.paceMinutesPerKm.clamp(0, maxPace),
+                    ),
+                  )
+                  .toList(),
+              isCurved: true,
+              curveSmoothness: 0.2,
+              color: _HistoryColors.green,
+              barWidth: 3,
+              dotData: const FlDotData(show: false),
+              belowBarData: BarAreaData(
+                show: true,
+                color: _HistoryColors.green.withValues(alpha: 0.13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CheckpointAnalysisRow extends StatelessWidget {
+  const _CheckpointAnalysisRow({required this.checkpoint, required this.index});
+
+  final HikeCheckpointAnalysis checkpoint;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final reached = checkpoint.reached;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: reached
+                  ? _HistoryColors.green
+                  : _HistoryColors.secondaryFor(
+                      context,
+                    ).withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: reached
+                ? const Icon(Icons.check_rounded, color: Colors.white, size: 19)
+                : Text('${index + 1}'),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  checkpoint.name,
+                  style: TextStyle(
+                    color: _HistoryColors.textFor(context),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  reached
+                      ? 'Reached ${_formatDateTime(checkpoint.reachedAt)}'
+                      : 'No recorded point within 100 m (nearest ${checkpoint.distanceFromTrackMeters.round()} m)',
+                  style: TextStyle(
+                    color: reached
+                        ? _HistoryColors.secondaryFor(context)
+                        : const Color(0xFFE07A36),
+                    fontSize: 12,
+                  ),
+                ),
+                if (reached) ...[
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: [
+                      _AnalysisChip(
+                        icon: Icons.timer_outlined,
+                        text: checkpoint.timeFromPrevious == null
+                            ? 'Starting point'
+                            : _formatDuration(checkpoint.timeFromPrevious!),
+                      ),
+                      _AnalysisChip(
+                        icon: Icons.straighten_rounded,
+                        text:
+                            '${checkpoint.distanceFromPreviousKm.toStringAsFixed(2)} km',
+                      ),
+                      _AnalysisChip(
+                        icon: Icons.directions_walk_rounded,
+                        text: checkpoint.paceMinutesPerKm > 0
+                            ? '${checkpoint.paceMinutesPerKm.toStringAsFixed(1)} min/km'
+                            : 'Pace unavailable',
+                      ),
+                      _AnalysisChip(
+                        icon: Icons.speed_rounded,
+                        text: checkpoint.speedKmh > 0
+                            ? '${checkpoint.speedKmh.toStringAsFixed(1)} km/h'
+                            : 'Speed unavailable',
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnalysisChip extends StatelessWidget {
+  const _AnalysisChip({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+    decoration: BoxDecoration(
+      color: _HistoryColors.backgroundFor(context),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: _HistoryColors.green),
+        const SizedBox(width: 5),
+        Text(text, style: const TextStyle(fontSize: 11)),
+      ],
+    ),
+  );
+}
+
+class _HistorySafetyTab extends StatelessWidget {
+  const _HistorySafetyTab({required this.detail, required this.onRefresh});
+
+  final HikeHistoryDetail detail;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) => RefreshIndicator(
+    onRefresh: onRefresh,
+    child: ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
+      children: [
+        _DetailSection(
+          title: 'Safety overview',
+          icon: Icons.health_and_safety_rounded,
+          rows: [
+            _RowData('Safe check-ins', '${detail.checkInRecords.length}'),
+            _RowData('Pinned locations', '${detail.manualPins.length}'),
+            _RowData('Deviation alerts', '${detail.pathDeviationAlertCount}'),
+            _RowData('Battery used', '${detail.batteryUsedPercent}%'),
+          ],
+          child: _FeatureWrap(detail: detail),
+        ),
+        if (detail.checkInRecords.isNotEmpty)
+          _DetailSection(
+            title: 'Check-in timeline',
+            icon: Icons.verified_user_rounded,
+            rows: const [],
+            child: Column(
+              children: detail.checkInRecords
+                  .map(
+                    (record) => _EventLine(
+                      icon: Icons.verified_user_rounded,
+                      title: record.status == 'safe'
+                          ? 'Safe check-in'
+                          : record.status,
+                      subtitle:
+                          '${_formatDateTime(record.checkedInAt)}${record.batteryLevel > 0 ? ' · Battery ${record.batteryLevel}%' : ''}',
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        if (detail.manualPins.isNotEmpty)
+          _DetailSection(
+            title: 'Pinned locations',
+            icon: Icons.location_pin,
+            rows: const [],
+            child: Column(
+              children: [
+                for (var index = 0; index < detail.manualPins.length; index++)
+                  _EventLine(
+                    icon: Icons.push_pin_rounded,
+                    title: 'Pin ${index + 1}',
+                    subtitle:
+                        '${_formatDateTime(detail.manualPins[index].pinnedAt)} · ${_coordinateLabel(detail.manualPins[index].coordinate)}',
+                  ),
+              ],
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+class _HistoryTeamTab extends StatefulWidget {
+  const _HistoryTeamTab({
+    required this.detail,
+    required this.onRefresh,
+    this.repository,
+    this.session,
+  });
+
+  final HikeHistoryDetail detail;
+  final Future<void> Function() onRefresh;
+  final HikerCircleFirebaseRepository? repository;
+  final AppSession? session;
+
+  @override
+  State<_HistoryTeamTab> createState() => _HistoryTeamTabState();
+}
+
+class _HistoryTeamTabState extends State<_HistoryTeamTab> {
+  bool _openingChat = false;
+
+  Future<void> _openChat() async {
+    final repository = widget.repository;
+    final session = widget.session;
+    if (repository == null || session == null || _openingChat) return;
+    setState(() => _openingChat = true);
+    try {
+      final chat = await repository.loadGroupChatById(
+        widget.detail.groupChatId,
+      );
+      if (!mounted) return;
+      if (chat == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This hike chat is no longer available.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => GroupChatDetailPage(
+            chat: chat,
+            session: session,
+            repository: repository,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingChat = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tracks = widget.detail.memberTracks.isNotEmpty
+        ? widget.detail.memberTracks
+        : [
+            HikeHistoryMemberTrack(
+              name: 'You',
+              isCurrentUser: true,
+              routePoints: widget.detail.routePoints,
+            ),
+          ];
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF4941A8), Color(0xFF7168DD)],
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.groups_2_rounded,
+                  color: Colors.white,
+                  size: 30,
+                ),
+                const SizedBox(height: 9),
+                Text(
+                  '${widget.detail.summary.teamMemberCount} hikers completed ${widget.detail.summary.trailName}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                const Text(
+                  'Replay timing follows each member’s recorded GPS timestamps.',
+                  style: TextStyle(color: Color(0xDDFFFFFF)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _TeamRouteReplay(tracks: tracks),
+          _DetailSection(
+            title: 'Hiking team',
+            icon: Icons.people_alt_rounded,
+            rows: [
+              _RowData(
+                'Team size',
+                '${widget.detail.summary.teamMemberCount} hikers',
+              ),
+              _RowData('Recorded member tracks', '${tracks.length}'),
+              for (final name in widget.detail.teamBuddyNames)
+                _RowData('Member', name),
+            ],
+          ),
+          if (widget.detail.groupChatId.isNotEmpty &&
+              widget.repository != null &&
+              widget.session != null) ...[
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              key: const Key('open-history-group-chat'),
+              onPressed: _openingChat ? null : _openChat,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF5C54C7),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              icon: _openingChat
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.forum_rounded),
+              label: const Text('Open this hike’s group chat'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TeamRouteReplay extends StatefulWidget {
+  const _TeamRouteReplay({required this.tracks});
+
+  final List<HikeHistoryMemberTrack> tracks;
+
+  @override
+  State<_TeamRouteReplay> createState() => _TeamRouteReplayState();
+}
+
+class _TeamRouteReplayState extends State<_TeamRouteReplay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 250,
+    margin: const EdgeInsets.only(bottom: 14),
+    decoration: BoxDecoration(
+      color: const Color(0xFF151633),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: AnimatedBuilder(
+      animation: _controller,
+      builder: (_, _) => CustomPaint(
+        painter: _TeamReplayPainter(
+          tracks: widget.tracks,
+          progress: Curves.easeInOut.transform(_controller.value),
+        ),
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text(
+              'TEAM ROUTE REPLAY',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _TeamReplayPainter extends CustomPainter {
+  _TeamReplayPainter({required this.tracks, required this.progress});
+
+  final List<HikeHistoryMemberTrack> tracks;
+  final double progress;
+  static const colors = [
+    Color(0xFF71E099),
+    Color(0xFFFFB65B),
+    Color(0xFF74B9FF),
+    Color(0xFFFF78A5),
+    Color(0xFFD6A7FF),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final allPoints = tracks.expand((track) => track.routePoints).toList();
+    if (allPoints.length < 2) return;
+    final minLat = allPoints.map((point) => point.latitude).reduce(math.min);
+    final maxLat = allPoints.map((point) => point.latitude).reduce(math.max);
+    final minLng = allPoints.map((point) => point.longitude).reduce(math.min);
+    final maxLng = allPoints.map((point) => point.longitude).reduce(math.max);
+    final globalStart = allPoints
+        .map((point) => point.capturedAt.millisecondsSinceEpoch)
+        .reduce(math.min);
+    final globalEnd = allPoints
+        .map((point) => point.capturedAt.millisecondsSinceEpoch)
+        .reduce(math.max);
+    Offset position(HikeCoordinate point) => Offset(
+      24 +
+          (point.longitude - minLng) /
+              math.max(maxLng - minLng, 0.000001) *
+              (size.width - 48),
+      45 +
+          (1 -
+                  (point.latitude - minLat) /
+                      math.max(maxLat - minLat, 0.000001)) *
+              (size.height - 75),
+    );
+    final grid = Paint()..color = const Color(0x132FA76B);
+    for (var x = 0.0; x < size.width; x += 30) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (var y = 0.0; y < size.height; y += 30) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    for (var trackIndex = 0; trackIndex < tracks.length; trackIndex++) {
+      final points = [...tracks[trackIndex].routePoints]
+        ..sort((left, right) => left.capturedAt.compareTo(right.capturedAt));
+      if (points.length < 2) continue;
+      final color = colors[trackIndex % colors.length];
+      final fullPath = Path()
+        ..moveTo(position(points.first).dx, position(points.first).dy);
+      for (final point in points.skip(1)) {
+        fullPath.lineTo(position(point).dx, position(point).dy);
+      }
+      canvas.drawPath(
+        fullPath,
+        Paint()
+          ..color = color.withValues(alpha: 0.22)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+      final target =
+          globalStart + ((globalEnd - globalStart) * progress).round();
+      if (target < points.first.capturedAt.millisecondsSinceEpoch) continue;
+      var currentIndex = 0;
+      while (currentIndex + 1 < points.length &&
+          points[currentIndex + 1].capturedAt.millisecondsSinceEpoch <=
+              target) {
+        currentIndex++;
+      }
+      final traveled = Path()
+        ..moveTo(position(points.first).dx, position(points.first).dy);
+      for (final point in points.take(currentIndex + 1).skip(1)) {
+        traveled.lineTo(position(point).dx, position(point).dy);
+      }
+      canvas.drawPath(
+        traveled,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = tracks[trackIndex].isCurrentUser ? 4 : 3,
+      );
+      final marker = position(points[currentIndex]);
+      canvas.drawCircle(marker, 7, Paint()..color = color);
+      canvas.drawCircle(marker, 3, Paint()..color = Colors.white);
+      final label = TextPainter(
+        text: TextSpan(
+          text: tracks[trackIndex].name,
+          style: TextStyle(
+            color: color,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: 90);
+      label.paint(canvas, marker + const Offset(9, -7));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _TeamReplayPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.tracks != tracks;
 }
 
 class _HistoryOverview extends StatelessWidget {
@@ -666,21 +1483,20 @@ class _HikeHistoryCard extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              Container(
-                width: 72,
-                height: 82,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFDCEFE2), Color(0xFF9FD2AD)],
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.terrain_rounded,
-                  color: Color(0xFF176B3A),
-                  size: 34,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox(
+                  width: 72,
+                  height: 82,
+                  child: hike.coverImageUrl.isNotEmpty
+                      ? Image.network(
+                          hike.coverImageUrl,
+                          key: Key('hike-history-cover-${hike.sessionId}'),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) =>
+                              const _HistoryImageFallback(),
+                        )
+                      : const _HistoryImageFallback(),
                 ),
               ),
               const SizedBox(width: 13),
@@ -744,12 +1560,37 @@ class _HikeHistoryCard extends StatelessWidget {
 }
 
 class _RecordedRouteCard extends StatelessWidget {
-  const _RecordedRouteCard({required this.detail});
+  const _RecordedRouteCard({
+    required this.detail,
+    required this.enableInteractiveRoute,
+  });
   final HikeHistoryDetail detail;
+  final bool enableInteractiveRoute;
 
   @override
   Widget build(BuildContext context) {
     final points = detail.routePoints;
+    final trail = _trailForHistory(detail);
+    final route = _routeForHistory(detail);
+    final pins = detail.manualPins
+        .map(
+          (pin) => mapbox.Point(
+            coordinates: mapbox.Position(
+              pin.coordinate.longitude,
+              pin.coordinate.latitude,
+            ),
+          ),
+        )
+        .toList();
+    final checkIns = detail.checkInRecords
+        .map((record) => record.coordinate)
+        .whereType<HikeCoordinate>()
+        .map(
+          (point) => mapbox.Point(
+            coordinates: mapbox.Position(point.longitude, point.latitude),
+          ),
+        )
+        .toList();
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: Container(
@@ -758,11 +1599,40 @@ class _RecordedRouteCard extends StatelessWidget {
         child: Stack(
           children: [
             Positioned.fill(
-              child: CustomPaint(
-                painter: _RouteTracePainter(
-                  points: points,
-                  pins: detail.manualPins,
-                  checkIns: detail.checkInRecords,
+              child: points.length >= 2 && enableInteractiveRoute
+                  ? RoutePreviewMap(
+                      key: const Key('hike-history-actual-route-map'),
+                      trail: trail,
+                      route: route,
+                      customCheckpoints: trail.checkpoints,
+                      pinnedPoints: pins,
+                      checkInPoints: checkIns,
+                      animateRoute: kReleaseMode,
+                      animationDuration: const Duration(seconds: 10),
+                      captureAllGestures: true,
+                    )
+                  : CustomPaint(
+                      painter: _RouteTracePainter(
+                        points: points,
+                        pins: detail.manualPins,
+                        checkIns: detail.checkInRecords,
+                      ),
+                    ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.transparent,
+                        const Color(0xB510271A),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -830,6 +1700,86 @@ class _RecordedRouteCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _HistoryImageFallback extends StatelessWidget {
+  const _HistoryImageFallback();
+
+  @override
+  Widget build(BuildContext context) => const DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFDCEFE2), Color(0xFF9FD2AD)],
+      ),
+    ),
+    child: Center(
+      child: Icon(Icons.terrain_rounded, color: Color(0xFF176B3A), size: 34),
+    ),
+  );
+}
+
+Trail _trailForHistory(HikeHistoryDetail detail) {
+  final first = detail.routePoints.isNotEmpty
+      ? detail.routePoints.first
+      : HikeCoordinate(
+          latitude: 0,
+          longitude: 0,
+          capturedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        );
+  return Trail.fromPersistence({
+    'trailId': detail.summary.trailId,
+    'name': detail.summary.trailName,
+    'area': detail.summary.location,
+    'state': '',
+    'country': '',
+    'latitude': first.latitude,
+    'longitude': first.longitude,
+    'distanceKm': detail.summary.distanceKm,
+    'difficulty': detail.summary.difficulty,
+    'estimatedDurationMinutes': detail.estimatedDurationMinutes,
+    'elevationGainMeters': detail.elevationGainMeters,
+    'ratingAverage': detail.trailRatingAverage,
+    'ratingCount': detail.trailRatingCount,
+    'offlineMapAvailable': false,
+    'offlineMapDownloaded': false,
+    'isVerifiedTrail': detail.isVerifiedTrail,
+    'routeFilePath': '',
+    'coverColorValue': 0xFF176B3A,
+    if (detail.summary.coverImageUrl.isNotEmpty)
+      'coverImageUrl': detail.summary.coverImageUrl,
+    'checkpoints': detail.checkpoints
+        .map(
+          (checkpoint) => {
+            'name': checkpoint.name,
+            'latitude': checkpoint.latitude,
+            'longitude': checkpoint.longitude,
+            'order': checkpoint.order,
+          },
+        )
+        .toList(),
+    'weather': const <String, dynamic>{},
+    'hazards': const <Map<String, dynamic>>[],
+  });
+}
+
+HikingRouteResult? _routeForHistory(HikeHistoryDetail detail) {
+  final points =
+      detail.routePoints.where((point) => point.hasValidPosition).toList()
+        ..sort((left, right) => left.capturedAt.compareTo(right.capturedAt));
+  if (points.length < 2) return null;
+  final encoded = PolylineCodec.encode(
+    points.map((point) => LatLng(point.latitude, point.longitude)).toList(),
+  );
+  if (encoded.isEmpty) return null;
+  return HikingRouteResult(
+    distanceMeters: (detail.summary.distanceKm * 1000).round(),
+    duration: detail.summary.duration,
+    encodedPolyline: encoded,
+    elevationGainMeters: detail.elevationGainMeters.toDouble(),
+    sourceLabel: 'Recorded GPS route',
+  );
 }
 
 class _RouteTracePainter extends CustomPainter {
