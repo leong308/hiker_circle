@@ -97,10 +97,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(
-      find.text('Synchronising hike history, please wait…'),
-      findsOneWidget,
-    );
+    expect(find.text('Loading your hike history…'), findsOneWidget);
     expect(find.byKey(const Key('hiker-circle-loading-toast')), findsOneWidget);
 
     completer.complete([summary]);
@@ -109,7 +106,7 @@ void main() {
     expect(find.text('Pine Ridge'), findsOneWidget);
   });
 
-  testWidgets('slow detail sync explains that route records are loading', (
+  testWidgets('slow detail load explains that route records are loading', (
     tester,
   ) async {
     final completer = Completer<HikeHistoryDetail>();
@@ -123,12 +120,9 @@ void main() {
     );
     await tester.pump();
 
+    expect(find.text('Loading hike details…'), findsOneWidget);
     expect(
-      find.text('Synchronising hike details, please wait…'),
-      findsOneWidget,
-    );
-    expect(
-      find.text('Loading route and safety records securely.'),
+      find.text('Preparing the route and safety records.'),
       findsOneWidget,
     );
 

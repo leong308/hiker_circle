@@ -29,7 +29,10 @@ mapbox.PointAnnotationOptions routeEndpointAnnotation({
     textColor: routeEndpointRed,
     textHaloColor: 0xFFFFFFFF,
     textHaloWidth: 2.4,
-    textOffset: const [0.0, -3.2],
+    // Keep the caption visually attached to the top of the half-scale pin.
+    // Mapbox offsets are expressed in ems, so reducing the negative offset
+    // moves Start/End down without shifting the geographic pin itself.
+    textOffset: const [0.0, -2.5],
     textAnchor: mapbox.TextAnchor.BOTTOM,
   );
 }

@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/hike_session_models.dart';
 import 'hike_reminder_preferences_sheet.dart';
@@ -150,25 +151,12 @@ class _FindHikePageState extends State<FindHikePage> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return _InsetGroup(
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Row(
-            children: [
-              const SizedBox.square(
-                dimension: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Loading upcoming hikes...',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _AppColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
+      return const _InsetGroup(
+        child: HikerCircleLoadingView(
+          message: 'Finding upcoming hikes…',
+          detail: 'Checking nearby solo and group hikes.',
+          compact: true,
+          padding: EdgeInsets.all(14),
         ),
       );
     }

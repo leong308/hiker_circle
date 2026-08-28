@@ -26,6 +26,7 @@ import '../../core/services/fcm_notification_router.dart';
 import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/network_reachability_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
@@ -1424,22 +1425,13 @@ class _HikerHomePageState extends State<HikerHomePage>
           }
           return const PopScope(
             canPop: false,
-            child: Center(
-              child: Card(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 22, vertical: 18),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      SizedBox(width: 12),
-                      Text('Loading upcoming hike...'),
-                    ],
-                  ),
-                ),
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: HikerCircleLoadingToast(
+                message: 'Loading upcoming hike…',
+                detail: 'Getting the latest hike and trail details.',
+                compact: true,
               ),
             ),
           );
@@ -1505,22 +1497,13 @@ class _HikerHomePageState extends State<HikerHomePage>
           if (!progressReady.isCompleted) progressReady.complete(dialogContext);
           return const PopScope(
             canPop: false,
-            child: Center(
-              child: Card(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 22, vertical: 18),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      SizedBox(width: 12),
-                      Text('Checking join request...'),
-                    ],
-                  ),
-                ),
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: HikerCircleLoadingToast(
+                message: 'Checking join request…',
+                detail: 'Confirming the hike and request status.',
+                compact: true,
               ),
             ),
           );
@@ -1610,22 +1593,13 @@ class _HikerHomePageState extends State<HikerHomePage>
           }
           return const PopScope(
             canPop: false,
-            child: Center(
-              child: Card(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 22, vertical: 18),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      SizedBox(width: 12),
-                      Text('Opening group chat...'),
-                    ],
-                  ),
-                ),
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: HikerCircleLoadingToast(
+                message: 'Opening group chat…',
+                detail: 'Loading the hike team and recent messages.',
+                compact: true,
               ),
             ),
           );
@@ -5710,15 +5684,9 @@ class _HikerHomePageState extends State<HikerHomePage>
             Positioned.fill(
               child: ColoredBox(
                 color: Theme.of(context).scaffoldBackgroundColor,
-                child: const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 16),
-                      Text('Restoring your active hike...'),
-                    ],
-                  ),
+                child: const HikerCircleLoadingView(
+                  message: 'Restoring your active hike…',
+                  detail: 'Loading your route, checkpoints, and team status.',
                 ),
               ),
             ),
@@ -9170,9 +9138,11 @@ class _ActiveHikeWeatherSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 if (samples.isEmpty && state.isLoading)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: Center(child: CircularProgressIndicator()),
+                  const HikerCircleLoadingView(
+                    message: 'Checking hike weather…',
+                    detail: 'Loading conditions along the trail ahead.',
+                    compact: true,
+                    padding: EdgeInsets.symmetric(vertical: 16),
                   )
                 else if (samples.isEmpty)
                   Padding(

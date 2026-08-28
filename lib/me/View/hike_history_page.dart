@@ -83,8 +83,8 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
             return const Stack(
               children: [
                 HikerCircleLoadingToastOverlay(
-                  message: 'Synchronising hike history, please wait…',
-                  detail: 'Loading your completed hikes securely.',
+                  message: 'Loading your hike history…',
+                  detail: 'Getting your completed hikes and route records.',
                   dimBackground: false,
                 ),
               ],
@@ -151,8 +151,8 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
               content,
               if (isLoading)
                 const HikerCircleLoadingToastOverlay(
-                  message: 'Synchronising hike history, please wait…',
-                  detail: 'Refreshing your completed hikes securely.',
+                  message: 'Refreshing your hike history…',
+                  detail: 'Getting the latest completed hike records.',
                 ),
             ],
           );
@@ -218,8 +218,8 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
             return const Stack(
               children: [
                 HikerCircleLoadingToastOverlay(
-                  message: 'Synchronising hike details, please wait…',
-                  detail: 'Loading route and safety records securely.',
+                  message: 'Loading hike details…',
+                  detail: 'Preparing the route and safety records.',
                   dimBackground: false,
                 ),
               ],
@@ -243,8 +243,8 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
               content,
               if (isLoading)
                 const HikerCircleLoadingToastOverlay(
-                  message: 'Synchronising hike details, please wait…',
-                  detail: 'Refreshing route and safety records securely.',
+                  message: 'Refreshing hike details…',
+                  detail: 'Getting the latest route and safety records.',
                 ),
             ],
           );

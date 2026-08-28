@@ -6,6 +6,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/services/hiking_route_service.dart';
 import '../../trail/Model/trail_models.dart';
+import 'loading_toast.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
 import 'route_endpoint_marker.dart';
@@ -1105,32 +1106,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               color: Theme.of(
                 context,
               ).colorScheme.surface.withValues(alpha: 0.82),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox.square(
-                      dimension: 28,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      !_styleLoaded
-                          ? 'Preparing map…'
-                          : !_routeRendered
-                          ? 'Drawing route…'
-                          : 'Focusing route…',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'This can take longer on a slow connection.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
+              child: HikerCircleLoadingView(
+                message: !_styleLoaded
+                    ? 'Preparing map…'
+                    : !_routeRendered
+                    ? 'Drawing route…'
+                    : 'Focusing route…',
+                detail: 'This can take longer on a slow connection.',
+                compact: true,
+                padding: const EdgeInsets.all(8),
               ),
             ),
           )

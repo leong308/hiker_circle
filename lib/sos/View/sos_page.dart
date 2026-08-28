@@ -16,6 +16,7 @@ import '../../home/View/gear_checklist_page.dart';
 import '../../me/View/location_sharing_page.dart';
 import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/network_reachability_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Data/location_snapshot_service.dart';
 import '../Data/nearby_sos_event_repository.dart';
@@ -2594,8 +2595,10 @@ class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
                       future: _dispatches,
                       builder: (context, snapshot) {
                         if (snapshot.connectionState != ConnectionState.done) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
+                          return const HikerCircleLoadingView(
+                            message: 'Loading SOS queue…',
+                            detail: 'Checking pending emergency messages.',
+                            compact: true,
                           );
                         }
                         if (snapshot.hasError) {

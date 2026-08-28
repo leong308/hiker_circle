@@ -29,6 +29,6 @@ void main() {
     expect(annotation.textField, 'Start');
     expect(annotation.textColor, routeEndpointRed);
     expect(annotation.textAnchor, mapbox.TextAnchor.BOTTOM);
-    expect(annotation.textOffset, const [0.0, -3.2]);
+    expect(annotation.textOffset, const [0.0, -2.5]);
   });
 }

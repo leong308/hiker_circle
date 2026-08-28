@@ -11,6 +11,7 @@ import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../home/Model/hike_session_models.dart';
 import 'group_chat_detail_page.dart';
 
@@ -1188,9 +1189,11 @@ class _CommunitySection extends StatelessWidget {
         _SectionTitle(label: 'Community Feed'),
         const SizedBox(height: 8),
         if (isLoadingPosts)
-          const Padding(
+          const HikerCircleLoadingView(
+            message: 'Loading community posts…',
+            detail: 'Getting the latest updates from hikers.',
+            compact: true,
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: LinearProgressIndicator(minHeight: 2),
           ),
         if (!isLoadingPosts && postsLoadError != null)
           _InsetGroup(
@@ -2015,9 +2018,11 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                   ),
                   const SizedBox(height: 10),
                   if (_isLoadingComments)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 20),
-                      child: Center(child: CircularProgressIndicator()),
+                    const HikerCircleLoadingView(
+                      message: 'Loading comments…',
+                      detail: 'Getting the latest trail discussion.',
+                      compact: true,
+                      padding: EdgeInsets.symmetric(vertical: 12),
                     )
                   else if (_comments.isEmpty)
                     Container(
@@ -4594,8 +4599,12 @@ class _ChatsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isLoading) {
       return const Padding(
-        padding: EdgeInsets.only(top: 60),
-        child: Center(child: CircularProgressIndicator()),
+        padding: EdgeInsets.only(top: 32),
+        child: HikerCircleLoadingView(
+          message: 'Loading group chats…',
+          detail: 'Getting your hike teams and recent messages.',
+          compact: true,
+        ),
       );
     }
 

@@ -9,6 +9,7 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/services/trail_cover_image_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../../trail/Model/trail_models.dart';
@@ -1149,7 +1150,12 @@ class _TrailManagementSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         if (isLoading && trails.isEmpty) ...[
-          const LinearProgressIndicator(minHeight: 2),
+          const HikerCircleLoadingView(
+            message: 'Loading trail records…',
+            detail: 'Getting trails and verification status.',
+            compact: true,
+            padding: EdgeInsets.symmetric(vertical: 4),
+          ),
           const SizedBox(height: 8),
         ],
         _InsetGroup(
@@ -2329,7 +2335,11 @@ class _DebugContent extends StatelessWidget {
     if (isLoading) {
       return const Padding(
         padding: EdgeInsets.only(top: 40),
-        child: Center(child: CircularProgressIndicator()),
+        child: HikerCircleLoadingView(
+          message: 'Loading diagnostic records…',
+          detail: 'Preparing the selected app data.',
+          compact: true,
+        ),
       );
     }
 

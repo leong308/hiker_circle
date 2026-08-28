@@ -16,6 +16,7 @@ import '../../core/services/hiking_route_service.dart';
 import '../../core/services/trail_cover_image_service.dart';
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
@@ -379,7 +380,12 @@ class _TrailPageState extends State<TrailPage> {
                   ),
                   if (_isLoadingTrails) ...[
                     const SizedBox(height: 10),
-                    const LinearProgressIndicator(minHeight: 2),
+                    const HikerCircleLoadingView(
+                      message: 'Updating trail information…',
+                      detail: 'Loading the latest routes and trail conditions.',
+                      compact: true,
+                      padding: EdgeInsets.symmetric(vertical: 4),
+                    ),
                   ],
                   const SizedBox(height: 16),
                   _DiscoverHero(trails: _trails),

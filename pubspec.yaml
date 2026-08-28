@@ -53,6 +53,7 @@ dependencies:
   emergency_helpline: ^0.0.4
   url_launcher: ^6.3.1
   image_picker: ^1.2.2
+  lottie: ^3.3.2
   firebase_storage: ^13.4.3
   file_picker: ^11.0.2
   firebase_messaging: ^16.4.0
@@ -90,6 +91,8 @@ flutter:
     - assets/audios/sos_alarm.mp3
     - assets/audios/med_alarm.mp3
     - assets/guides/first_aid_guide.json
+    - assets/animations/hiker_circle_loading.json
+    - assets/animations/file_transfer.gif
 
   fonts:
     - family: Inter
