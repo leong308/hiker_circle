@@ -23,6 +23,18 @@ function safeText(value, maximumLength) {
   return String(value || '').trim().slice(0, maximumLength);
 }
 
+function effectiveUpcomingHikeType(rawHike) {
+  const hike = rawHike && typeof rawHike === 'object' ? rawHike : {};
+  const draft = hike.draft && typeof hike.draft === 'object' ? hike.draft : {};
+  const hasTeamBuddies = Array.isArray(draft.teamBuddies)
+    && draft.teamBuddies.length > 0;
+  return String(hike.hikeType || '') === 'team'
+    || String(draft.hikeType || '') === 'team'
+    || hasTeamBuddies
+    ? 'team'
+    : 'solo';
+}
+
 function buildUpcomingHikePreview(
   hikeId,
   rawHike,
@@ -81,7 +93,7 @@ function buildUpcomingHikePreview(
     expectedReturnTimeLocal: Number.isFinite(expectedReturnMillis)
       ? new Date(expectedReturnMillis).toISOString()
       : new Date(departureMillis).toISOString(),
-    hikeType: String(hike.hikeType || '') === 'team' ? 'team' : 'solo',
+    hikeType: effectiveUpcomingHikeType(hike),
     participantCount: Math.round(
       boundedNumber(
         hike.participantCount,
@@ -101,4 +113,4 @@ function buildUpcomingHikePreview(
   };
 }
 
-module.exports = { buildUpcomingHikePreview };
+module.exports = { buildUpcomingHikePreview, effectiveUpcomingHikeType };

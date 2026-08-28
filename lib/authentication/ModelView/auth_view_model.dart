@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../../app/Data/firebase_app_check_guard.dart';
 import '../../app/Model/app_session.dart';
 import '../Data/phone_number_formatter.dart';
 import '../Model/auth_status.dart';
@@ -12,16 +11,13 @@ class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
     FirebaseAuth? firebaseAuth,
     FirebaseFunctions? firebaseFunctions,
-    FirebaseAppCheckGuard? appCheckGuard,
     Future<void> Function(AppSession session)? onAutomaticallyVerified,
   }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
        _firebaseFunctions = firebaseFunctions ?? FirebaseFunctions.instance,
-       _appCheckGuard = appCheckGuard ?? FirebaseAppCheckGuard(),
        _onAutomaticallyVerified = onAutomaticallyVerified;
 
   final FirebaseAuth _firebaseAuth;
   final FirebaseFunctions _firebaseFunctions;
-  final FirebaseAppCheckGuard _appCheckGuard;
   final Future<void> Function(AppSession session)? _onAutomaticallyVerified;
 
   AuthMode _authMode = AuthMode.signUp;
@@ -69,7 +65,6 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('sendGreenApiLoginCode')
           .call(<String, Object?>{'phoneNumber': normalized});
@@ -106,7 +101,6 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('verifyGreenApiLoginCode')
           .call(<String, Object?>{
@@ -161,7 +155,6 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('loginWithPassword')
           .call(<String, Object?>{
@@ -227,7 +220,6 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _appCheckGuard.ensureAuthorized();
       final response = await _firebaseFunctions
           .httpsCallable('sendPasswordResetCode')
           .call(<String, Object?>{'phoneNumber': normalized});
@@ -365,9 +357,6 @@ class AuthViewModel extends ChangeNotifier {
   }
 
   String _friendlyFunctionsError(Object error) {
-    if (error is FirebaseAppCheckUnavailable) {
-      return error.toString();
-    }
     if (error is FirebaseFunctionsException) {
       return error.message ?? _codeMessage(error.code);
     }

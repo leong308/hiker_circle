@@ -6,8 +6,10 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/services/hiking_route_service.dart';
 import '../../trail/Model/trail_models.dart';
+import 'loading_toast.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
+import 'route_endpoint_marker.dart';
 
 bool _isValidMapPoint(mapbox.Point point) {
   return mapPointCoordinatesOrNull(point) != null;
@@ -75,7 +77,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   int _lastAnimatedIndex = 0;
   mapbox.PolylineAnnotation? _animatedPolyline;
   List<int> _checkpointIndices = [];
+  Map<int, List<int>> _checkpointIndicesByRouteIndex = {};
+  List<mapbox.CircleAnnotation?> _checkpointCircleAnnotations = [];
+  final Map<int, Timer> _checkpointGlowTimers = {};
   Timer? _pauseTimer;
+  Timer? _loopPauseTimer;
   Timer? _styleWatchdogTimer;
   Timer? _renderRetryTimer;
   Timer? _fitRetryTimer;
@@ -107,10 +113,46 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   void _onAnimationStatusChange(AnimationStatus status) {
     if (status == AnimationStatus.completed) {
-      // Loop: reset to start and continue
-      _routeAnimController.reset();
-      _routeAnimController.forward();
+      _pauseBeforeRouteLoop();
     }
+  }
+
+  void _pauseBeforeRouteLoop() {
+    if (_isPaused || !mounted) return;
+    _isPaused = true;
+    _routeAnimController.stop();
+    _loopPauseTimer?.cancel();
+    _loopPauseTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      unawaited(_restartRouteLoop());
+    });
+  }
+
+  Future<void> _restartRouteLoop() async {
+    final annotation = _animatedPolyline;
+    final manager = _polylineManager;
+    if (!mounted || annotation == null || manager == null) return;
+
+    _routeAnimController.reset();
+    _lastAnimatedIndex = math.min(1, _routePoints.length);
+    annotation.geometry = mapbox.LineString(
+      coordinates: [
+        for (final point in _routePoints.take(math.min(2, _routePoints.length)))
+          mapbox.Position(point.coordinates[0]!, point.coordinates[1]!),
+      ],
+    );
+    try {
+      await manager.update(annotation);
+    } catch (_) {
+      // A style replacement will rebuild the route with a new manager.
+    }
+    if (!mounted ||
+        !identical(manager, _polylineManager) ||
+        !identical(annotation, _animatedPolyline)) {
+      return;
+    }
+    _isPaused = false;
+    _routeAnimController.forward(from: 0);
   }
 
   void _onRouteAnimationTick() {
@@ -122,10 +164,20 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       return;
     }
     final progress = _routeAnimProgress.value.clamp(0.0, 1.0);
-    final targetIndex = (progress * (_routePoints.length - 1)).round().clamp(
-      1,
-      _routePoints.length,
-    );
+    var targetIndex = (1 + (progress * (_routePoints.length - 1)).round())
+        .clamp(2, _routePoints.length);
+
+    int? reachedCheckpointRouteIndex;
+    if (targetIndex > _lastAnimatedIndex) {
+      for (final checkpointRouteIndex in _checkpointIndices) {
+        if (checkpointRouteIndex >= _lastAnimatedIndex &&
+            checkpointRouteIndex < targetIndex) {
+          reachedCheckpointRouteIndex = checkpointRouteIndex;
+          targetIndex = checkpointRouteIndex + 1;
+          break;
+        }
+      }
+    }
     if (targetIndex == _lastAnimatedIndex) return;
     _lastAnimatedIndex = targetIndex;
 
@@ -142,9 +194,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       unawaited(manager.update(annotation).catchError((_) {}));
     }
 
-    // Check if we reached a checkpoint
-    if (_checkpointIndices.contains(targetIndex)) {
-      _pauseAtCheckpoint(targetIndex);
+    if (reachedCheckpointRouteIndex != null) {
+      _pauseAtCheckpoint(reachedCheckpointRouteIndex);
     }
   }
 
@@ -153,8 +204,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _isPaused = true;
     _routeAnimController.stop();
 
-    // Trigger checkpoint glow
-    _triggerCheckpointGlow(index);
+    final checkpointProgress = index / (_routePoints.length - 1);
+    if ((_routeAnimController.value - checkpointProgress).abs() > 0.000001) {
+      _routeAnimController.value = checkpointProgress;
+    }
+
+    for (final checkpointIndex
+        in _checkpointIndicesByRouteIndex[index] ?? const <int>[]) {
+      _glowCheckpoint(checkpointIndex);
+    }
 
     _pauseTimer = Timer(const Duration(milliseconds: 500), () {
       if (!mounted) return;
@@ -163,67 +221,58 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
-  void _triggerCheckpointGlow(int routeIndex) {
-    // Find which actual checkpoint this route index corresponds to
-    int? checkpointIdx;
-    if (_checkpointPoints.isEmpty) return;
-
-    // For each checkpoint (skipping start/end if they match), find closest route point
-    for (int i = 0; i < _checkpointPoints.length; i++) {
-      double minDist = double.infinity;
-      int closestRouteIdx = 0;
-      for (int j = 0; j < _routePoints.length; j++) {
-        final dist = distanceMeters(_checkpointPoints[i], _routePoints[j]);
-        if (dist < minDist) {
-          minDist = dist;
-          closestRouteIdx = j;
-        }
-      }
-      if (closestRouteIdx == routeIndex) {
-        checkpointIdx = i;
-        break;
-      }
-    }
-    if (checkpointIdx == null) return;
-
-    // Update the checkpoint circle to glow
-    _glowCheckpoint(checkpointIdx);
-  }
-
   void _glowCheckpoint(int checkpointIdx) {
-    if (_circleManager == null) return;
-    if (checkpointIdx < 0 || checkpointIdx >= _checkpointPoints.length) return;
-
-    final checkpoint = _checkpointPoints[checkpointIdx];
-    // Small glow circle
     final manager = _circleManager;
     if (manager == null) return;
+    final annotationIndex = checkpointIdx - 1;
+    if (annotationIndex < 0 ||
+        annotationIndex >= _checkpointCircleAnnotations.length) {
+      return;
+    }
+    final annotation = _checkpointCircleAnnotations[annotationIndex];
+    if (annotation == null) return;
+
+    _checkpointGlowTimers.remove(checkpointIdx)?.cancel();
     unawaited(() async {
       try {
-        final annotation = await manager.create(
-          mapbox.CircleAnnotationOptions(
-            geometry: checkpoint,
-            circleColor: const Color(0xFF34A853).toARGB32(),
-            circleRadius: 8,
-            circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-            circleStrokeWidth: 1.5,
-            circleOpacity: 1.0,
-          ),
-        );
+        annotation.circleColor = const Color(0xFF34A853).toARGB32();
+        annotation.circleRadius = 9;
+        annotation.circleStrokeColor = const Color(0xFFFFFFFF).toARGB32();
+        annotation.circleStrokeWidth = 2.4;
+        annotation.circleOpacity = 1;
+        await manager.update(annotation);
         if (!mounted || !identical(manager, _circleManager)) return;
-        Timer(const Duration(milliseconds: 500), () {
-          if (!mounted || !identical(manager, _circleManager)) return;
-          unawaited(manager.delete(annotation).catchError((_) {}));
-        });
+        _checkpointGlowTimers[checkpointIdx] = Timer(
+          const Duration(milliseconds: 500),
+          () {
+            if (!mounted || !identical(manager, _circleManager)) return;
+            annotation.circleColor = const Color(0xFF2F8E50).toARGB32();
+            annotation.circleRadius = 4.2;
+            annotation.circleStrokeColor = const Color(0xFFFFFFFF).toARGB32();
+            annotation.circleStrokeWidth = 1.2;
+            annotation.circleOpacity = 0.65;
+            unawaited(manager.update(annotation).catchError((_) {}));
+            _checkpointGlowTimers.remove(checkpointIdx);
+          },
+        );
       } catch (_) {
         // Style replacement invalidates the old annotation manager.
       }
     }());
   }
 
+  void _cancelCheckpointGlows() {
+    for (final timer in _checkpointGlowTimers.values) {
+      timer.cancel();
+    }
+    _checkpointGlowTimers.clear();
+  }
+
   @override
   void dispose() {
     _pauseTimer?.cancel();
+    _loopPauseTimer?.cancel();
+    _cancelCheckpointGlows();
     _styleWatchdogTimer?.cancel();
     _renderRetryTimer?.cancel();
     _fitRetryTimer?.cancel();
@@ -282,11 +331,17 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   void _computeCheckpointIndices() {
     _checkpointIndices.clear();
+    _checkpointIndicesByRouteIndex = {};
     if (_routePoints.isEmpty || _checkpointPoints.isEmpty) return;
 
     // For each checkpoint (except start/end which are at route start/end),
     // find the closest route point index
-    for (final checkpoint in _checkpointPoints) {
+    for (
+      var checkpointIndex = 0;
+      checkpointIndex < _checkpointPoints.length;
+      checkpointIndex++
+    ) {
+      final checkpoint = _checkpointPoints[checkpointIndex];
       double minDist = double.infinity;
       int closestIdx = 0;
       for (int i = 0; i < _routePoints.length; i++) {
@@ -297,11 +352,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         }
       }
       if (closestIdx > 0 && closestIdx < _routePoints.length - 1) {
-        _checkpointIndices.add(closestIdx);
+        _checkpointIndicesByRouteIndex
+            .putIfAbsent(closestIdx, () => <int>[])
+            .add(checkpointIndex);
       }
     }
-    // Sort and deduplicate
-    _checkpointIndices = _checkpointIndices.toSet().toList()..sort();
+    _checkpointIndices = _checkpointIndicesByRouteIndex.keys.toList()..sort();
   }
 
   @override
@@ -468,6 +524,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       if (!_isCurrentMap(map, generation)) return false;
       pointManager ??= await map.annotations.createPointAnnotationManager();
       if (!_isCurrentMap(map, generation)) return false;
+      await pointManager.setIconAllowOverlap(true);
+      await pointManager.setTextAllowOverlap(true);
+      if (!_isCurrentMap(map, generation)) return false;
       _polylineManager = polylineManager;
       _circleManager = circleManager;
       _pointManager = pointManager;
@@ -503,7 +562,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _isRendering = true;
     try {
       _routeAnimController.stop();
+      _pauseTimer?.cancel();
+      _loopPauseTimer?.cancel();
+      _cancelCheckpointGlows();
+      _isPaused = false;
       _animatedPolyline = null;
+      _checkpointCircleAnnotations = [];
       _lastAnimatedIndex = 0;
       await _polylineManager!.deleteAll();
       await _circleManager!.deleteAll();
@@ -547,8 +611,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             ),
           );
           if (_animatedPolyline != null) {
-            _lastAnimatedIndex = 2;
-            _animateRoute(_animatedPolyline!);
+            _lastAnimatedIndex = 1;
           }
         } else {
           await _polylineManager!.create(
@@ -582,22 +645,30 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
             circleStrokeWidth: 1.2,
           ),
-        mapbox.CircleAnnotationOptions(
-          geometry: _startPoint,
-          circleColor: const Color(0xFF7BC90E).toARGB32(),
-          circleRadius: 6.5,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
-        mapbox.CircleAnnotationOptions(
-          geometry: _endPoint,
-          circleColor: const Color(0xFFE94B42).toARGB32(),
-          circleRadius: 6.5,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
       ];
-      await _circleManager!.createMulti(circleOptions);
+      if (circleOptions.isNotEmpty) {
+        _checkpointCircleAnnotations = await _circleManager!.createMulti(
+          circleOptions,
+        );
+      }
+
+      final endpointPin = await routeEndpointPinImage();
+      if (!_isCurrentMap(map, mapGeneration) ||
+          generation != _renderGeneration) {
+        return;
+      }
+      await _pointManager!.createMulti([
+        routeEndpointAnnotation(
+          geometry: _startPoint,
+          label: 'Start',
+          pinImage: endpointPin,
+        ),
+        routeEndpointAnnotation(
+          geometry: _endPoint,
+          label: 'End',
+          pinImage: endpointPin,
+        ),
+      ]);
 
       final validPinnedPoints = widget.pinnedPoints
           .where(_isValidMapPoint)
@@ -638,6 +709,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       if (!_isCurrentMap(map, mapGeneration) ||
           generation != _renderGeneration) {
         return;
+      }
+      final animatedPolyline = _animatedPolyline;
+      if (animatedPolyline != null) {
+        _animateRoute(animatedPolyline);
       }
       setState(() {
         _routeRendered = true;
@@ -694,7 +769,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   void _animateRoute(mapbox.PolylineAnnotation annotation) {
     if (!mounted) return;
-    _routeAnimController.repeat();
+    _routeAnimController.forward(from: 0);
   }
 
   Future<void> _fitRoute() async {
@@ -1031,32 +1106,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               color: Theme.of(
                 context,
               ).colorScheme.surface.withValues(alpha: 0.82),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox.square(
-                      dimension: 28,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      !_styleLoaded
-                          ? 'Preparing map…'
-                          : !_routeRendered
-                          ? 'Drawing route…'
-                          : 'Focusing route…',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'This can take longer on a slow connection.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
+              child: HikerCircleLoadingView(
+                message: !_styleLoaded
+                    ? 'Preparing map…'
+                    : !_routeRendered
+                    ? 'Drawing route…'
+                    : 'Focusing route…',
+                detail: 'This can take longer on a slow connection.',
+                compact: true,
+                padding: const EdgeInsets.all(8),
               ),
             ),
           )

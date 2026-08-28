@@ -36,7 +36,6 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "hiker_circle/sos_device_alerts"
         private const val DEEP_LINK_CHANNEL = "hiker_circle/deeplinks"
-        private const val BUILD_CONFIG_CHANNEL = "hiker_circle/build_config"
         private const val ACTIVE_HIKE_LIVE_STATUS_CHANNEL =
             "hiker_circle/active_hike_live_status"
         private const val CAMERA_REQUEST_CODE = 8472
@@ -223,17 +222,6 @@ class MainActivity : FlutterActivity() {
                     }
                     else -> result.notImplemented()
                 }
-            }
-        }
-
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            BUILD_CONFIG_CHANNEL,
-        ).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "isDevelopmentOnlyRelease" ->
-                    result.success(BuildConfig.DEVELOPMENT_ONLY_SIGNING)
-                else -> result.notImplemented()
             }
         }
 

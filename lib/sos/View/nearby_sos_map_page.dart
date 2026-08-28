@@ -6,6 +6,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/services/hiking_route_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../home/View/first_aid_guide_page.dart';
@@ -239,6 +240,16 @@ class _RouteMapPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return ColoredBox(
+        color: _NearbyMapColors.surfaceFor(context),
+        child: const HikerCircleLoadingView(
+          message: 'Getting your emergency location…',
+          detail: 'Preparing the nearby SOS map.',
+          compact: true,
+        ),
+      );
+    }
     return ColoredBox(
       color: _NearbyMapColors.surfaceFor(context),
       child: Center(
@@ -247,32 +258,25 @@ class _RouteMapPlaceholder extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (isLoading)
-                const CircularProgressIndicator()
-              else
-                Icon(
-                  Icons.location_off_outlined,
-                  size: 42,
-                  color: _NearbyMapColors.secondaryFor(context),
-                ),
+              Icon(
+                Icons.location_off_outlined,
+                size: 42,
+                color: _NearbyMapColors.secondaryFor(context),
+              ),
               const SizedBox(height: 14),
               Text(
-                isLoading
-                    ? 'Getting your location for the emergency map…'
-                    : errorMessage ?? 'The emergency map is unavailable.',
+                errorMessage ?? 'The emergency map is unavailable.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: _NearbyMapColors.textFor(context),
                 ),
               ),
-              if (!isLoading) ...[
-                const SizedBox(height: 14),
-                OutlinedButton.icon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Retry location'),
-                ),
-              ],
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry location'),
+              ),
             ],
           ),
         ),
@@ -615,6 +619,16 @@ class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
   Widget build(BuildContext context) {
     final point = _centerPoint;
     if (point == null) {
+      if (_isLoadingLocation) {
+        return ColoredBox(
+          color: _NearbyMapColors.surfaceFor(context),
+          child: const HikerCircleLoadingView(
+            message: 'Locating this phone…',
+            detail: 'Preparing the SOS search radius.',
+            compact: true,
+          ),
+        );
+      }
       return ColoredBox(
         color: _NearbyMapColors.surfaceFor(context),
         child: Center(
@@ -623,33 +637,26 @@ class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_isLoadingLocation)
-                  const CircularProgressIndicator()
-                else
-                  Icon(
-                    Icons.location_off_outlined,
-                    size: 42,
-                    color: _NearbyMapColors.secondaryFor(context),
-                  ),
+                Icon(
+                  Icons.location_off_outlined,
+                  size: 42,
+                  color: _NearbyMapColors.secondaryFor(context),
+                ),
                 const SizedBox(height: 14),
                 Text(
-                  _isLoadingLocation
-                      ? 'Locating the phone to place the blue search radius…'
-                      : 'The phone location is unavailable, so the search '
-                            'radius cannot be placed on the map.',
+                  'The phone location is unavailable, so the search '
+                  'radius cannot be placed on the map.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: _NearbyMapColors.textFor(context),
                   ),
                 ),
-                if (!_isLoadingLocation) ...[
-                  const SizedBox(height: 14),
-                  OutlinedButton.icon(
-                    onPressed: _loadCurrentLocation,
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text('Retry location'),
-                  ),
-                ],
+                const SizedBox(height: 14),
+                OutlinedButton.icon(
+                  onPressed: _loadCurrentLocation,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry location'),
+                ),
               ],
             ),
           ),

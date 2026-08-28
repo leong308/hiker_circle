@@ -20,6 +20,7 @@ import '../../sos/View/emergency_contacts_page.dart';
 import '../../onboarding/Data/onboarding_repository.dart';
 import '../Model/me_models.dart';
 import '../ModelView/me_view_model.dart';
+import 'hike_history_page.dart';
 import 'location_sharing_page.dart';
 import 'profile_details_page.dart';
 import 'qr_scanner_page.dart';
@@ -174,6 +175,15 @@ class _MePageState extends State<MePage> {
 
   void _openActionItem(MeActionItem item) {
     switch (item.title) {
+      case 'Hike history':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (context) => HikeHistoryPage(
+              repository: firebaseRepository,
+              session: widget.session,
+            ),
+          ),
+        );
       case 'My posts':
         _openHistoryPage(
           title: 'My Posts',

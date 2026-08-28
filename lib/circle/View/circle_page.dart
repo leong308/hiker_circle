@@ -11,6 +11,7 @@ import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../home/Model/hike_session_models.dart';
 import 'group_chat_detail_page.dart';
 
@@ -43,8 +44,10 @@ class _CirclePageState extends State<CirclePage> {
   late List<_CommunityPost> _posts = const [];
   final List<_TeamPlan> _teams = const [];
   bool _isLoadingPosts = false;
+  String? _postsLoadError;
   List<GroupChat> _groupChats = const [];
   bool _isLoadingChats = false;
+  String? _chatsLoadError;
   Set<String> _pinnedChatIds = {};
   final Map<String, int> _pinUpdateGeneration = {};
   final Map<String, Future<void>> _pinWriteChains = {};
@@ -142,6 +145,7 @@ class _CirclePageState extends State<CirclePage> {
 
   void _listenToGroupChats() {
     final phone = widget.session.phoneNumber;
+    unawaited(_chatsSubscription?.cancel());
     _chatsSubscription = widget.hikerCircleRepository
         .userGroupChatsStream(phone)
         .listen(
@@ -150,11 +154,13 @@ class _CirclePageState extends State<CirclePage> {
             if (!mounted) return;
             setState(() {
               _isLoadingChats = false;
+              _chatsLoadError = 'Unable to load chats right now.';
             });
           },
         );
     setState(() {
       _isLoadingChats = true;
+      _chatsLoadError = null;
     });
   }
 
@@ -172,6 +178,7 @@ class _CirclePageState extends State<CirclePage> {
       _groupChats = chats;
       _localLastReadAt = local;
       _isLoadingChats = false;
+      _chatsLoadError = null;
     });
   }
 
@@ -370,6 +377,7 @@ class _CirclePageState extends State<CirclePage> {
   Future<void> _loadCommunityPosts() async {
     setState(() {
       _isLoadingPosts = true;
+      _postsLoadError = null;
     });
     try {
       final posts = await widget.hikerCircleRepository.loadCommunityPosts();
@@ -377,11 +385,19 @@ class _CirclePageState extends State<CirclePage> {
       setState(() {
         _posts = posts.map(_communityPostFromFirestore).toList();
         _isLoadingPosts = false;
+        _postsLoadError = null;
+      });
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingPosts = false;
+        _postsLoadError = error.message;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _isLoadingPosts = false;
+        _postsLoadError = 'Unable to load community posts right now.';
       });
     }
   }
@@ -798,6 +814,8 @@ class _CirclePageState extends State<CirclePage> {
                               people: _people,
                               posts: _posts,
                               isLoadingPosts: _isLoadingPosts,
+                              postsLoadError: _postsLoadError,
+                              onRetryPosts: _loadCommunityPosts,
                               buddyPhones: _buddyPhones,
                               outgoingBuddyRequestPhones:
                                   _outgoingBuddyRequestPhones,
@@ -827,6 +845,8 @@ class _CirclePageState extends State<CirclePage> {
                           : _ChatsSection(
                               chats: _groupChats,
                               isLoading: _isLoadingChats,
+                              loadError: _chatsLoadError,
+                              onRetry: _listenToGroupChats,
                               phoneNumber: widget.session.phoneNumber,
                               pinnedChatIds: _pinnedChatIds,
                               currentUserName: widget.session.username,
@@ -1058,6 +1078,8 @@ class _CommunitySection extends StatelessWidget {
     required this.people,
     required this.posts,
     required this.isLoadingPosts,
+    required this.postsLoadError,
+    required this.onRetryPosts,
     required this.buddyPhones,
     required this.outgoingBuddyRequestPhones,
     required this.currentUserPhone,
@@ -1076,6 +1098,8 @@ class _CommunitySection extends StatelessWidget {
   final List<_CommunityPerson> people;
   final List<_CommunityPost> posts;
   final bool isLoadingPosts;
+  final String? postsLoadError;
+  final VoidCallback onRetryPosts;
   final Set<String> buddyPhones;
   final Set<String> outgoingBuddyRequestPhones;
   final String currentUserPhone;
@@ -1165,17 +1189,37 @@ class _CommunitySection extends StatelessWidget {
         _SectionTitle(label: 'Community Feed'),
         const SizedBox(height: 8),
         if (isLoadingPosts)
-          const Padding(
+          const HikerCircleLoadingView(
+            message: 'Loading community posts…',
+            detail: 'Getting the latest updates from hikers.',
+            compact: true,
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: LinearProgressIndicator(minHeight: 2),
           ),
-        if (!isLoadingPosts && posts.isEmpty)
+        if (!isLoadingPosts && postsLoadError != null)
+          _InsetGroup(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.cloud_off_rounded,
+                    color: _CircleColors.orange,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(postsLoadError!)),
+                  TextButton(
+                    onPressed: onRetryPosts,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else if (!isLoadingPosts && posts.isEmpty)
           const _InsetGroup(
             child: Padding(
               padding: EdgeInsets.all(16),
-              child: Text(
-                'No Firebase community posts yet. Shared hikes will appear here with their recorded route map.',
-              ),
+              child: Text('No community posts yet. Be the first to share one.'),
             ),
           ),
         for (final post in posts) ...[
@@ -1974,9 +2018,11 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                   ),
                   const SizedBox(height: 10),
                   if (_isLoadingComments)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 20),
-                      child: Center(child: CircularProgressIndicator()),
+                    const HikerCircleLoadingView(
+                      message: 'Loading comments…',
+                      detail: 'Getting the latest trail discussion.',
+                      compact: true,
+                      padding: EdgeInsets.symmetric(vertical: 12),
                     )
                   else if (_comments.isEmpty)
                     Container(
@@ -4524,6 +4570,8 @@ class _ChatsSection extends StatelessWidget {
   const _ChatsSection({
     required this.chats,
     required this.isLoading,
+    required this.loadError,
+    required this.onRetry,
     required this.phoneNumber,
     required this.pinnedChatIds,
     required this.currentUserName,
@@ -4536,6 +4584,8 @@ class _ChatsSection extends StatelessWidget {
 
   final List<GroupChat> chats;
   final bool isLoading;
+  final String? loadError;
+  final VoidCallback onRetry;
   final String phoneNumber;
   final Set<String> pinnedChatIds;
   final String currentUserName;
@@ -4549,8 +4599,53 @@ class _ChatsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isLoading) {
       return const Padding(
-        padding: EdgeInsets.only(top: 60),
-        child: Center(child: CircularProgressIndicator()),
+        padding: EdgeInsets.only(top: 32),
+        child: HikerCircleLoadingView(
+          message: 'Loading group chats…',
+          detail: 'Getting your hike teams and recent messages.',
+          compact: true,
+        ),
+      );
+    }
+
+    if (loadError != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 60),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: _CircleColors.greenSoftFor(context),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.cloud_off_rounded,
+                  color: _CircleColors.orange,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                loadError!,
+                style: TextStyle(
+                  color: _CircleColors.textFor(context),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
       );
     }
 

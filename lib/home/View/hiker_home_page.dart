@@ -17,14 +17,17 @@ import '../../app/Model/app_session.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../circle/View/circle_page.dart';
 import '../../circle/View/group_chat_detail_page.dart';
+import '../../circle/View/team_formed_naming_dialog.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../me/View/me_page.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
 import '../../core/services/device_notification_log_service.dart';
+import '../../core/models/hike_route_analysis.dart';
 import '../../core/services/fcm_notification_router.dart';
 import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/network_reachability_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
@@ -49,8 +52,11 @@ import '../ModelView/fall_stillness_monitor.dart';
 import '../ModelView/stationary_location_policy.dart';
 import 'active_hike_map_page.dart';
 import 'home_dashboard_page.dart';
+import 'hike_share_preview_page.dart';
 import 'first_aid_guide_page.dart';
 import 'start_hike_wizard_page.dart';
+import 'trail_rating_dialog.dart';
+import 'upcoming_hike_join_request_dialog.dart';
 
 class HikerHomePage extends StatefulWidget {
   const HikerHomePage({
@@ -97,6 +103,11 @@ class _HikerHomePageState extends State<HikerHomePage>
   StreamSubscription<HikerBleEvent>? _bleEventSubscription;
   StreamSubscription<NetworkReachabilitySnapshot>?
   _networkReachabilitySubscription;
+  StreamSubscription<List<GroupChat>>? _formedTeamChatsSubscription;
+  String? _activeTeamNamingChatId;
+  final Set<String> _deferredTeamNamingChatIds = {};
+  String? _activeUpcomingJoinRequestReviewId;
+  List<GroupChat> _pendingFormedTeamChats = const [];
   NetworkReachabilitySnapshot _networkReachabilitySnapshot =
       const NetworkReachabilitySnapshot(
         state: NetworkReachabilityState.checking,
@@ -191,6 +202,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     hikerCircleRepository = HikerCircleFirebaseRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    _listenForFormedTeamChats();
     unawaited(_restoreCachedUpcomingPlanningState());
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
@@ -235,6 +247,93 @@ class _HikerHomePageState extends State<HikerHomePage>
         .snapshots
         .listen(_handleNetworkReachabilityChanged);
     unawaited(NetworkReachabilityService.instance.start());
+  }
+
+  void _listenForFormedTeamChats() {
+    if (!widget.firebaseBootstrapResult.isAvailable) return;
+    _formedTeamChatsSubscription = hikerCircleRepository
+        .formedTeamChatsForHostStream(widget.session.phoneNumber)
+        .listen(
+          _promptForFormedTeamChatName,
+          onError: (_) {
+            // Circle provides a visible retry state if the chat stream fails.
+          },
+        );
+  }
+
+  void _promptForFormedTeamChatName(List<GroupChat> chats) {
+    if (!mounted || _activeTeamNamingChatId != null) return;
+    if (_activeUpcomingJoinRequestReviewId != null) {
+      _pendingFormedTeamChats = chats;
+      return;
+    }
+    final ownPhoneKey = _formedChatPhoneKey(widget.session.phoneNumber);
+    for (final chat in chats) {
+      final isHost = _formedChatPhoneKey(chat.creatorPhone) == ownPhoneKey;
+      if (chat.isDirect ||
+          !isHost ||
+          !chat.requiresHostNaming ||
+          chat.customName.trim().isNotEmpty ||
+          chat.participantPhones.length < 2 ||
+          _deferredTeamNamingChatIds.contains(chat.id)) {
+        continue;
+      }
+      _activeTeamNamingChatId = chat.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          _activeTeamNamingChatId = null;
+          return;
+        }
+        unawaited(_showFormedTeamNamingDialog(chat));
+      });
+      return;
+    }
+  }
+
+  String _formedChatPhoneKey(String value) {
+    return value.replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  Future<void> _showFormedTeamNamingDialog(GroupChat chat) async {
+    final trailName = chat.trailName.trim().isEmpty
+        ? 'this hike'
+        : chat.trailName.trim();
+    final suggestedName =
+        '${chat.trailName.trim().isEmpty ? 'Hiking Team' : chat.trailName.trim()} Crew';
+    final initialName = suggestedName.length <= 60
+        ? suggestedName
+        : suggestedName.substring(0, 60).trimRight();
+    final created = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => TeamFormedNamingDialog(
+        joinedHikerName: chat.latestJoinedName,
+        trailName: trailName,
+        initialName: initialName,
+        onSubmit: (name) => hikerCircleRepository.nameFormedHikeGroupChat(
+          chatId: chat.id,
+          name: name,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    _activeTeamNamingChatId = null;
+    if (created == true) {
+      final circleTabIndex = tabs.indexWhere((tab) => tab.label == 'Circle');
+      if (circleTabIndex >= 0 && activeHike == null) {
+        onTabTap(circleTabIndex);
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Your group chat is ready.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } else {
+      _deferredTeamNamingChatIds.add(chat.id);
+    }
   }
 
   Future<void> _initializeFirebaseMessaging() async {
@@ -1214,6 +1313,13 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
       return;
     }
+    if (uri.host == 'upcoming-hike' && uri.path == '/join-request') {
+      final requestId = uri.queryParameters['requestId'] ?? '';
+      if (requestId.isNotEmpty) {
+        unawaited(_openUpcomingHikeJoinRequest(requestId));
+      }
+      return;
+    }
     if (uri.host == 'group-chat' && uri.path == '/view') {
       final chatId = uri.queryParameters['chatId'] ?? '';
       if (chatId.isNotEmpty) {
@@ -1320,22 +1426,13 @@ class _HikerHomePageState extends State<HikerHomePage>
           }
           return const PopScope(
             canPop: false,
-            child: Center(
-              child: Card(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 22, vertical: 18),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      SizedBox(width: 12),
-                      Text('Loading upcoming hike...'),
-                    ],
-                  ),
-                ),
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: HikerCircleLoadingToast(
+                message: 'Loading upcoming hike…',
+                detail: 'Getting the latest hike and trail details.',
+                compact: true,
               ),
             ),
           );
@@ -1384,6 +1481,104 @@ class _HikerHomePageState extends State<HikerHomePage>
     await _showUpcomingHikeDetails(hike, availableTrails: notificationTrails);
   }
 
+  Future<void> _openUpcomingHikeJoinRequest(String requestId) async {
+    final normalizedId = requestId.trim();
+    if (!mounted ||
+        !RegExp(r'^join_[a-f0-9]{48}$').hasMatch(normalizedId) ||
+        _activeUpcomingJoinRequestReviewId == normalizedId) {
+      return;
+    }
+    _activeUpcomingJoinRequestReviewId = normalizedId;
+    final progressReady = Completer<BuildContext>();
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          if (!progressReady.isCompleted) progressReady.complete(dialogContext);
+          return const PopScope(
+            canPop: false,
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: HikerCircleLoadingToast(
+                message: 'Checking join request…',
+                detail: 'Confirming the hike and request status.',
+                compact: true,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    final progressContext = await progressReady.future;
+    UpcomingHikeJoinRequestReview? review;
+    try {
+      review = await hikerCircleRepository.loadUpcomingHikeJoinRequest(
+        normalizedId,
+      );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(error.message),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
+    } finally {
+      if (progressContext.mounted) Navigator.of(progressContext).pop();
+    }
+    if (!mounted || review == null) {
+      _finishUpcomingJoinRequestReview();
+      return;
+    }
+    final result = await showDialog<UpcomingHikeJoinRequestReview>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => UpcomingHikeJoinRequestDialog(
+        review: review!,
+        onResolve: (accept) =>
+            hikerCircleRepository.resolveUpcomingHikeJoinRequest(
+              requestId: normalizedId,
+              accept: accept,
+            ),
+      ),
+    );
+    _finishUpcomingJoinRequestReview();
+    if (!mounted || result == null) return;
+    if (result.status == 'accepted') {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('${result.requesterName} was added to the hike.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } else if (result.status == 'rejected') {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Join request declined.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  void _finishUpcomingJoinRequestReview() {
+    _activeUpcomingJoinRequestReviewId = null;
+    final pendingChats = _pendingFormedTeamChats;
+    _pendingFormedTeamChats = const [];
+    if (pendingChats.isNotEmpty) {
+      _promptForFormedTeamChatName(pendingChats);
+    }
+  }
+
   Future<void> _openGroupChatFromDeepLink(String chatId) async {
     if (!mounted) {
       return;
@@ -1399,22 +1594,13 @@ class _HikerHomePageState extends State<HikerHomePage>
           }
           return const PopScope(
             canPop: false,
-            child: Center(
-              child: Card(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 22, vertical: 18),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox.square(
-                        dimension: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      SizedBox(width: 12),
-                      Text('Opening group chat...'),
-                    ],
-                  ),
-                ),
+            child: Dialog(
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              child: HikerCircleLoadingToast(
+                message: 'Opening group chat…',
+                detail: 'Loading the hike team and recent messages.',
+                compact: true,
               ),
             ),
           );
@@ -3741,6 +3927,32 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   int _lastMapStyleIndex = 0;
 
+  Future<void> _promptForTrailRating(ActiveHikeSession completedHike) async {
+    final submitted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => TrailRatingDialog(
+        trailName: completedHike.trail.name,
+        onSubmit: (feedback) => hikerCircleRepository.submitCompletedHikeRating(
+          session: widget.session,
+          sessionId: completedHike.sessionId,
+          trailId: completedHike.trail.trailId,
+          rating: feedback.rating,
+          comment: feedback.comment,
+        ),
+      ),
+    );
+    if (!mounted || submitted != true) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Thanks — your trail rating is now included.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
   Future<void> _endActiveHikeSession({bool signOutAfter = false}) async {
     final hikeToEnd = activeHike;
     if (hikeToEnd == null || _isEndingActiveHike) {
@@ -3837,24 +4049,30 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     if (endResult.status == 'abandoned') return;
 
+    if (endResult.completed) {
+      await _promptForTrailRating(completedHike);
+      if (!mounted) return;
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) {
           return _HikeSummaryReportPage(
+            session: widget.session,
             report: completedReport,
             activeHike: completedHike,
             initialMapStyleIndex: _lastMapStyleIndex,
-            onShareReportText: () => _sosDeviceAlertService.shareText(
+            onShareReportText: (text) => _sosDeviceAlertService.shareText(
               subject: 'Hike summary: ${completedReport.trailName}',
-              text: completedReport.shareText,
+              text: text,
             ),
             onShareToCommunity: endResult.completed
-                ? () async {
+                ? (caption) async {
                     await hikerCircleRepository.createCompletedHikePost(
                       session: widget.session,
                       activeHike: completedHike,
                       summary: completedReport,
-                      caption: completedReport.shareText,
+                      caption: caption,
                     );
                   }
                 : null,
@@ -5417,6 +5635,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     fcmForegroundSubscription?.cancel();
     _bleEventSubscription?.cancel();
     _networkReachabilitySubscription?.cancel();
+    _formedTeamChatsSubscription?.cancel();
     unawaited(_bleService.stopTeamLocationExchange());
     unawaited(NetworkReachabilityService.instance.stop());
 
@@ -5466,15 +5685,9 @@ class _HikerHomePageState extends State<HikerHomePage>
             Positioned.fill(
               child: ColoredBox(
                 color: Theme.of(context).scaffoldBackgroundColor,
-                child: const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 16),
-                      Text('Restoring your active hike...'),
-                    ],
-                  ),
+                child: const HikerCircleLoadingView(
+                  message: 'Restoring your active hike…',
+                  detail: 'Loading your route, checkpoints, and team status.',
                 ),
               ),
             ),
@@ -7576,6 +7789,7 @@ class _PulsingHikeIconState extends State<_PulsingHikeIcon>
 
 class _HikeSummaryReportPage extends StatefulWidget {
   const _HikeSummaryReportPage({
+    required this.session,
     required this.report,
     required this.activeHike,
     required this.onShareReportText,
@@ -7583,10 +7797,11 @@ class _HikeSummaryReportPage extends StatefulWidget {
     this.initialMapStyleIndex = 0,
   });
 
+  final AppSession session;
   final HikeSummaryReport report;
   final ActiveHikeSession activeHike;
-  final Future<void> Function()? onShareToCommunity;
-  final Future<void> Function() onShareReportText;
+  final Future<void> Function(String caption)? onShareToCommunity;
+  final Future<void> Function(String text) onShareReportText;
   final int initialMapStyleIndex;
 
   @override
@@ -7594,7 +7809,20 @@ class _HikeSummaryReportPage extends StatefulWidget {
 }
 
 class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
-  bool _isSharingCommunity = false;
+  HikeRouteAnalysis get _routeAnalysis => analyzeHikeRoute(
+    routePoints: widget.activeHike.routePoints,
+    fallbackStartedAt: widget.activeHike.startedAt,
+    checkpoints: widget.activeHike.trail.checkpoints
+        .map(
+          (checkpoint) => HikeAnalysisCheckpoint(
+            name: checkpoint.name,
+            order: checkpoint.order,
+            latitude: checkpoint.latitude,
+            longitude: checkpoint.longitude,
+          ),
+        )
+        .toList(),
+  );
 
   List<mapbox.Point> get _actualPinPoints => widget
       .activeHike
@@ -7624,77 +7852,28 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
       )
       .toList();
 
-  Future<void> _shareToCommunity() async {
-    final shareToCommunity = widget.onShareToCommunity;
-    if (_isSharingCommunity || shareToCommunity == null) {
-      return;
-    }
-
-    setState(() {
-      _isSharingCommunity = true;
-    });
-    try {
-      await shareToCommunity();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Hike summary shared to community.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(error.message),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Unable to share this summary right now.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSharingCommunity = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _shareReportText() async {
-    try {
-      await widget.onShareReportText();
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Sharing is unavailable on this device.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    }
+  Future<void> _openSharePreview() async {
+    final posted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (context) => HikeSharePreviewPage(
+          session: widget.session,
+          report: widget.report,
+          activeHike: widget.activeHike,
+          initialMapStyleIndex: widget.initialMapStyleIndex,
+          onPostToCommunity: widget.onShareToCommunity,
+          onShareExternally: widget.onShareReportText,
+        ),
+      ),
+    );
+    if (!mounted || posted != true) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Hike shared to community.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   HikingRouteResult? get _summaryRouteResult {
@@ -7883,6 +8062,38 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                       ],
                     ),
                   ),
+                  if (_routeAnalysis.checkpoints.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      'CHECKPOINT PERFORMANCE',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: _SummaryColors.secondaryTextFor(context),
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SummaryCard(
+                      child: Column(
+                        children: [
+                          for (
+                            var index = 0;
+                            index < _routeAnalysis.checkpoints.length;
+                            index++
+                          ) ...[
+                            if (index > 0)
+                              Divider(
+                                height: 1,
+                                color: _SummaryColors.separatorFor(context),
+                              ),
+                            _SummaryCheckpointPerformanceRow(
+                              checkpoint: _routeAnalysis.checkpoints[index],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   Text(
                     'CHECK-INS',
@@ -8008,23 +8219,16 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  if (widget.onShareToCommunity != null) ...[
-                    FilledButton.icon(
-                      onPressed: _isSharingCommunity ? null : _shareToCommunity,
-                      icon: _isSharingCommunity
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.groups_2_rounded),
-                      label: const Text('Share to Community'),
+                  FilledButton.icon(
+                    key: const Key('preview-and-share-hike'),
+                    onPressed: () => unawaited(_openSharePreview()),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _SummaryColors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    const SizedBox(height: 10),
-                  ],
-                  OutlinedButton.icon(
-                    onPressed: () => unawaited(_shareReportText()),
                     icon: const Icon(Icons.ios_share_rounded),
-                    label: const Text('Share Report Text'),
+                    label: const Text('Preview & Share Hike'),
                   ),
                 ],
               ),
@@ -8126,6 +8330,94 @@ class _SummaryEventRow extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: _SummaryColors.secondaryTextFor(context),
               letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryCheckpointPerformanceRow extends StatelessWidget {
+  const _SummaryCheckpointPerformanceRow({required this.checkpoint});
+
+  final HikeCheckpointAnalysis checkpoint;
+
+  @override
+  Widget build(BuildContext context) {
+    String clock(DateTime? value) {
+      if (value == null) return 'Not reached';
+      final local = value.toLocal();
+      return '${local.hour.toString().padLeft(2, '0')}:'
+          '${local.minute.toString().padLeft(2, '0')}:'
+          '${local.second.toString().padLeft(2, '0')}';
+    }
+
+    String elapsed(Duration? value) {
+      if (value == null) return 'Start';
+      final hours = value.inHours;
+      final minutes = value.inMinutes.remainder(60);
+      return hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(13),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: checkpoint.reached
+                  ? _SummaryColors.green
+                  : _SummaryColors.secondaryTextFor(
+                      context,
+                    ).withValues(alpha: 0.13),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              checkpoint.reached
+                  ? Icons.check_rounded
+                  : Icons.horizontal_rule_rounded,
+              color: checkpoint.reached
+                  ? Colors.white
+                  : _SummaryColors.secondaryTextFor(context),
+              size: 17,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  checkpoint.name,
+                  style: TextStyle(
+                    color: _SummaryColors.textFor(context),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  checkpoint.reached
+                      ? '${clock(checkpoint.reachedAt)} · ${elapsed(checkpoint.timeFromPrevious)} · ${checkpoint.distanceFromPreviousKm.toStringAsFixed(2)} km'
+                      : 'No GPS sample within 100 m',
+                  style: TextStyle(
+                    color: _SummaryColors.secondaryTextFor(context),
+                    fontSize: 11,
+                  ),
+                ),
+                if (checkpoint.reached && checkpoint.paceMinutesPerKm > 0)
+                  Text(
+                    '${checkpoint.paceMinutesPerKm.toStringAsFixed(1)} min/km · ${checkpoint.speedKmh.toStringAsFixed(1)} km/h',
+                    style: const TextStyle(
+                      color: _SummaryColors.green,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
@@ -8879,7 +9171,7 @@ class _ActiveHikeTopBar extends StatelessWidget {
                   children: [
                     _MetricChip(
                       icon: Icons.schedule_rounded,
-                      label: 'Expected $returnLabel',
+                      label: 'Est. return $returnLabel',
                     ),
                     const SizedBox(height: 6),
                     _MetricChip(
@@ -8982,9 +9274,11 @@ class _ActiveHikeWeatherSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 if (samples.isEmpty && state.isLoading)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: Center(child: CircularProgressIndicator()),
+                  const HikerCircleLoadingView(
+                    message: 'Checking hike weather…',
+                    detail: 'Loading conditions along the trail ahead.',
+                    compact: true,
+                    padding: EdgeInsets.symmetric(vertical: 16),
                   )
                 else if (samples.isEmpty)
                   Padding(
@@ -9382,7 +9676,7 @@ class _UpcomingHikeDetailSheet extends StatelessWidget {
             ),
             _DetailRow(
               icon: Icons.timer_outlined,
-              label: 'Expected Return',
+              label: 'Estimated Return',
               value: _formatTime(hike.expectedReturnTime),
             ),
             const Divider(height: 24),

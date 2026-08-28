@@ -71,7 +71,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Join Hike'));
+    await tester.tap(find.text('Join Group Hike'));
     await tester.pumpAndSettle();
 
     expect(find.text('Set your hike reminders'), findsOneWidget);

@@ -1329,6 +1329,7 @@ class HikeCoordinate {
     required this.longitude,
     required this.capturedAt,
     this.accuracyMeters,
+    this.altitudeMeters,
   });
 
   factory HikeCoordinate.fromTriggerLocation(SosTriggerLocation location) {
@@ -1360,6 +1361,9 @@ class HikeCoordinate {
       latitude: latitude,
       longitude: longitude,
       accuracyMeters: _validAccuracyFrom(data['accuracyMeters']),
+      altitudeMeters: _validAltitudeFrom(
+        data['altitudeMeters'] ?? data['altitude'],
+      ),
       capturedAt: capturedAt is String
           ? DateTime.tryParse(capturedAt) ??
                 DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
@@ -1370,6 +1374,7 @@ class HikeCoordinate {
   final double latitude;
   final double longitude;
   final double? accuracyMeters;
+  final double? altitudeMeters;
   final DateTime capturedAt;
 
   bool get hasValidPosition =>
@@ -1385,6 +1390,7 @@ class HikeCoordinate {
       'latitude': latitude,
       'longitude': longitude,
       if (accuracyMeters != null) 'accuracyMeters': accuracyMeters,
+      if (altitudeMeters != null) 'altitudeMeters': altitudeMeters,
       'capturedAtLocal': capturedAt.toUtc().toIso8601String(),
     };
   }
@@ -1434,6 +1440,13 @@ class HikeCoordinate {
 
   static double? _validAccuracyFrom(Object? value) {
     if (value is num && value.isFinite && value >= 0) {
+      return value.toDouble();
+    }
+    return null;
+  }
+
+  static double? _validAltitudeFrom(Object? value) {
+    if (value is num && value.isFinite && value >= -500 && value <= 10000) {
       return value.toDouble();
     }
     return null;
@@ -1822,6 +1835,7 @@ class UpcomingHike {
     this.isDeleted = false,
     this.deletedAt,
     this.draft,
+    this.joinRequestStatus = '',
   });
 
   final String id;
@@ -1849,6 +1863,7 @@ class UpcomingHike {
   final bool isDeleted;
   final DateTime? deletedAt;
   final HikeSessionDraft? draft;
+  final String joinRequestStatus;
 
   bool get isLocalPendingSync => id.startsWith('local_pending_');
 
@@ -1877,6 +1892,7 @@ class UpcomingHike {
     if (isDeleted) 'isDeleted': true,
     if (deletedAt != null)
       'deletedAtLocal': deletedAt!.toUtc().toIso8601String(),
+    if (joinRequestStatus.isNotEmpty) 'joinRequestStatus': joinRequestStatus,
   };
 
   Map<String, dynamic> toPersistence() => {
@@ -1911,6 +1927,7 @@ class UpcomingHike {
       isDeleted: isDeleted,
       deletedAt: deletedAt,
       draft: value,
+      joinRequestStatus: joinRequestStatus,
     );
   }
 
@@ -1952,6 +1969,7 @@ class UpcomingHike {
       isDeleted: data['isDeleted'] == true,
       deletedAt: _modelDateFromValue(data['deletedAtLocal']),
       draft: _modelDraftFromValue(data['draft']),
+      joinRequestStatus: _modelStringFrom(data['joinRequestStatus']),
     );
   }
 
@@ -1985,6 +2003,46 @@ class UpcomingHike {
   }
 
   static double _toRadians(double deg) => deg * 3.141592653589793 / 180;
+}
+
+class UpcomingHikeJoinRequestReview {
+  const UpcomingHikeJoinRequestReview({
+    required this.requestId,
+    required this.hikeId,
+    required this.status,
+    required this.reason,
+    required this.requesterName,
+    required this.trailName,
+    this.departureTime,
+  });
+
+  final String requestId;
+  final String hikeId;
+  final String status;
+  final String reason;
+  final String requesterName;
+  final String trailName;
+  final DateTime? departureTime;
+
+  bool get canResolve => status == 'pending';
+
+  factory UpcomingHikeJoinRequestReview.fromMap(Map<String, dynamic> data) {
+    return UpcomingHikeJoinRequestReview(
+      requestId: _modelStringFrom(data['requestId']),
+      hikeId: _modelStringFrom(data['hikeId']),
+      status: _modelStringFrom(data['status']).isEmpty
+          ? 'expired'
+          : _modelStringFrom(data['status']),
+      reason: _modelStringFrom(data['reason']),
+      requesterName: _modelStringFrom(data['requesterName']).isEmpty
+          ? 'A hiker'
+          : _modelStringFrom(data['requesterName']),
+      trailName: _modelStringFrom(data['trailName']).isEmpty
+          ? 'Upcoming hike'
+          : _modelStringFrom(data['trailName']),
+      departureTime: _modelDateFromValue(data['departureTimeLocal']),
+    );
+  }
 }
 
 class HikeReminderPreference {
@@ -2110,6 +2168,9 @@ class GroupChat {
     this.unreadCount = const {},
     this.departureTime,
     this.participantPhotoURLs = const {},
+    this.customName = '',
+    this.requiresHostNaming = false,
+    this.latestJoinedName = '',
   });
 
   final String id;
@@ -2131,11 +2192,17 @@ class GroupChat {
   final Map<String, DateTime> lastReadAt;
   final Map<String, int> unreadCount;
   final Map<String, String> participantPhotoURLs;
+  final String customName;
+  final bool requiresHostNaming;
+  final String latestJoinedName;
 
   bool get isDirect => chatType == 'direct';
 
   String displayNameFor(String phoneNumber) {
     if (!isDirect) {
+      if (customName.trim().isNotEmpty) {
+        return customName.trim();
+      }
       if (departureTime != null) {
         return _formatGroupChatName(trailName, departureTime!);
       }
@@ -2184,6 +2251,9 @@ class GroupChat {
       unreadCount: unreadCount,
       departureTime: departureTime,
       participantPhotoURLs: participantPhotoURLs ?? this.participantPhotoURLs,
+      customName: customName,
+      requiresHostNaming: requiresHostNaming,
+      latestJoinedName: latestJoinedName,
     );
   }
 
@@ -2248,6 +2318,9 @@ class GroupChat {
           (k, v) => MapEntry(k, v.toUtc().toIso8601String()),
         ),
       if (unreadCount.isNotEmpty) 'unreadCount': unreadCount,
+      if (customName.isNotEmpty) 'customName': customName,
+      if (requiresHostNaming) 'requiresHostNaming': true,
+      if (latestJoinedName.isNotEmpty) 'latestJoinedName': latestJoinedName,
     };
   }
 
@@ -2316,13 +2389,18 @@ class GroupChat {
       lastMessageSenderPhone: data['lastMessageSenderPhone'] is String
           ? data['lastMessageSenderPhone'] as String
           : null,
-      hikeEndedAt: _modelDateFromValue(data['hikeEndedAt']),
+      hikeEndedAt: _modelDateFromValue(
+        data['hikeEndedAtLocal'] ?? data['hikeEndedAt'],
+      ),
       chatRemovesAt: _modelDateFromValue(data['chatRemovesAtLocal']),
       isDeleted: data['isDeleted'] == true,
       closureReason: _modelStringFrom(data['closureReason']),
       departureTime: _modelDateFromValue(data['departureTimeLocal']),
       lastReadAt: lastReadAt,
       unreadCount: unreadCount,
+      customName: _modelStringFrom(data['customName']),
+      requiresHostNaming: data['requiresHostNaming'] == true,
+      latestJoinedName: _modelStringFrom(data['latestJoinedName']),
     );
   }
 }

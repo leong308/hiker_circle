@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Model/app_session.dart';
 import '../../authentication/View/safety_questions_setup_page.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../sos/View/emergency_contacts_page.dart';
@@ -116,7 +117,14 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: SafeArea(
+          child: HikerCircleLoadingView(
+            message: 'Loading your profile…',
+            detail: 'Preparing your hiking and safety preferences.',
+          ),
+        ),
+      );
     }
     if (_loadError != null) {
       return PopScope(

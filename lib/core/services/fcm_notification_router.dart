@@ -46,6 +46,13 @@ abstract final class FcmNotificationRouter {
           key: 'upcomingHikeId',
           value: data['upcomingHikeId'] ?? data['hikeId'],
         );
+      case 'upcoming_hike_join_request':
+        return _link(
+          host: 'upcoming-hike',
+          path: '/join-request',
+          key: 'requestId',
+          value: data['requestId'],
+        );
       case 'team_hike_invite':
       case 'team_hike_ready':
       case 'team_hike_start':

@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../authentication/View/phone_sign_in_page.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../home/View/hiker_home_page.dart';
 import '../../onboarding/View/first_time_onboarding_flow.dart';
 import '../Data/app_settings_controller.dart';
@@ -326,6 +327,13 @@ class _StartupPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    return const Scaffold(
+      body: SafeArea(
+        child: HikerCircleLoadingView(
+          message: 'Getting HikerCircle ready…',
+          detail: 'Loading your account and saved hike information.',
+        ),
+      ),
+    );
   }
 }

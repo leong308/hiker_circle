@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/services/hiker_ble_service.dart';
+import '../../core/widgets/loading_toast.dart';
 
 enum _PairingStep {
   prepare,
@@ -1085,28 +1086,12 @@ class _PairingActivityPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: emphasize
-            ? scheme.primaryContainer
-            : scheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(20),
-        border: emphasize ? Border.all(color: scheme.primary, width: 2) : null,
-      ),
-      child: Column(
-        children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 16),
-          Text(
-            headline,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 7),
-          Text(detail, textAlign: TextAlign.center),
-        ],
+    return Semantics(
+      container: emphasize,
+      child: HikerCircleLoadingToast(
+        message: headline,
+        detail: detail,
+        compact: true,
       ),
     );
   }

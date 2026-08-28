@@ -11,6 +11,7 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../onboarding/Data/onboarding_repository.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../onboarding/Model/onboarding_profile.dart';
@@ -270,7 +271,10 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
                 if (snapshot.connectionState == ConnectionState.waiting)
                   const SliverFillRemaining(
                     hasScrollBody: false,
-                    child: Center(child: CircularProgressIndicator()),
+                    child: HikerCircleLoadingView(
+                      message: 'Loading your profile…',
+                      detail: 'Getting your hiking and safety information.',
+                    ),
                   )
                 else if (snapshot.hasError)
                   SliverFillRemaining(
@@ -566,7 +570,12 @@ class _ProfilePhotoCropDialogState extends State<_ProfilePhotoCropDialog> {
           if (image == null) {
             return const SizedBox(
               height: 220,
-              child: Center(child: CircularProgressIndicator()),
+              child: HikerCircleLoadingView(
+                message: 'Preparing your photo…',
+                detail: '',
+                compact: true,
+                padding: EdgeInsets.all(10),
+              ),
             );
           }
           _image = image;

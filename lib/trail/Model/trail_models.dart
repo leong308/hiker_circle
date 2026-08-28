@@ -235,6 +235,7 @@ class Trail {
     required this.estimatedDurationMinutes,
     required this.elevationGainMeters,
     required this.ratingAverage,
+    this.ratingCount = 0,
     required this.offlineMapAvailable,
     required this.offlineMapDownloaded,
     required this.isVerifiedTrail,
@@ -279,6 +280,7 @@ class Trail {
       estimatedDurationMinutes: _trailIntFrom(data['estimatedDurationMinutes']),
       elevationGainMeters: _trailIntFrom(data['elevationGainMeters']),
       ratingAverage: _trailDoubleFrom(data['ratingAverage']),
+      ratingCount: _trailIntFrom(data['ratingCount']),
       offlineMapAvailable: data['offlineMapAvailable'] == true,
       offlineMapDownloaded: data['offlineMapDownloaded'] == true,
       isVerifiedTrail: data['isVerifiedTrail'] == true,
@@ -311,6 +313,7 @@ class Trail {
   final int estimatedDurationMinutes;
   final int elevationGainMeters;
   final double ratingAverage;
+  final int ratingCount;
   final bool offlineMapAvailable;
   final bool offlineMapDownloaded;
   final bool isVerifiedTrail;
@@ -340,6 +343,7 @@ class Trail {
       'estimatedDurationMinutes': estimatedDurationMinutes,
       'elevationGainMeters': elevationGainMeters,
       'ratingAverage': ratingAverage,
+      'ratingCount': ratingCount,
       'offlineMapAvailable': offlineMapAvailable,
       'offlineMapDownloaded': offlineMapDownloaded,
       'isVerifiedTrail': isVerifiedTrail,
@@ -384,6 +388,10 @@ class Trail {
 
   String get distanceLabel => '${distanceKm.toStringAsFixed(1)} km';
 
+  String get ratingLabel => ratingCount <= 0
+      ? 'No ratings yet'
+      : '${ratingAverage.toStringAsFixed(1)} ($ratingCount)';
+
   Trail copyWith({
     String? trailId,
     String? name,
@@ -397,6 +405,7 @@ class Trail {
     int? estimatedDurationMinutes,
     int? elevationGainMeters,
     double? ratingAverage,
+    int? ratingCount,
     bool? offlineMapAvailable,
     bool? offlineMapDownloaded,
     bool? isVerifiedTrail,
@@ -423,6 +432,7 @@ class Trail {
           estimatedDurationMinutes ?? this.estimatedDurationMinutes,
       elevationGainMeters: elevationGainMeters ?? this.elevationGainMeters,
       ratingAverage: ratingAverage ?? this.ratingAverage,
+      ratingCount: ratingCount ?? this.ratingCount,
       offlineMapAvailable: offlineMapAvailable ?? this.offlineMapAvailable,
       offlineMapDownloaded: offlineMapDownloaded ?? this.offlineMapDownloaded,
       isVerifiedTrail: isVerifiedTrail ?? this.isVerifiedTrail,

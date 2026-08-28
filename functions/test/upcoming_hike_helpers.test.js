@@ -2,7 +2,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildUpcomingHikePreview } = require('../upcoming_hike_helpers');
+const {
+  buildUpcomingHikePreview,
+  effectiveUpcomingHikeType,
+} = require('../upcoming_hike_helpers');
 
 const now = Date.parse('2026-08-04T10:00:00.000Z');
 const privateHike = {
@@ -87,4 +90,13 @@ test('deleted and expired hikes are not returned', () => {
     ),
     null
   );
+});
+
+test('a group draft stays group even when no buddies were preselected', () => {
+  const legacyMislabelled = {
+    hikeType: 'solo',
+    draft: { hikeType: 'team', teamBuddies: [] },
+  };
+  assert.equal(effectiveUpcomingHikeType(legacyMislabelled), 'team');
+  assert.equal(effectiveUpcomingHikeType({ hikeType: 'solo' }), 'solo');
 });

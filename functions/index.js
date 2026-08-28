@@ -1,5 +1,5 @@
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const {
   onDocumentCreated,
   onDocumentDeleted,
@@ -34,7 +34,21 @@ const {
 } = require('./green_api_helpers');
 const {
   buildUpcomingHikePreview,
+  effectiveUpcomingHikeType,
 } = require('./upcoming_hike_helpers');
+const {
+  joinRequestDocumentId,
+  joinRequestLifecycle,
+  upcomingHikeUnavailableReason,
+} = require('./upcoming_hike_join_request_helpers');
+const {
+  detailData: hikeHistoryDetailData,
+  summaryData: hikeHistorySummaryData,
+} = require('./hike_history_helpers');
+const {
+  trailRatingAggregate,
+  validRating,
+} = require('./trail_rating_helpers');
 const {
   upcomingHikeReminderDue,
 } = require('./upcoming_hike_reminder_helpers');
@@ -75,7 +89,7 @@ const greenApiToken = defineSecret('GREEN_API_TOKEN');
 // A deterministic device/counter incident ID and one report per account prevent
 // repeated BLE advertisements or reconnect retries from creating emergencies.
 exports.forwardNearbySosIncident = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
@@ -424,7 +438,7 @@ async function updateTeamParticipantForHike(hike, nextStatus) {
 }
 
 exports.sendGreenApiLoginCode = onCall(
-  { secrets: [greenApiInstanceId, greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiInstanceId, greenApiToken] },
   async (request) => {
     const phoneNumber = String(request.data?.phoneNumber || '').trim();
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
@@ -716,7 +730,6 @@ function greenApiReadinessHttpsError(error) {
 exports.sendSosWhatsAppMessage = onCall(
   {
     secrets: [greenApiInstanceId, greenApiToken],
-    enforceAppCheck: true,
     timeoutSeconds: 30,
   },
   async (request) => {
@@ -1119,7 +1132,7 @@ exports.sendSosWhatsAppMessage = onCall(
   }
 );
 
-exports.manageBuddyRequest = onCall({ enforceAppCheck: true }, async (request) => {
+exports.manageBuddyRequest = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
   const action = String(request.data?.action || '');
@@ -1270,7 +1283,7 @@ exports.manageBuddyRequest = onCall({ enforceAppCheck: true }, async (request) =
 // and route-planning fields never cross the trust boundary. Full documents
 // remain readable only by their participants and administrators.
 exports.listUpcomingHikePreviews = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -1307,7 +1320,7 @@ exports.listUpcomingHikePreviews = onCall(
       documents = snapshot.docs;
     }
 
-    const hikes = documents
+    const previewRows = documents
       .map((document) => {
         const hike = document.data() || {};
         const launchHasStarted = Boolean(
@@ -1317,15 +1330,31 @@ exports.listUpcomingHikePreviews = onCall(
           || (Array.isArray(hike.startedParticipantPhones)
             && hike.startedParticipantPhones.length > 0)
         );
-        return launchHasStarted
+        const preview = launchHasStarted
           ? null
           : buildUpcomingHikePreview(
               document.id,
               hike,
               phoneNumber
             );
+        return preview ? { document, preview } : null;
       })
       .filter((hike) => hike !== null);
+    const requestSnapshots = previewRows.length === 0
+      ? []
+      : await db.getAll(
+          ...previewRows.map(({ document }) => db
+            .collection('upcomingHikeJoinRequests')
+            .doc(joinRequestDocumentId(document.id, phoneNumber)))
+        );
+    const hikes = previewRows.map(({ preview }, index) => {
+      const request = requestSnapshots[index]?.data() || {};
+      const requestStatus = String(request.status || '').trim();
+      return {
+        ...preview,
+        ...(requestStatus ? { joinRequestStatus: requestStatus } : {}),
+      };
+    });
     return { hikes };
   }
 );
@@ -1333,7 +1362,7 @@ exports.listUpcomingHikePreviews = onCall(
 // Joining changes another user's upcoming-hike document, so membership and
 // chat creation are performed together by trusted server code. The caller's
 // phone number is always derived from the verified Firebase token.
-exports.joinUpcomingHike = onCall({ enforceAppCheck: true }, async (request) => {
+exports.joinUpcomingHike = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
   const hikeId = String(request.data?.hikeId || '').trim();
@@ -1419,6 +1448,12 @@ exports.joinUpcomingHike = onCall({ enforceAppCheck: true }, async (request) => 
       .filter((phone) => /^\+[1-9]\d{7,14}$/.test(phone));
     const uniquePhones = [...new Set(participantPhones)];
     const alreadyJoined = uniquePhones.includes(ownerPhone);
+    if (!alreadyJoined && effectiveUpcomingHikeType(hike) === 'solo') {
+      throw new HttpsError(
+        'failed-precondition',
+        'Send a join request and wait for the host to approve it.'
+      );
+    }
     if (!alreadyJoined) {
       uniquePhones.push(ownerPhone);
     }
@@ -1460,6 +1495,13 @@ exports.joinUpcomingHike = onCall({ enforceAppCheck: true }, async (request) => 
         creatorPhone,
         chatType: 'group',
         departureTimeLocal: new Date(departureMillis).toISOString(),
+        ...(!alreadyJoined && !String(chat.customName || '').trim()
+          ? {
+              requiresHostNaming: true,
+              latestJoinedName: displayName,
+              teamFormedAtLocal: String(chat.teamFormedAtLocal || nowIso),
+            }
+          : {}),
         ...(!chatSnapshot.exists ? { createdAtLocal: nowIso } : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAtLocal: nowIso,
@@ -1481,6 +1523,616 @@ exports.joinUpcomingHike = onCall({ enforceAppCheck: true }, async (request) => 
   });
 
   return { joined: true, ...result };
+});
+
+exports.requestToJoinUpcomingHike = onCall({}, async (request) => {
+  const { phoneNumber: requesterPhone, uid } = authenticatedPhoneFor(
+    request,
+    'Sign in to request to join this hike.'
+  );
+  const hikeId = String(request.data?.hikeId || '').trim();
+  if (!validFirestoreDocumentId(hikeId)) {
+    throw new HttpsError('invalid-argument', 'The upcoming hike is invalid.');
+  }
+
+  const db = admin.firestore();
+  const requestId = joinRequestDocumentId(hikeId, requesterPhone);
+  const requestReference = db.collection('upcomingHikeJoinRequests').doc(requestId);
+  const hikeReference = db.collection('upcomingHikes').doc(hikeId);
+  const userReference = db.collection('users').doc(uid);
+  const rateReference = db.collection('upcomingHikeJoinRequestRateLimits').doc(uid);
+  return db.runTransaction(async (transaction) => {
+    const [hikeSnapshot, userSnapshot, requestSnapshot, rateSnapshot] =
+      await Promise.all([
+        transaction.get(hikeReference),
+        transaction.get(userReference),
+        transaction.get(requestReference),
+        transaction.get(rateReference),
+      ]);
+    const hike = hikeSnapshot.data() || {};
+    const user = userSnapshot.data() || {};
+    if (!hikeSnapshot.exists) {
+      return { requestId, status: 'expired', reason: 'hike_removed' };
+    }
+    if (
+      !userSnapshot.exists
+      || user.accountDisabled === true
+      || user.status === 'disabled'
+    ) {
+      throw new HttpsError('permission-denied', 'Your account is unavailable.');
+    }
+    const unavailableReason = upcomingHikeUnavailableReason(hike);
+    if (unavailableReason) {
+      return { requestId, status: 'expired', reason: unavailableReason };
+    }
+    const hostPhone = String(hike.creatorPhone || '').trim();
+    const participants = Array.isArray(hike.participantPhones)
+      ? hike.participantPhones.map((phone) => String(phone || '').trim())
+      : [];
+    if (hostPhone === requesterPhone || participants.includes(requesterPhone)) {
+      return { requestId, status: 'accepted', reason: 'already_participating' };
+    }
+    if (effectiveUpcomingHikeType(hike) !== 'solo') {
+      throw new HttpsError(
+        'failed-precondition',
+        'This is a group hike and can be joined directly.'
+      );
+    }
+    if (!/^\+[1-9]\d{7,14}$/.test(hostPhone)) {
+      throw new HttpsError('failed-precondition', 'This hike host is unavailable.');
+    }
+    if (requestSnapshot.exists) {
+      const lifecycle = joinRequestLifecycle(requestSnapshot.data() || {}, hike);
+      return { requestId, ...lifecycle };
+    }
+
+    const profile = canonicalChatProfile(requesterPhone, user);
+    const nowIso = new Date().toISOString();
+    transaction.create(requestReference, {
+      requestId,
+      hikeId,
+      trailName: String(hike.trailName || 'Upcoming hike').trim().slice(0, 160),
+      departureTimeLocal: String(hike.departureTimeLocal || ''),
+      hostPhone,
+      requesterPhone,
+      requesterUserId: uid,
+      requesterName: profile.name,
+      requesterPhotoURL: profile.photoURL,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtLocal: nowIso,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtLocal: nowIso,
+    });
+    assertWindowRate(transaction, rateReference, rateSnapshot, {
+      limit: 10,
+      windowMillis: 60 * 60 * 1000,
+      message: 'Too many join requests were sent. Try again later.',
+    });
+    return { requestId, status: 'pending', reason: '' };
+  });
+});
+
+function upcomingHikeJoinRequestResponse(requestId, request, hike, lifecycle) {
+  return {
+    requestId,
+    hikeId: String(request?.hikeId || ''),
+    status: lifecycle.status,
+    reason: lifecycle.reason,
+    requesterName: String(request?.requesterName || 'A hiker').slice(0, 80),
+    trailName: String(hike?.trailName || request?.trailName || 'Upcoming hike')
+      .slice(0, 160),
+    departureTimeLocal: String(
+      hike?.departureTimeLocal || request?.departureTimeLocal || ''
+    ),
+  };
+}
+
+exports.loadUpcomingHikeJoinRequest = onCall({}, async (request) => {
+  const { phoneNumber: hostPhone } = authenticatedPhoneFor(
+    request,
+    'Sign in to review this join request.'
+  );
+  const requestId = String(request.data?.requestId || '').trim();
+  if (!/^join_[a-f0-9]{48}$/.test(requestId)) {
+    throw new HttpsError('invalid-argument', 'The join request link is invalid.');
+  }
+  const db = admin.firestore();
+  const requestSnapshot = await db
+    .collection('upcomingHikeJoinRequests')
+    .doc(requestId)
+    .get();
+  if (!requestSnapshot.exists) {
+    return { requestId, status: 'expired', reason: 'request_missing' };
+  }
+  const joinRequest = requestSnapshot.data() || {};
+  if (String(joinRequest.hostPhone || '') !== hostPhone) {
+    throw new HttpsError(
+      'permission-denied',
+      'This join request belongs to a different hike host.'
+    );
+  }
+  const hikeSnapshot = await db
+    .collection('upcomingHikes')
+    .doc(String(joinRequest.hikeId || ''))
+    .get();
+  const hike = hikeSnapshot.exists ? hikeSnapshot.data() || {} : null;
+  const lifecycle = joinRequestLifecycle(joinRequest, hike);
+  if (lifecycle.status === 'expired' && String(joinRequest.status) === 'pending') {
+    await requestSnapshot.ref.set(
+      {
+        status: 'expired',
+        expiredReason: lifecycle.reason,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  }
+  return upcomingHikeJoinRequestResponse(
+    requestId,
+    joinRequest,
+    hike,
+    lifecycle
+  );
+});
+
+exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
+  const { phoneNumber: hostPhone } = authenticatedPhoneFor(
+    request,
+    'Sign in to respond to this join request.'
+  );
+  const requestId = String(request.data?.requestId || '').trim();
+  const action = String(request.data?.action || '').trim();
+  if (!/^join_[a-f0-9]{48}$/.test(requestId) || !['accept', 'reject'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'The join request response is invalid.');
+  }
+  const db = admin.firestore();
+  const requestReference = db.collection('upcomingHikeJoinRequests').doc(requestId);
+  return db.runTransaction(async (transaction) => {
+    const requestSnapshot = await transaction.get(requestReference);
+    if (!requestSnapshot.exists) {
+      return { requestId, status: 'expired', reason: 'request_missing' };
+    }
+    const joinRequest = requestSnapshot.data() || {};
+    if (String(joinRequest.hostPhone || '') !== hostPhone) {
+      throw new HttpsError(
+        'permission-denied',
+        'Only the hike host can respond to this request.'
+      );
+    }
+    const hikeId = String(joinRequest.hikeId || '').trim();
+    const requesterPhone = String(joinRequest.requesterPhone || '').trim();
+    const hikeReference = db.collection('upcomingHikes').doc(hikeId);
+    const userReference = db
+      .collection('users')
+      .doc(userDocumentIdForPhone(requesterPhone));
+    const chatReference = db.collection('groupChats').doc(`hike_${hikeId}`);
+    const [hikeSnapshot, userSnapshot, chatSnapshot] = await Promise.all([
+      transaction.get(hikeReference),
+      transaction.get(userReference),
+      transaction.get(chatReference),
+    ]);
+    const hike = hikeSnapshot.exists ? hikeSnapshot.data() || {} : null;
+    const lifecycle = joinRequestLifecycle(joinRequest, hike);
+    if (lifecycle.status !== 'pending') {
+      return upcomingHikeJoinRequestResponse(
+        requestId,
+        joinRequest,
+        hike,
+        lifecycle
+      );
+    }
+    const unavailableReason = upcomingHikeUnavailableReason(hike);
+    if (unavailableReason) {
+      transaction.set(
+        requestReference,
+        {
+          status: 'expired',
+          expiredReason: unavailableReason,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAtLocal: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return upcomingHikeJoinRequestResponse(
+        requestId,
+        joinRequest,
+        hike,
+        { status: 'expired', reason: unavailableReason }
+      );
+    }
+    const nowIso = new Date().toISOString();
+    if (action === 'reject') {
+      transaction.set(
+        requestReference,
+        {
+          status: 'rejected',
+          resolvedByPhone: hostPhone,
+          resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+          resolvedAtLocal: nowIso,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAtLocal: nowIso,
+        },
+        { merge: true }
+      );
+      return upcomingHikeJoinRequestResponse(
+        requestId,
+        joinRequest,
+        hike,
+        { status: 'rejected', reason: 'rejected' }
+      );
+    }
+    if (!userSnapshot.exists) {
+      throw new HttpsError('failed-precondition', 'This hiker is no longer available.');
+    }
+    const participantPhones = [
+      hostPhone,
+      ...(Array.isArray(hike.participantPhones) ? hike.participantPhones : []),
+    ]
+      .map((phone) => String(phone || '').trim())
+      .filter((phone) => /^\+[1-9]\d{7,14}$/.test(phone));
+    const uniquePhones = [...new Set(participantPhones)];
+    if (!uniquePhones.includes(requesterPhone)) uniquePhones.push(requesterPhone);
+    if (uniquePhones.length > 50) {
+      throw new HttpsError('resource-exhausted', 'This hike has reached its participant limit.');
+    }
+    const requesterProfile = canonicalChatProfile(
+      requesterPhone,
+      userSnapshot.data() || {}
+    );
+    const chat = chatSnapshot.data() || {};
+    const participantNames = chat.participantNames
+      && typeof chat.participantNames === 'object'
+      ? { ...chat.participantNames }
+      : {};
+    participantNames[phoneKeyFor(requesterPhone)] = requesterProfile.name;
+    transaction.set(
+      hikeReference,
+      {
+        hikeType: 'team',
+        draft: {
+          ...(hike.draft && typeof hike.draft === 'object' ? hike.draft : {}),
+          hikeType: 'team',
+        },
+        participantPhones: uniquePhones,
+        participantCount: uniquePhones.length,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+      },
+      { merge: true }
+    );
+    transaction.set(
+      chatReference,
+      {
+        hikeSessionId: hikeId,
+        trailName: String(hike.trailName || 'Group hike').slice(0, 160),
+        participantPhones: uniquePhones,
+        participantNames,
+        creatorPhone: hostPhone,
+        chatType: 'group',
+        departureTimeLocal: String(hike.departureTimeLocal || ''),
+        ...(!String(chat.customName || '').trim()
+          ? {
+              requiresHostNaming: true,
+              latestJoinedName: requesterProfile.name,
+              teamFormedAtLocal: String(chat.teamFormedAtLocal || nowIso),
+            }
+          : {}),
+        ...(!chatSnapshot.exists
+          ? {
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              createdAtLocal: nowIso,
+            }
+          : {}),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+      },
+      { merge: true }
+    );
+    transaction.set(chatReference.collection('messages').doc(`joined_${phoneKeyFor(requesterPhone)}`), {
+      chatId: chatReference.id,
+      senderPhone: requesterPhone,
+      senderName: requesterProfile.name,
+      text: `${requesterProfile.name} joined the hike`,
+      sentAtLocal: nowIso,
+      isSystemMessage: true,
+      seenBy: uniquePhones,
+    });
+    transaction.set(
+      requestReference,
+      {
+        status: 'accepted',
+        resolvedByPhone: hostPhone,
+        resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        resolvedAtLocal: nowIso,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+      },
+      { merge: true }
+    );
+    return upcomingHikeJoinRequestResponse(
+      requestId,
+      joinRequest,
+      { ...hike, hikeType: 'team' },
+      { status: 'accepted', reason: 'accepted' }
+    );
+  });
+});
+
+exports.openUpcomingHikeJoinRequest = onRequest((request, response) => {
+  const requestId = String(request.query.requestId || '').trim();
+  if (!/^join_[a-f0-9]{48}$/.test(requestId)) {
+    response.status(400).send('This HikerCircle join-request link is invalid.');
+    return;
+  }
+  const deepLink = `hikercircle://upcoming-hike/join-request?requestId=${requestId}`;
+  response.set('Cache-Control', 'no-store');
+  response.set('Content-Type', 'text/html; charset=utf-8');
+  response.status(200).send(`<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0;url=${deepLink}">
+<title>Open HikerCircle</title></head>
+<body style="font-family:system-ui;text-align:center;padding:48px 20px">
+<h1>Opening HikerCircle…</h1>
+<p><a href="${deepLink}">Tap here if the app does not open</a></p>
+<script>window.location.replace(${JSON.stringify(deepLink)});</script>
+</body></html>`);
+});
+
+exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
+  {
+    document: 'upcomingHikeJoinRequests/{requestId}',
+    secrets: [greenApiInstanceId, greenApiToken],
+  },
+  async (event) => {
+    const joinRequest = await claimAtMostOnceDelivery(event.data.ref, {
+      claimPrefix: 'hostNotificationDelivery',
+      processedFields: ['hostNotificationProcessedAtLocal'],
+    });
+    if (!joinRequest) return;
+    const requestId = String(event.params.requestId || '');
+    const hostPhone = String(joinRequest.hostPhone || '').trim();
+    const requesterPhone = String(joinRequest.requesterPhone || '').trim();
+    const hikeId = String(joinRequest.hikeId || '').trim();
+    if (
+      requestId !== String(joinRequest.requestId || '')
+      || !/^join_[a-f0-9]{48}$/.test(requestId)
+      || !/^\+[1-9]\d{7,14}$/.test(hostPhone)
+      || !/^\+[1-9]\d{7,14}$/.test(requesterPhone)
+      || !validFirestoreDocumentId(hikeId)
+      || String(joinRequest.status || '') !== 'pending'
+    ) {
+      await event.data.ref.set(
+        {
+          hostNotificationStatus: 'failed',
+          hostNotificationError: 'invalid_request',
+          hostNotificationProcessedAtLocal: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return;
+    }
+    const db = admin.firestore();
+    const hikeSnapshot = await db.collection('upcomingHikes').doc(hikeId).get();
+    const hike = hikeSnapshot.exists ? hikeSnapshot.data() || {} : null;
+    const lifecycle = joinRequestLifecycle(joinRequest, hike);
+    if (lifecycle.status !== 'pending') {
+      await event.data.ref.set(
+        {
+          hostNotificationStatus: 'skipped',
+          hostNotificationError: lifecycle.reason,
+          hostNotificationProcessedAtLocal: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return;
+    }
+
+    const requesterName = String(joinRequest.requesterName || 'A hiker')
+      .trim().slice(0, 80);
+    const trailName = String(hike.trailName || joinRequest.trailName || 'your hike')
+      .trim().slice(0, 100);
+    const deepLink =
+      `hikercircle://upcoming-hike/join-request?requestId=${encodeURIComponent(requestId)}`;
+    const reviewUrl =
+      'https://us-central1-hiker-circle.cloudfunctions.net/'
+      + `openUpcomingHikeJoinRequest?requestId=${encodeURIComponent(requestId)}`;
+
+    let fcmStatus = 'no_token';
+    let fcmSuccessCount = 0;
+    let fcmFailureCount = 0;
+    try {
+      const hostSnapshot = await db
+        .collection('users')
+        .doc(userDocumentIdForPhone(hostPhone))
+        .get();
+      const tokenList = latestFcmTokensForUser(hostSnapshot.data() || {});
+      if (tokenList.length > 0) {
+        for (let index = 0; index < tokenList.length; index += 500) {
+          const delivery = await admin.messaging().sendEachForMulticast({
+            tokens: tokenList.slice(index, index + 500),
+            notification: {
+              title: 'Hike join request',
+              body: `${requesterName || 'A hiker'} wants to join ${trailName}.`,
+            },
+            data: {
+              type: 'upcoming_hike_join_request',
+              requestId,
+              upcomingHikeId: hikeId,
+              deepLink,
+            },
+            android: { priority: 'high' },
+            apns: {
+              headers: { 'apns-priority': '10' },
+              payload: { aps: { sound: 'default' } },
+            },
+          });
+          fcmSuccessCount += delivery.successCount;
+          fcmFailureCount += delivery.failureCount;
+        }
+        fcmStatus = fcmFailureCount === 0 ? 'sent' : 'partial';
+      }
+    } catch (error) {
+      fcmStatus = 'delivery_uncertain';
+      logger.error(`Join-request FCM delivery ${requestId} failed`, {
+        errorCode: String(error?.code || error?.name || ''),
+      });
+    }
+
+    let whatsAppStatus = 'failed';
+    let whatsAppMessageId = '';
+    let whatsAppError = '';
+    try {
+      const credentials = greenApiCredentials();
+      const recipientDigits = hostPhone.replace(/\D/g, '');
+      const providerResponse = await fetch(
+        greenApiEndpoint('sendInteractiveButtons', credentials),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chatId: `${recipientDigits}@c.us`,
+            header: 'HikerCircle join request',
+            body: `${requesterName || 'A hiker'} wants to join ${trailName}.`,
+            footer: 'Open HikerCircle to accept or decline.',
+            buttons: [
+              {
+                type: 'url',
+                buttonId: 'review_join_request',
+                buttonText: 'Review request',
+                url: reviewUrl,
+              },
+            ],
+          }),
+          signal: AbortSignal.timeout(12 * 1000),
+        }
+      );
+      const responseData = await providerResponse.json().catch(() => null);
+      whatsAppMessageId = greenApiMessageId(responseData);
+      if (providerResponse.ok && whatsAppMessageId) {
+        whatsAppStatus = 'sent';
+      } else {
+        whatsAppError = `provider_http_${providerResponse.status}`;
+      }
+    } catch (error) {
+      whatsAppStatus = providerFailureWasDefinitelyUnsent(error)
+        ? 'failed'
+        : 'delivery_uncertain';
+      whatsAppError = String(error?.code || error?.name || 'provider_error')
+        .slice(0, 120);
+      logger.error(`Join-request WhatsApp delivery ${requestId} failed`, {
+        errorCode: whatsAppError,
+      });
+    }
+
+    await event.data.ref.set(
+      {
+        hostNotificationStatus:
+          fcmStatus === 'sent' && whatsAppStatus === 'sent' ? 'sent' : 'partial',
+        hostFcmStatus: fcmStatus,
+        hostFcmSuccessCount: fcmSuccessCount,
+        hostFcmFailureCount: fcmFailureCount,
+        hostWhatsAppStatus: whatsAppStatus,
+        ...(whatsAppMessageId ? { hostWhatsAppMessageId: whatsAppMessageId } : {}),
+        ...(whatsAppError ? { hostWhatsAppError: whatsAppError } : {}),
+        hostNotificationProcessedAt:
+          admin.firestore.FieldValue.serverTimestamp(),
+        hostNotificationProcessedAtLocal: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  }
+);
+
+exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
+  const { phoneNumber: ownerPhone } = authenticatedPhoneFor(
+    request,
+    'Sign in to name this group chat.'
+  );
+  const chatId = String(request.data?.chatId || '').trim();
+  const customName = String(request.data?.name || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!validFirestoreDocumentId(chatId)) {
+    throw new HttpsError('invalid-argument', 'The group chat is invalid.');
+  }
+  if (customName.length < 2 || customName.length > 60) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Enter a group chat name between 2 and 60 characters.'
+    );
+  }
+
+  const db = admin.firestore();
+  const chatReference = db.collection('groupChats').doc(chatId);
+  const messageReference = chatReference.collection('messages').doc('group_named');
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(chatReference);
+    if (!snapshot.exists) {
+      throw new HttpsError('not-found', 'This group chat is no longer available.');
+    }
+    const chat = snapshot.data() || {};
+    const participantPhones = Array.isArray(chat.participantPhones)
+      ? chat.participantPhones
+        .map((phone) => String(phone || '').trim())
+        .filter((phone) => /^\+[1-9]\d{7,14}$/.test(phone))
+      : [];
+    if (
+      String(chat.chatType || 'group') === 'direct'
+      || String(chat.creatorPhone || '').trim() !== ownerPhone
+      || participantPhones.length < 2
+    ) {
+      throw new HttpsError(
+        'permission-denied',
+        'Only the hike host can name this newly formed group.'
+      );
+    }
+    const existingName = String(chat.customName || '').trim();
+    if (existingName) {
+      if (existingName === customName) return;
+      throw new HttpsError(
+        'failed-precondition',
+        'This group chat has already been named.'
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const participantNames = chat.participantNames
+      && typeof chat.participantNames === 'object'
+      ? chat.participantNames
+      : {};
+    const hostName = String(
+      participantNames[phoneKeyFor(ownerPhone)] || 'Hike host'
+    ).trim().slice(0, 80);
+    const systemText = `Group named ${customName}`;
+    transaction.set(
+      chatReference,
+      {
+        customName,
+        requiresHostNaming: false,
+        namedAt: admin.firestore.FieldValue.serverTimestamp(),
+        namedAtLocal: nowIso,
+        lastMessage: systemText,
+        lastMessageAtLocal: nowIso,
+        lastMessageSenderPhone: 'system',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+      },
+      { merge: true }
+    );
+    transaction.set(messageReference, {
+      chatId,
+      senderPhone: ownerPhone,
+      senderName: hostName || 'Hike host',
+      text: systemText,
+      sentAtLocal: nowIso,
+      isSystemMessage: true,
+      seenBy: [ownerPhone],
+    });
+  });
+
+  return { named: true, chatId, customName };
 });
 
 function publicProfileFromUserDocument(document) {
@@ -1521,7 +2173,7 @@ function publicProfileFromUserDocument(document) {
 // User documents contain authentication hashes, device bindings, emergency
 // contacts, and push tokens. Mobile clients receive only this explicit public
 // projection instead of being allowed to read other users' full documents.
-exports.getPublicProfiles = onCall({ enforceAppCheck: true }, async (request) => {
+exports.getPublicProfiles = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
   if (
@@ -2142,7 +2794,12 @@ function activeHikeDocumentData({
   };
 }
 
-async function ensureTeamChatDocument(db, teamId, team) {
+async function ensureTeamChatDocument(
+  db,
+  teamId,
+  team,
+  { newlyJoinedName = '' } = {}
+) {
   const participants = validTeamParticipants(team);
   const participantPhones = participants.map(teamParticipantPhone);
   if (participantPhones.length === 0) {
@@ -2168,9 +2825,12 @@ async function ensureTeamChatDocument(db, teamId, team) {
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(chatReference);
     const existing = snapshot.data() || {};
+    const safeJoinedName = String(newlyJoinedName || '').trim().slice(0, 80);
+    const shouldRequestHostNaming = Boolean(
+      safeJoinedName && !String(existing.customName || '').trim()
+    );
     const phase = String(team.phase || '');
-    const shouldClose = phase === 'completed' && !existing.chatRemovesAtLocal;
-    const removesAt = new Date(now.getTime() + 60 * 60 * 1000);
+    const shouldArchive = phase === 'completed' && !existing.hikeEndedAtLocal;
     transaction.set(
       chatReference,
       {
@@ -2186,20 +2846,27 @@ async function ensureTeamChatDocument(db, teamId, team) {
         departureTimeLocal: String(
           team.plannedStartTimeLocal || team.draft?.departureTime || ''
         ),
+        ...(shouldRequestHostNaming
+          ? {
+              requiresHostNaming: true,
+              latestJoinedName: safeJoinedName,
+              teamFormedAtLocal: String(existing.teamFormedAtLocal || now.toISOString()),
+            }
+          : {}),
         ...(!snapshot.exists
           ? {
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
               createdAtLocal: String(team.createdAtLocal || now.toISOString()),
             }
           : {}),
-        ...(shouldClose
+        ...(shouldArchive
           ? {
               hikeEndedAtLocal: now.toISOString(),
-              chatRemovesAtLocal: removesAt.toISOString(),
-              closureReason: 'team_hike_ended',
+              chatRemovesAtLocal: admin.firestore.FieldValue.delete(),
+              closureReason: 'team_hike_completed',
               isDeleted: false,
               lastMessage:
-                'Team hike ended. This chat will be removed in one hour.',
+                'Team hike completed. This chat is saved with your hike history.',
               lastMessageAtLocal: now.toISOString(),
               lastMessageSenderPhone: 'system',
             }
@@ -2209,12 +2876,12 @@ async function ensureTeamChatDocument(db, teamId, team) {
       },
       { merge: true }
     );
-    if (shouldClose) {
+    if (shouldArchive) {
       transaction.set(chatReference.collection('messages').doc('team_closed'), {
         chatId: chatReference.id,
         senderPhone: String(team.hostPhoneNumber || participantPhones[0]),
         senderName: 'HikerCircle',
-        text: 'Team hike ended. This chat will be removed in one hour.',
+        text: 'Team hike completed. This chat is saved with your hike history.',
         sentAtLocal: now.toISOString(),
         isSystemMessage: true,
         seenBy: participantPhones,
@@ -2224,7 +2891,7 @@ async function ensureTeamChatDocument(db, teamId, team) {
 }
 
 exports.scheduleUpcomingHike = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber: ownerPhone, uid } = authenticatedPhoneFor(
       request,
@@ -2326,9 +2993,11 @@ exports.scheduleUpcomingHike = onCall(
       const buddies = inviteeSnapshots.map((snapshot, index) =>
         teamBuddyFromUser(invitedPhones[index], snapshot.data() || {}, false, index)
       );
+      const isGroupHike =
+        String(rawDraft?.hikeType || '') === 'team' || invitedPhones.length > 0;
       const draft = {
         ...sharedHikePlan(rawDraft, trail, buddies),
-        hikeType: invitedPhones.length > 0 ? 'team' : 'solo',
+        hikeType: isGroupHike ? 'team' : 'solo',
       };
       const departureMillis = dateMillis(draft.departureTime);
       if (
@@ -2426,7 +3095,7 @@ exports.scheduleUpcomingHike = onCall(
 );
 
 exports.openDirectChat = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber: callerPhone, uid } = authenticatedPhoneFor(
       request,
@@ -2522,7 +3191,7 @@ exports.openDirectChat = onCall(
 );
 
 exports.deleteChatForUser = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber: callerPhone, uid } = authenticatedPhoneFor(
       request,
@@ -2608,7 +3277,7 @@ exports.deleteChatForUser = onCall(
 );
 
 exports.startActiveHikeSession = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -2910,7 +3579,7 @@ exports.startActiveHikeSession = onCall(
 );
 
 exports.ensureActiveHikeSessionInCloud = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -3515,7 +4184,7 @@ function completedHikeSummaryData({
 // IDs are remapped into a caller-scoped deterministic namespace to prevent
 // another account from pre-claiming a predictable document ID.
 exports.completeActiveHikeSession = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -3811,8 +4480,220 @@ exports.completeActiveHikeSession = onCall(
   }
 );
 
+// Ratings are accepted only for a server-confirmed completed hike. The review
+// document is keyed by session so retries replace the same vote, and the trail
+// aggregate is updated atomically with the review.
+exports.submitCompletedHikeRating = onCall({}, async (request) => {
+  const { uid } = authenticatedPhoneFor(
+    request,
+    'Sign in to rate a completed hike.'
+  );
+  const sessionId = String(request.data?.sessionId || '').trim();
+  const trailId = String(request.data?.trailId || '').trim();
+  const rating = Number(request.data?.rating);
+  const comment = String(request.data?.comment || '').trim();
+  if (
+    !validFirestoreDocumentId(sessionId)
+    || !validFirestoreDocumentId(trailId)
+    || !validRating(rating)
+    || comment.length > 500
+  ) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Choose 1 to 5 stars and keep the optional comment under 500 characters.'
+    );
+  }
+
+  const db = admin.firestore();
+  const sessionReference = db.collection('hikeSessions').doc(sessionId);
+  const trailReference = db.collection('trails').doc(trailId);
+  const reviewReference = trailReference.collection('ratings').doc(sessionId);
+
+  return db.runTransaction(async (transaction) => {
+    const [sessionSnapshot, trailSnapshot, reviewSnapshot] = await Promise.all([
+      transaction.get(sessionReference),
+      transaction.get(trailReference),
+      transaction.get(reviewReference),
+    ]);
+    const session = sessionSnapshot.data() || {};
+    if (
+      !sessionSnapshot.exists
+      || String(session.userId || '') !== uid
+      || String(session.trailId || '') !== trailId
+      || String(session.status || '') !== 'completed'
+    ) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Only a completed hike can be rated.'
+      );
+    }
+    if (!trailSnapshot.exists) {
+      throw new HttpsError('not-found', 'This trail is no longer available.');
+    }
+
+    const review = reviewSnapshot.data() || {};
+    const aggregate = trailRatingAggregate(
+      trailSnapshot.data() || {},
+      reviewSnapshot.exists ? review.rating : null,
+      rating
+    );
+    const nowIso = new Date().toISOString();
+    transaction.set(
+      reviewReference,
+      {
+        sessionId,
+        trailId,
+        userId: uid,
+        rating,
+        comment,
+        ...(reviewSnapshot.exists
+          ? {}
+          : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+      },
+      { merge: true }
+    );
+    transaction.update(trailReference, {
+      ...aggregate,
+      ratingUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ratingUpdatedAtLocal: nowIso,
+    });
+    return aggregate;
+  });
+});
+
+// Hike history is served through owner-authorized callables instead of broad
+// client queries. This keeps session IDs, route telemetry, and safety records
+// private even if another account learns a document ID.
+exports.listMyHikeHistory = onCall({}, async (request) => {
+  const { uid } = authenticatedPhoneFor(
+    request,
+    'Sign in to view your hike history.'
+  );
+  const requestedLimit = Number(request.data?.limit || 100);
+  const limit = Math.round(boundedNumber(requestedLimit, 1, 200, 100));
+  const snapshot = await admin.firestore()
+    .collection('hikeSessions')
+    .where('userId', '==', uid)
+    .limit(500)
+    .get();
+  const hikes = snapshot.docs
+    .filter((document) => String(document.data()?.status || '') === 'completed')
+    .map((document) => hikeHistorySummaryData(document.id, document.data() || {}))
+    .sort((left, right) => String(right.endedAtLocal || '')
+      .localeCompare(String(left.endedAtLocal || '')))
+    .slice(0, limit);
+  return { hikes };
+});
+
+exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
+  const { phoneNumber, uid } = authenticatedPhoneFor(
+    request,
+    'Sign in to view this hike.'
+  );
+  const sessionId = String(request.data?.sessionId || '').trim();
+  if (!validFirestoreDocumentId(sessionId)) {
+    throw new HttpsError('invalid-argument', 'The hike history entry is invalid.');
+  }
+  const db = admin.firestore();
+  const sessionReference = db.collection('hikeSessions').doc(sessionId);
+  const sessionSnapshot = await sessionReference.get();
+  const session = sessionSnapshot.data() || {};
+  if (
+    !sessionSnapshot.exists
+    || String(session.userId || '') !== uid
+    || String(session.userPhoneNumber || '') !== phoneNumber
+  ) {
+    throw new HttpsError('not-found', 'This hike is not in your history.');
+  }
+  if (String(session.status || '') !== 'completed') {
+    throw new HttpsError('failed-precondition', 'This hike has not been completed.');
+  }
+  const trailId = String(session.trailId || '').trim();
+  const teamHikeSessionId = String(session.teamHikeSessionId || '').trim();
+  const sourceUpcomingHikeId = String(session.sourceUpcomingHikeId || '').trim();
+  const chatReferences = [
+    ...(validFirestoreDocumentId(teamHikeSessionId)
+      ? [db.collection('groupChats').doc(`team_${teamHikeSessionId}`)] : []),
+    ...(validFirestoreDocumentId(sourceUpcomingHikeId)
+      ? [db.collection('groupChats').doc(`hike_${sourceUpcomingHikeId}`)] : []),
+  ];
+  const [
+    captureSnapshot,
+    checkInSnapshot,
+    locationSnapshot,
+    ratingSnapshot,
+    chatSnapshots,
+    teamSessionsSnapshot,
+    teamSnapshot,
+  ] =
+    await Promise.all([
+      db.collection('hikeRouteCaptures').doc(sessionId).get(),
+      db.collection('checkIns').where('sessionId', '==', sessionId).limit(1000).get(),
+      db.collection('localLocationPoints')
+        .where('sessionId', '==', sessionId).limit(5000).get(),
+      trailId
+        ? db.collection('trails').doc(trailId).collection('ratings').doc(sessionId).get()
+        : Promise.resolve(null),
+      chatReferences.length > 0 ? db.getAll(...chatReferences) : Promise.resolve([]),
+      validFirestoreDocumentId(teamHikeSessionId)
+        ? db.collection('hikeSessions')
+          .where('teamHikeSessionId', '==', teamHikeSessionId).limit(50).get()
+        : Promise.resolve(null),
+      validFirestoreDocumentId(teamHikeSessionId)
+        ? db.collection('teamHikeSessions').doc(teamHikeSessionId).get()
+        : Promise.resolve(null),
+    ]);
+  const groupChatId = (chatSnapshots || []).find((snapshot) => {
+    if (!snapshot.exists) return false;
+    const chat = snapshot.data() || {};
+    return chat.isDeleted !== true
+      && Array.isArray(chat.participantPhones)
+      && chat.participantPhones.includes(phoneNumber);
+  })?.id || '';
+  const participantNames = new Map();
+  const teamParticipants = Array.isArray(teamSnapshot?.data()?.participants)
+    ? teamSnapshot.data().participants : [];
+  teamParticipants.forEach((participant) => {
+    const buddy = participant?.buddy || {};
+    const phone = String(participant?.phoneNumber || buddy.phoneNumber || '').trim();
+    const name = String(buddy.name || buddy.username || buddy.displayName || '').trim();
+    if (phone && name) participantNames.set(phone, name);
+  });
+  const teamSessionDocs = teamSessionsSnapshot?.docs
+    ?.filter((document) => String(document.data()?.status || '') === 'completed') || [];
+  const teamCaptureSnapshots = teamSessionDocs.length > 0
+    ? await db.getAll(...teamSessionDocs.map((document) =>
+      db.collection('hikeRouteCaptures').doc(document.id)))
+    : [];
+  const memberTracks = teamSessionDocs.map((document, index) => {
+    const memberSession = document.data() || {};
+    const memberPhone = String(memberSession.userPhoneNumber || '').trim();
+    const isCurrentUser = document.id === sessionId || memberPhone === phoneNumber;
+    return {
+      name: participantNames.get(memberPhone)
+        || (isCurrentUser ? 'You' : `Hiker ${index + 1}`),
+      isCurrentUser,
+      routePoints: teamCaptureSnapshots[index]?.data()?.routePoints || [],
+    };
+  });
+  return {
+    detail: hikeHistoryDetailData({
+      sessionId,
+      session,
+      capture: captureSnapshot.data() || {},
+      checkIns: checkInSnapshot.docs.map((document) => document.data() || {}),
+      locationPoints: locationSnapshot.docs.map((document) => document.data() || {}),
+      rating: ratingSnapshot?.data() || null,
+      groupChatId,
+      memberTracks,
+    }),
+  };
+});
+
 exports.recordActiveHikeCheckIn = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { phoneNumber, uid } = authenticatedPhoneFor(
       request,
@@ -3931,7 +4812,7 @@ exports.recordActiveHikeCheckIn = onCall(
   }
 );
 
-exports.createTeamHikeSession = onCall({ enforceAppCheck: true }, async (request) => {
+exports.createTeamHikeSession = onCall({}, async (request) => {
   const { phoneNumber: ownerPhone, uid } = authenticatedPhoneFor(
     request,
     'Sign in to create a team hike.'
@@ -4290,7 +5171,7 @@ exports.createTeamHikeSession = onCall({ enforceAppCheck: true }, async (request
   return { teamSession: teamSessionForCallable(sessionReference.id, team) };
 });
 
-exports.manageTeamHikeSession = onCall({ enforceAppCheck: true }, async (request) => {
+exports.manageTeamHikeSession = onCall({}, async (request) => {
   const { phoneNumber: callerPhone, uid } = authenticatedPhoneFor(
     request,
     'Sign in to update this team hike.'
@@ -4423,6 +5304,7 @@ exports.manageTeamHikeSession = onCall({ enforceAppCheck: true }, async (request
     }));
     let phase = String(team.phase || 'inviting');
     let didChange = false;
+    let newlyJoinedName = '';
     let everyoneEnded = phase === 'completed';
     const teamPatch = {};
     if (action === 'read') {
@@ -4516,6 +5398,7 @@ exports.manageTeamHikeSession = onCall({ enforceAppCheck: true }, async (request
           joinedAtLocal: participant.joinedAtLocal || nowIso,
           updatedAtLocal: nowIso,
         };
+        newlyJoinedName = String(canonicalBuddy.name || '').trim().slice(0, 80);
         didChange = true;
         queueTeamOutbox(transaction, db, {
           type: 'team_hike_invite_accepted',
@@ -5045,11 +5928,15 @@ exports.manageTeamHikeSession = onCall({ enforceAppCheck: true }, async (request
     return {
       teamSession: teamSessionForCallable(teamId, nextTeam),
       everyoneEnded,
+      newlyJoinedName,
     };
   });
 
-  await ensureTeamChatDocument(db, teamId, result.teamSession);
-  return result;
+  await ensureTeamChatDocument(db, teamId, result.teamSession, {
+    newlyJoinedName: result.newlyJoinedName,
+  });
+  const { newlyJoinedName: _newlyJoinedName, ...publicResult } = result;
+  return publicResult;
 });
 
 function queueTeamOutboxForParticipants(
@@ -5144,7 +6031,7 @@ exports.cleanExpiredTeamHikeInvitations = onSchedule(
 );
 
 exports.verifyGreenApiLoginCode = onCall(
-  { secrets: [greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
     const code = String(request.data?.code || '').trim();
@@ -5230,7 +6117,7 @@ exports.verifyGreenApiLoginCode = onCall(
 );
 
 exports.registerWithGreenApiAndPassword = onCall(
-  { secrets: [greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
     const code = String(request.data?.code || '').trim();
@@ -5368,7 +6255,7 @@ const SAFETY_QUESTIONS = [
 ];
 
 exports.registerSafetyQuestions = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     const phoneNumber = authenticatedPhoneClaim(request);
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
@@ -5421,7 +6308,7 @@ exports.registerSafetyQuestions = onCall(
 );
 
 exports.sendPasswordResetCode = onCall(
-  { secrets: [greenApiInstanceId, greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiInstanceId, greenApiToken] },
   async (request) => {
     const phoneNumber = String(request.data?.phoneNumber || '').trim();
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
@@ -5578,7 +6465,7 @@ exports.sendPasswordResetCode = onCall(
 );
 
 exports.verifyPasswordResetOtp = onCall(
-  { secrets: [greenApiToken], enforceAppCheck: true },
+  { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
     const code = String(request.data?.code || '').trim();
@@ -5704,7 +6591,7 @@ exports.verifyPasswordResetOtp = onCall(
 );
 
 exports.checkSafetyAnswer = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
     const answer = String(request.data?.answer || '');
@@ -5782,7 +6669,7 @@ exports.checkSafetyAnswer = onCall(
 );
 
 exports.resetPassword = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
     const answer = String(request.data?.answer || '');
@@ -5869,7 +6756,7 @@ exports.resetPassword = onCall(
   }
 );
 
-exports.loginWithPassword = onCall({ enforceAppCheck: true }, async (request) => {
+exports.loginWithPassword = onCall({}, async (request) => {
   const phoneNumber = String(request.data?.phoneNumber || '').trim();
   if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
     throw new HttpsError(
@@ -5972,7 +6859,7 @@ exports.loginWithPassword = onCall({ enforceAppCheck: true }, async (request) =>
   return { customToken, phoneNumber };
 });
 
-exports.linkPasswordToAccount = onCall({ enforceAppCheck: true }, async (request) => {
+exports.linkPasswordToAccount = onCall({}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError(
@@ -6037,7 +6924,7 @@ exports.linkPasswordToAccount = onCall({ enforceAppCheck: true }, async (request
   return { customToken, phoneNumber };
 });
 
-exports.authenticateAppSession = onCall({ enforceAppCheck: true }, async (request) => {
+exports.authenticateAppSession = onCall({}, async (request) => {
   const phoneNumber = String(request.data?.phoneNumber || '').trim();
   const appInstanceId = String(request.data?.appInstanceId || '').trim();
   if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber) || appInstanceId.length < 20) {
@@ -6330,7 +7217,7 @@ function buildWeatherFromApi(body) {
 }
 
 exports.fetchWeatherForTrail = onCall(
-  { secrets: [], enforceAppCheck: true },
+  {},
   async (request) => {
     authenticatedPhoneFor(request, 'Sign in to refresh trail weather.');
     const trailId = String(request.data?.trailId || '').trim();
@@ -6926,7 +7813,7 @@ async function applyAchievementMetricServer({
 }
 
 exports.manageAchievementDefinition = onCall(
-  { enforceAppCheck: true },
+  {},
   async (request) => {
     const { uid } = authenticatedPhoneFor(
       request,

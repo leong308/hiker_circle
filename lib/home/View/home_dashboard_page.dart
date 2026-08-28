@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/loading_toast.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../../sos/Model/sos_models.dart';
@@ -937,7 +938,9 @@ class _BestMatchTrailCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 3),
                           Text(
-                            trail.ratingAverage.toStringAsFixed(1),
+                            trail.ratingCount <= 0
+                                ? 'New'
+                                : trail.ratingAverage.toStringAsFixed(1),
                             style: Theme.of(context).textTheme.labelLarge
                                 ?.copyWith(
                                   color: _HomeColors.textFor(context),
@@ -1123,24 +1126,12 @@ class _BestMatchesLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Row(
-          children: [
-            const SizedBox.square(
-              dimension: 22,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              'Loading trails...',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _HomeColors.secondaryTextFor(context),
-              ),
-            ),
-          ],
-        ),
+    return const _InsetGroup(
+      child: HikerCircleLoadingView(
+        message: 'Loading recommended trails…',
+        detail: 'Finding routes that match your hike plans.',
+        compact: true,
+        padding: EdgeInsets.all(14),
       ),
     );
   }
@@ -1243,7 +1234,7 @@ class _UpcomingHikeCard extends StatelessWidget {
                   '${_formatDate(plannedHike.plannedStartTime)} | ${_formatTime(plannedHike.plannedStartTime)}',
             ),
             _InfoLine(
-              label: 'Expected Return',
+              label: 'Estimated Return',
               value: _formatTime(plannedHike.expectedReturnTime),
             ),
             _InfoLine(
@@ -1549,7 +1540,7 @@ class _PreparationReminderPage extends StatelessWidget {
                                 '${_formatDate(plannedHike.plannedStartTime)} | ${_formatTime(plannedHike.plannedStartTime)}',
                           ),
                           _InfoLine(
-                            label: 'Expected return',
+                            label: 'Estimated return',
                             value: _formatTime(plannedHike.expectedReturnTime),
                           ),
                           _InfoLine(
@@ -2005,7 +1996,7 @@ class _ActiveMetrics extends StatelessWidget {
                 const _VerticalSeparator(),
                 Expanded(
                   child: _MetricCell(
-                    label: 'Expected Return',
+                    label: 'Estimated Return',
                     value: _formatTime(expectedReturn),
                   ),
                 ),
@@ -2903,7 +2894,7 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                           '${_formatDate(hike.departureTime)} | ${_formatTime(hike.departureTime)}',
                     ),
                     _InfoLine(
-                      label: 'Expected Return',
+                      label: 'Estimated Return',
                       value: _formatTime(hike.expectedReturnTime),
                     ),
                     _InfoLine(

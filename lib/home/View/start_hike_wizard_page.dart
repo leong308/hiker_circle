@@ -10,6 +10,7 @@ import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/hiker_ble_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
@@ -667,7 +668,6 @@ class _TrailSelectionStep extends StatefulWidget {
 }
 
 class _TrailSelectionStepState extends State<_TrailSelectionStep> {
-  bool _showMap = true;
   bool _editMode = false;
   int? _highlightedCheckpointIndex;
   late Future<HikingRouteResult> _routeFuture;
@@ -751,43 +751,36 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
         const SizedBox(height: 12),
         _TrailSummary(trail: widget.draft.trail),
         const SizedBox(height: 16),
-        if (_showMap)
-          SizedBox(
-            height: 220,
-            child: FutureBuilder<HikingRouteResult>(
-              future: _routeFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                return RoutePreviewMap(
-                  trail: widget.draft.trail,
-                  route: snapshot.data,
-                  customCheckpoints: widget.draft.customCheckpoints,
-                  highlightedCheckpointIndex: _highlightedCheckpointIndex,
+        SizedBox(
+          height: 220,
+          child: FutureBuilder<HikingRouteResult>(
+            future: _routeFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const HikerCircleLoadingView(
+                  message: 'Preparing your route…',
+                  detail: 'Calculating the trail and checkpoints.',
+                  compact: true,
+                  padding: EdgeInsets.all(10),
                 );
-              },
-            ),
+              }
+              return RoutePreviewMap(
+                trail: widget.draft.trail,
+                route: snapshot.data,
+                customCheckpoints: widget.draft.customCheckpoints,
+                highlightedCheckpointIndex: _highlightedCheckpointIndex,
+              );
+            },
           ),
+        ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '${cpsSorted.length} checkpoints',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: _WizardColors.textFor(context),
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0,
-                ),
-              ),
-            ),
-            CupertinoButton(
-              padding: EdgeInsets.zero,
-              onPressed: () => setState(() => _showMap = !_showMap),
-              child: Text(_showMap ? 'Hide map' : 'Show map'),
-            ),
-          ],
+        Text(
+          '${cpsSorted.length} checkpoints',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: _WizardColors.textFor(context),
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
@@ -935,7 +928,6 @@ class _CheckpointStep extends StatefulWidget {
 }
 
 class _CheckpointStepState extends State<_CheckpointStep> {
-  bool _showMap = true;
   bool _editMode = false;
   int? _highlightedCheckpointIndex;
   late Future<HikingRouteResult> _routeFuture;
@@ -1060,43 +1052,36 @@ class _CheckpointStepState extends State<_CheckpointStep> {
       subtitle:
           'Use 3–12 checkpoints. Trailhead and trail end are fixed; middle stops are optimized.',
       children: [
-        if (_showMap)
-          SizedBox(
-            height: 220,
-            child: FutureBuilder<HikingRouteResult>(
-              future: _routeFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                return RoutePreviewMap(
-                  trail: widget.draft.trail,
-                  route: snapshot.data,
-                  customCheckpoints: widget.draft.customCheckpoints,
-                  highlightedCheckpointIndex: _highlightedCheckpointIndex,
+        SizedBox(
+          height: 220,
+          child: FutureBuilder<HikingRouteResult>(
+            future: _routeFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const HikerCircleLoadingView(
+                  message: 'Preparing your route…',
+                  detail: 'Calculating the trail and checkpoints.',
+                  compact: true,
+                  padding: EdgeInsets.all(10),
                 );
-              },
-            ),
+              }
+              return RoutePreviewMap(
+                trail: widget.draft.trail,
+                route: snapshot.data,
+                customCheckpoints: widget.draft.customCheckpoints,
+                highlightedCheckpointIndex: _highlightedCheckpointIndex,
+              );
+            },
           ),
+        ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                '${cpsSorted.length} checkpoints',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: _WizardColors.textFor(context),
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0,
-                ),
-              ),
-            ),
-            CupertinoButton(
-              padding: EdgeInsets.zero,
-              onPressed: () => setState(() => _showMap = !_showMap),
-              child: Text(_showMap ? 'Hide map' : 'Show map'),
-            ),
-          ],
+        Text(
+          '${cpsSorted.length} checkpoints',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: _WizardColors.textFor(context),
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0,
+          ),
         ),
         const SizedBox(height: 8),
         _WizardCheckpointTimeline(
@@ -1310,7 +1295,7 @@ class _TimingStep extends StatelessWidget {
         ],
         const SizedBox(height: 12),
         _DurationPickerField(
-          label: 'Expected Hours and Minutes Needed',
+          label: 'Estimated Hike Duration',
           value: draft.expectedArrivalTime.difference(draft.departureTime),
           onChanged: (duration) {
             final arrival = draft.departureTime.add(duration);
@@ -1324,13 +1309,13 @@ class _TimingStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _ReadOnlyField(
-          label: 'Expected Arrival at Destination',
+          label: 'Estimated Time of Arrival',
           value: _formatTime(draft.expectedArrivalTime),
           icon: Icons.flag_rounded,
         ),
         const SizedBox(height: 12),
         _ReadOnlyField(
-          label: 'Expected Return Time',
+          label: 'Estimated Return Time',
           value: _formatTime(draft.expectedReturnTime),
           icon: Icons.assignment_return_rounded,
         ),
@@ -2194,7 +2179,7 @@ class _DurationPickerField extends StatelessWidget {
       onTap: () => _showPicker(context),
       child: InputDecorator(
         decoration: const InputDecoration(
-          labelText: 'Expected Hours and Minutes Needed',
+          labelText: 'Estimated Hike Duration',
           prefixIcon: Icon(Icons.timer_rounded),
         ),
         child: Row(

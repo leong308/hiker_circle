@@ -1,8 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 
 import '../../firebase_options.dart';
 
@@ -19,33 +17,12 @@ class FirebaseBootstrapResult {
 }
 
 abstract final class FirebaseBootstrap {
-  static const bool _useAppleDebugProviderInRelease = bool.fromEnvironment(
-    'FIREBASE_APP_CHECK_DEBUG',
-  );
-  static const MethodChannel _buildConfigChannel = MethodChannel(
-    'hiker_circle/build_config',
-  );
-  static bool _appCheckActivated = false;
-
   static Future<FirebaseBootstrapResult> initialize() async {
     try {
       if (Firebase.apps.isEmpty) {
         await Firebase.initializeApp(
           options: DefaultFirebaseOptions.currentPlatform,
         );
-      }
-
-      if (!_appCheckActivated) {
-        final useAndroidDebugProvider = await _useAndroidDebugProvider();
-        await FirebaseAppCheck.instance.activate(
-          providerAndroid: useAndroidDebugProvider
-              ? const AndroidDebugProvider()
-              : const AndroidPlayIntegrityProvider(),
-          providerApple: !kReleaseMode || _useAppleDebugProviderInRelease
-              ? const AppleDebugProvider()
-              : const AppleAppAttestWithDeviceCheckFallbackProvider(),
-        );
-        _appCheckActivated = true;
       }
 
       if (kDebugMode &&
@@ -58,23 +35,6 @@ abstract final class FirebaseBootstrap {
       return FirebaseBootstrapResult.unavailable(error.message ?? error.code);
     } catch (error) {
       return FirebaseBootstrapResult.unavailable(error.toString());
-    }
-  }
-
-  static Future<bool> _useAndroidDebugProvider() async {
-    if (kDebugMode) return true;
-    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
-      return false;
-    }
-    try {
-      return await _buildConfigChannel.invokeMethod<bool>(
-            'isDevelopmentOnlyRelease',
-          ) ??
-          false;
-    } on PlatformException {
-      return false;
-    } on MissingPluginException {
-      return false;
     }
   }
 
