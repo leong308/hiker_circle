@@ -492,37 +492,42 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
         @unknown default:
           notificationsEnabled = false
         }
-        result([
+        let bluetoothEnabled = self.centralManager.state == .poweredOn
+        let isScanning = self.centralManager.isScanning
+        let monitorHealthy = self.isSosMonitorRequested && isScanning
+        let monitorHeartbeatAtMillis: Int64 = isScanning ? now : 0
+        let lastFailure: Any = bluetoothEnabled ? NSNull() : self.centralStateMessage
+        let pairedButtons: [[String: Any]] = self.buttonsForActiveOwner.map { button in
+          [
+            "deviceId": button.deviceIdHex,
+            "displayName": button.displayName,
+            "pairedAtMillis": button.pairedAtMillis,
+            "lastSeenAtMillis": button.lastSeenAtMillis ?? 0,
+            "lastAcceptedEventId": button.lastAcceptedEventId.map { Int($0) } ?? -1,
+          ]
+        }
+        let readiness: [String: Any] = [
           "supported": true,
-          "bluetoothEnabled": self.centralManager.state == .poweredOn,
+          "bluetoothEnabled": bluetoothEnabled,
           "scanPermissionGranted": bluetoothAuthorized,
           "connectPermissionGranted": bluetoothAuthorized,
           "notificationPermissionGranted": notificationsEnabled,
           "notificationsEnabled": notificationsEnabled,
           "batteryOptimizationExempt": true,
           "monitorEnabled": self.isSosMonitorRequested,
-          "monitorHealthy": self.isSosMonitorRequested && self.centralManager.isScanning,
-          "monitorHeartbeatAtMillis": self.centralManager.isScanning ? now : 0,
-          "scanState": self.centralManager.isScanning ? "scanning" : "stopped",
+          "monitorHealthy": monitorHealthy,
+          "monitorHeartbeatAtMillis": monitorHeartbeatAtMillis,
+          "scanState": isScanning ? "scanning" : "stopped",
           "scanStartedAtMillis": 0,
           "lastScanResultAtMillis": 0,
-          "lastFailure": self.centralManager.state == .poweredOn
-            ? NSNull()
-            : self.centralStateMessage,
+          "lastFailure": lastFailure,
           "restartCount": 0,
           "lostButtonWarningEnabled": self.isLostButtonWarningEnabled,
           "lostButtonThresholdMillis": self.lostButtonWarningThresholdMillis,
           "checkedAtMillis": now,
-          "pairedButtons": self.buttonsForActiveOwner.map { button in
-            [
-              "deviceId": button.deviceIdHex,
-              "displayName": button.displayName,
-              "pairedAtMillis": button.pairedAtMillis,
-              "lastSeenAtMillis": button.lastSeenAtMillis ?? 0,
-              "lastAcceptedEventId": button.lastAcceptedEventId.map { Int($0) } ?? -1,
-            ]
-          },
-        ])
+          "pairedButtons": pairedButtons,
+        ]
+        result(readiness)
       }
     }
   }
