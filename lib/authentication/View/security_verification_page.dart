@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/Model/app_session.dart';
 import '../Data/multi_factor_auth_service.dart';
+import '../Data/passkey_build_support.dart';
 import '../Model/mfa_models.dart';
 
 class SecurityVerificationPage extends StatefulWidget {
@@ -132,6 +133,9 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final passkeysEnabled = nativePasskeysEnabledForBuild();
+    final passkeyIsRelevant =
+        _isEnrollment || widget.continuation.methods.contains('passkey');
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -205,8 +209,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
                         busy: _busy,
                         onPressed: _startTotp,
                       ),
-                    if (_isEnrollment ||
-                        widget.continuation.methods.contains('passkey')) ...[
+                    if (passkeyIsRelevant && passkeysEnabled) ...[
                       const SizedBox(height: 12),
                       _MethodCard(
                         icon: Icons.fingerprint_rounded,
@@ -218,6 +221,34 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
                             : 'Use passkey',
                         busy: _busy,
                         onPressed: _usePasskey,
+                      ),
+                    ] else if (passkeyIsRelevant) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: scheme.outlineVariant),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.info_outline_rounded,
+                              color: scheme.primary,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                _isEnrollment
+                                    ? personalSigningPasskeyMessage
+                                    : 'This account has a passkey, but personal-signed iOS builds cannot use native passkeys. Use Authenticator, or sign in on Android or the web and add Authenticator first.',
+                                style: theme.textTheme.bodyMedium,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ],

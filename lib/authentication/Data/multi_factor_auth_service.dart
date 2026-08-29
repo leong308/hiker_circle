@@ -5,6 +5,7 @@ import 'package:passkeys/types.dart';
 
 import '../../app/Model/app_session.dart';
 import '../Model/mfa_models.dart';
+import 'passkey_build_support.dart';
 
 class MultiFactorAuthService {
   MultiFactorAuthService({
@@ -52,6 +53,7 @@ class MultiFactorAuthService {
   }
 
   Future<AppSession?> enrollPasskey({String? mfaToken, String? label}) async {
+    _requirePasskeysEnabled();
     final begin = await _call(
       'beginPasskeyEnrollment',
       mfaToken == null ? const {} : {'mfaToken': mfaToken},
@@ -81,6 +83,7 @@ class MultiFactorAuthService {
   }
 
   Future<AppSession> verifyPasskeyLogin({required String mfaToken}) async {
+    _requirePasskeysEnabled();
     final begin = await _call('beginPasskeyLogin', {'mfaToken': mfaToken});
     final platformResponse = await _passkeys.authenticate(
       AuthenticateRequestType.fromJson(_requiredMap(begin, 'options')),
@@ -121,6 +124,12 @@ class MultiFactorAuthService {
 
   Future<void> removeFactor(String factorId) async {
     await _call('removeMfaFactor', {'factorId': factorId});
+  }
+
+  void _requirePasskeysEnabled() {
+    if (!nativePasskeysEnabledForBuild()) {
+      throw const PasskeysUnavailableForBuildException();
+    }
   }
 
   Future<Map<String, dynamic>> _call(
@@ -201,9 +210,40 @@ String readableMfaError(Object error) {
   if (error is FirebaseAuthException) {
     return error.message ?? 'Secure sign-in could not be completed.';
   }
-  final text = error.toString();
-  if (text.contains('cancelled')) return 'The passkey request was cancelled.';
-  if (text.contains('domain-not-associated')) {
+  if (error is PasskeysUnavailableForBuildException) {
+    return personalSigningPasskeyMessage;
+  }
+  if (error is PasskeyAuthCancelledException) {
+    return 'The passkey request was cancelled.';
+  }
+  if (error is DomainNotAssociatedException) {
+    return 'Passkeys are not yet associated with this app build.';
+  }
+  if (error is NoCredentialsAvailableException) {
+    return 'No matching passkey is available on this device.';
+  }
+  if (error is DeviceNotSupportedException ||
+      error is PasskeyUnsupportedException) {
+    return 'This device does not support passkeys.';
+  }
+  if (error is TimeoutException) {
+    return 'The passkey request timed out. Please try again.';
+  }
+  if (error is ExcludeCredentialsCanNotBeRegisteredException) {
+    return 'This passkey is already registered on this device.';
+  }
+  if (error is MissingGoogleSignInException) {
+    return 'Sign in to a Google account on this device to use passkeys.';
+  }
+  if (error is SyncAccountNotAvailableException) {
+    return 'The passkey sync account is unavailable on this device.';
+  }
+  final text = error.toString().toLowerCase();
+  if (text.contains('cancelled') || text.contains('canceled')) {
+    return 'The passkey request was cancelled.';
+  }
+  if (text.contains('domain-not-associated') ||
+      text.contains('not associated with domain')) {
     return 'Passkeys are not yet associated with this app build.';
   }
   if (text.contains('no-credentials')) {

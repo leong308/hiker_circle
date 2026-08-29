@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/authentication/Data/multi_factor_auth_service.dart';
@@ -54,4 +55,37 @@ void main() {
     expect(find.text('Use Authenticator'), findsOneWidget);
     expect(find.text('Use passkey'), findsNothing);
   });
+
+  testWidgets(
+    'personal-signed iOS enrollment uses Authenticator without launching passkeys',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: SecurityVerificationPage(
+              continuation: MfaContinuation(
+                token: 'c' * 43,
+                phoneNumber: '+60123456789',
+                methods: const [],
+                enrollmentRequired: true,
+                isNewAccount: true,
+                expiresAt: DateTime(2030),
+              ),
+              service: _UnusedMfaService(),
+            ),
+          ),
+        );
+
+        expect(find.text('Set up Authenticator'), findsOneWidget);
+        expect(find.text('Create passkey'), findsNothing);
+        expect(
+          find.textContaining('personal-signed iOS build'),
+          findsOneWidget,
+        );
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
 }

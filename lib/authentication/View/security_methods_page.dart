@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../Data/multi_factor_auth_service.dart';
+import '../Data/passkey_build_support.dart';
 import '../Model/mfa_models.dart';
 
 class SecurityMethodsPage extends StatefulWidget {
@@ -143,6 +144,7 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
               final status = snapshot.data!;
               final hasTotp = status.methods.contains('totp');
               final hasPasskey = status.methods.contains('passkey');
+              final passkeysEnabled = nativePasskeysEnabledForBuild();
               return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 12, 18, 30),
                 children: [
@@ -162,14 +164,20 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${status.methods.length} of 2 method types protected',
+                                passkeysEnabled
+                                    ? '${status.methods.length} of 2 method types protected'
+                                    : hasTotp
+                                    ? 'Authenticator is protecting this account'
+                                    : 'Add Authenticator to protect this account',
                                 style: theme.textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                hasTotp && hasPasskey
+                                !passkeysEnabled
+                                    ? 'Native passkeys are unavailable with personal iOS signing. Authenticator remains fully supported.'
+                                    : hasTotp && hasPasskey
                                     ? 'Both methods are bound. Security Guardian achievement progress is complete.'
                                     : 'At least one method must always remain. Bind both to complete the Security Guardian achievement.',
                               ),
@@ -228,12 +236,20 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
                       icon: const Icon(Icons.password_rounded),
                       label: const Text('Add Authenticator'),
                     ),
-                  if (!hasPasskey) ...[
+                  if (!hasPasskey && passkeysEnabled) ...[
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
                       onPressed: _busy ? null : _addPasskey,
                       icon: const Icon(Icons.fingerprint_rounded),
                       label: const Text('Add passkey'),
+                    ),
+                  ] else if (!hasPasskey) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      personalSigningPasskeyMessage,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                   const SizedBox(height: 16),

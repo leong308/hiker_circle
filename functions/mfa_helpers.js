@@ -5,6 +5,15 @@ const MFA_SESSION_TTL_MILLIS = 10 * 60 * 1000;
 const MFA_CHALLENGE_TTL_MILLIS = 5 * 60 * 1000;
 const TOTP_STEP_SECONDS = 30;
 const TOTP_DIGITS = 6;
+const WEBAUTHN_AUTHENTICATOR_TRANSPORTS = new Set([
+  'ble',
+  'cable',
+  'hybrid',
+  'internal',
+  'nfc',
+  'smart-card',
+  'usb',
+]);
 
 function randomOpaqueToken(bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64url');
@@ -12,6 +21,13 @@ function randomOpaqueToken(bytes = 32) {
 
 function opaqueTokenDigest(token) {
   return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function normalizeAuthenticatorTransports(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((transport) => String(transport || '').trim().toLowerCase())
+    .filter((transport) => WEBAUTHN_AUTHENTICATOR_TRANSPORTS.has(transport)))];
 }
 
 function base32Encode(buffer) {
@@ -162,6 +178,7 @@ module.exports = {
   decryptTotpSecret,
   encryptTotpSecret,
   generateTotpSecret,
+  normalizeAuthenticatorTransports,
   opaqueTokenDigest,
   otpauthUri,
   randomOpaqueToken,

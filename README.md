@@ -59,6 +59,29 @@ password-reset, or SOS dispatch. The instance must report `authorized`, and a
 successful `sendMessage` response must contain `idMessage`; otherwise the app
 reports the real provider/configuration failure instead of claiming delivery.
 
+## iOS passkeys and personal signing
+
+Free Apple-account (Personal Team) provisioning does not authorize the
+Associated Domains entitlement required by native iOS passkeys. Personal-signed
+iOS builds therefore offer Authenticator as the supported second factor and do
+not start a passkey request that iOS will reject.
+
+Android and web passkeys remain enabled. If the app is later signed through the
+paid Apple Developer Program, select `ios/Runner/Runner.entitlements` for the
+iOS target and opt in when building with:
+
+```powershell
+flutter build ios --release --dart-define=IOS_NATIVE_PASSKEYS_ENABLED=true
+```
+
+Do not use that flag with Personal Team signing; the matching entitlement
+cannot be authorized by its provisioning profile.
+
+See [`docs/IOS_PERSONAL_TEAM_LIMITATIONS.md`](docs/IOS_PERSONAL_TEAM_LIMITATIONS.md)
+for the complete feature-impact audit, Personal Team release constraints, and
+the Android/iOS platform differences that a paid Apple membership would not
+change.
+
 ## BLE SOS monitor lifecycle
 
 On Android, the BLE monitor runs as a `connectedDevice` foreground service and

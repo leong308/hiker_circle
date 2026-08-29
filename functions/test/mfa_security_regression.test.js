@@ -122,3 +122,16 @@ test('WebAuthn validation uses exact RP ID, allowlisted origins, and user verifi
   assert.ok((source.match(/requireUserVerification: true/g) || []).length >= 2);
   assert.ok((source.match(/userVerification: 'required'/g) || []).length >= 2);
 });
+
+test('Android passkey transports are normalized before storage and authentication', () => {
+  const enrollmentBlock = exportedBlock(
+    'finishPasskeyEnrollment',
+    'verifyTotpLogin'
+  );
+  const loginBlock = exportedBlock('beginPasskeyLogin', 'removeMfaFactor');
+  assert.match(enrollmentBlock, /normalizeAuthenticatorTransports\(credential\.transports\)/);
+  assert.ok(
+    (loginBlock.match(/normalizeAuthenticatorTransports/g) || []).length >= 2
+  );
+  assert.match(loginBlock, /transports\.length > 0/);
+});

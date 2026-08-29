@@ -70,6 +70,7 @@ const {
   decryptTotpSecret,
   encryptTotpSecret,
   generateTotpSecret,
+  normalizeAuthenticatorTransports,
   opaqueTokenDigest,
   otpauthUri,
   randomOpaqueToken,
@@ -6935,7 +6936,7 @@ exports.finishPasskeyEnrollment = onCall({}, async (request) => {
       credentialId: String(credential.id),
       publicKey: Buffer.from(credential.publicKey).toString('base64'),
       counter: Number(credential.counter || 0),
-      transports: Array.isArray(credential.transports) ? credential.transports : [],
+      transports: normalizeAuthenticatorTransports(credential.transports),
       credentialDeviceType: String(info.credentialDeviceType || ''),
       credentialBackedUp: info.credentialBackedUp === true,
       aaguid: String(info.aaguid || ''),
@@ -7033,12 +7034,15 @@ exports.beginPasskeyLogin = onCall({}, async (request) => {
   const { generateAuthenticationOptions } = await simpleWebAuthn();
   const options = await generateAuthenticationOptions({
     rpID: MFA_RP_ID,
-    allowCredentials: factors.map((document) => ({
-      id: String(document.data()?.credentialId || ''),
-      transports: Array.isArray(document.data()?.transports)
-        ? document.data().transports
-        : undefined,
-    })),
+    allowCredentials: factors.map((document) => {
+      const transports = normalizeAuthenticatorTransports(
+        document.data()?.transports
+      );
+      return {
+        id: String(document.data()?.credentialId || ''),
+        ...(transports.length > 0 ? { transports } : {}),
+      };
+    }),
     userVerification: 'required',
     timeout: 60_000,
   });
@@ -7103,7 +7107,7 @@ exports.finishPasskeyLogin = onCall({}, async (request) => {
         id: credentialId,
         publicKey: new Uint8Array(Buffer.from(String(factor.publicKey || ''), 'base64')),
         counter: Number(factor.counter || 0),
-        transports: Array.isArray(factor.transports) ? factor.transports : [],
+        transports: normalizeAuthenticatorTransports(factor.transports),
       },
     });
   } catch (error) {

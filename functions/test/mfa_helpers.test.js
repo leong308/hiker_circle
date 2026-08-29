@@ -6,6 +6,7 @@ const {
   base32Encode,
   decryptTotpSecret,
   encryptTotpSecret,
+  normalizeAuthenticatorTransports,
   opaqueTokenDigest,
   totpAtStep,
   verifyTotp,
@@ -48,5 +49,20 @@ test('opaque session tokens are never used as their database identifiers', () =>
   assert.equal(
     opaqueTokenDigest('example-token'),
     '4d1566a1d7df42a8517456d60ea06ed284e535cfe4c956aa6ee172dbcdf945f7'
+  );
+});
+
+test('WebAuthn transports discard Android plugin placeholders and invalid values', () => {
+  assert.deepEqual(normalizeAuthenticatorTransports(null), []);
+  assert.deepEqual(normalizeAuthenticatorTransports(['']), []);
+  assert.deepEqual(
+    normalizeAuthenticatorTransports([
+      ' internal ',
+      'HYBRID',
+      'internal',
+      null,
+      'not-a-transport',
+    ]),
+    ['internal', 'hybrid']
   );
 });
