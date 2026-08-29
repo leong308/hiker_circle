@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.leongziqi.hikercircle",
+      "sha256_cert_fingerprints": [
+        "73:6F:D0:E3:68:8D:B2:47:26:44:B2:B3:10:3D:4A:7B:E6:C5:AC:D7:DC:DF:42:09:8E:B7:0C:27:F4:DE:96:5E"
+      ]
+    }
+  }
+]

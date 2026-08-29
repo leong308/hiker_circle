@@ -372,6 +372,25 @@ service cloud.firestore {
       allow delete: if admin();
     }
 
+    // Authentication factors, OTP/session material, and WebAuthn challenges
+    // are backend-only. They must never be readable through a mobile SDK,
+    // including by the account owner or an administrator client session.
+    match /users/{userId}/authFactors/{factorId} {
+      allow read, write: if false;
+    }
+
+    match /mfaLoginSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /mfaEnrollmentChallenges/{challengeId} {
+      allow read, write: if false;
+    }
+
+    match /mfaAuthenticationChallenges/{challengeId} {
+      allow read, write: if false;
+    }
+
     match /live_location_shares/{shareId} {
       allow read: if (
         resource.data.isActive == true

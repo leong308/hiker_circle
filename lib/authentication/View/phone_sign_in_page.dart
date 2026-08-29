@@ -5,8 +5,8 @@ import '../../app/Model/app_session.dart';
 import '../Model/auth_status.dart';
 import '../ModelView/auth_view_model.dart';
 import 'auth_brand_panel.dart';
-import 'forgot_password_page.dart';
 import 'inline_notice.dart';
+import 'security_verification_page.dart';
 
 class PhoneSignInPage extends StatefulWidget {
   const PhoneSignInPage({super.key, required this.onSignedIn});
@@ -21,16 +21,14 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   final _formKey = GlobalKey<FormState>();
   final _phoneController = TextEditingController();
   final _otpController = TextEditingController();
-  final _passwordController = TextEditingController();
   late final AuthViewModel _viewModel;
   bool _isCompletingSignIn = false;
-  bool _obscurePassword = true;
   String? _signInError;
 
   @override
   void initState() {
     super.initState();
-    _viewModel = AuthViewModel(onAutomaticallyVerified: _completeSignIn);
+    _viewModel = AuthViewModel();
     _viewModel.addListener(_refresh);
   }
 
@@ -40,7 +38,6 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     _viewModel.dispose();
     _phoneController.dispose();
     _otpController.dispose();
-    _passwordController.dispose();
     super.dispose();
   }
 
@@ -63,32 +60,16 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
       return;
     }
     FocusScope.of(context).unfocus();
-    final session = await _viewModel.verifyOtp(_otpController.text);
-    if (session != null) {
-      await _completeSignIn(session);
+    final continuation = await _viewModel.verifyOtp(_otpController.text);
+    if (continuation != null && mounted) {
+      final session = await Navigator.of(context).push<AppSession>(
+        MaterialPageRoute<AppSession>(
+          builder: (context) =>
+              SecurityVerificationPage(continuation: continuation),
+        ),
+      );
+      if (session != null) await _completeSignIn(session);
     }
-  }
-
-  Future<void> _login() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-    FocusScope.of(context).unfocus();
-    final session = await _viewModel.loginWithPassword(
-      _phoneController.text,
-      _passwordController.text,
-    );
-    if (session != null) {
-      await _completeSignIn(session);
-    }
-  }
-
-  Future<void> _openForgotPassword() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => ForgotPasswordPage(viewModel: _viewModel),
-      ),
-    );
   }
 
   Future<void> _completeSignIn(AppSession session) async {
@@ -173,8 +154,8 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                   const SizedBox(height: 6),
                                   Text(
                                     isSignUp
-                                        ? 'Verify your phone via WhatsApp OTP.'
-                                        : 'Sign in with your phone number and password.',
+                                        ? 'Verify WhatsApp, then bind Authenticator or a passkey.'
+                                        : 'Verify WhatsApp, then use Authenticator or your passkey.',
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: scheme.onSurfaceVariant,
                                     ),
@@ -189,11 +170,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                     onChanged: _viewModel.setAuthMode,
                                   ),
                                   const SizedBox(height: 16),
-                                  if (isSignUp) ...[
-                                    _buildSignUpForm(theme, scheme),
-                                  ] else ...[
-                                    _buildLoginForm(theme, scheme),
-                                  ],
+                                  _buildWhatsAppForm(theme, scheme),
                                   if (_viewModel.message != null) ...[
                                     const SizedBox(height: 16),
                                     InlineNotice(
@@ -235,7 +212,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     );
   }
 
-  Widget _buildSignUpForm(ThemeData theme, ColorScheme scheme) {
+  Widget _buildWhatsAppForm(ThemeData theme, ColorScheme scheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -308,76 +285,6 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
             ),
           ),
         ],
-      ],
-    );
-  }
-
-  Widget _buildLoginForm(ThemeData theme, ColorScheme scheme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextFormField(
-          controller: _phoneController,
-          keyboardType: TextInputType.phone,
-          textInputAction: TextInputAction.next,
-          enabled: !_viewModel.isBusy && !_isCompletingSignIn,
-          decoration: const InputDecoration(
-            labelText: 'Phone number',
-            hintText: '012 345 6789',
-            prefixIcon: Icon(Icons.phone_iphone),
-          ),
-          validator: _viewModel.validatePhone,
-        ),
-        const SizedBox(height: 12),
-        TextFormField(
-          controller: _passwordController,
-          obscureText: _obscurePassword,
-          textInputAction: TextInputAction.done,
-          enabled: !_viewModel.isBusy && !_isCompletingSignIn,
-          decoration: InputDecoration(
-            labelText: 'Password',
-            prefixIcon: const Icon(Icons.key),
-            suffixIcon: IconButton(
-              icon: Icon(
-                _obscurePassword ? Icons.visibility_off : Icons.visibility,
-              ),
-              tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-              onPressed: () {
-                setState(() => _obscurePassword = !_obscurePassword);
-              },
-            ),
-          ),
-          validator: (value) {
-            if (value == null || value.isEmpty) {
-              return 'Enter your password.';
-            }
-            return null;
-          },
-          onFieldSubmitted: (_) => _login(),
-        ),
-        const SizedBox(height: 4),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: _viewModel.isBusy || _isCompletingSignIn
-                ? null
-                : _openForgotPassword,
-            child: const Text('Forgot password?'),
-          ),
-        ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: _viewModel.isLoggingIn || _isCompletingSignIn
-              ? null
-              : _login,
-          icon: _viewModel.isLoggingIn || _isCompletingSignIn
-              ? const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.login),
-          label: const Text('Login'),
-        ),
       ],
     );
   }

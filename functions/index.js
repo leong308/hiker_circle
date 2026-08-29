@@ -64,6 +64,17 @@ const {
   scheduledTeamLaunchCanResume,
   legacyActiveHikeCanAdoptTeamSource,
 } = require('./shared_hike_plan_helpers');
+const {
+  MFA_CHALLENGE_TTL_MILLIS,
+  MFA_SESSION_TTL_MILLIS,
+  decryptTotpSecret,
+  encryptTotpSecret,
+  generateTotpSecret,
+  opaqueTokenDigest,
+  otpauthUri,
+  randomOpaqueToken,
+  verifyTotp,
+} = require('./mfa_helpers');
 
 admin.initializeApp();
 
@@ -84,6 +95,7 @@ admin.messaging = () => getMessaging();
 
 const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
+const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
 
 // Accepts an explicitly unverified observation from a signed-in nearby phone.
 // A deterministic device/counter incident ID and one report per account prevent
@@ -214,6 +226,19 @@ const achievementSeedDefinitions = Object.freeze({
     isActive: true,
     sortOrder: 40,
     accentColorValue: 0xff9b51e0,
+  },
+  security_guardian: {
+    title: 'Security Guardian',
+    condition: 'Protect your account with both Authenticator and a passkey',
+    category: 'Account security',
+    iconName: 'verified_user',
+    rewardPoints: 150,
+    rewardType: 'cumulative',
+    metricKey: 'security_factor_type_bound',
+    targetCount: 2,
+    isActive: true,
+    sortOrder: 45,
+    accentColorValue: 0xff2f80ed,
   },
   community_helper: {
     title: 'Community Helper',
@@ -447,6 +472,23 @@ exports.sendGreenApiLoginCode = onCall(
         'Enter a valid international phone number.'
       );
     }
+    const intent = String(request.data?.intent || '').trim();
+    if (!['sign_in', 'sign_up'].includes(intent)) {
+      throw new HttpsError('invalid-argument', 'Choose Sign Up or Login and try again.');
+    }
+    const accountSnapshot = await admin.firestore()
+      .collection('users')
+      .doc(userDocumentIdForPhone(phoneNumber))
+      .get();
+    if (intent === 'sign_in' && !accountSnapshot.exists) {
+      throw new HttpsError('not-found', 'No account was found for this phone number.');
+    }
+    if (intent === 'sign_up' && accountSnapshot.exists) {
+      throw new HttpsError(
+        'already-exists',
+        'This phone number already has an account. Log in instead.'
+      );
+    }
 
     let credentials;
     try {
@@ -480,6 +522,7 @@ exports.sendGreenApiLoginCode = onCall(
       expiresAtMillis,
       cooldownMessage: 'Wait one minute before requesting another WhatsApp code.',
     });
+    await challengeReference.set({ intent }, { merge: true });
     const digitsOnly = phoneNumber.replace(/\D/g, '');
     let response;
     try {
@@ -6432,6 +6475,753 @@ exports.cleanExpiredTeamHikeInvitations = onSchedule(
   }
 );
 
+const MFA_RP_ID = 'hiker-circle.web.app';
+const MFA_RP_NAME = 'HikerCircle';
+const MFA_ANDROID_DEBUG_ORIGIN =
+  'android:apk-key-hash:c2_Q42iNskcmRLKzED1Ke-bFrNfc30IJjrcMJ_Tell4';
+const MFA_EXPECTED_ORIGINS = Object.freeze([
+  `https://${MFA_RP_ID}`,
+  MFA_ANDROID_DEBUG_ORIGIN,
+]);
+let simpleWebAuthnModulePromise;
+
+function simpleWebAuthn() {
+  simpleWebAuthnModulePromise ||= import('@simplewebauthn/server');
+  return simpleWebAuthnModulePromise;
+}
+
+function mfaSessionReference(token) {
+  return admin.firestore().collection('mfaLoginSessions').doc(
+    opaqueTokenDigest(token)
+  );
+}
+
+function validMfaToken(token) {
+  return /^[A-Za-z0-9_-]{40,100}$/.test(String(token || ''));
+}
+
+function validMfaChallengeId(challengeId) {
+  return /^[A-Za-z0-9_-]{20,100}$/.test(String(challengeId || ''));
+}
+
+async function readUsableMfaSession(token, { enrollmentOnly = false } = {}) {
+  if (!validMfaToken(token)) {
+    throw new HttpsError('invalid-argument', 'The verification session is invalid.');
+  }
+  const reference = mfaSessionReference(token);
+  const snapshot = await reference.get();
+  const session = snapshot.data() || {};
+  if (
+    !snapshot.exists
+    || session.consumed === true
+    || Date.now() > Number(session.expiresAtMillis || 0)
+  ) {
+    throw new HttpsError(
+      'deadline-exceeded',
+      'This verification session has expired. Start the WhatsApp verification again.'
+    );
+  }
+  if (enrollmentOnly && session.enrollmentRequired !== true) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This session is not authorized to bind a new security method.'
+    );
+  }
+  const phoneNumber = String(session.phoneNumber || '');
+  const userId = String(session.userId || '');
+  if (
+    !/^\+[1-9]\d{7,14}$/.test(phoneNumber)
+    || userId !== userDocumentIdForPhone(phoneNumber)
+  ) {
+    throw new HttpsError('internal', 'The verification session is corrupted.');
+  }
+  return { reference, snapshot, session, phoneNumber, userId };
+}
+
+async function factorDocumentsForUser(userId) {
+  const snapshot = await admin.firestore()
+    .collection('users')
+    .doc(userId)
+    .collection('authFactors')
+    .get();
+  return snapshot.docs.filter((document) => document.data()?.enabled !== false);
+}
+
+async function decrementMfaChallengeAttempt(reference) {
+  return admin.firestore().runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(reference);
+    if (!snapshot.exists || snapshot.data()?.consumed === true) return 0;
+    const remaining = Math.max(0, Number(snapshot.data()?.attemptsRemaining || 0) - 1);
+    transaction.set(reference, { attemptsRemaining: remaining }, { merge: true });
+    return remaining;
+  });
+}
+
+function factorMethods(documents) {
+  return [...new Set(documents.map((document) => String(document.data()?.type || '')))]
+    .filter((type) => type === 'totp' || type === 'passkey')
+    .sort();
+}
+
+async function resolveMfaEnrollmentContext(request) {
+  if (request.auth?.uid) {
+    const phoneNumber = authenticatedPhoneClaim(request);
+    const userId = String(request.auth.uid);
+    if (
+      !/^\+[1-9]\d{7,14}$/.test(phoneNumber)
+      || userId !== userDocumentIdForPhone(phoneNumber)
+    ) {
+      throw new HttpsError('unauthenticated', 'Sign in again before changing security methods.');
+    }
+    const currentFactors = await factorDocumentsForUser(userId);
+    if (currentFactors.length > 0 && !recentMfaAuthentication(request)) {
+      throw new HttpsError(
+        'failed-precondition',
+        'For your safety, sign in again before adding another security method.'
+      );
+    }
+    return {
+      source: 'authenticated',
+      contextKey: `authenticated:${userId}`,
+      phoneNumber,
+      userId,
+      sessionReference: null,
+    };
+  }
+  const token = String(request.data?.mfaToken || '').trim();
+  const resolved = await readUsableMfaSession(token, { enrollmentOnly: true });
+  return {
+    source: 'pre_authentication',
+    contextKey: `session:${opaqueTokenDigest(token)}`,
+    phoneNumber: resolved.phoneNumber,
+    userId: resolved.userId,
+    sessionReference: resolved.reference,
+  };
+}
+
+function recentMfaAuthentication(request) {
+  const authTimeSeconds = Number(request.auth?.token?.auth_time || 0);
+  return request.auth?.token?.mfa === true
+    && authTimeSeconds > 0
+    && Date.now() / 1000 - authTimeSeconds <= 10 * 60;
+}
+
+async function createMfaCustomToken({ userId, phoneNumber, method }) {
+  const userSnapshot = await admin.firestore().collection('users').doc(userId).get();
+  const user = userSnapshot.data() || {};
+  const nowIso = new Date().toISOString();
+  await userSnapshot.ref.set({
+    firebaseUid: userId,
+    lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastSignedInAtLocal: nowIso,
+    lastMfaAt: admin.firestore.FieldValue.serverTimestamp(),
+    lastMfaAtLocal: nowIso,
+  }, { merge: true });
+  return admin.auth().createCustomToken(userId, {
+    phoneNumber,
+    isAdmin: isAdminUser(user),
+    verificationProvider: `whatsapp_${method}`,
+    mfa: true,
+    mfaMethod: method,
+    mfaAt: nowIso,
+  });
+}
+
+async function persistEnrolledFactor({
+  context,
+  factorId,
+  factor,
+  achievementType,
+}) {
+  const db = admin.firestore();
+  const userReference = db.collection('users').doc(context.userId);
+  const factorReference = userReference.collection('authFactors').doc(factorId);
+  const existingFactors = await factorDocumentsForUser(context.userId);
+  if (existingFactors.some((document) => document.id === factorId)) {
+    throw new HttpsError('already-exists', 'This security method is already bound.');
+  }
+  const nextMethods = [...new Set([...factorMethods(existingFactors), factor.type])].sort();
+  const nowIso = new Date().toISOString();
+  await db.runTransaction(async (transaction) => {
+    const reads = await Promise.all([
+      transaction.get(factorReference),
+      transaction.get(userReference),
+      ...(context.sessionReference
+        ? [transaction.get(context.sessionReference)]
+        : []),
+    ]);
+    const currentFactor = reads[0];
+    const currentUser = reads[1];
+    if (currentFactor.exists && currentFactor.data()?.enabled !== false) {
+      throw new HttpsError('already-exists', 'This security method is already bound.');
+    }
+    if (context.sessionReference) {
+      const sessionSnapshot = reads[2];
+      const session = sessionSnapshot.data() || {};
+      if (
+        !sessionSnapshot.exists
+        || session.consumed === true
+        || Date.now() > Number(session.expiresAtMillis || 0)
+      ) {
+        throw new HttpsError('deadline-exceeded', 'The verification session has expired.');
+      }
+      transaction.set(context.sessionReference, {
+        consumed: true,
+        consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+        completedMethod: factor.type,
+      }, { merge: true });
+    }
+    transaction.set(factorReference, {
+      ...factor,
+      enabled: true,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtLocal: nowIso,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtLocal: nowIso,
+    });
+    transaction.set(userReference, {
+      phoneNumber: context.phoneNumber,
+      firebaseUid: context.userId,
+      mfaRequired: true,
+      mfaFactorCount: existingFactors.length + 1,
+      mfaMethods: nextMethods,
+      mfaUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      mfaUpdatedAtLocal: nowIso,
+      ...(
+        context.source === 'pre_authentication' && !currentUser.exists
+          ? {
+              requiresOnboarding: true,
+              profileSetupCompleted: false,
+              onboardingVersion: 1,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              createdAtLocal: nowIso,
+            }
+          : {}
+      ),
+    }, { merge: true });
+  });
+  await applyAchievementMetricServer({
+    userId: context.userId,
+    metricKey: 'security_factor_type_bound',
+    eventKey: `security-factor-type:${context.userId}:${achievementType}`,
+    condition: 'Bind Authenticator and a passkey',
+  });
+  if (!context.sessionReference) {
+    return { enrolled: true, methods: nextMethods };
+  }
+  const customToken = await createMfaCustomToken({
+    userId: context.userId,
+    phoneNumber: context.phoneNumber,
+    method: factor.type,
+  });
+  return {
+    enrolled: true,
+    methods: nextMethods,
+    customToken,
+    phoneNumber: context.phoneNumber,
+  };
+}
+
+exports.getMfaStatus = onCall({}, async (request) => {
+  const phoneNumber = authenticatedPhoneClaim(request);
+  const userId = String(request.auth?.uid || '');
+  if (!phoneNumber || userId !== userDocumentIdForPhone(phoneNumber)) {
+    throw new HttpsError('unauthenticated', 'Sign in to view security methods.');
+  }
+  const factors = await factorDocumentsForUser(userId);
+  return {
+    required: factors.length > 0,
+    factorCount: factors.length,
+    methods: factorMethods(factors),
+    factors: factors.map((document) => ({
+      id: document.id,
+      type: String(document.data()?.type || ''),
+      label: String(document.data()?.label || ''),
+      createdAtLocal: String(document.data()?.createdAtLocal || ''),
+    })),
+    canRemove: factors.length > 1,
+  };
+});
+
+exports.beginTotpEnrollment = onCall(
+  { secrets: [mfaTotpEncryptionKey] },
+  async (request) => {
+    const context = await resolveMfaEnrollmentContext(request);
+    const factors = await factorDocumentsForUser(context.userId);
+    if (factorMethods(factors).includes('totp')) {
+      throw new HttpsError('already-exists', 'Authenticator is already bound.');
+    }
+    const secret = generateTotpSecret();
+    const challengeId = randomOpaqueToken(24);
+    const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+    await admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId).set({
+      kind: 'totp',
+      contextKey: context.contextKey,
+      userId: context.userId,
+      phoneNumber: context.phoneNumber,
+      encryptedSecret: encryptTotpSecret(secret, mfaTotpEncryptionKey.value()),
+      attemptsRemaining: 5,
+      consumed: false,
+      expiresAtMillis,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {
+      challengeId,
+      secret,
+      otpauthUri: otpauthUri({ secret, phoneNumber: context.phoneNumber }),
+      expiresAtMillis,
+    };
+  }
+);
+
+exports.finishTotpEnrollment = onCall(
+  { secrets: [mfaTotpEncryptionKey] },
+  async (request) => {
+    const context = await resolveMfaEnrollmentContext(request);
+    const challengeId = String(request.data?.challengeId || '').trim();
+    const code = String(request.data?.code || '').trim();
+    if (!validMfaChallengeId(challengeId) || !/^\d{6}$/.test(code)) {
+      throw new HttpsError('invalid-argument', 'Enter the current 6-digit Authenticator code.');
+    }
+    const reference = admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId);
+    const snapshot = await reference.get();
+    const challenge = snapshot.data() || {};
+    if (
+      !snapshot.exists
+      || challenge.kind !== 'totp'
+      || challenge.contextKey !== context.contextKey
+      || challenge.consumed === true
+      || Date.now() > Number(challenge.expiresAtMillis || 0)
+    ) {
+      throw new HttpsError('deadline-exceeded', 'This Authenticator setup has expired. Start again.');
+    }
+    const attemptsRemaining = Number(challenge.attemptsRemaining || 0);
+    if (attemptsRemaining <= 0) {
+      throw new HttpsError('permission-denied', 'Too many incorrect codes. Start setup again.');
+    }
+    const secret = decryptTotpSecret(
+      challenge.encryptedSecret,
+      mfaTotpEncryptionKey.value()
+    );
+    const verification = verifyTotp({ secret, code, window: 1 });
+    if (!verification.valid) {
+      await reference.set({ attemptsRemaining: attemptsRemaining - 1 }, { merge: true });
+      throw new HttpsError('permission-denied', 'The Authenticator code is incorrect.');
+    }
+    await reference.set({
+      consumed: true,
+      consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+      encryptedSecret: admin.firestore.FieldValue.delete(),
+    }, { merge: true });
+    return persistEnrolledFactor({
+      context,
+      factorId: 'totp',
+      achievementType: 'totp',
+      factor: {
+        type: 'totp',
+        label: 'Authenticator app',
+        encryptedSecret: encryptTotpSecret(secret, mfaTotpEncryptionKey.value()),
+        algorithm: 'SHA1',
+        digits: 6,
+        periodSeconds: 30,
+        lastUsedStep: verification.step,
+      },
+    });
+  }
+);
+
+exports.beginPasskeyEnrollment = onCall({}, async (request) => {
+  const context = await resolveMfaEnrollmentContext(request);
+  const factors = await factorDocumentsForUser(context.userId);
+  const passkeys = factors.filter((document) => document.data()?.type === 'passkey');
+  const { generateRegistrationOptions } = await simpleWebAuthn();
+  const options = await generateRegistrationOptions({
+    rpName: MFA_RP_NAME,
+    rpID: MFA_RP_ID,
+    userID: new Uint8Array(Buffer.from(context.userId, 'utf8')),
+    userName: context.phoneNumber,
+    userDisplayName: `Hiker ${context.phoneNumber.slice(-4)}`,
+    attestationType: 'none',
+    excludeCredentials: passkeys.map((document) => ({
+      id: String(document.data()?.credentialId || ''),
+      transports: Array.isArray(document.data()?.transports)
+        ? document.data().transports
+        : undefined,
+    })),
+    authenticatorSelection: {
+      residentKey: 'required',
+      userVerification: 'required',
+    },
+    supportedAlgorithmIDs: [-7, -257],
+    timeout: 60_000,
+  });
+  const challengeId = randomOpaqueToken(24);
+  const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+  await admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId).set({
+    kind: 'passkey',
+    contextKey: context.contextKey,
+    userId: context.userId,
+    phoneNumber: context.phoneNumber,
+    webAuthnChallenge: options.challenge,
+    attemptsRemaining: 5,
+    consumed: false,
+    expiresAtMillis,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { challengeId, options, expiresAtMillis };
+});
+
+exports.finishPasskeyEnrollment = onCall({}, async (request) => {
+  const context = await resolveMfaEnrollmentContext(request);
+  const challengeId = String(request.data?.challengeId || '').trim();
+  const response = request.data?.response;
+  if (!validMfaChallengeId(challengeId) || !response || typeof response !== 'object') {
+    throw new HttpsError('invalid-argument', 'The passkey response is invalid.');
+  }
+  const reference = admin.firestore().collection('mfaEnrollmentChallenges').doc(challengeId);
+  const snapshot = await reference.get();
+  const challenge = snapshot.data() || {};
+  if (
+    !snapshot.exists
+    || challenge.kind !== 'passkey'
+    || challenge.contextKey !== context.contextKey
+    || challenge.consumed === true
+    || Date.now() > Number(challenge.expiresAtMillis || 0)
+  ) {
+    throw new HttpsError('deadline-exceeded', 'This passkey setup has expired. Start again.');
+  }
+  if (Number(challenge.attemptsRemaining || 0) <= 0) {
+    throw new HttpsError('permission-denied', 'Too many failed passkey attempts. Start again.');
+  }
+  let verification;
+  try {
+    const { verifyRegistrationResponse } = await simpleWebAuthn();
+    verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge: String(challenge.webAuthnChallenge || ''),
+      expectedOrigin: MFA_EXPECTED_ORIGINS,
+      expectedRPID: MFA_RP_ID,
+      requireUserVerification: true,
+    });
+  } catch (error) {
+    await decrementMfaChallengeAttempt(reference);
+    logger.warn('Passkey registration verification failed', {
+      userId: context.userId,
+      errorName: String(error?.name || ''),
+    });
+    throw new HttpsError('permission-denied', 'The passkey could not be verified. Try again.');
+  }
+  if (!verification.verified || !verification.registrationInfo?.credential) {
+    throw new HttpsError('permission-denied', 'The passkey could not be verified.');
+  }
+  const info = verification.registrationInfo;
+  const credential = info.credential;
+  const factorId = `passkey_${crypto.createHash('sha256')
+    .update(String(credential.id))
+    .digest('hex')
+    .slice(0, 32)}`;
+  await reference.set({
+    consumed: true,
+    consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+    webAuthnChallenge: admin.firestore.FieldValue.delete(),
+  }, { merge: true });
+  return persistEnrolledFactor({
+    context,
+    factorId,
+    achievementType: 'passkey',
+    factor: {
+      type: 'passkey',
+      label: String(request.data?.label || 'Passkey').trim().slice(0, 80) || 'Passkey',
+      credentialId: String(credential.id),
+      publicKey: Buffer.from(credential.publicKey).toString('base64'),
+      counter: Number(credential.counter || 0),
+      transports: Array.isArray(credential.transports) ? credential.transports : [],
+      credentialDeviceType: String(info.credentialDeviceType || ''),
+      credentialBackedUp: info.credentialBackedUp === true,
+      aaguid: String(info.aaguid || ''),
+    },
+  });
+});
+
+exports.verifyTotpLogin = onCall(
+  { secrets: [mfaTotpEncryptionKey] },
+  async (request) => {
+    const token = String(request.data?.mfaToken || '').trim();
+    const code = String(request.data?.code || '').trim();
+    if (!/^\d{6}$/.test(code)) {
+      throw new HttpsError('invalid-argument', 'Enter the current 6-digit Authenticator code.');
+    }
+    const resolved = await readUsableMfaSession(token);
+    const factorReference = admin.firestore()
+      .collection('users').doc(resolved.userId)
+      .collection('authFactors').doc('totp');
+    const result = await admin.firestore().runTransaction(async (transaction) => {
+      const [sessionSnapshot, factorSnapshot] = await Promise.all([
+        transaction.get(resolved.reference),
+        transaction.get(factorReference),
+      ]);
+      const session = sessionSnapshot.data() || {};
+      const factor = factorSnapshot.data() || {};
+      if (
+        !sessionSnapshot.exists
+        || session.consumed === true
+        || Date.now() > Number(session.expiresAtMillis || 0)
+      ) {
+        return { error: 'expired' };
+      }
+      if (!factorSnapshot.exists || factor.enabled === false || factor.type !== 'totp') {
+        return { error: 'missing' };
+      }
+      const attemptsRemaining = Number(session.attemptsRemaining || 0);
+      if (attemptsRemaining <= 0) return { error: 'locked' };
+      const secret = decryptTotpSecret(
+        factor.encryptedSecret,
+        mfaTotpEncryptionKey.value()
+      );
+      const verification = verifyTotp({
+        secret,
+        code,
+        window: 1,
+        lastUsedStep: Number(factor.lastUsedStep ?? -1),
+      });
+      if (!verification.valid) {
+        transaction.set(resolved.reference, {
+          attemptsRemaining: attemptsRemaining - 1,
+        }, { merge: true });
+        return { error: 'incorrect' };
+      }
+      transaction.set(factorReference, {
+        lastUsedStep: verification.step,
+        lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.set(resolved.reference, {
+        consumed: true,
+        consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+        completedMethod: 'totp',
+      }, { merge: true });
+      return { verified: true };
+    });
+    if (!result.verified) {
+      const messages = {
+        expired: 'This verification session has expired.',
+        missing: 'Authenticator is not bound to this account.',
+        locked: 'Too many incorrect attempts. Start login again.',
+        incorrect: 'The Authenticator code is incorrect or was already used.',
+      };
+      throw new HttpsError(
+        result.error === 'expired' ? 'deadline-exceeded' : 'permission-denied',
+        messages[result.error] || 'Authenticator verification failed.'
+      );
+    }
+    const customToken = await createMfaCustomToken({
+      userId: resolved.userId,
+      phoneNumber: resolved.phoneNumber,
+      method: 'totp',
+    });
+    return { customToken, phoneNumber: resolved.phoneNumber };
+  }
+);
+
+exports.beginPasskeyLogin = onCall({}, async (request) => {
+  const token = String(request.data?.mfaToken || '').trim();
+  const resolved = await readUsableMfaSession(token);
+  const factors = (await factorDocumentsForUser(resolved.userId))
+    .filter((document) => document.data()?.type === 'passkey');
+  if (factors.length === 0) {
+    throw new HttpsError('failed-precondition', 'No passkey is bound to this account.');
+  }
+  const { generateAuthenticationOptions } = await simpleWebAuthn();
+  const options = await generateAuthenticationOptions({
+    rpID: MFA_RP_ID,
+    allowCredentials: factors.map((document) => ({
+      id: String(document.data()?.credentialId || ''),
+      transports: Array.isArray(document.data()?.transports)
+        ? document.data().transports
+        : undefined,
+    })),
+    userVerification: 'required',
+    timeout: 60_000,
+  });
+  const challengeId = randomOpaqueToken(24);
+  const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+  await admin.firestore().collection('mfaAuthenticationChallenges').doc(challengeId).set({
+    sessionDigest: opaqueTokenDigest(token),
+    userId: resolved.userId,
+    webAuthnChallenge: options.challenge,
+    attemptsRemaining: 5,
+    consumed: false,
+    expiresAtMillis,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { challengeId, options, expiresAtMillis };
+});
+
+exports.finishPasskeyLogin = onCall({}, async (request) => {
+  const token = String(request.data?.mfaToken || '').trim();
+  const challengeId = String(request.data?.challengeId || '').trim();
+  const response = request.data?.response;
+  const resolved = await readUsableMfaSession(token);
+  if (!validMfaChallengeId(challengeId) || !response || typeof response !== 'object') {
+    throw new HttpsError('invalid-argument', 'The passkey response is invalid.');
+  }
+  const challengeReference = admin.firestore()
+    .collection('mfaAuthenticationChallenges').doc(challengeId);
+  const challengeSnapshot = await challengeReference.get();
+  const challenge = challengeSnapshot.data() || {};
+  if (
+    !challengeSnapshot.exists
+    || challenge.userId !== resolved.userId
+    || challenge.sessionDigest !== opaqueTokenDigest(token)
+    || challenge.consumed === true
+    || Date.now() > Number(challenge.expiresAtMillis || 0)
+  ) {
+    throw new HttpsError('deadline-exceeded', 'This passkey request has expired. Start again.');
+  }
+  if (Number(challenge.attemptsRemaining || 0) <= 0) {
+    throw new HttpsError('permission-denied', 'Too many failed passkey attempts. Start login again.');
+  }
+  const credentialId = String(response.id || '');
+  const factors = await factorDocumentsForUser(resolved.userId);
+  const factorDocument = factors.find(
+    (document) => document.data()?.type === 'passkey'
+      && String(document.data()?.credentialId || '') === credentialId
+  );
+  if (!factorDocument) {
+    throw new HttpsError('permission-denied', 'This passkey is not bound to the account.');
+  }
+  const factor = factorDocument.data();
+  let verification;
+  try {
+    const { verifyAuthenticationResponse } = await simpleWebAuthn();
+    verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: String(challenge.webAuthnChallenge || ''),
+      expectedOrigin: MFA_EXPECTED_ORIGINS,
+      expectedRPID: MFA_RP_ID,
+      requireUserVerification: true,
+      credential: {
+        id: credentialId,
+        publicKey: new Uint8Array(Buffer.from(String(factor.publicKey || ''), 'base64')),
+        counter: Number(factor.counter || 0),
+        transports: Array.isArray(factor.transports) ? factor.transports : [],
+      },
+    });
+  } catch (error) {
+    await decrementMfaChallengeAttempt(challengeReference);
+    logger.warn('Passkey authentication verification failed', {
+      userId: resolved.userId,
+      errorName: String(error?.name || ''),
+    });
+    throw new HttpsError('permission-denied', 'The passkey could not be verified.');
+  }
+  if (!verification.verified) {
+    throw new HttpsError('permission-denied', 'The passkey could not be verified.');
+  }
+  await admin.firestore().runTransaction(async (transaction) => {
+    const [freshChallenge, freshSession, freshFactor] = await Promise.all([
+      transaction.get(challengeReference),
+      transaction.get(resolved.reference),
+      transaction.get(factorDocument.ref),
+    ]);
+    if (
+      freshChallenge.data()?.consumed === true
+      || freshSession.data()?.consumed === true
+      || Number(freshFactor.data()?.counter || 0) !== Number(factor.counter || 0)
+    ) {
+      throw new HttpsError('already-exists', 'This passkey response was already used.');
+    }
+    transaction.set(challengeReference, {
+      consumed: true,
+      consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+      webAuthnChallenge: admin.firestore.FieldValue.delete(),
+    }, { merge: true });
+    transaction.set(resolved.reference, {
+      consumed: true,
+      consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+      completedMethod: 'passkey',
+    }, { merge: true });
+    transaction.set(factorDocument.ref, {
+      counter: Number(verification.authenticationInfo?.newCounter || 0),
+      lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+  const customToken = await createMfaCustomToken({
+    userId: resolved.userId,
+    phoneNumber: resolved.phoneNumber,
+    method: 'passkey',
+  });
+  return { customToken, phoneNumber: resolved.phoneNumber };
+});
+
+exports.removeMfaFactor = onCall({}, async (request) => {
+  const phoneNumber = authenticatedPhoneClaim(request);
+  const userId = String(request.auth?.uid || '');
+  const factorId = String(request.data?.factorId || '').trim();
+  if (
+    userId !== userDocumentIdForPhone(phoneNumber)
+    || !validFirestoreDocumentId(factorId)
+  ) {
+    throw new HttpsError('unauthenticated', 'Sign in again before changing security methods.');
+  }
+  if (!recentMfaAuthentication(request)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'For your safety, sign in again before removing a security method.'
+    );
+  }
+  const factors = await factorDocumentsForUser(userId);
+  const target = factors.find((document) => document.id === factorId);
+  if (!target) throw new HttpsError('not-found', 'This security method no longer exists.');
+  if (factors.length <= 1) {
+    throw new HttpsError(
+      'failed-precondition',
+      'At least one Authenticator or passkey method must remain bound.'
+    );
+  }
+  const remaining = factors.filter((document) => document.id !== factorId);
+  const nowIso = new Date().toISOString();
+  const batch = admin.firestore().batch();
+  batch.delete(target.ref);
+  batch.set(admin.firestore().collection('users').doc(userId), {
+    mfaRequired: true,
+    mfaFactorCount: remaining.length,
+    mfaMethods: factorMethods(remaining),
+    mfaUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    mfaUpdatedAtLocal: nowIso,
+  }, { merge: true });
+  await batch.commit();
+  return { removed: true, factorCount: remaining.length, methods: factorMethods(remaining) };
+});
+
+exports.cleanExpiredMfaArtifacts = onSchedule(
+  { schedule: 'every 24 hours', timeoutSeconds: 120 },
+  async () => {
+    const db = admin.firestore();
+    const now = Date.now();
+    const collections = [
+      'mfaLoginSessions',
+      'mfaEnrollmentChallenges',
+      'mfaAuthenticationChallenges',
+    ];
+    let deleted = 0;
+    for (const collectionName of collections) {
+      while (true) {
+        const snapshot = await db.collection(collectionName)
+          .where('expiresAtMillis', '<', now)
+          .limit(400)
+          .get();
+        if (snapshot.empty) break;
+        const batch = db.batch();
+        for (const document of snapshot.docs) batch.delete(document.ref);
+        await batch.commit();
+        deleted += snapshot.size;
+        if (snapshot.size < 400) break;
+      }
+    }
+    logger.log('Expired MFA artifacts removed.', { deleted });
+  }
+);
+
 exports.verifyGreenApiLoginCode = onCall(
   { secrets: [greenApiToken] },
   async (request) => {
@@ -6510,17 +7300,43 @@ exports.verifyGreenApiLoginCode = onCall(
       throw new HttpsError('internal', 'Invalid phone number on record.');
     }
     const userId = userDocumentIdForPhone(phoneNumber);
-    const customToken = await admin.auth().createCustomToken(userId, {
+    const userSnapshot = await admin.firestore().collection('users').doc(userId).get();
+    const factors = await factorDocumentsForUser(userId);
+    const methods = factorMethods(factors);
+    const mfaToken = randomOpaqueToken(32);
+    const expiresAtMillis = Date.now() + MFA_SESSION_TTL_MILLIS;
+    await mfaSessionReference(mfaToken).set({
+      userId,
       phoneNumber,
-      verificationProvider: 'green_api',
+      whatsappChallengeId: challengeId,
+      whatsappVerified: true,
+      enrollmentRequired: methods.length === 0,
+      methods,
+      attemptsRemaining: 8,
+      consumed: false,
+      expiresAtMillis,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtLocal: new Date().toISOString(),
     });
-    return { customToken, phoneNumber };
+    return {
+      mfaToken,
+      phoneNumber,
+      methods,
+      enrollmentRequired: methods.length === 0,
+      isNewAccount: !userSnapshot.exists,
+      expiresAtMillis,
+    };
   }
 );
 
 exports.registerWithGreenApiAndPassword = onCall(
   { secrets: [greenApiToken] },
   async (request) => {
+    throw new HttpsError(
+      'failed-precondition',
+      'This legacy registration path is disabled. Verify WhatsApp and bind Authenticator or a passkey.'
+    );
+    /* c8 ignore start -- retained temporarily for rolling-client compatibility */
     const challengeId = String(request.data?.challengeId || '').trim();
     const code = String(request.data?.code || '').trim();
     const password = String(request.data?.password || '');
@@ -6635,6 +7451,7 @@ exports.registerWithGreenApiAndPassword = onCall(
       verificationProvider: 'green_api_password',
     });
     return { customToken, phoneNumber };
+    /* c8 ignore stop */
   }
 );
 
@@ -7159,6 +7976,11 @@ exports.resetPassword = onCall(
 );
 
 exports.loginWithPassword = onCall({}, async (request) => {
+  throw new HttpsError(
+    'failed-precondition',
+    'Password-only login is disabled. Sign in with WhatsApp and your security method.'
+  );
+  /* c8 ignore start -- retained temporarily for rolling-client compatibility */
   const phoneNumber = String(request.data?.phoneNumber || '').trim();
   if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
     throw new HttpsError(
@@ -7259,6 +8081,7 @@ exports.loginWithPassword = onCall({}, async (request) => {
     verificationProvider: 'password',
   });
   return { customToken, phoneNumber };
+  /* c8 ignore stop */
 });
 
 exports.linkPasswordToAccount = onCall({}, async (request) => {
@@ -7327,6 +8150,11 @@ exports.linkPasswordToAccount = onCall({}, async (request) => {
 });
 
 exports.authenticateAppSession = onCall({}, async (request) => {
+  throw new HttpsError(
+    'failed-precondition',
+    'Saved-device recovery requires a fresh WhatsApp and second-factor sign-in.'
+  );
+  /* c8 ignore start -- retained temporarily for rolling-client compatibility */
   const phoneNumber = String(request.data?.phoneNumber || '').trim();
   const appInstanceId = String(request.data?.appInstanceId || '').trim();
   if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber) || appInstanceId.length < 20) {
@@ -7398,6 +8226,7 @@ exports.authenticateAppSession = onCall({}, async (request) => {
     { merge: true }
   );
   return { customToken, userId };
+  /* c8 ignore stop */
 });
 
 // ─── Weather ────────────────────────────────────────────────────

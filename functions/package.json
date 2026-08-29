@@ -5,7 +5,7 @@
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",
-    "test": "node --test test",
+    "test": "node --test test/*.test.js",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"
   },
@@ -13,6 +13,7 @@
     "node": "22"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^13.3.2",
     "@firebase/app": "^0.16.0",
     "@firebase/app-compat": "^0.5.16",
     "argon2": "^0.44.0",

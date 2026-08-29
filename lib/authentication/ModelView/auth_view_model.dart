@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../app/Model/app_session.dart';
 import '../Data/phone_number_formatter.dart';
 import '../Model/auth_status.dart';
+import '../Model/mfa_models.dart';
 
 class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
@@ -67,7 +68,10 @@ class AuthViewModel extends ChangeNotifier {
     try {
       final response = await _firebaseFunctions
           .httpsCallable('sendGreenApiLoginCode')
-          .call(<String, Object?>{'phoneNumber': normalized});
+          .call(<String, Object?>{
+            'phoneNumber': normalized,
+            'intent': _authMode == AuthMode.signUp ? 'sign_up' : 'sign_in',
+          });
       final data = response.data;
       if (data is! Map || data['challengeId'] is! String) {
         throw FirebaseFunctionsException(
@@ -87,7 +91,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<AppSession?> verifyOtp(String code) async {
+  Future<MfaContinuation?> verifyOtp(String code) async {
     final challengeId = _greenApiChallengeId;
     if (challengeId == null) {
       _error = 'Send a verification code first.';
@@ -109,32 +113,33 @@ class AuthViewModel extends ChangeNotifier {
           });
       final data = response.data;
       if (data is! Map ||
-          data['customToken'] is! String ||
-          data['phoneNumber'] is! String) {
+          data['mfaToken'] is! String ||
+          data['phoneNumber'] is! String ||
+          data['expiresAtMillis'] is! num) {
         throw FirebaseFunctionsException(
           code: 'invalid-response',
           message: 'The WhatsApp verification service returned invalid data.',
         );
       }
-      final credential = await _firebaseAuth.signInWithCustomToken(
-        data['customToken'] as String,
-      );
-      if (credential.user == null) {
-        throw FirebaseAuthException(
-          code: 'green-api-sign-in-failed',
-          message: 'Firebase could not complete the verification.',
-        );
-      }
-      final session = AppSession(
+      final continuation = MfaContinuation(
+        token: data['mfaToken'] as String,
         phoneNumber: data['phoneNumber'] as String,
-        signedInAt: DateTime.now(),
+        methods: data['methods'] is List
+            ? (data['methods'] as List)
+                  .map((method) => method.toString())
+                  .toList(growable: false)
+            : const [],
+        enrollmentRequired: data['enrollmentRequired'] == true,
+        isNewAccount: data['isNewAccount'] == true,
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(
+          (data['expiresAtMillis'] as num).toInt(),
+        ),
       );
-      _status = AuthStatus.signedIn;
+      _status = AuthStatus.enteringCode;
       _message = null;
       _error = null;
       notifyListeners();
-      await _onAutomaticallyVerified?.call(session);
-      return session;
+      return continuation;
     } catch (error) {
       _status = AuthStatus.enteringCode;
       _message = null;
