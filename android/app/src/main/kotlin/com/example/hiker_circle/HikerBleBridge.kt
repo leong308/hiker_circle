@@ -48,6 +48,7 @@ class HikerBleBridge(
         private const val GATT_OPERATION_TIMEOUT_MILLIS = 30000L
         private const val SECURE_BOND_TIMEOUT_MILLIS = 45000L
         private const val READ_GATT_TIMEOUT_MILLIS = 10000L
+        private const val LOCATION_HANDOFF_TIMEOUT_MILLIS = 12000L
         private const val PAIRING_CONFIRMATION_TIMEOUT_MILLIS = 15000L
         private const val MAX_PENDING_SOS_AGE_MILLIS = 5 * 60 * 1000L
         private const val MAX_PENDING_SOS_FUTURE_SKEW_MILLIS = 2 * 60 * 1000L
@@ -82,6 +83,7 @@ class HikerBleBridge(
     private var locationGatt: BluetoothGatt? = null
     private var locationPayload: ByteArray? = null
     private var locationResult: MethodChannel.Result? = null
+    private var locationServiceCacheRefreshAttempted = false
     private val locationTimeout = Runnable {
         finishLocationHandoff(
             success = false,
@@ -1819,6 +1821,7 @@ class HikerBleBridge(
             return
         }
         finishLocationHandoff(success = false)
+        locationServiceCacheRefreshAttempted = false
         val payload = runCatching {
             HikerBleProtocol.encodeSosLocationHandoff(
                 eventId = eventId,
@@ -1834,6 +1837,7 @@ class HikerBleBridge(
         }
         locationPayload = payload
         locationResult = result
+        mainHandler.postDelayed(locationTimeout, LOCATION_HANDOFF_TIMEOUT_MILLIS)
         val device = runCatching {
             bluetoothManager?.adapter?.getRemoteDevice(address)
         }.getOrNull()
@@ -1859,6 +1863,7 @@ class HikerBleBridge(
 
     private val locationGattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (gatt !== locationGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS ||
                 newState != BluetoothProfile.STATE_CONNECTED
             ) {
@@ -1877,12 +1882,14 @@ class HikerBleBridge(
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (gatt !== locationGatt) return
             if (hasConnectPermission()) {
                 gatt.discoverServices()
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (gatt !== locationGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS || !hasConnectPermission()) {
                 finishLocationHandoff(
                     success = false,
@@ -1896,11 +1903,7 @@ class HikerBleBridge(
                 ?.getCharacteristic(HikerBleProtocol.SOS_LOCATION_CHARACTERISTIC_UUID)
             val payload = locationPayload
             if (characteristic == null || payload == null) {
-                finishLocationHandoff(
-                    success = false,
-                    errorCode = "paired_button_location_service_missing",
-                    errorMessage = "The SOS button is not accepting location handoffs.",
-                )
+                recoverFromMissingLocationService(gatt)
                 return
             }
             characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
@@ -1919,6 +1922,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            if (gatt !== locationGatt) return
             if (characteristic.uuid == HikerBleProtocol.SOS_LOCATION_CHARACTERISTIC_UUID) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     finishLocationHandoff(success = true)
@@ -1933,14 +1937,69 @@ class HikerBleBridge(
         }
     }
 
+    private fun recoverFromMissingLocationService(gatt: BluetoothGatt) {
+        val discovered = gatt.services.joinToString(separator = "; ") { service ->
+            "${service.uuid}=[${service.characteristics.joinToString { it.uuid.toString() }}]"
+        }
+        Log.w(TAG, "Active SOS location GATT service missing; discovered=$discovered")
+        if (locationServiceCacheRefreshAttempted) {
+            finishLocationHandoff(
+                success = false,
+                errorCode = "paired_button_location_service_missing",
+                errorMessage =
+                    "Android refreshed the SOS button services, but the active location handoff service is still unavailable.",
+            )
+            return
+        }
+
+        locationServiceCacheRefreshAttempted = true
+        val device = gatt.device
+        val cacheRefreshed = runCatching {
+            val refresh = gatt.javaClass.getMethod("refresh")
+            (refresh.invoke(gatt) as? Boolean) != false
+        }.onFailure { error ->
+            Log.w(TAG, "Android rejected the SOS location GATT cache refresh.", error)
+        }.getOrDefault(false)
+
+        locationGatt = null
+        runCatching { gatt.disconnect() }
+        runCatching { gatt.close() }
+        if (!cacheRefreshed) {
+            finishLocationHandoff(
+                success = false,
+                errorCode = "paired_button_location_bluetooth_cache_stale",
+                errorMessage =
+                    "Android cached the button's older Bluetooth services and could not refresh them automatically.",
+            )
+            return
+        }
+
+        mainHandler.postDelayed({
+            if (locationResult == null || locationPayload == null) return@postDelayed
+            locationGatt = runCatching {
+                device.connectGatt(activity, false, locationGattCallback)
+            }.getOrNull()
+            if (locationGatt == null) {
+                finishLocationHandoff(
+                    success = false,
+                    errorCode = "paired_button_location_connect_failed",
+                    errorMessage =
+                        "Unable to reconnect after refreshing Android Bluetooth services.",
+                )
+            }
+        }, 700L)
+    }
+
     private fun finishLocationHandoff(
         success: Boolean,
         errorCode: String? = null,
         errorMessage: String? = null,
     ) {
+        mainHandler.removeCallbacks(locationTimeout)
         val gatt = locationGatt
         locationGatt = null
         locationPayload = null
+        locationServiceCacheRefreshAttempted = false
         runCatching { gatt?.disconnect() }
         runCatching { gatt?.close() }
         val result = locationResult
