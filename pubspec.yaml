@@ -94,6 +94,7 @@ flutter:
     - assets/animations/hiker_circle_loading.json
     - assets/animations/file_transfer.gif
     - assets/icons/AppIcon-Default-1024.png
+    - assets/icons/HikerCircle-Loader-Transparent.png
 
   fonts:
     - family: Inter

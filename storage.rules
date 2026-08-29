@@ -94,6 +94,22 @@ service firebase.storage {
         && (request.auth.uid == userId || admin());
     }
 
+    match /community_hikes/{userId}/{sessionId}/{fileName} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.metadata.ownerUserId == userId
+        && request.resource.metadata.sessionId == sessionId
+        && request.resource.size <= 10 * 1024 * 1024
+        && supportedImage(request.resource.contentType, fileName);
+      allow update: if false;
+      allow delete: if admin() || (
+        signedIn()
+        && request.auth.uid == userId
+        && resource.metadata.ownerUserId == userId
+      );
+    }
+
     match /group_chats/{chatId}/attachments/{fileName} {
       allow read: if chatMember(chatId);
       allow create: if resource == null

@@ -107,6 +107,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   String? _activeTeamNamingChatId;
   final Set<String> _deferredTeamNamingChatIds = {};
   String? _activeUpcomingJoinRequestReviewId;
+  final Set<String> _completedUpcomingJoinRequestReviewIds = <String>{};
   List<GroupChat> _pendingFormedTeamChats = const [];
   NetworkReachabilitySnapshot _networkReachabilitySnapshot =
       const NetworkReachabilitySnapshot(
@@ -395,7 +396,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         alert: true,
         badge: true,
         sound: true,
-        provisional: true,
+        provisional: false,
       );
 
       try {
@@ -866,6 +867,24 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
 
     if (type == 'active_hike_monitoring_stopped') return;
+
+    // A team readiness request is actionable state, not just an informational
+    // banner. Foreground users should see the ready interface immediately;
+    // background and terminated users follow the same deep link after tapping
+    // the FCM notification.
+    if (type == 'team_hike_invite' && deepLink != null) {
+      _enqueueFcmOpen(
+        _PendingFcmOpen(
+          key: message.messageId?.trim().isNotEmpty == true
+              ? message.messageId!.trim()
+              : 'foreground-team:${message.sentTime?.millisecondsSinceEpoch ?? 0}:${message.data.hashCode}',
+          deepLink: deepLink,
+          title: title,
+          body: body,
+        ),
+      );
+      return;
+    }
 
     final androidDetails = AndroidNotificationDetails(
       'hiker_circle_foreground',
@@ -1485,7 +1504,8 @@ class _HikerHomePageState extends State<HikerHomePage>
     final normalizedId = requestId.trim();
     if (!mounted ||
         !RegExp(r'^join_[a-f0-9]{48}$').hasMatch(normalizedId) ||
-        _activeUpcomingJoinRequestReviewId == normalizedId) {
+        _activeUpcomingJoinRequestReviewId == normalizedId ||
+        _completedUpcomingJoinRequestReviewIds.contains(normalizedId)) {
       return;
     }
     _activeUpcomingJoinRequestReviewId = normalizedId;
@@ -1535,6 +1555,25 @@ class _HikerHomePageState extends State<HikerHomePage>
       _finishUpcomingJoinRequestReview();
       return;
     }
+    if (review.status != 'pending') {
+      _completedUpcomingJoinRequestReviewIds.add(normalizedId);
+      _finishUpcomingJoinRequestReview();
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              review.status == 'accepted'
+                  ? 'This join request was already accepted.'
+                  : review.status == 'rejected'
+                  ? 'This join request was already declined.'
+                  : 'This join request is no longer available.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
     final result = await showDialog<UpcomingHikeJoinRequestReview>(
       context: context,
       barrierDismissible: false,
@@ -1547,8 +1586,17 @@ class _HikerHomePageState extends State<HikerHomePage>
             ),
       ),
     );
-    _finishUpcomingJoinRequestReview();
-    if (!mounted || result == null) return;
+    if (result != null && result.status != 'pending') {
+      // Android/iOS can deliver the same universal link through the initial
+      // intent, method channel and notification callback. Keep the resolved
+      // request id for this app process so a late duplicate cannot reopen it.
+      _completedUpcomingJoinRequestReviewIds.add(normalizedId);
+    }
+    _activeUpcomingJoinRequestReviewId = null;
+    if (!mounted || result == null) {
+      _finishUpcomingJoinRequestReview();
+      return;
+    }
     if (result.status == 'accepted') {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -1558,6 +1606,9 @@ class _HikerHomePageState extends State<HikerHomePage>
             behavior: SnackBarBehavior.floating,
           ),
         );
+      if (result.needsJoinPolicyChoice) {
+        await _chooseFutureJoinPolicy(result.hikeId);
+      }
     } else if (result.status == 'rejected') {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -1567,6 +1618,59 @@ class _HikerHomePageState extends State<HikerHomePage>
             behavior: SnackBarBehavior.floating,
           ),
         );
+    }
+    _finishUpcomingJoinRequestReview();
+  }
+
+  Future<void> _chooseFutureJoinPolicy(String hikeId) async {
+    if (!mounted) return;
+    final policy = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.groups_2_rounded, color: Color(0xFF34A853)),
+        title: const Text('Your group hike is ready'),
+        content: const Text(
+          'A team has now been formed. Choose how future hikers can join this upcoming hike.',
+        ),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop('approval'),
+            icon: const Icon(Icons.verified_user_outlined),
+            label: const Text('Needs approval'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop('open'),
+            icon: const Icon(Icons.group_add_rounded),
+            label: const Text('Open to join'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || policy == null) return;
+    try {
+      await hikerCircleRepository.setUpcomingHikeJoinPolicy(
+        hikeId: hikeId,
+        joinPolicy: policy,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              policy == 'open'
+                  ? 'This hike is now open to join.'
+                  : 'Future join requests will need your approval.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     }
   }
 
@@ -4067,12 +4171,13 @@ class _HikerHomePageState extends State<HikerHomePage>
               text: text,
             ),
             onShareToCommunity: endResult.completed
-                ? (caption) async {
+                ? (caption, images) async {
                     await hikerCircleRepository.createCompletedHikePost(
                       session: widget.session,
                       activeHike: completedHike,
                       summary: completedReport,
                       caption: caption,
+                      images: images,
                     );
                   }
                 : null,
@@ -4803,16 +4908,12 @@ class _HikerHomePageState extends State<HikerHomePage>
       final iosReady =
           locationReady &&
           status.notificationsAuthorized &&
-          status.timeSensitiveGranted &&
-          status.liveActivitiesGranted &&
           status.motionGranted;
       if (iosReady) return true;
 
       final missing = <String>[
         if (!locationReady) 'Location: Always',
         if (!status.notificationsAuthorized) 'Notifications: Allow',
-        if (!status.timeSensitiveGranted) 'Time Sensitive Notifications: On',
-        if (!status.liveActivitiesGranted) 'Live Activities: On',
         if (!status.motionGranted) 'Motion & Fitness: On',
       ];
       final openSettings =
@@ -4824,10 +4925,9 @@ class _HikerHomePageState extends State<HikerHomePage>
               content: Text(
                 'Hike monitoring cannot start until these settings are enabled:\n\n'
                 '${missing.map((item) => '• $item').join('\n')}\n\n'
-                'HikerCircle can verify its Time Sensitive permission, but iOS '
-                'does not let apps inspect or change every Focus mode. In '
-                'Settings, also allow Time Sensitive notifications through the '
-                'Focus mode you use while hiking.',
+                'Only the settings listed above are required. Time Sensitive '
+                'Notifications and Live Activities are optional enhancements '
+                'and will not remove you from a team hike.',
               ),
               actions: [
                 CupertinoDialogAction(
@@ -7800,7 +7900,11 @@ class _HikeSummaryReportPage extends StatefulWidget {
   final AppSession session;
   final HikeSummaryReport report;
   final ActiveHikeSession activeHike;
-  final Future<void> Function(String caption)? onShareToCommunity;
+  final Future<void> Function(
+    String caption,
+    List<CommunityPostImageUpload> images,
+  )?
+  onShareToCommunity;
   final Future<void> Function(String text) onShareReportText;
   final int initialMapStyleIndex;
 
@@ -8228,7 +8332,14 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     icon: const Icon(Icons.ios_share_rounded),
-                    label: const Text('Preview & Share Hike'),
+                    label: const Text('Share Hike'),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    key: const Key('back-to-home-after-hike'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.home_rounded),
+                    label: const Text('Back to Home'),
                   ),
                 ],
               ),

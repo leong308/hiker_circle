@@ -47,6 +47,9 @@ const Set<String> _upcomingHikePreviewFields = {
   'createdAtLocal',
   'participantPhones',
   'joinRequestStatus',
+  'joinPolicy',
+  'departureReminderCount',
+  'departureReminderSentByMe',
   'isDeleted',
   'deletedAtLocal',
 };
@@ -416,6 +419,18 @@ List<T> _evenlyDownsample<T>(List<T> values, {required int maxPoints}) {
 
 class AdminTrailImageUpload {
   const AdminTrailImageUpload({
+    required this.bytes,
+    required this.fileName,
+    this.contentType,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final String? contentType;
+}
+
+class CommunityPostImageUpload {
+  const CommunityPostImageUpload({
     required this.bytes,
     required this.fileName,
     this.contentType,
@@ -997,6 +1012,41 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  Future<void> setUpcomingHikeJoinPolicy({
+    required String hikeId,
+    required String joinPolicy,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      await _resolvedFunctions
+          .httpsCallable('setUpcomingHikeJoinPolicy')
+          .call(<String, dynamic>{
+            'hikeId': hikeId.trim(),
+            'joinPolicy': joinPolicy == 'open' ? 'open' : 'approval',
+          });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to update who can join this hike.',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> remindUpcomingHikeHost({
+    required String hikeId,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      final result = await _resolvedFunctions
+          .httpsCallable('remindUpcomingHikeHost')
+          .call(<String, dynamic>{'hikeId': hikeId.trim()});
+      return Map<String, dynamic>.from(result.data as Map);
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to remind the host right now.',
+      );
+    }
+  }
+
   Future<String> requestToJoinUpcomingHike({required String hikeId}) async {
     _throwIfFirebaseUnavailable();
     try {
@@ -1062,6 +1112,27 @@ class HikerCircleFirebaseRepository {
     } catch (_) {
       throw const HikerCircleFirebaseRepositoryException(
         'The join request response was invalid.',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> loadPublicHikerProfile({
+    String userId = '',
+    String phoneNumber = '',
+  }) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      final result = await _resolvedFunctions
+          .httpsCallable('loadPublicHikerProfile')
+          .call(<String, dynamic>{
+            if (userId.trim().isNotEmpty) 'userId': userId.trim(),
+            if (phoneNumber.trim().isNotEmpty)
+              'phoneNumber': phoneNumber.trim(),
+          });
+      return Map<String, dynamic>.from(result.data as Map);
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to load this hiker profile.',
       );
     }
   }
@@ -2075,6 +2146,7 @@ class HikerCircleFirebaseRepository {
   Future<String> scheduleUpcomingHike({
     required AppSession session,
     required HikeSessionDraft draft,
+    String joinPolicy = 'approval',
   }) async {
     _throwIfFirebaseUnavailable();
     try {
@@ -2095,6 +2167,7 @@ class HikerCircleFirebaseRepository {
           .call<Map<String, dynamic>>({
             'creationKey': creationKey,
             'draft': draft.toPersistence(),
+            'joinPolicy': joinPolicy == 'open' ? 'open' : 'approval',
           });
       final hikeId = _stringFrom(response.data['hikeId']);
       if (hikeId.isEmpty) {
@@ -2970,11 +3043,48 @@ class HikerCircleFirebaseRepository {
     HikeSummaryReport? summary,
     String caption = 'Trail completed safely.',
     String postType = 'completed_hike',
+    List<CommunityPostImageUpload> images = const [],
   }) async {
     _throwIfFirebaseUnavailable();
 
     final now = DateTime.now().toUtc();
     final document = _communityPosts.doc();
+    final uploadedReferences = <Reference>[];
+    final imageUrls = <String>[];
+    try {
+      for (var index = 0; index < images.length && index < 6; index++) {
+        final image = images[index];
+        if (image.bytes.isEmpty || image.bytes.length > 10 * 1024 * 1024) {
+          continue;
+        }
+        final safeName = _safeStorageFileName(image.fileName, index);
+        final reference = _resolvedStorage.ref(
+          'community_hikes/${_userIdFor(session)}/${activeHike.sessionId}/'
+          '${DateTime.now().microsecondsSinceEpoch}_$safeName',
+        );
+        await reference.putData(
+          image.bytes,
+          SettableMetadata(
+            contentType: image.contentType ?? _contentTypeForFileName(safeName),
+            customMetadata: {
+              'sessionId': activeHike.sessionId,
+              'ownerUserId': _userIdFor(session),
+            },
+          ),
+        );
+        uploadedReferences.add(reference);
+        imageUrls.add(await reference.getDownloadURL());
+      }
+    } catch (_) {
+      for (final reference in uploadedReferences) {
+        try {
+          await reference.delete();
+        } catch (_) {}
+      }
+      throw const HikerCircleFirebaseRepositoryException(
+        'Unable to upload the selected hike photos.',
+      );
+    }
     final author = await _communityAuthorSnapshot(session);
     final routePoints = _actualRoutePointsFor(activeHike);
     final routePreviewPoints = _routePreviewPointsFor(routePoints);
@@ -2998,7 +3108,7 @@ class HikerCircleFirebaseRepository {
       'routeCaptureId': activeHike.sessionId,
       'thumbnailType': 'recorded_route_map',
       'caption': caption,
-      'imageUrls': <String>[],
+      'imageUrls': imageUrls,
       'distanceKm': summary?.distanceKm ?? activeHike.recordedDistanceKm,
       'durationMinutes':
           summary?.duration.inMinutes ??
@@ -3870,7 +3980,9 @@ class HikerCircleFirebaseRepository {
     if (hike.isDeleted) {
       return false;
     }
-    final hiddenAt = hike.departureTime.toUtc().add(const Duration(hours: 1));
+    final hiddenAt = hike.departureTime.toUtc().add(
+      const Duration(minutes: 15),
+    );
     return hiddenAt.isAfter(DateTime.now().toUtc());
   }
 

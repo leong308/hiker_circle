@@ -2243,9 +2243,6 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
     if (!mounted) return;
     _mapboxMap = mapboxMap;
     try {
-      mapboxMap.addInteraction(
-        mapbox.TapInteraction.onMap((context) => _onMapTap(context.point)),
-      );
       await mapboxMap.compass.updateSettings(
         mapbox.CompassSettings(enabled: false),
       );
@@ -2501,6 +2498,8 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                     gestureRecognizers: mapGestureRecognizers,
                     onMapCreated: _onMapCreated,
                     onStyleLoadedListener: (_) => _onStyleLoaded(),
+                    // ignore: deprecated_member_use
+                    onTapListener: (context) => _onMapTap(context.point),
                   ),
                 ),
                 Align(
@@ -2694,11 +2693,6 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
     if (!mounted) return;
     _mapboxMap = mapboxMap;
     try {
-      mapboxMap.addInteraction(
-        mapbox.TapInteraction.onMap(
-          (context) => _selectCoordinate(context.point),
-        ),
-      );
       await mapboxMap.compass.updateSettings(
         mapbox.CompassSettings(enabled: false),
       );
@@ -2796,6 +2790,9 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
                         gestureRecognizers: mapGestureRecognizers,
                         onMapCreated: _onMapCreated,
                         onStyleLoadedListener: (_) => _onStyleLoaded(),
+                        // ignore: deprecated_member_use
+                        onTapListener: (context) =>
+                            _selectCoordinate(context.point),
                       ),
                     ),
                     Align(

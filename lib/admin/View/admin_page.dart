@@ -841,56 +841,71 @@ class _AdminHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        if (onBack == null)
-          const _CircleIcon(icon: Icons.admin_panel_settings_rounded)
-        else
-          _CircleIconButton(
-            icon: Icons.arrow_back_rounded,
-            tooltip: 'Back to admin dashboard',
-            onPressed: onBack!,
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: _AdminColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _AdminColors.green.withValues(alpha: 0.16)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 7),
           ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              GestureDetector(
-                onTap: onTitleTap,
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _AdminColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
+        ],
+      ),
+      child: Row(
+        children: [
+          if (onBack == null)
+            const _CircleIcon(icon: Icons.admin_panel_settings_rounded)
+          else
+            _CircleIconButton(
+              icon: Icons.arrow_back_rounded,
+              tooltip: 'Back to admin dashboard',
+              onPressed: onBack!,
+            ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTap: onTitleTap,
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: _AdminColors.textFor(context),
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _AdminColors.secondaryTextFor(context),
                     letterSpacing: 0,
                   ),
                 ),
-              ),
-              Text(
-                subtitle,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _AdminColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        Tooltip(
-          message: 'Refresh admin data',
-          child: IconButton(
-            onPressed: isLoading ? null : onRefresh,
-            icon: isLoading
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded),
+          Tooltip(
+            message: 'Refresh admin data',
+            child: IconButton(
+              onPressed: isLoading ? null : onRefresh,
+              icon: isLoading
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -927,6 +942,98 @@ class _AdminOverviewDashboard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF173F2B), Color(0xFF2F7D4A)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: _AdminColors.green.withValues(alpha: 0.2),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.monitor_heart_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'SYSTEM OPERATIONS',
+                      style: TextStyle(
+                        color: Color(0xFFBDE8C8),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'HikerCircle is operational',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: 3),
+                    Text(
+                      'Review safety queues and manage live platform content.',
+                      style: TextStyle(color: Color(0xFFDDEDE2)),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.circle, size: 9, color: Color(0xFF7CF29A)),
+                    SizedBox(width: 6),
+                    Text(
+                      'LIVE',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
@@ -1026,9 +1133,28 @@ class _AdminDashboardCard extends StatelessWidget {
         : _AdminColors.greenSoftFor(context);
     final iconColor = isPrimary ? Colors.white : _AdminColors.green;
 
-    return _InsetGroup(
+    return Container(
+      decoration: BoxDecoration(
+        color: _AdminColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isPrimary
+              ? _AdminColors.green.withValues(alpha: 0.34)
+              : _AdminColors.separatorFor(context),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.045),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Material(
-        color: Colors.transparent,
+        color: isPrimary
+            ? _AdminColors.green.withValues(alpha: 0.035)
+            : Colors.transparent,
         child: InkWell(
           onTap: onTap,
           child: Padding(

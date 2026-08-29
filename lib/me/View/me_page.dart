@@ -13,6 +13,7 @@ import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../app/Model/preferred_time_zone.dart';
 import '../../core/models/hiker_level.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
 import '../../sos/Model/sos_models.dart';
@@ -3123,28 +3124,12 @@ class _AchievementLoadingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Row(
-          children: [
-            CircularProgressIndicator(
-              color: _MeColors.green,
-              backgroundColor: _MeColors.greenSoftFor(context),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                'Loading your achievement progress...',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _MeColors.textFor(context),
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-            ),
-          ],
-        ),
+    return const _InsetGroup(
+      child: HikerCircleLoadingView(
+        message: 'Loading achievements…',
+        detail: 'Checking your progress, levels and unlocked badges.',
+        compact: true,
+        padding: EdgeInsets.all(12),
       ),
     );
   }

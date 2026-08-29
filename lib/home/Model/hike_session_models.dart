@@ -1836,6 +1836,9 @@ class UpcomingHike {
     this.deletedAt,
     this.draft,
     this.joinRequestStatus = '',
+    this.joinPolicy = 'open',
+    this.departureReminderCount = 0,
+    this.departureReminderSentByMe = false,
   });
 
   final String id;
@@ -1864,6 +1867,11 @@ class UpcomingHike {
   final DateTime? deletedAt;
   final HikeSessionDraft? draft;
   final String joinRequestStatus;
+  final String joinPolicy;
+  final int departureReminderCount;
+  final bool departureReminderSentByMe;
+
+  bool get requiresJoinApproval => joinPolicy != 'open';
 
   bool get isLocalPendingSync => id.startsWith('local_pending_');
 
@@ -1893,6 +1901,10 @@ class UpcomingHike {
     if (deletedAt != null)
       'deletedAtLocal': deletedAt!.toUtc().toIso8601String(),
     if (joinRequestStatus.isNotEmpty) 'joinRequestStatus': joinRequestStatus,
+    'joinPolicy': joinPolicy,
+    if (departureReminderCount > 0)
+      'departureReminderCount': departureReminderCount,
+    if (departureReminderSentByMe) 'departureReminderSentByMe': true,
   };
 
   Map<String, dynamic> toPersistence() => {
@@ -1928,6 +1940,9 @@ class UpcomingHike {
       deletedAt: deletedAt,
       draft: value,
       joinRequestStatus: joinRequestStatus,
+      joinPolicy: joinPolicy,
+      departureReminderCount: departureReminderCount,
+      departureReminderSentByMe: departureReminderSentByMe,
     );
   }
 
@@ -1970,6 +1985,11 @@ class UpcomingHike {
       deletedAt: _modelDateFromValue(data['deletedAtLocal']),
       draft: _modelDraftFromValue(data['draft']),
       joinRequestStatus: _modelStringFrom(data['joinRequestStatus']),
+      joinPolicy: _modelStringFrom(data['joinPolicy']) == 'approval'
+          ? 'approval'
+          : 'open',
+      departureReminderCount: _modelIntFrom(data['departureReminderCount']),
+      departureReminderSentByMe: data['departureReminderSentByMe'] == true,
     );
   }
 
@@ -2014,6 +2034,10 @@ class UpcomingHikeJoinRequestReview {
     required this.requesterName,
     required this.trailName,
     this.departureTime,
+    this.needsJoinPolicyChoice = false,
+    this.profile = const <String, dynamic>{},
+    this.achievements = const <Map<String, dynamic>>[],
+    this.hikeHistory = const <Map<String, dynamic>>[],
   });
 
   final String requestId;
@@ -2023,6 +2047,10 @@ class UpcomingHikeJoinRequestReview {
   final String requesterName;
   final String trailName;
   final DateTime? departureTime;
+  final bool needsJoinPolicyChoice;
+  final Map<String, dynamic> profile;
+  final List<Map<String, dynamic>> achievements;
+  final List<Map<String, dynamic>> hikeHistory;
 
   bool get canResolve => status == 'pending';
 
@@ -2041,6 +2069,22 @@ class UpcomingHikeJoinRequestReview {
           ? 'Upcoming hike'
           : _modelStringFrom(data['trailName']),
       departureTime: _modelDateFromValue(data['departureTimeLocal']),
+      needsJoinPolicyChoice: data['needsJoinPolicyChoice'] == true,
+      profile: data['profile'] is Map
+          ? Map<String, dynamic>.from(data['profile'] as Map)
+          : const <String, dynamic>{},
+      achievements: data['achievements'] is List
+          ? (data['achievements'] as List)
+                .whereType<Map>()
+                .map((value) => Map<String, dynamic>.from(value))
+                .toList()
+          : const <Map<String, dynamic>>[],
+      hikeHistory: data['hikeHistory'] is List
+          ? (data['hikeHistory'] as List)
+                .whereType<Map>()
+                .map((value) => Map<String, dynamic>.from(value))
+                .toList()
+          : const <Map<String, dynamic>>[],
     );
   }
 }

@@ -22,7 +22,7 @@ void main() {
     expect(
       defaultHikeShareCaption(report),
       'Completed Pine Ridge Trail — 7.42 km in 2h 15m. '
-      '3 check-ins along the way. #HikerCircle',
+      '3 check-ins along the way.',
     );
   });
 

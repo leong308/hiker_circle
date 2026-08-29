@@ -100,6 +100,22 @@ class _UpcomingHikeJoinRequestDialogState
         '${departure.hour}:$minute';
   }
 
+  String _profileText(String key, [String fallback = 'Not provided']) {
+    final value = widget.review.profile[key]?.toString().trim() ?? '';
+    return value.isEmpty ? fallback : value;
+  }
+
+  String _historySubtitle(Map<String, dynamic> hike) {
+    final distance = (hike['recordedDistanceKm'] as num?)?.toDouble() ?? 0;
+    final seconds = (hike['durationSeconds'] as num?)?.toInt() ?? 0;
+    final duration = Duration(seconds: seconds);
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final kind = hike['hikeType'] == 'team' ? 'Group hike' : 'Solo hike';
+    return '$kind · ${distance.toStringAsFixed(1)} km · '
+        '${hours > 0 ? '${hours}h ' : ''}${minutes}m';
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -116,7 +132,10 @@ class _UpcomingHikeJoinRequestDialogState
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 430),
+        constraints: BoxConstraints(
+          maxWidth: 430,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+        ),
         child: Container(
           padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
           decoration: BoxDecoration(
@@ -134,108 +153,271 @@ class _UpcomingHikeJoinRequestDialogState
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 54,
-                    height: 54,
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: isDark ? 0.2 : 0.1),
-                      borderRadius: BorderRadius.circular(17),
-                    ),
-                    child: Icon(
-                      terminal?.icon ?? Icons.person_add_alt_1_rounded,
-                      color: accent,
-                      size: 29,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          terminal?.title ?? 'New hike join request',
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(
-                                color: text,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.4,
-                              ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          terminal?.message ??
-                              '${widget.review.requesterName} would like to join your solo hike.',
-                          style: TextStyle(color: secondary, height: 1.4),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              if (pending) ...[
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.all(15),
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF101813)
-                        : const Color(0xFFF5F7F5),
-                    borderRadius: BorderRadius.circular(15),
-                  ),
+              Expanded(
+                child: SingleChildScrollView(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.terrain_rounded, color: _green),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              widget.review.trailName,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: text,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
+                          Container(
+                            width: 54,
+                            height: 54,
+                            decoration: BoxDecoration(
+                              color: accent.withValues(
+                                alpha: isDark ? 0.2 : 0.1,
                               ),
+                              borderRadius: BorderRadius.circular(17),
+                            ),
+                            child: Icon(
+                              terminal?.icon ?? Icons.person_add_alt_1_rounded,
+                              color: accent,
+                              size: 29,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  terminal?.title ?? 'New hike join request',
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(
+                                        color: text,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: -0.4,
+                                      ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  terminal?.message ??
+                                      '${widget.review.requesterName} would like to join your solo hike.',
+                                  style: TextStyle(
+                                    color: secondary,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.schedule_rounded,
-                            color: secondary,
-                            size: 18,
+                      if (pending) ...[
+                        const SizedBox(height: 20),
+                        Container(
+                          padding: const EdgeInsets.all(15),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0xFF101813)
+                                : const Color(0xFFF5F7F5),
+                            borderRadius: BorderRadius.circular(15),
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _departureLabel(),
-                            style: TextStyle(color: secondary),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.terrain_rounded,
+                                    color: _green,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      widget.review.trailName,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: text,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.schedule_rounded,
+                                    color: secondary,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _departureLabel(),
+                                    style: TextStyle(color: secondary),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.all(15),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0xFF101813)
+                                : const Color(0xFFF5F7F5),
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 25,
+                                    backgroundColor: _green.withValues(
+                                      alpha: 0.14,
+                                    ),
+                                    backgroundImage:
+                                        _profileText('photoURL', '').isEmpty
+                                        ? null
+                                        : NetworkImage(
+                                            _profileText('photoURL', ''),
+                                          ),
+                                    child: _profileText('photoURL', '').isEmpty
+                                        ? const Icon(
+                                            Icons.person_rounded,
+                                            color: _green,
+                                          )
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _profileText(
+                                            'displayName',
+                                            widget.review.requesterName,
+                                          ),
+                                          style: TextStyle(
+                                            color: text,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${_profileText('hikerLevelName', 'Hiker')} · '
+                                          '${widget.review.profile['achievementPoints'] ?? 0} points',
+                                          style: TextStyle(color: secondary),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              _ProfileLine(
+                                icon: Icons.landscape_outlined,
+                                label: 'Experience',
+                                value: _profileText('hikerExperience'),
+                                color: secondary,
+                              ),
+                              _ProfileLine(
+                                icon: Icons.calendar_month_outlined,
+                                label: 'Hike frequency',
+                                value: _profileText('hikeFrequency'),
+                                color: secondary,
+                              ),
+                              _ProfileLine(
+                                icon: Icons.location_on_outlined,
+                                label: 'Area',
+                                value: _profileText('residentialLocation'),
+                                color: secondary,
+                              ),
+                              if (widget.review.achievements.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  'Achievements',
+                                  style: TextStyle(
+                                    color: text,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 7),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: widget.review.achievements
+                                      .map(
+                                        (achievement) => Chip(
+                                          avatar: const Icon(
+                                            Icons.workspace_premium_rounded,
+                                            size: 17,
+                                            color: Color(0xFFF59E0B),
+                                          ),
+                                          label: Text(
+                                            achievement['title']?.toString() ??
+                                                'Achievement',
+                                          ),
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              ],
+                              if (widget.review.hikeHistory.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Recent hike history',
+                                  style: TextStyle(
+                                    color: text,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                for (final hike in widget.review.hikeHistory)
+                                  ListTile(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: const Icon(
+                                      Icons.route_rounded,
+                                      color: _green,
+                                    ),
+                                    title: Text(
+                                      hike['trailName']?.toString() ?? 'Hike',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle: Text(_historySubtitle(hike)),
+                                  ),
+                              ],
+                              const SizedBox(height: 4),
+                              Text(
+                                'Phone number and private route data are never shown.',
+                                style: TextStyle(
+                                  color: secondary,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: _red,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-              ],
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _error!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: _red,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+              ),
               const SizedBox(height: 20),
               if (pending)
                 Row(
@@ -307,6 +489,41 @@ class _UpcomingHikeJoinRequestDialogState
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ProfileLine extends StatelessWidget {
+  const _ProfileLine({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 17, color: color),
+          const SizedBox(width: 8),
+          Text('$label: ', style: TextStyle(color: color)),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
       ),
     );
   }
