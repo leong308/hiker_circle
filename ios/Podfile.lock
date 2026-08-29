@@ -1500,8 +1500,6 @@ PODS:
   - nanopb/decode (3.30910.0)
   - nanopb/encode (3.30910.0)
   - PromisesObjC (2.4.1)
-  - PromisesSwift (2.4.1):
-    - PromisesObjC (= 2.4.1)
   - RecaptchaInterop (101.0.0)
   - SDWebImage (5.21.7):
     - SDWebImage/Core (= 5.21.7)
@@ -1583,7 +1581,6 @@ SPEC REPOS:
     - MapboxMaps
     - nanopb
     - PromisesObjC
-    - PromisesSwift
     - RecaptchaInterop
     - SDWebImage
     - SwiftyGif
@@ -1664,7 +1661,6 @@ SPEC CHECKSUMS:
   MapboxMaps: 8bb1372be05039df5e92cc8f2782bd39f260e0e7
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
-  PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
   SDWebImage: e9fc87c1aab89a8ab1bbd74eba378c6f53be8abf
   sensors_plus: 6a11ed0c2e1d0bd0b20b4029d3bad27d96e0c65b
@@ -1673,6 +1669,6 @@ SPEC CHECKSUMS:
   Turf: c9eb11a65d96af58cac523460fd40fec5061b081
   url_launcher_ios: 7a95fa5b60cc718a708b8f2966718e93db0cef1b
 
-PODFILE CHECKSUM: b03b43138395bf675c144b2119deebd4829f15b3
+PODFILE CHECKSUM: 06ef34001eb774ac205c472a985db58cb0d35dd9
 
 COCOAPODS: 1.16.2
