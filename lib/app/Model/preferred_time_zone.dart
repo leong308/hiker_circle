@@ -2,7 +2,14 @@ import 'package:timezone/data/latest.dart' as time_zone_data;
 import 'package:timezone/timezone.dart' as time_zone;
 
 abstract final class PreferredTimeZone {
-  static const String fallbackId = 'Asia/Singapore';
+  // The bundled timezone database does not expose the legacy
+  // Asia/Kuala_Lumpur link on every platform. Asia/Kuching is Malaysia's
+  // canonical UTC+8 zone and has the same civil time nationwide.
+  static const String fallbackId = 'Asia/Kuching';
+  static const Map<String, String> _friendlyNames = {
+    'Asia/Kuala_Lumpur': 'Malaysia · Kuala Lumpur',
+    'Asia/Kuching': 'Malaysia · Kuala Lumpur / Kuching',
+  };
 
   static bool _initialized = false;
 
@@ -33,14 +40,18 @@ abstract final class PreferredTimeZone {
 
   static String compactLabel(String timeZoneId, {DateTime? at}) {
     final normalized = normalize(timeZoneId);
-    final city = normalized.split('/').last.replaceAll('_', ' ');
-    return '$city (${offsetLabel(normalized, at: at)})';
+    final name =
+        _friendlyNames[normalized] ??
+        normalized.split('/').last.replaceAll('_', ' ');
+    return '$name (${offsetLabel(normalized, at: at)})';
   }
 
   static String fullLabel(String timeZoneId, {DateTime? at}) {
     final normalized = normalize(timeZoneId);
+    final friendly = _friendlyNames[normalized];
     return '${offsetLabel(normalized, at: at)}  '
-        '${normalized.replaceAll('_', ' ')}';
+        '${friendly ?? normalized.replaceAll('_', ' ')}'
+        '${friendly == null ? '' : ' · $normalized'}';
   }
 
   static String offsetLabel(String timeZoneId, {DateTime? at}) {

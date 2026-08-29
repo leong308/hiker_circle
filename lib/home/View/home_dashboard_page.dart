@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/worldwide_region_picker.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../../sos/Model/sos_models.dart';
@@ -494,21 +495,7 @@ class _HomeDashboardHeader extends StatelessWidget {
   }
 }
 
-enum _BestMatchSort { all, nearest }
-
-enum _TrailRegionKind { country, state }
-
-class _TrailRegionFilter {
-  const _TrailRegionFilter({required this.kind, required this.value});
-
-  final _TrailRegionKind kind;
-  final String value;
-
-  String get label => switch (kind) {
-    _TrailRegionKind.country => value,
-    _TrailRegionKind.state => value,
-  };
-}
+enum _TrailFilterMode { all, nearest, state }
 
 class _BestMatchesSection extends StatefulWidget {
   const _BestMatchesSection({
@@ -532,8 +519,8 @@ class _BestMatchesSection extends StatefulWidget {
 }
 
 class _BestMatchesSectionState extends State<_BestMatchesSection> {
-  _BestMatchSort _sort = _BestMatchSort.nearest;
-  _TrailRegionFilter? _region;
+  _TrailFilterMode _filterMode = _TrailFilterMode.nearest;
+  WorldwideRegion? _region;
   SosTriggerLocation? _userLocation;
   bool _isLocating = false;
   double _nearestRadiusKm = 50;
@@ -546,42 +533,17 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
     );
   }
 
-  List<_TrailRegionFilter> get _regionOptions {
-    final countries = <String>{};
-    final states = <String>{};
-    for (final trail in widget.trails) {
-      final country = trail.country.trim();
-      final state = trail.state.trim();
-      if (country.isNotEmpty) countries.add(country);
-      if (state.isNotEmpty) states.add(state);
-    }
-    final sortedCountries = countries.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    final sortedStates = states.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return [
-      for (final value in sortedCountries)
-        _TrailRegionFilter(kind: _TrailRegionKind.country, value: value),
-      for (final value in sortedStates)
-        _TrailRegionFilter(kind: _TrailRegionKind.state, value: value),
-    ];
-  }
-
   bool _matchesRegion(Trail trail) {
     final region = _region;
-    if (region == null) return true;
-    return switch (region.kind) {
-      _TrailRegionKind.country =>
-        trail.country.trim().toLowerCase() == region.value.toLowerCase(),
-      _TrailRegionKind.state =>
-        trail.state.trim().toLowerCase() == region.value.toLowerCase(),
-    };
+    if (_filterMode != _TrailFilterMode.state || region == null) return true;
+    return trail.country.trim().toLowerCase() == region.country.toLowerCase() &&
+        trail.state.trim().toLowerCase() == region.state.toLowerCase();
   }
 
   Future<void> _useNearest() async {
     if (_isLocating) return;
     if (_userLocation != null) {
-      setState(() => _sort = _BestMatchSort.nearest);
+      setState(() => _filterMode = _TrailFilterMode.nearest);
       return;
     }
     setState(() => _isLocating = true);
@@ -604,7 +566,7 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
       }
       setState(() {
         _userLocation = location;
-        _sort = _BestMatchSort.nearest;
+        _filterMode = _TrailFilterMode.nearest;
       });
     } finally {
       if (mounted) setState(() => _isLocating = false);
@@ -612,82 +574,19 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
   }
 
   Future<void> _chooseRegion() async {
-    final options = _regionOptions;
-    if (options.isEmpty) return;
-    var selectedIndex = math.max(
-      0,
-      options.indexWhere(
-        (option) =>
-            option.kind == _region?.kind && option.value == _region?.value,
-      ),
-    );
-    final selected = await showModalBottomSheet<_TrailRegionFilter>(
-      context: context,
-      backgroundColor: _HomeColors.surfaceFor(context),
-      builder: (sheetContext) => SafeArea(
-        child: SizedBox(
-          height: 330,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 12, 8, 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Choose state or country',
-                        style: Theme.of(sheetContext).textTheme.titleLarge
-                            ?.copyWith(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    CupertinoButton(
-                      child: const Text('Done'),
-                      onPressed: () => Navigator.of(
-                        sheetContext,
-                      ).pop(options[selectedIndex]),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: CupertinoPicker(
-                  itemExtent: 48,
-                  scrollController: FixedExtentScrollController(
-                    initialItem: selectedIndex,
-                  ),
-                  onSelectedItemChanged: (index) => selectedIndex = index,
-                  children: [
-                    for (final option in options)
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => Navigator.of(sheetContext).pop(option),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(option.value),
-                            const SizedBox(width: 6),
-                            Text(
-                              option.kind == _TrailRegionKind.country
-                                  ? 'Country'
-                                  : 'State',
-                              style: Theme.of(sheetContext).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    final selected = await WorldwideRegionPicker.show(
+      context,
+      initialCountry: _region?.country ?? '',
+      initialState: _region?.state ?? '',
     );
     if (!mounted || selected == null) return;
-    setState(() => _region = selected);
+    setState(() {
+      _region = selected;
+      _filterMode = _TrailFilterMode.state;
+    });
   }
 
-  Future<void> _chooseRadius() async {
+  Future<double?> _chooseRadius() async {
     const values = <double>[5, 10, 25, 50, 100, 250, 500];
     var index = values.indexOf(_nearestRadiusKm);
     if (index < 0) index = 3;
@@ -736,16 +635,21 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
         ),
       ),
     );
-    if (mounted && selected != null) {
-      setState(() => _nearestRadiusKm = selected);
-    }
+    return selected;
+  }
+
+  Future<void> _chooseNearest() async {
+    final radius = await _chooseRadius();
+    if (!mounted || radius == null) return;
+    setState(() => _nearestRadiusKm = radius);
+    await _useNearest();
   }
 
   @override
   Widget build(BuildContext context) {
     final filteredTrails = widget.trails.where(_matchesRegion).toList();
     final location = _userLocation;
-    if (_sort == _BestMatchSort.nearest && location != null) {
+    if (_filterMode == _TrailFilterMode.nearest && location != null) {
       filteredTrails.removeWhere(
         (trail) => _distanceFromTrail(trail, location) > _nearestRadiusKm,
       );
@@ -764,7 +668,7 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
       children: [
         _BestMatchesHeader(
           onAddTrailByAdmin: widget.onAddTrailByAdmin,
-          hasActiveFilter: _sort == _BestMatchSort.nearest || _region != null,
+          hasActiveFilter: _filterMode != _TrailFilterMode.all,
         ),
         const SizedBox(height: 8),
         Material(
@@ -775,27 +679,25 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
             children: [
               ChoiceChip(
                 label: const Text('All'),
-                selected: _sort == _BestMatchSort.all,
-                onSelected: (_) => setState(() => _sort = _BestMatchSort.all),
+                selected: _filterMode == _TrailFilterMode.all,
+                onSelected: (_) =>
+                    setState(() => _filterMode = _TrailFilterMode.all),
               ),
               ChoiceChip(
                 avatar: _isLocating
                     ? const Icon(Icons.location_searching_rounded, size: 17)
                     : const Icon(Icons.near_me_rounded, size: 17),
-                label: const Text('Nearest'),
-                selected: _sort == _BestMatchSort.nearest,
-                onSelected: (_) => unawaited(_useNearest()),
+                label: Text('Nearest · ${_nearestRadiusKm.toInt()} km'),
+                selected: _filterMode == _TrailFilterMode.nearest,
+                onSelected: (_) => unawaited(_chooseNearest()),
               ),
-              if (_sort == _BestMatchSort.nearest)
-                ActionChip(
-                  avatar: const Icon(Icons.straighten_rounded, size: 17),
-                  label: Text('${_nearestRadiusKm.toInt()} km'),
-                  onPressed: _chooseRadius,
-                ),
-              ActionChip(
+              ChoiceChip(
                 avatar: const Icon(Icons.public_rounded, size: 17),
-                label: Text(_region?.label ?? 'Region'),
-                onPressed: _chooseRegion,
+                label: Text(
+                  _region == null ? 'State' : 'State · ${_region!.state}',
+                ),
+                selected: _filterMode == _TrailFilterMode.state,
+                onSelected: (_) => unawaited(_chooseRegion()),
               ),
             ],
           ),
@@ -805,9 +707,9 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
           const _BestMatchesLoading()
         else if (visibleTrails.isEmpty)
           _EmptyState(
-            message: _region == null
+            message: _filterMode != _TrailFilterMode.state || _region == null
                 ? 'No trails are available yet. Check again later.'
-                : 'No trails match ${_region!.label}. Try another region.',
+                : 'No trails match ${_region!.state}, ${_region!.country}. Try another state.',
           )
         else
           for (final trail in visibleTrails) ...[

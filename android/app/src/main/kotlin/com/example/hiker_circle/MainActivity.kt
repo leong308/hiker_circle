@@ -64,6 +64,8 @@ class MainActivity : FlutterActivity() {
     private var pendingLocationResult: MethodChannel.Result? = null
     private var pendingLocationListener: LocationListener? = null
     private var pendingAllowLastKnownLocation = false
+    private var pendingRequirePreciseLocation = false
+    private var pendingBestLocation: Location? = null
     private var deepLinkChannel: MethodChannel? = null
     private var pendingDeepLink: String? = null
     private var pendingActiveHikeLiveStatus: ActiveHikeLiveStatus? = null
@@ -112,7 +114,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private val locationTimeoutRunnable = Runnable {
-        completePendingLocation(lastKnownLocationFallback())
+        completePendingLocation(
+            pendingBestLocation ?: lastKnownLocationFallback()
+        )
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -778,6 +782,8 @@ class MainActivity : FlutterActivity() {
 
         pendingLocationResult = result
         pendingAllowLastKnownLocation = call.argument<Boolean>("allowLastKnown") == true
+        pendingRequirePreciseLocation = call.argument<Boolean>("requirePrecise") == true
+        pendingBestLocation = null
         if (!hasLocationPermission()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 requestPermissions(
@@ -836,7 +842,19 @@ class MainActivity : FlutterActivity() {
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                completePendingLocation(location)
+                val currentBest = pendingBestLocation
+                if (currentBest == null ||
+                    (!currentBest.hasAccuracy() && location.hasAccuracy()) ||
+                    (currentBest.hasAccuracy() && location.hasAccuracy() &&
+                        location.accuracy < currentBest.accuracy)
+                ) {
+                    pendingBestLocation = location
+                }
+                val isPreciseFix = hasFineLocationPermission() &&
+                    location.hasAccuracy() && location.accuracy <= 25f
+                if (!pendingRequirePreciseLocation || isPreciseFix) {
+                    completePendingLocation(location)
+                }
             }
         }
 
@@ -868,6 +886,8 @@ class MainActivity : FlutterActivity() {
         }
         pendingLocationListener = null
         pendingAllowLastKnownLocation = false
+        pendingRequirePreciseLocation = false
+        pendingBestLocation = null
 
         result.success(location?.toFlutterMap())
     }

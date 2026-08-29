@@ -20,6 +20,7 @@ import '../../circle/View/group_chat_detail_page.dart';
 import '../../circle/View/team_formed_naming_dialog.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../me/View/me_page.dart';
+import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../navigation/View/hiker_bottom_nav_bar.dart';
 import '../../core/services/device_notification_log_service.dart';
 import '../../core/models/hike_route_analysis.dart';
@@ -30,6 +31,7 @@ import '../../core/services/network_reachability_service.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_preview_map.dart';
+import '../../core/widgets/worldwide_region_picker.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../../sos/Data/nearby_sos_event_repository.dart';
@@ -100,12 +102,12 @@ class _HikerHomePageState extends State<HikerHomePage>
   final HikerBleService _bleService = const HikerBleService();
   StreamSubscription<List<UpcomingHike>>? _myUpcomingHikesSubscription;
   StreamSubscription<List<Trail>>? _trailsSubscription;
+  bool _trailRegionRepairStarted = false;
   StreamSubscription<HikerBleEvent>? _bleEventSubscription;
   StreamSubscription<NetworkReachabilitySnapshot>?
   _networkReachabilitySubscription;
   StreamSubscription<List<GroupChat>>? _formedTeamChatsSubscription;
   String? _activeTeamNamingChatId;
-  final Set<String> _deferredTeamNamingChatIds = {};
   String? _activeUpcomingJoinRequestReviewId;
   final Set<String> _completedUpcomingJoinRequestReviewIds = <String>{};
   List<GroupChat> _pendingFormedTeamChats = const [];
@@ -183,6 +185,10 @@ class _HikerHomePageState extends State<HikerHomePage>
   DateTime? _lastHandledDeepLinkAt;
   String? _lastHandledPairedSosKey;
   final Set<String> _presentedNearbySosKeys = <String>{};
+  final Set<String> _presentedExactNearbySosKeys = <String>{};
+  final Set<String> _activeApproximateNearbySosKeys = <String>{};
+  final Map<String, SosTriggerLocation> _exactNearbySosLocations = {};
+  final Map<String, Timer> _nearbySosFallbackTimers = {};
   int _nearbySosRevision = 0;
   final List<DateTime> fallStillnessCancelTaps = <DateTime>[];
   List<EmergencyContact> emergencyContacts = const [];
@@ -274,9 +280,10 @@ class _HikerHomePageState extends State<HikerHomePage>
       if (chat.isDirect ||
           !isHost ||
           !chat.requiresHostNaming ||
-          chat.customName.trim().isNotEmpty ||
+          chat.namingPromptShown ||
+          chat.hikeEndedAt != null ||
           chat.participantPhones.length < 2 ||
-          _deferredTeamNamingChatIds.contains(chat.id)) {
+          chat.isDeleted) {
         continue;
       }
       _activeTeamNamingChatId = chat.id;
@@ -299,11 +306,19 @@ class _HikerHomePageState extends State<HikerHomePage>
     final trailName = chat.trailName.trim().isEmpty
         ? 'this hike'
         : chat.trailName.trim();
-    final suggestedName =
-        '${chat.trailName.trim().isEmpty ? 'Hiking Team' : chat.trailName.trim()} Crew';
-    final initialName = suggestedName.length <= 60
-        ? suggestedName
-        : suggestedName.substring(0, 60).trimRight();
+    final departure = chat.departureTime ?? chat.createdAt;
+    final initialName = GroupChat.defaultGroupName(chat.trailName, departure);
+    try {
+      await hikerCircleRepository.markFormedHikeGroupNamingPromptShown(
+        chatId: chat.id,
+        defaultName: initialName,
+      );
+    } catch (_) {
+      // The mandatory dialog still lets the host retry the final save. If the
+      // app is killed before this acknowledgement reaches Firebase, the chat
+      // remains pending and will be offered again instead of being lost.
+    }
+    if (!mounted) return;
     final created = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -332,8 +347,6 @@ class _HikerHomePageState extends State<HikerHomePage>
             behavior: SnackBarBehavior.floating,
           ),
         );
-    } else {
-      _deferredTeamNamingChatIds.add(chat.id);
     }
   }
 
@@ -1898,6 +1911,10 @@ class _HikerHomePageState extends State<HikerHomePage>
             isLoadingLiveData = false;
             _rebuildPlannedHike();
           });
+          if (widget.session.isAdmin && !_trailRegionRepairStarted) {
+            _trailRegionRepairStarted = true;
+            unawaited(_repairTrailRegions(liveTrails));
+          }
         },
         onError: (_) {
           if (mounted) setState(() => isLoadingLiveData = false);
@@ -1925,6 +1942,39 @@ class _HikerHomePageState extends State<HikerHomePage>
     } catch (_) {
       if (mounted) {
         setState(() => isLoadingLiveData = false);
+      }
+    }
+  }
+
+  Future<void> _repairTrailRegions(List<Trail> liveTrails) async {
+    for (final trail in liveTrails) {
+      try {
+        var region = await WorldwideRegionCatalog.normalize(
+          country: trail.country,
+          state: trail.state,
+        );
+        if (region == null &&
+            trail.latitude.isFinite &&
+            trail.longitude.isFinite) {
+          final resolved = await GoogleCityGeocodingService().resolveCity(
+            latitude: trail.latitude,
+            longitude: trail.longitude,
+          );
+          region = await WorldwideRegionCatalog.normalize(
+            country: resolved.country,
+            state: resolved.state,
+          );
+        }
+        if (region == null ||
+            (region.country == trail.country && region.state == trail.state)) {
+          continue;
+        }
+        await hikerCircleRepository.updateTrailByAdmin(
+          session: widget.session,
+          trail: trail.copyWith(country: region.country, state: region.state),
+        );
+      } catch (error) {
+        debugPrint('Unable to normalize ${trail.name} region: $error');
       }
     }
   }
@@ -3727,9 +3777,19 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<void> _sendPairedSosLocation(String deviceId, int eventId) async {
     try {
       final snapshotService = LocationSnapshotService.instance;
+      final preciseLocation = await const SosDeviceAlertService()
+          .getCurrentTriggerLocation(
+            allowLastKnown: false,
+            requirePrecise: true,
+          );
       final location =
-          await snapshotService.refresh() ?? snapshotService.latestLocation;
-      if (location == null) return;
+          preciseLocation ??
+          await snapshotService.refresh() ??
+          snapshotService.latestLocation;
+      if (location == null) {
+        debugPrint('SOS location handoff stopped: no usable phone location.');
+        return;
+      }
       await _bleService.sendPairedSosLocation(
         deviceId: deviceId,
         eventId: eventId,
@@ -3754,8 +3814,41 @@ class _HikerHomePageState extends State<HikerHomePage>
       receivedAt: receivedAt,
       rssi: rssi,
     );
-    if (_presentedNearbySosKeys.add(key)) {
-      await _showNearbySosButtonPopup(rssi: rssi);
+    _nearbySosFallbackTimers.remove(key)?.cancel();
+    _nearbySosFallbackTimers[key] = Timer(const Duration(seconds: 12), () {
+      unawaited(_presentNearbySosAfterLocationWait(key, rssi));
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Nearby SOS received. Waiting briefly for the button’s exact phone location…',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  Future<void> _presentNearbySosAfterLocationWait(String key, int? rssi) async {
+    _nearbySosFallbackTimers.remove(key)?.cancel();
+    final exact = _exactNearbySosLocations[key];
+    if (exact != null) {
+      if (_presentedExactNearbySosKeys.add(key)) {
+        _presentedNearbySosKeys.add(key);
+        await _showNearbySosButtonPopup(rssi: rssi, location: exact);
+      }
+      return;
+    }
+    if (!_presentedNearbySosKeys.add(key)) return;
+    _activeApproximateNearbySosKeys.add(key);
+    await _showNearbySosButtonPopup(rssi: rssi);
+    _activeApproximateNearbySosKeys.remove(key);
+    final lateExact = _exactNearbySosLocations[key];
+    if (lateExact != null && _presentedExactNearbySosKeys.add(key)) {
+      await _showNearbySosButtonPopup(rssi: rssi, location: lateExact);
     }
   }
 
@@ -3771,6 +3864,8 @@ class _HikerHomePageState extends State<HikerHomePage>
         )
         ? event.location
         : null;
+    _nearbySosFallbackTimers.remove(key)?.cancel();
+    if (location != null) _exactNearbySosLocations[key] = location;
     await _recordNearbySosEvent(
       deviceId: event.deviceId,
       counter: event.counter,
@@ -3778,7 +3873,13 @@ class _HikerHomePageState extends State<HikerHomePage>
       rssi: event.rssi,
       location: location,
     );
-    if (_presentedNearbySosKeys.add(key)) {
+    if (location == null) {
+      await _presentNearbySosAfterLocationWait(key, event.rssi);
+      return;
+    }
+    if (!_activeApproximateNearbySosKeys.contains(key) &&
+        _presentedExactNearbySosKeys.add(key)) {
+      _presentedNearbySosKeys.add(key);
       await _showNearbySosButtonPopup(rssi: event.rssi, location: location);
     }
   }
@@ -5736,6 +5837,10 @@ class _HikerHomePageState extends State<HikerHomePage>
     _bleEventSubscription?.cancel();
     _networkReachabilitySubscription?.cancel();
     _formedTeamChatsSubscription?.cancel();
+    for (final timer in _nearbySosFallbackTimers.values) {
+      timer.cancel();
+    }
+    _nearbySosFallbackTimers.clear();
     unawaited(_bleService.stopTeamLocationExchange());
     unawaited(NetworkReachabilityService.instance.stop());
 

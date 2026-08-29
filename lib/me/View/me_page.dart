@@ -14,6 +14,7 @@ import '../../app/Model/app_session.dart';
 import '../../app/Model/preferred_time_zone.dart';
 import '../../core/models/hiker_level.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../home/Model/hike_session_models.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
 import '../../sos/Model/sos_models.dart';
@@ -52,6 +53,10 @@ class _MePageState extends State<MePage> {
   late final EmergencyContactsRepository emergencyContactsRepository;
   List<EmergencyContact> emergencyContacts = const [];
   MeProfile? firestoreProfile;
+  List<_ProfileHistoryItem> _postHistoryItems = const [];
+  List<_ProfileHistoryItem> _circleHistoryItems = const [];
+  List<_ProfileHistoryItem> _buddyHistoryItems = const [];
+  final List<_ProfileHistoryItem> _trailHistoryItems = const [];
 
   @override
   void initState() {
@@ -71,6 +76,7 @@ class _MePageState extends State<MePage> {
     );
     unawaited(_loadEmergencyContacts());
     unawaited(_loadFirestoreProfile());
+    unawaited(_loadProfileCollections());
   }
 
   MeProfile get _displayProfile => firestoreProfile ?? viewModel.profile;
@@ -111,6 +117,128 @@ class _MePageState extends State<MePage> {
       return;
     }
   }
+
+  Future<void> _loadProfileCollections() async {
+    try {
+      final results = await Future.wait<Object>([
+        firebaseRepository.loadCommunityPostsForUser(session: widget.session),
+        firebaseRepository.loadUserGroupChats(widget.session.phoneNumber),
+        firebaseRepository.loadBuddyPhoneNumbers(session: widget.session),
+      ]);
+      final ownPhone = widget.session.phoneNumber.trim();
+      final posts = (results[0] as List<Map<String, dynamic>>)
+          .where(
+            (post) =>
+                (post['authorPhoneNumber']?.toString().trim() ?? '') ==
+                ownPhone,
+          )
+          .map(
+            (post) => _ProfileHistoryItem(
+              title: post['trailName']?.toString().trim().isNotEmpty == true
+                  ? post['trailName'].toString().trim()
+                  : 'Community post',
+              subtitle: post['caption']?.toString().trim() ?? '',
+              meta: _profileHistoryDate(post['createdAtLocal']),
+              icon: Icons.forum_rounded,
+            ),
+          )
+          .toList(growable: false);
+      final chats = (results[1] as List<GroupChat>)
+          .where((chat) => !chat.isDirect)
+          .map(
+            (chat) => _ProfileHistoryItem(
+              title: chat.displayNameFor(ownPhone),
+              subtitle:
+                  '${chat.participantPhones.length} hikers · ${chat.trailName}',
+              meta: chat.hikeEndedAt == null
+                  ? 'Active circle'
+                  : 'Hike ended ${_profileDateLabel(chat.hikeEndedAt!)}',
+              icon: Icons.groups_2_rounded,
+            ),
+          )
+          .toList(growable: false);
+      final buddyPhones = results[2] as Set<String>;
+      final buddyProfiles = await Future.wait(
+        buddyPhones.take(100).map((phone) async {
+          try {
+            return await firebaseRepository.loadPublicHikerProfile(
+              phoneNumber: phone,
+            );
+          } catch (_) {
+            return <String, dynamic>{'phoneNumber': phone};
+          }
+        }),
+      );
+      final buddies = buddyProfiles
+          .map(
+            (profile) => _ProfileHistoryItem(
+              title: _profileDisplayName(profile),
+              subtitle: [
+                profile['levelName']?.toString().trim() ?? '',
+                profile['hikerExperience']?.toString().trim() ?? '',
+              ].where((value) => value.isNotEmpty).join(' · '),
+              meta: '${profile['achievementPoints'] ?? 0} achievement points',
+              icon: Icons.person_rounded,
+            ),
+          )
+          .toList(growable: false);
+      if (!mounted) return;
+      setState(() {
+        _postHistoryItems = posts;
+        _circleHistoryItems = chats;
+        _buddyHistoryItems = buddies;
+      });
+    } catch (_) {
+      // The sections stay empty while Firebase is unavailable.
+    }
+  }
+
+  String _profileDisplayName(Map<String, dynamic> profile) {
+    for (final key in const ['displayName', 'username', 'handle']) {
+      final value = profile[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return 'Hiking buddy';
+  }
+
+  String _profileHistoryDate(Object? value) {
+    final parsed = DateTime.tryParse(value?.toString() ?? '');
+    return parsed == null ? 'Recent activity' : _profileDateLabel(parsed);
+  }
+
+  String _profileDateLabel(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final local = date.toLocal();
+    return '${local.day} ${months[local.month - 1]} ${local.year}';
+  }
+
+  List<MeStat> get _linkedProfileStats => [
+    MeStat(label: 'Circles', value: '${_circleHistoryItems.length}'),
+    MeStat(label: 'Buddies', value: '${_buddyHistoryItems.length}'),
+    MeStat(label: 'Trails', value: '${_trailHistoryItems.length}'),
+  ];
+
+  String? _countLabelForAction(String title) => switch (title) {
+    'My posts' => '${_postHistoryItems.length}',
+    'My circles' => '${_circleHistoryItems.length}',
+    'My buddies' => '${_buddyHistoryItems.length}',
+    'Export history' =>
+      '${_postHistoryItems.length + _circleHistoryItems.length + _buddyHistoryItems.length + _trailHistoryItems.length}',
+    _ => null,
+  };
 
   @override
   void dispose() {
@@ -161,6 +289,7 @@ class _MePageState extends State<MePage> {
                     _SettingsSection(
                       section: section,
                       onItemTap: _openActionItem,
+                      countForTitle: _countLabelForAction,
                     ),
                     const SizedBox(height: 18),
                   ],
@@ -1262,32 +1391,6 @@ IconData _achievementIconFor(String iconName) {
   };
 }
 
-List<MeStat> get _linkedProfileStats {
-  return [
-    MeStat(label: 'Circles', value: '${_circleHistoryItems.length}'),
-    MeStat(label: 'Buddies', value: '${_buddyHistoryItems.length}'),
-    MeStat(label: 'Trails', value: '${_trailHistoryItems.length}'),
-  ];
-}
-
-String? _countLabelForAction(String title) {
-  return switch (title) {
-    'My posts' => '${_postHistoryItems.length}',
-    'My circles' => '${_circleHistoryItems.length}',
-    'My buddies' => '${_buddyHistoryItems.length}',
-    'Export history' =>
-      '${_postHistoryItems.length + _circleHistoryItems.length + _buddyHistoryItems.length + _trailHistoryItems.length}',
-    _ => null,
-  };
-}
-
-// History repositories are not implemented yet. Keep these lists empty instead
-// of presenting sample activity as if it belongs to the signed-in hiker.
-const List<_ProfileHistoryItem> _postHistoryItems = [];
-const List<_ProfileHistoryItem> _circleHistoryItems = [];
-const List<_ProfileHistoryItem> _buddyHistoryItems = [];
-const List<_ProfileHistoryItem> _trailHistoryItems = [];
-
 class _ProfileHistoryItem {
   const _ProfileHistoryItem({
     required this.title,
@@ -1534,7 +1637,7 @@ class _DeviceNotificationsPageState extends State<_DeviceNotificationsPage> {
   Future<List<DeviceNotificationRecord>> _loadNotifications() {
     return _database.loadDeviceNotifications(
       ownerPhoneNumber: widget.phoneNumber,
-      limit: 200,
+      limit: 500,
     );
   }
 
@@ -1562,6 +1665,32 @@ class _DeviceNotificationsPageState extends State<_DeviceNotificationsPage> {
         ),
       );
     await _refresh();
+  }
+
+  Future<void> _markAllOpened() async {
+    await _database.markAllDeviceNotificationsOpened(
+      ownerPhoneNumber: widget.phoneNumber,
+    );
+    if (mounted) await _refresh();
+  }
+
+  Future<void> _toggleStar(DeviceNotificationRecord notification) async {
+    await _database.setDeviceNotificationStarred(
+      ownerPhoneNumber: widget.phoneNumber,
+      id: notification.id,
+      isStarred: !notification.isStarred,
+    );
+    if (mounted) await _refresh();
+  }
+
+  Future<void> _deleteNotification(
+    DeviceNotificationRecord notification,
+  ) async {
+    await _database.deleteDeviceNotification(
+      ownerPhoneNumber: widget.phoneNumber,
+      id: notification.id,
+    );
+    if (mounted) await _refresh();
   }
 
   Future<void> _markOpened(DeviceNotificationRecord notification) async {
@@ -1619,6 +1748,10 @@ class _DeviceNotificationsPageState extends State<_DeviceNotificationsPage> {
                         else ...[
                           _NotificationSummaryCard(
                             count: notifications.length,
+                            unreadCount: notifications
+                                .where((item) => !item.isOpened)
+                                .length,
+                            onMarkAllRead: _markAllOpened,
                             onClear: _clearNotifications,
                           ),
                           const SizedBox(height: 12),
@@ -1630,6 +1763,8 @@ class _DeviceNotificationsPageState extends State<_DeviceNotificationsPage> {
                             _DeviceNotificationTile(
                               notification: notifications[index],
                               onTap: _markOpened,
+                              onStar: _toggleStar,
+                              onDelete: _deleteNotification,
                             ),
                             if (index != notifications.length - 1)
                               const SizedBox(height: 10),
@@ -1649,9 +1784,16 @@ class _DeviceNotificationsPageState extends State<_DeviceNotificationsPage> {
 }
 
 class _NotificationSummaryCard extends StatelessWidget {
-  const _NotificationSummaryCard({required this.count, required this.onClear});
+  const _NotificationSummaryCard({
+    required this.count,
+    required this.unreadCount,
+    required this.onMarkAllRead,
+    required this.onClear,
+  });
 
   final int count;
+  final int unreadCount;
+  final Future<void> Function() onMarkAllRead;
   final Future<void> Function() onClear;
 
   @override
@@ -1664,15 +1806,40 @@ class _NotificationSummaryCard extends StatelessWidget {
             const _Glyph(icon: CupertinoIcons.bell_fill),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                '$count FCM ${count == 1 ? 'message' : 'messages'} saved on this device.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: _MeColors.textFor(context),
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$count notifications saved on this device',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: _MeColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  Text(
+                    '$unreadCount unread · newest 500 kept locally',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _MeColors.secondaryTextFor(context),
+                    ),
+                  ),
+                ],
               ),
             ),
+            if (unreadCount > 0)
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                minimumSize: Size.zero,
+                onPressed: () => unawaited(onMarkAllRead()),
+                child: Text(
+                  'Read all',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: _MeColors.green,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
             CupertinoButton(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               minimumSize: Size.zero,
@@ -1756,10 +1923,14 @@ class _DeviceNotificationTile extends StatelessWidget {
   const _DeviceNotificationTile({
     required this.notification,
     required this.onTap,
+    required this.onStar,
+    required this.onDelete,
   });
 
   final DeviceNotificationRecord notification;
   final Future<void> Function(DeviceNotificationRecord notification) onTap;
+  final Future<void> Function(DeviceNotificationRecord notification) onStar;
+  final Future<void> Function(DeviceNotificationRecord notification) onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1822,10 +1993,39 @@ class _DeviceNotificationTile extends StatelessWidget {
                         if (hasDeepLink) const _MiniPill(label: 'Opens in app'),
                         if (notification.isOpened)
                           const _MiniPill(label: 'Opened'),
+                        if (notification.isStarred)
+                          const _MiniPill(label: 'Starred'),
                       ],
                     ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 6),
+              Column(
+                children: [
+                  IconButton(
+                    tooltip: notification.isStarred ? 'Unstar' : 'Keep',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => unawaited(onStar(notification)),
+                    icon: Icon(
+                      notification.isStarred
+                          ? Icons.star_rounded
+                          : Icons.star_border_rounded,
+                      color: notification.isStarred
+                          ? const Color(0xFFF5A623)
+                          : _MeColors.secondaryTextFor(context),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => unawaited(onDelete(notification)),
+                    icon: Icon(
+                      Icons.delete_outline_rounded,
+                      color: _MeColors.destructiveFor(context),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2529,6 +2729,8 @@ class _AchievementsPage extends StatefulWidget {
 
 class _AchievementsPageState extends State<_AchievementsPage> {
   late Future<List<Map<String, dynamic>>> _achievementsFuture;
+  late Future<List<Map<String, dynamic>>> _leaderboardFuture;
+  String _leaderboardPeriod = 'month';
 
   @override
   void initState() {
@@ -2536,6 +2738,7 @@ class _AchievementsPageState extends State<_AchievementsPage> {
     _achievementsFuture = widget.repository.loadUserAchievementProgress(
       session: widget.session,
     );
+    _leaderboardFuture = widget.repository.loadAchievementLeaderboard();
   }
 
   Future<void> _refreshAchievements() async {
@@ -2544,6 +2747,9 @@ class _AchievementsPageState extends State<_AchievementsPage> {
     );
     setState(() {
       _achievementsFuture = future;
+      _leaderboardFuture = widget.repository.loadAchievementLeaderboard(
+        period: _leaderboardPeriod,
+      );
     });
     await future;
   }
@@ -2601,6 +2807,28 @@ class _AchievementsPageState extends State<_AchievementsPage> {
                             const _AchievementLoadingCard()
                           else ...[
                             _AchievementProgressPanel(items: achievements),
+                            const SizedBox(height: 12),
+                            FutureBuilder<List<Map<String, dynamic>>>(
+                              future: _leaderboardFuture,
+                              builder: (context, leaderboardSnapshot) {
+                                return _AchievementLeaderboardCard(
+                                  period: _leaderboardPeriod,
+                                  entries: leaderboardSnapshot.data ?? const [],
+                                  isLoading:
+                                      leaderboardSnapshot.connectionState ==
+                                      ConnectionState.waiting,
+                                  onPeriodChanged: (period) {
+                                    setState(() {
+                                      _leaderboardPeriod = period;
+                                      _leaderboardFuture = widget.repository
+                                          .loadAchievementLeaderboard(
+                                            period: period,
+                                          );
+                                    });
+                                  },
+                                );
+                              },
+                            ),
                             const SizedBox(height: 18),
                             const _SectionTitle(label: 'Earned'),
                             const SizedBox(height: 8),
@@ -2649,6 +2877,134 @@ class _AchievementsPageState extends State<_AchievementsPage> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _AchievementDetailSheet(item: item),
+    );
+  }
+}
+
+class _AchievementLeaderboardCard extends StatelessWidget {
+  const _AchievementLeaderboardCard({
+    required this.period,
+    required this.entries,
+    required this.isLoading,
+    required this.onPeriodChanged,
+  });
+
+  final String period;
+  final List<Map<String, dynamic>> entries;
+  final bool isLoading;
+  final ValueChanged<String> onPeriodChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const _Glyph(icon: Icons.leaderboard_rounded),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Hiker leaderboard',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _MeColors.textFor(context),
+                              fontWeight: FontWeight.w900,
+                            ),
+                      ),
+                      Text(
+                        'Points earned during the selected period',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _MeColors.secondaryTextFor(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            CupertinoSlidingSegmentedControl<String>(
+              groupValue: period,
+              children: const {
+                'month': Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('This month'),
+                ),
+                'year': Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('This year'),
+                ),
+              },
+              onValueChanged: (value) {
+                if (value != null && value != period) onPeriodChanged(value);
+              },
+            ),
+            const SizedBox(height: 12),
+            if (isLoading)
+              const Center(child: CupertinoActivityIndicator())
+            else if (entries.isEmpty)
+              Text(
+                'No achievement points have been earned in this period yet.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: _MeColors.secondaryTextFor(context)),
+              )
+            else
+              for (final entry in entries.take(10)) ...[
+                Container(
+                  margin: const EdgeInsets.only(bottom: 7),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: entry['isCurrentUser'] == true
+                        ? _MeColors.greenSoftFor(context)
+                        : _MeColors.backgroundFor(context),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 28,
+                        child: Text(
+                          '#${entry['rank'] ?? '-'}',
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          entry['displayName']?.toString() ?? 'Hiker',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _MeColors.textFor(context),
+                            fontWeight: entry['isCurrentUser'] == true
+                                ? FontWeight.w900
+                                : FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${entry['points'] ?? 0} pts',
+                        style: const TextStyle(
+                          color: _MeColors.green,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -3620,10 +3976,15 @@ class _StatCell extends StatelessWidget {
 }
 
 class _SettingsSection extends StatelessWidget {
-  const _SettingsSection({required this.section, required this.onItemTap});
+  const _SettingsSection({
+    required this.section,
+    required this.onItemTap,
+    required this.countForTitle,
+  });
 
   final MeSection section;
   final ValueChanged<MeActionItem> onItemTap;
+  final String? Function(String title) countForTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -3649,6 +4010,7 @@ class _SettingsSection extends StatelessWidget {
                 _SettingsCell(
                   item: section.items[index],
                   onTap: () => onItemTap(section.items[index]),
+                  countLabel: countForTitle(section.items[index].title),
                 ),
                 if (index != section.items.length - 1)
                   const Padding(
@@ -3665,15 +4027,19 @@ class _SettingsSection extends StatelessWidget {
 }
 
 class _SettingsCell extends StatelessWidget {
-  const _SettingsCell({required this.item, required this.onTap});
+  const _SettingsCell({
+    required this.item,
+    required this.onTap,
+    this.countLabel,
+  });
 
   final MeActionItem item;
   final VoidCallback onTap;
+  final String? countLabel;
 
   @override
   Widget build(BuildContext context) {
-    final countLabel = _countLabelForAction(item.title);
-
+    final displayedCount = countLabel;
     return _TapSurface(
       onTap: onTap,
       child: Padding(
@@ -3710,8 +4076,8 @@ class _SettingsCell extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            if (countLabel != null) ...[
-              _MiniPill(label: countLabel),
+            if (displayedCount != null) ...[
+              _MiniPill(label: displayedCount),
               const SizedBox(width: 8),
             ],
             Icon(

@@ -18,6 +18,7 @@ import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/route_preview_map.dart';
+import '../../core/widgets/worldwide_region_picker.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/trail_models.dart';
@@ -1405,17 +1406,17 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         latitude: latitude,
         longitude: longitude,
       );
+      final region = await WorldwideRegionCatalog.normalize(
+        country: result.country,
+        state: result.state,
+      );
       if (mounted) {
         setState(() {
           if (_areaController.text.isEmpty) {
             _areaController.text = result.city;
           }
-          if (_stateController.text.isEmpty) {
-            _stateController.text = result.state;
-          }
-          if (_countryController.text.isEmpty) {
-            _countryController.text = result.country;
-          }
+          _stateController.text = region?.state ?? result.state;
+          _countryController.text = region?.country ?? result.country;
         });
       }
       return;
@@ -1426,17 +1427,17 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           latitude: latitude,
           longitude: longitude,
         );
+        final region = await WorldwideRegionCatalog.normalize(
+          country: result.country,
+          state: result.state,
+        );
         if (mounted) {
           setState(() {
             if (_areaController.text.isEmpty && result.area.isNotEmpty) {
               _areaController.text = result.area;
             }
-            if (_stateController.text.isEmpty && result.state.isNotEmpty) {
-              _stateController.text = result.state;
-            }
-            if (_countryController.text.isEmpty && result.country.isNotEmpty) {
-              _countryController.text = result.country;
-            }
+            _stateController.text = region?.state ?? result.state;
+            _countryController.text = region?.country ?? result.country;
           });
         }
         return;
@@ -1661,6 +1662,19 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     return checkpoints;
   }
 
+  Future<void> _chooseWorldwideRegion() async {
+    final region = await WorldwideRegionPicker.show(
+      context,
+      initialCountry: _countryController.text,
+      initialState: _stateController.text,
+    );
+    if (!mounted || region == null) return;
+    setState(() {
+      _countryController.text = region.country;
+      _stateController.text = region.state;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1803,13 +1817,12 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                 Expanded(
                   child: TextField(
                     controller: _stateController,
-                    readOnly: !_locationFailed,
+                    readOnly: true,
+                    onTap: _chooseWorldwideRegion,
                     decoration: InputDecoration(
                       labelText: 'State',
-                      hintText: _locationFailed ? 'Enter state manually' : null,
-                      prefixIcon: _locationFailed
-                          ? const Icon(Icons.edit_rounded, size: 18)
-                          : null,
+                      hintText: 'Select worldwide state',
+                      suffixIcon: const Icon(Icons.expand_more_rounded),
                     ),
                   ),
                 ),
@@ -1818,13 +1831,13 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
             const SizedBox(height: 10),
             TextField(
               controller: _countryController,
-              readOnly: !_locationFailed,
+              readOnly: true,
+              onTap: _chooseWorldwideRegion,
               decoration: InputDecoration(
                 labelText: 'Country',
-                hintText: _locationFailed ? 'Enter country manually' : null,
-                prefixIcon: _locationFailed
-                    ? const Icon(Icons.edit_rounded, size: 18)
-                    : const Icon(Icons.public_rounded, size: 18),
+                hintText: 'Select worldwide country',
+                prefixIcon: const Icon(Icons.public_rounded, size: 18),
+                suffixIcon: const Icon(Icons.expand_more_rounded),
               ),
             ),
             if (_locationFailed)
@@ -1841,7 +1854,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'Auto location unavailable — enter area, state, and country',
+                      'Auto location unavailable — enter the area and select its country/state',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: Theme.of(context).brightness == Brightness.dark
                             ? const Color(0xFFA8B8AE)
@@ -3966,6 +3979,19 @@ class _EditTrailPageState extends State<_EditTrailPage> {
     Navigator.of(context).pop(updatedTrail);
   }
 
+  Future<void> _chooseWorldwideRegion() async {
+    final region = await WorldwideRegionPicker.show(
+      context,
+      initialCountry: _countryController.text,
+      initialState: _stateController.text,
+    );
+    if (!mounted || region == null) return;
+    setState(() {
+      _countryController.text = region.country;
+      _stateController.text = region.state;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -4016,7 +4042,12 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                 Expanded(
                   child: TextField(
                     controller: _stateController,
-                    decoration: const InputDecoration(labelText: 'State'),
+                    readOnly: true,
+                    onTap: _chooseWorldwideRegion,
+                    decoration: const InputDecoration(
+                      labelText: 'State',
+                      suffixIcon: Icon(Icons.expand_more_rounded),
+                    ),
                   ),
                 ),
               ],
@@ -4024,9 +4055,12 @@ class _EditTrailPageState extends State<_EditTrailPage> {
             const SizedBox(height: 10),
             TextField(
               controller: _countryController,
+              readOnly: true,
+              onTap: _chooseWorldwideRegion,
               decoration: const InputDecoration(
                 labelText: 'Country',
                 prefixIcon: Icon(Icons.public_rounded),
+                suffixIcon: Icon(Icons.expand_more_rounded),
               ),
             ),
             const SizedBox(height: 14),

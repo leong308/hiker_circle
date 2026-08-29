@@ -35,6 +35,11 @@ void main() {
     expect(find.text('Your hiking team is formed'), findsOneWidget);
     expect(find.text('Aina joined Bukit Gasing.'), findsOneWidget);
     expect(find.text('Bukit Gasing Crew'), findsOneWidget);
+    expect(find.text('Not now'), findsNothing);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Your hiking team is formed'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const Key('team-group-name-field')),

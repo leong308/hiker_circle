@@ -34,6 +34,8 @@ import ActivityKit
   private var locationManager: CLLocationManager?
   private var pendingLocationResult: FlutterResult?
   private var pendingAllowLastKnownLocation = false
+  private var pendingRequirePreciseLocation = false
+  private var pendingBestLocation: CLLocation?
   private var isPreciseLocationEnabled = true
   private var locationTimeoutTimer: Timer?
   private var motionAuthorizationManager: CMMotionActivityManager?
@@ -777,9 +779,12 @@ import ActivityKit
     if let arguments = call.arguments as? [String: Any],
        let allowLastKnown = arguments["allowLastKnown"] as? Bool {
       pendingAllowLastKnownLocation = allowLastKnown
+      pendingRequirePreciseLocation = arguments["requirePrecise"] as? Bool ?? false
     } else {
       pendingAllowLastKnownLocation = false
+      pendingRequirePreciseLocation = false
     }
+    pendingBestLocation = nil
 
     switch CLLocationManager.authorizationStatus() {
     case .notDetermined:
@@ -805,16 +810,24 @@ import ActivityKit
       return
     }
 
-    manager.desiredAccuracy = isPreciseLocationEnabled ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters
+    manager.desiredAccuracy = pendingRequirePreciseLocation
+      ? kCLLocationAccuracyBestForNavigation
+      : (isPreciseLocationEnabled ? kCLLocationAccuracyBest : kCLLocationAccuracyHundredMeters)
     manager.allowsBackgroundLocationUpdates =
       CLLocationManager.authorizationStatus() == .authorizedAlways
     manager.pausesLocationUpdatesAutomatically = false
     locationTimeoutTimer?.invalidate()
     locationTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) {
       [weak self] _ in
-      self?.completePendingLocation(self?.lastKnownLocationFallback())
+      self?.completePendingLocation(
+        self?.pendingBestLocation ?? self?.lastKnownLocationFallback()
+      )
     }
-    manager.requestLocation()
+    if pendingRequirePreciseLocation {
+      manager.startUpdatingLocation()
+    } else {
+      manager.requestLocation()
+    }
   }
 
   private func shareText(
@@ -882,7 +895,18 @@ import ActivityKit
   }
 
   func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-    completePendingLocation(locations.last)
+    guard let location = locations
+      .filter({ $0.horizontalAccuracy >= 0 })
+      .min(by: { $0.horizontalAccuracy < $1.horizontalAccuracy }) else {
+      return
+    }
+    if pendingBestLocation == nil ||
+        location.horizontalAccuracy < pendingBestLocation!.horizontalAccuracy {
+      pendingBestLocation = location
+    }
+    if !pendingRequirePreciseLocation || location.horizontalAccuracy <= 25 {
+      completePendingLocation(location)
+    }
   }
 
   func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -896,8 +920,11 @@ import ActivityKit
 
     locationTimeoutTimer?.invalidate()
     locationTimeoutTimer = nil
+    locationManager?.stopUpdatingLocation()
     pendingLocationResult = nil
     pendingAllowLastKnownLocation = false
+    pendingRequirePreciseLocation = false
+    pendingBestLocation = nil
     result(location?.toFlutterMap())
   }
 

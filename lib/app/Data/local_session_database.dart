@@ -732,8 +732,8 @@ class LocalSessionDatabase {
         owner_phone_number = ? AND id NOT IN (
           SELECT id FROM device_notifications
           WHERE owner_phone_number = ?
-          ORDER BY received_at DESC
-          LIMIT 200
+          ORDER BY is_starred DESC, received_at DESC
+          LIMIT 500
         )
       ''',
       whereArgs: [ownerPhoneNumber, ownerPhoneNumber],
@@ -742,14 +742,14 @@ class LocalSessionDatabase {
 
   Future<List<DeviceNotificationRecord>> loadDeviceNotifications({
     required String ownerPhoneNumber,
-    int limit = 100,
+    int limit = 500,
   }) async {
     final database = await _openDatabase();
     final rows = await database.query(
       'device_notifications',
       where: 'owner_phone_number = ?',
       whereArgs: [ownerPhoneNumber],
-      orderBy: 'received_at DESC',
+      orderBy: 'is_starred DESC, received_at DESC',
       limit: limit,
     );
     return rows.map(DeviceNotificationRecord.fromRow).toList();
@@ -768,13 +768,54 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<void> clearDeviceNotifications({
+  Future<void> markAllDeviceNotificationsOpened({
     required String ownerPhoneNumber,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'device_notifications',
+      {'opened_at': DateTime.now().toUtc().toIso8601String()},
+      where: 'owner_phone_number = ? AND opened_at IS NULL',
+      whereArgs: [ownerPhoneNumber],
+    );
+  }
+
+  Future<void> setDeviceNotificationStarred({
+    required String ownerPhoneNumber,
+    required int id,
+    required bool isStarred,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'device_notifications',
+      {'is_starred': isStarred ? 1 : 0},
+      where: 'owner_phone_number = ? AND id = ?',
+      whereArgs: [ownerPhoneNumber, id],
+    );
+  }
+
+  Future<void> deleteDeviceNotification({
+    required String ownerPhoneNumber,
+    required int id,
   }) async {
     final database = await _openDatabase();
     await database.delete(
       'device_notifications',
-      where: 'owner_phone_number = ?',
+      where: 'owner_phone_number = ? AND id = ?',
+      whereArgs: [ownerPhoneNumber, id],
+    );
+  }
+
+  Future<void> clearDeviceNotifications({
+    required String ownerPhoneNumber,
+    bool includeStarred = true,
+  }) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'device_notifications',
+      where: includeStarred
+          ? 'owner_phone_number = ?'
+          : 'owner_phone_number = ? AND is_starred = 0',
       whereArgs: [ownerPhoneNumber],
     );
   }
@@ -950,7 +991,7 @@ class LocalSessionDatabase {
 
     _database = await openDatabase(
       databasePath,
-      version: 22,
+      version: 23,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -1147,6 +1188,14 @@ class LocalSessionDatabase {
             tableName: 'nearby_sos_events',
             columnName: 'detector_captured_at',
             definition: 'TEXT',
+          );
+        }
+        if (oldVersion < 23) {
+          await _addColumnIfMissing(
+            database,
+            tableName: 'device_notifications',
+            columnName: 'is_starred',
+            definition: 'INTEGER NOT NULL DEFAULT 0',
           );
         }
       },
@@ -1710,7 +1759,8 @@ class LocalSessionDatabase {
         data_json TEXT NOT NULL DEFAULT '{}',
         received_at TEXT NOT NULL,
         opened_at TEXT,
-        source TEXT NOT NULL DEFAULT 'fcm'
+        source TEXT NOT NULL DEFAULT 'fcm',
+        is_starred INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await database.execute('''
@@ -2340,6 +2390,7 @@ class DeviceNotificationRecord {
     required this.receivedAt,
     required this.openedAt,
     required this.source,
+    required this.isStarred,
   });
 
   factory DeviceNotificationRecord.fromRow(Map<String, Object?> row) {
@@ -2364,6 +2415,7 @@ class DeviceNotificationRecord {
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       openedAt: DateTime.tryParse(row['opened_at'] as String? ?? ''),
       source: row['source'] as String? ?? 'fcm',
+      isStarred: (row['is_starred'] as int? ?? 0) == 1,
     );
   }
 
@@ -2377,6 +2429,7 @@ class DeviceNotificationRecord {
   final DateTime receivedAt;
   final DateTime? openedAt;
   final String source;
+  final bool isStarred;
 
   bool get isOpened => openedAt != null;
 }

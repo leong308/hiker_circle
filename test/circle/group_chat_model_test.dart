@@ -36,4 +36,11 @@ void main() {
     expect(chat.customName, isEmpty);
     expect(chat.latestJoinedName, 'Wei Ming');
   });
+
+  test('automatic group name follows the required departure format', () {
+    expect(
+      GroupChat.defaultGroupName('HikeLocation', DateTime(2026, 8, 29, 5)),
+      '29Aug 05:00 HikeLocation Group',
+    );
+  });
 }

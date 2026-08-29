@@ -1213,7 +1213,8 @@ class HikerCircleFirebaseRepository {
                     _shouldRenderGroupChat(chat) &&
                     !chat.isDirect &&
                     chat.requiresHostNaming &&
-                    chat.customName.trim().isEmpty,
+                    !chat.namingPromptShown &&
+                    chat.hikeEndedAt == null,
               )
               .toList(growable: false),
         );
@@ -1235,6 +1236,25 @@ class HikerCircleFirebaseRepository {
     } on FirebaseFunctionsException catch (error) {
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to name the group chat right now.',
+      );
+    }
+  }
+
+  Future<void> markFormedHikeGroupNamingPromptShown({
+    required String chatId,
+    required String defaultName,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      await _resolvedFunctions
+          .httpsCallable('markFormedHikeGroupNamingPromptShown')
+          .call(<String, dynamic>{
+            'chatId': chatId.trim(),
+            'defaultName': defaultName.trim(),
+          });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to prepare the group chat name.',
       );
     }
   }
@@ -3649,6 +3669,55 @@ class HikerCircleFirebaseRepository {
       return _achievementProgressFrom(
         achievements: _achievementSeedRows(),
         userAwardsByAchievementId: const <String, Map<String, dynamic>>{},
+      );
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> loadCommunityPostsForUser({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    try {
+      final snapshot = await _communityPosts
+          .where('authorPhoneNumber', isEqualTo: session.phoneNumber.trim())
+          .limit(100)
+          .get()
+          .timeout(_firebaseReadTimeout);
+      final posts = snapshot.docs
+          .map((document) => {'postId': document.id, ...document.data()})
+          .toList();
+      posts.sort((a, b) {
+        final first = _dateFromValue(a['createdAtLocal']) ?? DateTime(1970);
+        final second = _dateFromValue(b['createdAtLocal']) ?? DateTime(1970);
+        return second.compareTo(first);
+      });
+      return posts;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> loadAchievementLeaderboard({
+    String period = 'month',
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('loadAchievementLeaderboard')
+          .call(<String, dynamic>{
+            'period': period == 'year' ? 'year' : 'month',
+          });
+      final data = Map<String, dynamic>.from(response.data as Map);
+      final entries = data['entries'];
+      return entries is Iterable
+          ? entries
+                .whereType<Map>()
+                .map((entry) => Map<String, dynamic>.from(entry))
+                .toList(growable: false)
+          : const [];
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to load the hiking leaderboard.',
       );
     }
   }

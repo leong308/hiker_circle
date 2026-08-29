@@ -177,10 +177,11 @@ class SosDeviceAlertService {
 
   Future<SosTriggerLocation?> getCurrentTriggerLocation({
     bool allowLastKnown = false,
+    bool requirePrecise = false,
   }) async {
     final locationData = await _channel.invokeMapMethod<Object?, Object?>(
       'getCurrentTriggerLocation',
-      {'allowLastKnown': allowLastKnown},
+      {'allowLastKnown': allowLastKnown, 'requirePrecise': requirePrecise},
     );
     if (locationData == null) {
       return null;

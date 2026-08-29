@@ -2214,6 +2214,7 @@ class GroupChat {
     this.participantPhotoURLs = const {},
     this.customName = '',
     this.requiresHostNaming = false,
+    this.namingPromptShown = false,
     this.latestJoinedName = '',
   });
 
@@ -2238,6 +2239,7 @@ class GroupChat {
   final Map<String, String> participantPhotoURLs;
   final String customName;
   final bool requiresHostNaming;
+  final bool namingPromptShown;
   final String latestJoinedName;
 
   bool get isDirect => chatType == 'direct';
@@ -2248,9 +2250,9 @@ class GroupChat {
         return customName.trim();
       }
       if (departureTime != null) {
-        return _formatGroupChatName(trailName, departureTime!);
+        return defaultGroupName(trailName, departureTime!);
       }
-      return trailName;
+      return '${trailName.trim().isEmpty ? 'Hike' : trailName.trim()} Group';
     }
     for (final phone in participantPhones) {
       if (_modelPhoneKey(phone) == _modelPhoneKey(phoneNumber)) {
@@ -2297,26 +2299,29 @@ class GroupChat {
       participantPhotoURLs: participantPhotoURLs ?? this.participantPhotoURLs,
       customName: customName,
       requiresHostNaming: requiresHostNaming,
+      namingPromptShown: namingPromptShown,
       latestJoinedName: latestJoinedName,
     );
   }
 
-  static String _formatGroupChatName(String trailName, DateTime departureTime) {
-    final time = _formatTime(departureTime);
-    final date = _formatDate(departureTime);
-    return '[$time, $date] $trailName';
+  static String defaultGroupName(String trailName, DateTime departureTime) {
+    final local = departureTime.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    final month = _monthName(local.month);
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    final rawLocation = trailName.trim().isEmpty ? 'Hike' : trailName.trim();
+    const suffix = ' Group';
+    final prefix = '$day$month $hour:$minute ';
+    final availableLocationLength = 60 - prefix.length - suffix.length;
+    final location = rawLocation.length <= availableLocationLength
+        ? rawLocation
+        : rawLocation.substring(0, availableLocationLength).trimRight();
+    return '$prefix$location$suffix';
   }
 
-  static String _formatTime(DateTime dt) {
-    final hour = dt.hour;
-    final minute = dt.minute.toString().padLeft(2, '0');
-    final period = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
-    return '$displayHour:$minute $period';
-  }
-
-  static String _formatDate(DateTime dt) {
-    final months = [
+  static String _monthName(int month) {
+    const months = [
       'Jan',
       'Feb',
       'Mar',
@@ -2330,7 +2335,7 @@ class GroupChat {
       'Nov',
       'Dec',
     ];
-    return '${months[dt.month - 1]} ${dt.day}';
+    return months[month - 1];
   }
 
   Map<String, dynamic> toFirestore() {
@@ -2364,6 +2369,7 @@ class GroupChat {
       if (unreadCount.isNotEmpty) 'unreadCount': unreadCount,
       if (customName.isNotEmpty) 'customName': customName,
       if (requiresHostNaming) 'requiresHostNaming': true,
+      if (namingPromptShown) 'namingPromptShown': true,
       if (latestJoinedName.isNotEmpty) 'latestJoinedName': latestJoinedName,
     };
   }
@@ -2444,6 +2450,7 @@ class GroupChat {
       unreadCount: unreadCount,
       customName: _modelStringFrom(data['customName']),
       requiresHostNaming: data['requiresHostNaming'] == true,
+      namingPromptShown: data['namingPromptShown'] == true,
       latestJoinedName: _modelStringFrom(data['latestJoinedName']),
     );
   }

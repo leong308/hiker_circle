@@ -2933,32 +2933,77 @@ class _CommunityProfileSheet extends StatelessWidget {
                         ? profile['hikeFrequency'].toString()
                         : 'Not provided',
                   ),
-                  _ProfileInfoRow(
-                    icon: Icons.workspace_premium_outlined,
-                    label: 'Achievements',
-                    value:
-                        '${achievements.length} unlocked · ${profile['achievementPoints'] ?? 0} points',
-                  ),
-                  if (achievements.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: Theme.of(context).brightness == Brightness.dark
+                            ? const [Color(0xFF173526), Color(0xFF202C24)]
+                            : const [Color(0xFFE9F8EE), Color(0xFFFFF8E7)],
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final achievement in achievements)
-                          Chip(
-                            avatar: const Icon(
-                              Icons.emoji_events_rounded,
-                              size: 16,
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.workspace_premium_rounded,
                               color: Color(0xFFF59E0B),
+                              size: 28,
                             ),
-                            label: Text(
-                              achievement['title']?.toString() ?? 'Achievement',
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    profile['levelName']?.toString() ??
+                                        person.levelName,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.w900),
+                                  ),
+                                  Text(
+                                    '${profile['achievementPoints'] ?? 0} points · ${achievements.length} badges unlocked',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
                             ),
+                          ],
+                        ),
+                        if (achievements.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 7,
+                            children: [
+                              for (final achievement in achievements.take(8))
+                                Chip(
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.surface.withValues(alpha: 0.82),
+                                  avatar: const Icon(
+                                    Icons.emoji_events_rounded,
+                                    size: 16,
+                                    color: Color(0xFFF59E0B),
+                                  ),
+                                  label: Text(
+                                    achievement['title']?.toString() ??
+                                        'Achievement',
+                                  ),
+                                ),
+                            ],
                           ),
+                        ],
                       ],
                     ),
-                  ],
+                  ),
                   if (history.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     Text(

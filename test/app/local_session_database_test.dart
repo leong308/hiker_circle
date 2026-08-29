@@ -413,6 +413,47 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'notification history supports read, star, delete, and 500 cap',
+    () async {
+      const phone = '+60111111111';
+      for (var index = 0; index < 505; index++) {
+        await database.saveDeviceNotification(
+          ownerPhoneNumber: phone,
+          messageId: 'message-$index',
+          title: 'Update $index',
+          body: 'Body',
+          receivedAt: DateTime.utc(2026, 8, 1).add(Duration(minutes: index)),
+        );
+      }
+
+      var records = await database.loadDeviceNotifications(
+        ownerPhoneNumber: phone,
+      );
+      expect(records, hasLength(500));
+      final keep = records.last;
+      await database.setDeviceNotificationStarred(
+        ownerPhoneNumber: phone,
+        id: keep.id,
+        isStarred: true,
+      );
+      await database.markAllDeviceNotificationsOpened(ownerPhoneNumber: phone);
+
+      records = await database.loadDeviceNotifications(ownerPhoneNumber: phone);
+      expect(records.first.id, keep.id);
+      expect(records.every((record) => record.isOpened), isTrue);
+      expect(records.first.isStarred, isTrue);
+
+      await database.deleteDeviceNotification(
+        ownerPhoneNumber: phone,
+        id: keep.id,
+      );
+      records = await database.loadDeviceNotifications(ownerPhoneNumber: phone);
+      expect(records, hasLength(499));
+      expect(records.any((record) => record.id == keep.id), isFalse);
+    },
+  );
 }
 
 UpcomingHike _upcomingHike({

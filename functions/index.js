@@ -2273,6 +2273,158 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
   }
 );
 
+function defaultFormedHikeGroupName(chat) {
+  const departureMillis = dateMillis(
+    chat.departureTimeLocal || chat.departureTime || chat.createdAtLocal
+  );
+  const date = new Date(Number.isFinite(departureMillis) ? departureMillis : Date.now());
+  const timeZone = String(chat.timeZone || 'Asia/Kuala_Lumpur').trim();
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+  } catch (_) {
+    parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kuala_Lumpur',
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+  }
+  const part = (type) => String(parts.find((value) => value.type === type)?.value || '');
+  const rawLocation = String(chat.trailName || 'Hike')
+    .replace(/\s+/g, ' ')
+    .trim() || 'Hike';
+  const prefix = `${part('day')}${part('month')} ${part('hour')}:${part('minute')} `;
+  const suffix = ' Group';
+  const location = rawLocation.slice(0, Math.max(1, 60 - prefix.length - suffix.length)).trim();
+  return `${prefix}${location}${suffix}`;
+}
+
+exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
+  const { phoneNumber: ownerPhone } = authenticatedPhoneFor(
+    request,
+    'Sign in to prepare this group chat.'
+  );
+  const chatId = String(request.data?.chatId || '').trim();
+  const requestedDefaultName = String(request.data?.defaultName || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!validFirestoreDocumentId(chatId)) {
+    throw new HttpsError('invalid-argument', 'The group chat is invalid.');
+  }
+  const db = admin.firestore();
+  const chatReference = db.collection('groupChats').doc(chatId);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(chatReference);
+    if (!snapshot.exists) {
+      throw new HttpsError('not-found', 'This group chat is no longer available.');
+    }
+    const chat = snapshot.data() || {};
+    if (
+      String(chat.chatType || 'group') === 'direct'
+      || String(chat.creatorPhone || '').trim() !== ownerPhone
+    ) {
+      throw new HttpsError('permission-denied', 'Only the hike host can name this group.');
+    }
+    if (chat.hikeEndedAtLocal || chat.isDeleted === true) {
+      const fallback = String(chat.customName || '').trim()
+        || defaultFormedHikeGroupName(chat);
+      transaction.set(chatReference, {
+        customName: fallback,
+        requiresHostNaming: false,
+        namingPromptShown: true,
+        namingPromptActive: false,
+        nameSource: String(chat.customName || '').trim() ? 'host' : 'automatic',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: new Date().toISOString(),
+      }, { merge: true });
+      return;
+    }
+    const fallback = requestedDefaultName.length >= 2 && requestedDefaultName.length <= 60
+      ? requestedDefaultName
+      : defaultFormedHikeGroupName(chat);
+    transaction.set(chatReference, {
+      customName: String(chat.customName || '').trim() || fallback,
+      requiresHostNaming: false,
+      namingPromptShown: true,
+      namingPromptActive: true,
+      nameSource: String(chat.customName || '').trim() ? 'host' : 'automatic',
+      namingPromptShownAt: admin.firestore.FieldValue.serverTimestamp(),
+      namingPromptShownAtLocal: new Date().toISOString(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtLocal: new Date().toISOString(),
+    }, { merge: true });
+  });
+  return { prepared: true, chatId };
+});
+
+exports.loadAchievementLeaderboard = onCall({}, async (request) => {
+  const { uid } = authenticatedPhoneFor(
+    request,
+    'Sign in to view the hiking leaderboard.'
+  );
+  const period = String(request.data?.period || 'month') === 'year'
+    ? 'year'
+    : 'month';
+  const now = new Date();
+  const start = period === 'year'
+    ? new Date(Date.UTC(now.getUTCFullYear(), 0, 1))
+    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const snapshot = await admin.firestore()
+    .collection('userAchievements')
+    .where('isUnlocked', '==', true)
+    .limit(5000)
+    .get();
+  const pointsByUser = new Map();
+  for (const document of snapshot.docs) {
+    const row = document.data() || {};
+    const awardedAt = dateMillis(row.awardedAt || row.awardedAtLocal);
+    if (!Number.isFinite(awardedAt) || awardedAt < start.getTime()) continue;
+    const userId = String(row.userId || '').trim();
+    if (!userId) continue;
+    const points = Math.max(0, Number(row.pointsAwarded || 0));
+    pointsByUser.set(userId, (pointsByUser.get(userId) || 0) + points);
+  }
+  const ranked = [...pointsByUser.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 50);
+  const userReferences = ranked.map(([userId]) =>
+    admin.firestore().collection('users').doc(userId)
+  );
+  const users = userReferences.length > 0
+    ? await admin.firestore().getAll(...userReferences)
+    : [];
+  const profiles = new Map(users.map((document) => [document.id, document.data() || {}]));
+  return {
+    period,
+    startsAtLocal: start.toISOString(),
+    currentUserId: uid,
+    entries: ranked.map(([userId, points], index) => {
+      const profile = profiles.get(userId) || {};
+      const username = String(
+        profile.username || profile.displayName || profile.handle || 'Hiker'
+      ).replace(/^@/, '').trim();
+      return {
+        rank: index + 1,
+        userId,
+        displayName: username || 'Hiker',
+        photoURL: String(profile.photoURL || '').trim(),
+        points: Math.floor(points),
+        isCurrentUser: userId === uid,
+      };
+    }),
+  };
+});
+
 exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
   const { phoneNumber: ownerPhone } = authenticatedPhoneFor(
     request,
@@ -2317,7 +2469,7 @@ exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
       );
     }
     const existingName = String(chat.customName || '').trim();
-    if (existingName) {
+    if (existingName && chat.namingPromptActive !== true) {
       if (existingName === customName) return;
       throw new HttpsError(
         'failed-precondition',
@@ -2339,6 +2491,11 @@ exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
       {
         customName,
         requiresHostNaming: false,
+        namingPromptShown: true,
+        namingPromptActive: false,
+        nameSource: 'host',
+        hostNamingFinalizedAt: admin.firestore.FieldValue.serverTimestamp(),
+        hostNamingFinalizedAtLocal: nowIso,
         namedAt: admin.firestore.FieldValue.serverTimestamp(),
         namedAtLocal: nowIso,
         lastMessage: systemText,
@@ -3089,6 +3246,19 @@ async function ensureTeamChatDocument(
           : {}),
         ...(shouldArchive
           ? {
+              customName: String(existing.customName || '').trim()
+                || defaultFormedHikeGroupName({
+                  ...existing,
+                  trailName: String(
+                    team.trailName || team.draft?.trail?.name || 'Hike'
+                  ),
+                  departureTimeLocal: String(
+                    team.plannedStartTimeLocal || team.draft?.departureTime || ''
+                  ),
+                }),
+              requiresHostNaming: false,
+              namingPromptShown: true,
+              namingPromptActive: false,
               hikeEndedAtLocal: now.toISOString(),
               chatRemovesAtLocal: admin.firestore.FieldValue.delete(),
               closureReason: 'team_hike_completed',
@@ -7810,6 +7980,11 @@ async function startGroupChatClosure(db, chatDoc, reason, messagePrefix) {
   const removesAt = new Date(now.getTime() + 60 * 60 * 1000);
   await chatDoc.ref.set(
     {
+      customName: String(chat.customName || '').trim()
+        || defaultFormedHikeGroupName(chat),
+      requiresHostNaming: false,
+      namingPromptShown: true,
+      namingPromptActive: false,
       hikeEndedAtLocal: now.toISOString(),
       chatRemovesAtLocal: removesAt.toISOString(),
       closureReason: reason,

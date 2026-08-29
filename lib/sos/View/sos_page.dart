@@ -6,9 +6,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
-import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../home/View/first_aid_guide_page.dart';
@@ -790,13 +790,9 @@ class _SosPageState extends State<SosPage> {
                     )
                   else ...[
                     _SosTriggerLogPanel(
-                      isNetworkAvailable:
-                          widget.firebaseBootstrapResult.isAvailable &&
-                          _networkSnapshot.isOnline,
                       session: widget.session,
                       latestResult: viewModel.latestSosAlertResult,
                       customWhatsAppNotes: _customWhatsAppNotes,
-                      cloudAlertLogs: viewModel.cloudAlertLogs,
                       onCustomWhatsAppNoteChanged: (mode, note) {
                         setState(() {
                           _customWhatsAppNotes = {
@@ -1668,7 +1664,7 @@ class _SosSystemLogRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${mode.toUpperCase()} - ${status.toUpperCase()}',
+                    '${_friendlySosType(mode)} · ${_friendlySosStatus(status)}',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: _SosColors.textFor(context),
                       fontWeight: FontWeight.w800,
@@ -1689,12 +1685,14 @@ class _SosSystemLogRow extends StatelessWidget {
                     runSpacing: 6,
                     children: [
                       _StatusPill(
-                        label: '$sent sent',
+                        label: '$sent contacts notified',
                         color: _SosColors.green,
                         surface: _SosColors.greenSoftFor(context),
                       ),
                       _StatusPill(
-                        label: '$failed failed',
+                        label: failed == 0
+                            ? 'No delivery issues'
+                            : '$failed need attention',
                         color: failed > 0
                             ? _SosColors.orange
                             : _SosColors.secondaryTextFor(context),
@@ -1770,9 +1768,18 @@ class _SosSystemLogDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final location = _sosLogLocationSummary(log['triggerLocation']);
-    final dispatches = log['dispatches'];
-    final dispatchCount = dispatches is Iterable ? dispatches.length : 0;
+    final location = _sosLogLocation(log['triggerLocation']);
+    final mode = _sosLogString(log['mode'], fallback: 'sos');
+    final status = _sosLogString(log['status'], fallback: 'unknown');
+    final rawContacts = log['dispatches'];
+    final contactNames = rawContacts is Iterable
+        ? rawContacts
+              .whereType<Map>()
+              .map((item) => item['contactName']?.toString().trim() ?? '')
+              .where((name) => name.isNotEmpty)
+              .toSet()
+              .toList(growable: false)
+        : const <String>[];
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -1820,19 +1827,11 @@ class _SosSystemLogDetailSheet extends StatelessWidget {
                 padding: const EdgeInsets.all(14),
                 child: Column(
                   children: [
-                    _StatusRow(
-                      label: 'Alert ID',
-                      value: _sosLogString(log['alertId'], fallback: '-'),
-                    ),
-                    const _HorizontalSeparator(),
-                    _StatusRow(
-                      label: 'Type',
-                      value: _sosLogString(log['mode'], fallback: 'SOS'),
-                    ),
+                    _StatusRow(label: 'Type', value: _friendlySosType(mode)),
                     const _HorizontalSeparator(),
                     _StatusRow(
                       label: 'Status',
-                      value: _sosLogString(log['status'], fallback: 'unknown'),
+                      value: _friendlySosStatus(status),
                     ),
                     const _HorizontalSeparator(),
                     _StatusRow(
@@ -1846,18 +1845,54 @@ class _SosSystemLogDetailSheet extends StatelessWidget {
                       ),
                     ),
                     const _HorizontalSeparator(),
-                    _StatusRow(label: 'Location', value: location),
+                    _StatusRow(
+                      label: 'Location',
+                      value: location == null
+                          ? 'Location unavailable'
+                          : location.accuracyMeters == null
+                          ? 'Location captured'
+                          : 'Captured within about ${location.accuracyMeters!.round()} m',
+                    ),
+                    if (location != null) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () => launchUrl(
+                            Uri.parse(location.universalMapLink),
+                            mode: LaunchMode.externalApplication,
+                          ),
+                          icon: const Icon(Icons.map_rounded),
+                          label: const Text('View on map'),
+                        ),
+                      ),
+                    ],
                     const _HorizontalSeparator(),
                     _StatusRow(
                       label: 'Contacts',
                       value:
-                          '${_sosLogInt(log['sentCount'])}/${_sosLogInt(log['contactCount'])} sent, ${_sosLogInt(log['failedCount'])} failed',
+                          '${_sosLogInt(log['sentCount'])} notified · ${_sosLogInt(log['failedCount'])} need attention',
                     ),
-                    const _HorizontalSeparator(),
-                    _StatusRow(
-                      label: 'Dispatch records',
-                      value: '$dispatchCount',
-                    ),
+                    if (contactNames.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: [
+                            for (final name in contactNames)
+                              Chip(
+                                avatar: const Icon(
+                                  Icons.person_rounded,
+                                  size: 17,
+                                ),
+                                label: Text(name),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -3027,30 +3062,24 @@ class _SosSafetyToolTile extends StatelessWidget {
 
 class _SosTriggerLogPanel extends StatelessWidget {
   const _SosTriggerLogPanel({
-    required this.isNetworkAvailable,
     required this.session,
     required this.latestResult,
     required this.customWhatsAppNotes,
-    required this.cloudAlertLogs,
     required this.onCustomWhatsAppNoteChanged,
   });
 
-  final bool isNetworkAvailable;
   final AppSession session;
   final SosAlertResult? latestResult;
   final Map<SosAlertMode, String> customWhatsAppNotes;
-  final List<SosAlert> cloudAlertLogs;
   final void Function(SosAlertMode mode, String note)
   onCustomWhatsAppNoteChanged;
 
   @override
   Widget build(BuildContext context) {
-    final latestAlert = latestResult?.alert;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionTitle(label: 'SOS Trigger Log'),
+        const _SectionTitle(label: 'SOS communication'),
         const SizedBox(height: 8),
         _DeliveryActionCard(
           icon: Icons.chat_bubble_rounded,
@@ -3058,40 +3087,6 @@ class _SosTriggerLogPanel extends StatelessWidget {
           subtitle: 'Edit Manual, Duress, and Medical SOS notes.',
           trailing: 'Edit',
           onTap: () => unawaited(_openWhatsAppMessageEditor(context)),
-        ),
-        const SizedBox(height: 8),
-        _DeliveryActionCard(
-          icon: Icons.cloud_done_rounded,
-          title: 'Cloud alert log',
-          subtitle: latestAlert == null
-              ? 'Cloud logs load from Firebase when alerts exist.'
-              : 'Latest ${latestAlert.mode.label} is logged with audit fields.',
-          trailing: isNetworkAvailable ? '${cloudAlertLogs.length}' : 'Offline',
-          onTap: () => _openDeliveryDetail(
-            context,
-            title: 'Cloud alert log',
-            icon: Icons.cloud_done_rounded,
-            description:
-                'SOS alerts are read from the top-level sosAlerts Firebase collection and mirrored to the user profile latest alert.',
-            rows: _cloudLogRows(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        _DeliveryActionCard(
-          icon: Icons.fact_check_rounded,
-          title: 'SOS trigger log',
-          subtitle: latestAlert == null
-              ? 'Trigger results appear after an SOS alert is sent.'
-              : '${latestAlert.sentCount} sent, ${latestAlert.failedCount} failed.',
-          trailing: latestAlert?.status.label ?? 'View',
-          onTap: () => _openDeliveryDetail(
-            context,
-            title: 'SOS trigger log',
-            icon: Icons.fact_check_rounded,
-            description:
-                'Each contact dispatch records the normalized recipient, send state, and any WhatsApp/Green API error returned by the delivery layer.',
-            rows: _deliveryResultRows(),
-          ),
         ),
       ],
     );
@@ -3116,98 +3111,6 @@ class _SosTriggerLogPanel extends StatelessWidget {
     if (update != null && context.mounted) {
       onCustomWhatsAppNoteChanged(update.mode, update.note);
     }
-  }
-
-  List<(String, String)> _cloudLogRows() {
-    final latestAlert = latestResult?.alert;
-    final userDocumentId = FirebaseUserRepository.documentIdForPhoneNumber(
-      session.phoneNumber,
-    );
-    if (latestAlert == null) {
-      return [
-        ('Network status', isNetworkAvailable ? 'Ready' : 'Offline'),
-        ('User latest path', 'users/$userDocumentId/latest_sos_alert'),
-        ('Audit collection', 'sosAlerts/{alertId}'),
-        ('Loaded cloud logs', '${cloudAlertLogs.length}'),
-        for (final alert in cloudAlertLogs.take(8))
-          (
-            '${alert.mode.label} ${_shortTime(alert.triggeredAt)}',
-            alert.status.label,
-          ),
-        ('Stored fields', 'Mode, timestamp, GPS, message, status, dispatches'),
-      ];
-    }
-
-    return [
-      if (cloudAlertLogs.isNotEmpty)
-        ('Loaded cloud logs', '${cloudAlertLogs.length}'),
-      for (final alert in cloudAlertLogs.take(8))
-        (
-          '${alert.mode.label} ${_shortTime(alert.triggeredAt)}',
-          alert.status.label,
-        ),
-      ('Alert ID', latestAlert.id),
-      ('Status', latestAlert.status.label),
-      ('Triggered', latestAlert.triggeredAt.toUtc().toIso8601String()),
-      ('User latest path', 'users/$userDocumentId/latest_sos_alert'),
-      ('Audit path', 'sosAlerts/${latestAlert.id}'),
-      (
-        'Location',
-        latestAlert.triggerLocation?.universalMapLink ?? 'Unavailable',
-      ),
-    ];
-  }
-
-  String _shortTime(DateTime value) {
-    final local = value.toLocal();
-    final hour = local.hour.toString().padLeft(2, '0');
-    final minute = local.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
-  }
-
-  List<(String, String)> _deliveryResultRows() {
-    final latestAlert = latestResult?.alert;
-    if (latestAlert == null) {
-      return const [
-        ('Latest alert', 'No SOS alert sent yet'),
-        ('Sent', '0 contacts'),
-        ('Failed', '0 contacts'),
-      ];
-    }
-
-    return [
-      ('Alert mode', latestAlert.mode.label),
-      ('Overall status', latestAlert.status.label),
-      ('Contacts', '${latestAlert.contactCount} selected'),
-      ('Sent', '${latestAlert.sentCount} contacts'),
-      ('Failed', '${latestAlert.failedCount} contacts'),
-      for (final dispatch in latestAlert.dispatches)
-        (
-          dispatch.contactName,
-          dispatch.wasSent
-              ? 'Sent to ${dispatch.phoneNumber}'
-              : 'Failed: ${dispatch.errorMessage ?? dispatch.phoneNumber}',
-        ),
-    ];
-  }
-
-  void _openDeliveryDetail(
-    BuildContext context, {
-    required String title,
-    required IconData icon,
-    required String description,
-    required List<(String, String)> rows,
-  }) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => _AlertDeliveryDetailPage(
-          title: title,
-          icon: icon,
-          description: description,
-          rows: rows,
-        ),
-      ),
-    );
   }
 }
 
@@ -3353,8 +3256,8 @@ class _WhatsAppMessageDetailPageState
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _SosDetailHeader(
-                    title: 'WhatsApp Message',
-                    subtitle: 'Custom SOS notification payload',
+                    title: 'Emergency WhatsApp',
+                    subtitle: 'Make every emergency message clear and useful',
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
@@ -3370,7 +3273,7 @@ class _WhatsAppMessageDetailPageState
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'Custom note',
+                            'Message instructions',
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(
                                   color: _SosColors.textFor(context),
@@ -3473,14 +3376,26 @@ class _WhatsAppMessageDetailPageState
                                 ),
                           ),
                           const SizedBox(height: 10),
-                          SelectableText(
-                            preview,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: _SosColors.textFor(context),
-                                  height: 1.35,
-                                  letterSpacing: 0,
-                                ),
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: _SosColors.greenSoftFor(context),
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(18),
+                                topRight: Radius.circular(18),
+                                bottomLeft: Radius.circular(18),
+                                bottomRight: Radius.circular(5),
+                              ),
+                            ),
+                            child: SelectableText(
+                              preview,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: _SosColors.textFor(context),
+                                    height: 1.4,
+                                    letterSpacing: 0,
+                                  ),
+                            ),
                           ),
                         ],
                       ),
@@ -3510,89 +3425,6 @@ class _WhatsAppMessageDetailPageState
 
   void _saveCurrentNote() {
     _notes = {..._notes, _selectedMode: _noteController.text.trim()};
-  }
-}
-
-class _AlertDeliveryDetailPage extends StatelessWidget {
-  const _AlertDeliveryDetailPage({
-    required this.title,
-    required this.icon,
-    required this.description,
-    required this.rows,
-  });
-
-  final String title;
-  final IconData icon;
-  final String description;
-  final List<(String, String)> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _SosColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _SosDetailHeader(
-                    title: title,
-                    subtitle: 'Alert delivery settings',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _Glyph(icon: icon, color: _SosColors.green),
-                          const SizedBox(height: 12),
-                          Text(
-                            title,
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(
-                                  color: _SosColors.textFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            description,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: _SosColors.secondaryTextFor(context),
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 14),
-                          for (final row in rows) ...[
-                            _StatusRow(label: row.$1, value: row.$2),
-                            if (row != rows.last) const _HorizontalSeparator(),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.check_rounded),
-                    label: const Text('Done'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -4556,22 +4388,47 @@ String _sosLogDateLabel(Object? value) {
   return '$date $time';
 }
 
-String _sosLogLocationSummary(Object? value) {
+SosTriggerLocation? _sosLogLocation(Object? value) {
   if (value is! Map || value.isEmpty) {
-    return 'Unavailable';
+    return null;
   }
   final latitude = value['latitude'];
   final longitude = value['longitude'];
   final accuracy = value['accuracyMeters'];
   if (latitude is! num || longitude is! num) {
-    return 'Captured';
+    return null;
   }
-  final coordinate =
-      '${latitude.toDouble().toStringAsFixed(5)}, ${longitude.toDouble().toStringAsFixed(5)}';
-  if (accuracy is num) {
-    return '$coordinate (+/- ${accuracy.round()} m)';
-  }
-  return coordinate;
+  final location = SosTriggerLocation(
+    latitude: latitude.toDouble(),
+    longitude: longitude.toDouble(),
+    accuracyMeters: accuracy is num ? accuracy.toDouble() : null,
+    capturedAt: DateTime.now().toUtc(),
+  );
+  return location.hasValidPosition ? location : null;
+}
+
+String _friendlySosType(String raw) {
+  return switch (raw.trim().toLowerCase()) {
+    'manual' => 'Emergency button',
+    'medical' => 'Medical assistance',
+    'duress' => 'Discreet emergency',
+    'fall' || 'fall_stillness' => 'Fall detected',
+    'nearby' || 'nearby_ble' => 'Nearby hiker emergency',
+    _ => 'SOS emergency',
+  };
+}
+
+String _friendlySosStatus(String raw) {
+  return switch (raw.trim().toLowerCase()) {
+    'sent' => 'Contacts notified',
+    'partial' => 'Some contacts need attention',
+    'failed' => 'Delivery needs attention',
+    'queued' || 'retry' => 'Waiting for connection',
+    'no_contacts' => 'No emergency contacts',
+    'active' => 'Help requested',
+    'resolved' => 'Resolved',
+    _ => 'Status updating',
+  };
 }
 
 abstract final class _SosColors {
