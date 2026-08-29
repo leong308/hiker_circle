@@ -494,7 +494,7 @@ class _HomeDashboardHeader extends StatelessWidget {
   }
 }
 
-enum _BestMatchSort { recommended, nearest }
+enum _BestMatchSort { all, nearest }
 
 enum _TrailRegionKind { country, state }
 
@@ -532,10 +532,19 @@ class _BestMatchesSection extends StatefulWidget {
 }
 
 class _BestMatchesSectionState extends State<_BestMatchesSection> {
-  _BestMatchSort _sort = _BestMatchSort.recommended;
+  _BestMatchSort _sort = _BestMatchSort.nearest;
   _TrailRegionFilter? _region;
   SosTriggerLocation? _userLocation;
   bool _isLocating = false;
+  double _nearestRadiusKm = 50;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => unawaited(_useNearest()),
+    );
+  }
 
   List<_TrailRegionFilter> get _regionOptions {
     final countries = <String>{};
@@ -604,83 +613,70 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
 
   Future<void> _chooseRegion() async {
     final options = _regionOptions;
-    final selected = await showModalBottomSheet<_TrailRegionFilter?>(
+    if (options.isEmpty) return;
+    var selectedIndex = math.max(
+      0,
+      options.indexWhere(
+        (option) =>
+            option.kind == _region?.kind && option.value == _region?.value,
+      ),
+    );
+    final selected = await showModalBottomSheet<_TrailRegionFilter>(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
       backgroundColor: _HomeColors.surfaceFor(context),
       builder: (sheetContext) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.72,
-          ),
+        child: SizedBox(
+          height: 330,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
-                child: Text(
-                  'Filter by region',
-                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
-                    color: _HomeColors.textFor(sheetContext),
-                    fontWeight: FontWeight.w800,
-                  ),
+                padding: const EdgeInsets.fromLTRB(18, 12, 8, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Choose state or country',
+                        style: Theme.of(sheetContext).textTheme.titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    CupertinoButton(
+                      child: const Text('Done'),
+                      onPressed: () => Navigator.of(
+                        sheetContext,
+                      ).pop(options[selectedIndex]),
+                    ),
+                  ],
                 ),
               ),
-              ListTile(
-                leading: const Icon(Icons.public_rounded),
-                title: const Text('All regions'),
-                trailing: _region == null
-                    ? const Icon(Icons.check_rounded, color: _HomeColors.green)
-                    : null,
-                onTap: () => Navigator.of(sheetContext).pop(
-                  const _TrailRegionFilter(
-                    kind: _TrailRegionKind.country,
-                    value: '',
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
               Expanded(
-                child: options.isEmpty
-                    ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text(
-                            'Region information is not available for these trails yet.',
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: options.length,
-                        itemBuilder: (context, index) {
-                          final option = options[index];
-                          final selected =
-                              _region?.kind == option.kind &&
-                              _region?.value == option.value;
-                          return ListTile(
-                            leading: Icon(
-                              option.kind == _TrailRegionKind.country
-                                  ? Icons.public_rounded
-                                  : Icons.map_outlined,
-                            ),
-                            title: Text(option.value),
-                            subtitle: Text(
+                child: CupertinoPicker(
+                  itemExtent: 48,
+                  scrollController: FixedExtentScrollController(
+                    initialItem: selectedIndex,
+                  ),
+                  onSelectedItemChanged: (index) => selectedIndex = index,
+                  children: [
+                    for (final option in options)
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => Navigator.of(sheetContext).pop(option),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(option.value),
+                            const SizedBox(width: 6),
+                            Text(
                               option.kind == _TrailRegionKind.country
                                   ? 'Country'
-                                  : 'State or region',
+                                  : 'State',
+                              style: Theme.of(sheetContext).textTheme.bodySmall,
                             ),
-                            trailing: selected
-                                ? const Icon(
-                                    Icons.check_rounded,
-                                    color: _HomeColors.green,
-                                  )
-                                : null,
-                            onTap: () => Navigator.of(sheetContext).pop(option),
-                          );
-                        },
+                          ],
+                        ),
                       ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -688,7 +684,61 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
       ),
     );
     if (!mounted || selected == null) return;
-    setState(() => _region = selected.value.isEmpty ? null : selected);
+    setState(() => _region = selected);
+  }
+
+  Future<void> _chooseRadius() async {
+    const values = <double>[5, 10, 25, 50, 100, 250, 500];
+    var index = values.indexOf(_nearestRadiusKm);
+    if (index < 0) index = 3;
+    final selected = await showModalBottomSheet<double>(
+      context: context,
+      backgroundColor: _HomeColors.surfaceFor(context),
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: 300,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 12, 8, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Nearest distance',
+                        style: Theme.of(sheetContext).textTheme.titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    CupertinoButton(
+                      child: const Text('Done'),
+                      onPressed: () =>
+                          Navigator.of(sheetContext).pop(values[index]),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: CupertinoPicker(
+                  itemExtent: 48,
+                  scrollController: FixedExtentScrollController(
+                    initialItem: index,
+                  ),
+                  onSelectedItemChanged: (value) => index = value,
+                  children: [
+                    for (final value in values)
+                      Center(child: Text('Within ${value.toInt()} km')),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (mounted && selected != null) {
+      setState(() => _nearestRadiusKm = selected);
+    }
   }
 
   @override
@@ -696,12 +746,17 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
     final filteredTrails = widget.trails.where(_matchesRegion).toList();
     final location = _userLocation;
     if (_sort == _BestMatchSort.nearest && location != null) {
+      filteredTrails.removeWhere(
+        (trail) => _distanceFromTrail(trail, location) > _nearestRadiusKm,
+      );
       filteredTrails.sort(
         (a, b) => _distanceFromTrail(
           a,
           location,
         ).compareTo(_distanceFromTrail(b, location)),
       );
+    } else {
+      filteredTrails.sort((a, b) => b.ratingAverage.compareTo(a.ratingAverage));
     }
     final visibleTrails = filteredTrails.take(5).toList();
     return Column(
@@ -719,22 +774,24 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
             runSpacing: 8,
             children: [
               ChoiceChip(
-                label: const Text('Recommended'),
-                selected: _sort == _BestMatchSort.recommended,
-                onSelected: (_) =>
-                    setState(() => _sort = _BestMatchSort.recommended),
+                label: const Text('All'),
+                selected: _sort == _BestMatchSort.all,
+                onSelected: (_) => setState(() => _sort = _BestMatchSort.all),
               ),
               ChoiceChip(
                 avatar: _isLocating
-                    ? const SizedBox.square(
-                        dimension: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const Icon(Icons.location_searching_rounded, size: 17)
                     : const Icon(Icons.near_me_rounded, size: 17),
                 label: const Text('Nearest'),
                 selected: _sort == _BestMatchSort.nearest,
                 onSelected: (_) => unawaited(_useNearest()),
               ),
+              if (_sort == _BestMatchSort.nearest)
+                ActionChip(
+                  avatar: const Icon(Icons.straighten_rounded, size: 17),
+                  label: Text('${_nearestRadiusKm.toInt()} km'),
+                  onPressed: _chooseRadius,
+                ),
               ActionChip(
                 avatar: const Icon(Icons.public_rounded, size: 17),
                 label: Text(_region?.label ?? 'Region'),
@@ -915,8 +972,8 @@ class _BestMatchTrailCard extends StatelessWidget {
                             _TrailMeta(
                               icon: Icons.near_me_rounded,
                               label: nearbyDistanceKm! < 1
-                                  ? '${(nearbyDistanceKm! * 1000).round()} m away'
-                                  : '${nearbyDistanceKm!.toStringAsFixed(1)} km away',
+                                  ? '${(nearbyDistanceKm! * 1000).round()} m from you'
+                                  : '${nearbyDistanceKm!.toStringAsFixed(1)} km from you',
                             ),
                           _TrailMeta(
                             icon: Icons.signal_cellular_alt_rounded,

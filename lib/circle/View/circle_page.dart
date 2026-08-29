@@ -506,12 +506,28 @@ class _CirclePageState extends State<CirclePage> {
     }
     if (!mounted || profile == null) return;
     final person = _communityPersonFromProfile(profile);
+    await _showCommunityPersonProfile(person);
+  }
+
+  Future<void> _showCommunityPersonProfile(_CommunityPerson person) async {
+    Map<String, dynamic> details = const <String, dynamic>{};
+    try {
+      details = await widget.hikerCircleRepository.loadPublicHikerProfile(
+        userId: person.userId,
+        phoneNumber: person.phoneNumber,
+      );
+    } catch (_) {
+      // The basic allow-listed profile remains useful if extended history is
+      // temporarily unavailable.
+    }
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => _CommunityProfileSheet(
         person: person,
+        details: details,
         isBuddy: _buddyPhones.contains(person.phoneNumber),
         isRequested: _outgoingBuddyRequestPhones.contains(
           _phoneKeyFor(person.phoneNumber),
@@ -830,6 +846,9 @@ class _CirclePageState extends State<CirclePage> {
                                   unawaited(_addBuddy(person)),
                               onMessageBuddy: (person) =>
                                   unawaited(_openDirectChat(person)),
+                              onOpenPersonProfile: (person) => unawaited(
+                                _showCommunityPersonProfile(person),
+                              ),
                               onOpenProfile: _showCommunityProfile,
                               onSharePost: _sharePostToGroupChat,
                               onCreatePost: _createCommunityPost,
@@ -1087,6 +1106,7 @@ class _CommunitySection extends StatelessWidget {
     required this.currentUserPhotoBytes,
     required this.onAddBuddy,
     required this.onMessageBuddy,
+    required this.onOpenPersonProfile,
     required this.onOpenProfile,
     required this.onSharePost,
     required this.onCreatePost,
@@ -1107,6 +1127,7 @@ class _CommunitySection extends StatelessWidget {
   final Uint8List? currentUserPhotoBytes;
   final ValueChanged<_CommunityPerson> onAddBuddy;
   final ValueChanged<_CommunityPerson> onMessageBuddy;
+  final ValueChanged<_CommunityPerson> onOpenPersonProfile;
   final ValueChanged<_CommunityPost> onOpenProfile;
   final ValueChanged<_CommunityPost> onSharePost;
   final Future<void> Function(String caption) onCreatePost;
@@ -1149,6 +1170,7 @@ class _CommunitySection extends StatelessWidget {
                   isBuddy: true,
                   onAddBuddy: () {},
                   onMessage: () => onMessageBuddy(person),
+                  onOpenProfile: () => onOpenPersonProfile(person),
                 );
               },
             ),
@@ -1181,6 +1203,7 @@ class _CommunitySection extends StatelessWidget {
                   ),
                   onAddBuddy: () => onAddBuddy(person),
                   onMessage: () => onMessageBuddy(person),
+                  onOpenProfile: () => onOpenPersonProfile(person),
                 );
               },
             ),
@@ -1468,6 +1491,7 @@ class _BuddySuggestionCard extends StatelessWidget {
     this.isRequested = false,
     required this.onAddBuddy,
     required this.onMessage,
+    required this.onOpenProfile,
   });
 
   final _CommunityPerson person;
@@ -1475,6 +1499,7 @@ class _BuddySuggestionCard extends StatelessWidget {
   final bool isRequested;
   final VoidCallback onAddBuddy;
   final VoidCallback onMessage;
+  final VoidCallback onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -1502,10 +1527,13 @@ class _BuddySuggestionCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  _Avatar(
-                    label: _circleInitial(person.name),
-                    color: person.color,
-                    imageUrl: person.photoURL,
+                  GestureDetector(
+                    onTap: onOpenProfile,
+                    child: _Avatar(
+                      label: _circleInitial(person.name),
+                      color: person.color,
+                      imageUrl: person.photoURL,
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -2775,6 +2803,7 @@ class _TeamDetailPage extends StatelessWidget {
 class _CommunityProfileSheet extends StatelessWidget {
   const _CommunityProfileSheet({
     required this.person,
+    required this.details,
     required this.isBuddy,
     required this.isRequested,
     required this.isOwnProfile,
@@ -2783,6 +2812,7 @@ class _CommunityProfileSheet extends StatelessWidget {
   });
 
   final _CommunityPerson person;
+  final Map<String, dynamic> details;
   final bool isBuddy;
   final bool isRequested;
   final bool isOwnProfile;
@@ -2791,103 +2821,181 @@ class _CommunityProfileSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profile = details['profile'] is Map
+        ? Map<String, dynamic>.from(details['profile'] as Map)
+        : const <String, dynamic>{};
+    final achievements = details['achievements'] is List
+        ? (details['achievements'] as List).whereType<Map>().toList()
+        : const <Map>[];
+    final history = details['hikeHistory'] is List
+        ? (details['hikeHistory'] as List).whereType<Map>().toList()
+        : const <Map>[];
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 18),
         child: _InsetGroup(
           child: Padding(
             padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _Avatar(
-                      label: _circleInitial(person.name),
-                      color: person.color,
-                      size: 58,
-                      imageUrl: person.photoURL,
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            person.name,
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(
-                                  color: _CircleColors.textFor(context),
-                                  fontWeight: FontWeight.w900,
-                                ),
-                          ),
-                          const SizedBox(height: 5),
-                          Row(
-                            children: [
-                              _LevelBadge(level: person.level),
-                              const SizedBox(width: 7),
-                              Flexible(
-                                child: Text(
-                                  person.levelName,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: _CircleColors.secondaryTextFor(
-                                          context,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _Avatar(
+                        label: _circleInitial(person.name),
+                        color: person.color,
+                        size: 58,
+                        imageUrl: person.photoURL,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              person.name,
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(
+                                    color: _CircleColors.textFor(context),
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                            ),
+                            const SizedBox(height: 5),
+                            Row(
+                              children: [
+                                _LevelBadge(level: person.level),
+                                const SizedBox(width: 7),
+                                Flexible(
+                                  child: Text(
+                                    person.levelName,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: _CircleColors.secondaryTextFor(
+                                            context,
+                                          ),
                                         ),
-                                      ),
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (isOwnProfile)
+                        const _StatusPill(
+                          label: 'You',
+                          color: _CircleColors.green,
+                        )
+                      else if (isRequested)
+                        const _StatusPill(
+                          label: 'Requested',
+                          color: _CircleColors.orange,
+                        )
+                      else if (!isBuddy)
+                        IconButton.filled(
+                          tooltip: 'Send friend request',
+                          onPressed: onAddBuddy,
+                          icon: const Icon(Icons.person_add_rounded),
+                        )
+                      else
+                        const _StatusPill(
+                          label: 'Buddy',
+                          color: _CircleColors.green,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  _ProfileInfoRow(
+                    icon: Icons.terrain_rounded,
+                    label: 'Experience',
+                    value: person.subtitle.isEmpty
+                        ? 'Not provided'
+                        : person.subtitle,
+                  ),
+                  _ProfileInfoRow(
+                    icon: Icons.location_city_rounded,
+                    label: 'Area',
+                    value: person.trailAffinity,
+                  ),
+                  _ProfileInfoRow(
+                    icon: Icons.calendar_month_outlined,
+                    label: 'Frequency',
+                    value:
+                        (profile['hikeFrequency']
+                                ?.toString()
+                                .trim()
+                                .isNotEmpty ??
+                            false)
+                        ? profile['hikeFrequency'].toString()
+                        : 'Not provided',
+                  ),
+                  _ProfileInfoRow(
+                    icon: Icons.workspace_premium_outlined,
+                    label: 'Achievements',
+                    value:
+                        '${achievements.length} unlocked · ${profile['achievementPoints'] ?? 0} points',
+                  ),
+                  if (achievements.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final achievement in achievements)
+                          Chip(
+                            avatar: const Icon(
+                              Icons.emoji_events_rounded,
+                              size: 16,
+                              color: Color(0xFFF59E0B),
+                            ),
+                            label: Text(
+                              achievement['title']?.toString() ?? 'Achievement',
+                            ),
                           ),
-                        ],
+                      ],
+                    ),
+                  ],
+                  if (history.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'Recent hikes',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
-                    if (isOwnProfile)
-                      const _StatusPill(
-                        label: 'You',
-                        color: _CircleColors.green,
-                      )
-                    else if (isRequested)
-                      const _StatusPill(
-                        label: 'Requested',
-                        color: _CircleColors.orange,
-                      )
-                    else if (!isBuddy)
-                      IconButton.filled(
-                        tooltip: 'Send friend request',
-                        onPressed: onAddBuddy,
-                        icon: const Icon(Icons.person_add_rounded),
-                      )
-                    else
-                      const _StatusPill(
-                        label: 'Buddy',
-                        color: _CircleColors.green,
+                    const SizedBox(height: 4),
+                    for (final hike in history)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.route_rounded,
+                          color: _CircleColors.green,
+                        ),
+                        title: Text(hike['trailName']?.toString() ?? 'Hike'),
+                        subtitle: Text(
+                          '${((hike['recordedDistanceKm'] as num?)?.toDouble() ?? 0).toStringAsFixed(1)} km · ${hike['hikeType'] == 'team' ? 'Group' : 'Solo'}',
+                        ),
                       ),
                   ],
-                ),
-                const SizedBox(height: 18),
-                _ProfileInfoRow(
-                  icon: Icons.terrain_rounded,
-                  label: 'Experience',
-                  value: person.subtitle.isEmpty
-                      ? 'Not provided'
-                      : person.subtitle,
-                ),
-                _ProfileInfoRow(
-                  icon: Icons.location_city_rounded,
-                  label: 'Area',
-                  value: person.trailAffinity,
-                ),
-                const SizedBox(height: 14),
-                FilledButton.icon(
-                  onPressed: onMessage,
-                  icon: const Icon(Icons.chat_rounded),
-                  label: const Text('Start conversation'),
-                ),
-              ],
+                  Text(
+                    'Phone number and private route details are hidden.',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: _CircleColors.secondaryTextFor(context),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    onPressed: onMessage,
+                    icon: const Icon(Icons.chat_rounded),
+                    label: const Text('Start conversation'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

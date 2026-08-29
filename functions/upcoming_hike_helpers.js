@@ -52,7 +52,7 @@ function buildUpcomingHikePreview(
     !id
     || hike.isDeleted === true
     || !Number.isFinite(departureMillis)
-    || departureMillis + 60 * 60 * 1000 <= nowMillis
+    || departureMillis + 15 * 60 * 1000 <= nowMillis
   ) {
     return null;
   }
@@ -71,6 +71,11 @@ function buildUpcomingHikePreview(
   const isCreator = creatorPhone === normalizedCallerPhone;
   const isParticipant = isCreator
     || storedParticipantPhones.includes(normalizedCallerPhone);
+  const reminderPhones = Array.isArray(hike.departureReminderPhones)
+    ? hike.departureReminderPhones
+        .map((phone) => safeText(phone, 20))
+        .filter((phone) => phone)
+    : [];
 
   return {
     id,
@@ -94,6 +99,7 @@ function buildUpcomingHikePreview(
       ? new Date(expectedReturnMillis).toISOString()
       : new Date(departureMillis).toISOString(),
     hikeType: effectiveUpcomingHikeType(hike),
+    joinPolicy: String(hike.joinPolicy || '') === 'approval' ? 'approval' : 'open',
     participantCount: Math.round(
       boundedNumber(
         hike.participantCount,
@@ -110,6 +116,8 @@ function buildUpcomingHikePreview(
     // already knows about their own account.
     creatorPhone: isCreator ? normalizedCallerPhone : '',
     participantPhones: isParticipant ? [normalizedCallerPhone] : [],
+    departureReminderCount: Math.min(3, new Set(reminderPhones).size),
+    departureReminderSentByMe: reminderPhones.includes(normalizedCallerPhone),
   };
 }
 

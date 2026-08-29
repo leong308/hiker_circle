@@ -510,7 +510,9 @@ import ActivityKit
           "fullScreenIntentGranted": true,
           "overlayGranted": true,
           "notificationAuthorizationStatus": notificationStatus,
-          "notificationsAuthorized": settings.authorizationStatus == .authorized,
+          "notificationsAuthorized": settings.authorizationStatus == .authorized
+            || settings.authorizationStatus == .provisional
+            || settings.authorizationStatus == .ephemeral,
           "timeSensitiveGranted": timeSensitiveGranted,
           "liveActivitiesGranted": liveActivitiesGranted,
           "motionAuthorizationStatus": motionStatus,

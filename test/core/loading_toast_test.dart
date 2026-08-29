@@ -33,7 +33,7 @@ void main() {
     expect(layers.where((layer) => layer['nm'] == 'SENZO'), isEmpty);
     expect(
       assets.singleWhere((asset) => asset['id'] == 'hiker_circle_app_icon'),
-      containsPair('p', 'AppIcon-Default-1024.png'),
+      containsPair('p', 'HikerCircle-Loader-Transparent.png'),
     );
   });
 

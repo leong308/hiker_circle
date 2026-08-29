@@ -1720,10 +1720,20 @@ class _ParticipantRow extends StatelessWidget {
             const SizedBox(width: 4),
             Icon(Icons.star_rounded, size: 14, color: color),
           ],
-          if (!hasLocation && !isEnded) ...[
+          if (isEnded) ...[
             const SizedBox(width: 4),
             Text(
-              'away',
+              'Ended',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: const Color(0xFF6E6E73),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
+          ] else if (!hasLocation) ...[
+            const SizedBox(width: 4),
+            Text(
+              'Away',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: const Color(0xFF6E6E73),
                 letterSpacing: 0,

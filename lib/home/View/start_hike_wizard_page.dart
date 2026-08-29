@@ -51,6 +51,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   bool _isScheduling = false;
   bool _isStarting = false;
   HikeReminderPreference _reminderPreference = const HikeReminderPreference();
+  String _joinPolicy = 'approval';
 
   bool get _isUpcomingHike => !_startNow;
 
@@ -295,6 +296,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       final hikeId = await repo.scheduleUpcomingHike(
         session: session,
         draft: safeDraft,
+        joinPolicy: _joinPolicy,
       );
       await repo.saveUpcomingHikeReminderPreference(
         session: session,
@@ -502,7 +504,13 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   Widget _stepForIndex(int index) {
     switch (_steps[index]) {
       case _StartHikeWizardStep.type:
-        return _HikeTypeStep(draft: _draft, onChanged: _updateDraft);
+        return _HikeTypeStep(
+          draft: _draft,
+          isUpcomingHike: _isUpcomingHike,
+          joinPolicy: _joinPolicy,
+          onJoinPolicyChanged: (value) => setState(() => _joinPolicy = value),
+          onChanged: _updateDraft,
+        );
       case _StartHikeWizardStep.timing:
         return _TimingStep(
           draft: _draft,
@@ -522,6 +530,15 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           subtitle:
               'These choices apply only to you. Every invited hiker can choose their own reminder schedule after joining.',
           children: [
+            if (_draft.hikeType == HikeType.team) ...[
+              _JoinPolicySelector(
+                joinPolicy: _joinPolicy,
+                onChanged: (value) => setState(() => _joinPolicy = value),
+              ),
+              const SizedBox(height: 18),
+              const Divider(height: 1),
+              const SizedBox(height: 18),
+            ],
             HikeReminderPreferencesEditor(
               preference: _reminderPreference,
               departureTime: _draft.departureTime,
@@ -617,9 +634,18 @@ class _StepProgress extends StatelessWidget {
 }
 
 class _HikeTypeStep extends StatelessWidget {
-  const _HikeTypeStep({required this.draft, required this.onChanged});
+  const _HikeTypeStep({
+    required this.draft,
+    required this.isUpcomingHike,
+    required this.joinPolicy,
+    required this.onJoinPolicyChanged,
+    required this.onChanged,
+  });
 
   final HikeSessionDraft draft;
+  final bool isUpcomingHike;
+  final String joinPolicy;
+  final ValueChanged<String> onJoinPolicyChanged;
   final ValueChanged<HikeSessionDraft> onChanged;
 
   @override
@@ -646,6 +672,62 @@ class _HikeTypeStep extends StatelessWidget {
           onTap: () => onChanged(
             draft.copyWith(hikeType: HikeType.team, teamBuddies: const []),
           ),
+        ),
+        if (isUpcomingHike && draft.hikeType == HikeType.team) ...[
+          const SizedBox(height: 18),
+          _JoinPolicySelector(
+            joinPolicy: joinPolicy,
+            onChanged: onJoinPolicyChanged,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _JoinPolicySelector extends StatelessWidget {
+  const _JoinPolicySelector({
+    required this.joinPolicy,
+    required this.onChanged,
+  });
+
+  final String joinPolicy;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'How people join',
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment<String>(
+              value: 'approval',
+              icon: Icon(Icons.verified_user_outlined),
+              label: Text('Needs approval'),
+            ),
+            ButtonSegment<String>(
+              value: 'open',
+              icon: Icon(Icons.group_add_rounded),
+              label: Text('Open to join'),
+            ),
+          ],
+          selected: <String>{joinPolicy},
+          onSelectionChanged: (values) => onChanged(values.single),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          joinPolicy == 'open'
+              ? 'Signed-in hikers can join immediately.'
+              : 'You will review each request before the hiker is added.',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       ],
     );

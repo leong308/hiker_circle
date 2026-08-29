@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
+import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../Model/hike_session_models.dart';
+import '../../trail/Model/trail_models.dart';
 
 class HikeSharePreviewPage extends StatefulWidget {
   const HikeSharePreviewPage({
@@ -23,7 +27,11 @@ class HikeSharePreviewPage extends StatefulWidget {
   final AppSession session;
   final HikeSummaryReport report;
   final ActiveHikeSession activeHike;
-  final Future<void> Function(String caption)? onPostToCommunity;
+  final Future<void> Function(
+    String caption,
+    List<CommunityPostImageUpload> images,
+  )?
+  onPostToCommunity;
   final Future<void> Function(String text) onShareExternally;
   final int initialMapStyleIndex;
 
@@ -35,6 +43,7 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
   late final TextEditingController _captionController;
   bool _isPosting = false;
   bool _isSharingExternally = false;
+  final List<_SelectedHikeImage> _images = <_SelectedHikeImage>[];
 
   @override
   void initState() {
@@ -62,7 +71,18 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
 
     setState(() => _isPosting = true);
     try {
-      await post(caption);
+      await post(
+        caption,
+        _images
+            .map(
+              (image) => CommunityPostImageUpload(
+                bytes: image.bytes,
+                fileName: image.fileName,
+                contentType: image.contentType,
+              ),
+            )
+            .toList(),
+      );
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
       if (mounted) {
@@ -70,6 +90,33 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
       }
     } finally {
       if (mounted) setState(() => _isPosting = false);
+    }
+  }
+
+  Future<void> _addImages() async {
+    if (_images.length >= 6 || _isPosting || _isSharingExternally) return;
+    try {
+      final picked = await ImagePicker().pickMultiImage(
+        imageQuality: 88,
+        limit: 6 - _images.length,
+      );
+      final additions = <_SelectedHikeImage>[];
+      for (final file in picked) {
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty || bytes.length > 10 * 1024 * 1024) continue;
+        additions.add(
+          _SelectedHikeImage(
+            bytes: bytes,
+            fileName: file.name,
+            contentType: file.mimeType,
+          ),
+        );
+      }
+      if (mounted && additions.isNotEmpty) {
+        setState(() => _images.addAll(additions));
+      }
+    } catch (_) {
+      if (mounted) _showMessage('Unable to open the photo library.');
     }
   }
 
@@ -161,6 +208,14 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
                             initialMapStyleIndex: widget.initialMapStyleIndex,
                             captionController: _captionController,
                             enabled: !isBusy,
+                          ),
+                          const SizedBox(height: 12),
+                          _HikePhotoPicker(
+                            images: _images,
+                            enabled: !isBusy,
+                            onAdd: _addImages,
+                            onRemove: (index) =>
+                                setState(() => _images.removeAt(index)),
                           ),
                           const SizedBox(height: 12),
                           Text(
@@ -359,7 +414,8 @@ class _PostPreviewCard extends StatelessWidget {
               pinnedPoints: _pinPoints(activeHike),
               checkInPoints: _checkInPoints(activeHike),
               captureAllGestures: true,
-              animateRoute: false,
+              customCheckpoints: _recordedRouteCheckpoints(activeHike),
+              animateRoute: true,
               initialStyleIndex: initialMapStyleIndex,
             ),
           ),
@@ -492,6 +548,116 @@ class _ShareAvatar extends StatelessWidget {
     }
 
     return ClipOval(child: SizedBox.square(dimension: 42, child: child));
+  }
+}
+
+class _SelectedHikeImage {
+  const _SelectedHikeImage({
+    required this.bytes,
+    required this.fileName,
+    this.contentType,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final String? contentType;
+}
+
+class _HikePhotoPicker extends StatelessWidget {
+  const _HikePhotoPicker({
+    required this.images,
+    required this.enabled,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final List<_SelectedHikeImage> images;
+  final bool enabled;
+  final VoidCallback onAdd;
+  final ValueChanged<int> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _ShareColors.surfaceFor(context),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _ShareColors.separatorFor(context)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.photo_library_outlined,
+                color: _ShareColors.green,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Hike photos (${images.length}/6)',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: enabled && images.length < 6 ? onAdd : null,
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: const Text('Add'),
+              ),
+            ],
+          ),
+          if (images.isEmpty)
+            Text(
+              'Add photos from this hike to make the post more personal.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _ShareColors.secondaryTextFor(context),
+              ),
+            )
+          else
+            SizedBox(
+              height: 92,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: images.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, index) => Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(11),
+                      child: Image.memory(
+                        images[index].bytes,
+                        width: 92,
+                        height: 92,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: InkWell(
+                        onTap: enabled ? () => onRemove(index) : null,
+                        child: const CircleAvatar(
+                          radius: 12,
+                          backgroundColor: Color(0xB3000000),
+                          child: Icon(
+                            Icons.close,
+                            size: 15,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 
@@ -665,7 +831,7 @@ String defaultHikeShareCaption(HikeSummaryReport report) {
   return 'Completed ${report.trailName} — '
       '${report.distanceKm.toStringAsFixed(2)} km in '
       '${_formatDuration(report.duration)}. '
-      '${report.checkIns} check-ins along the way. #HikerCircle';
+      '${report.checkIns} check-ins along the way.';
 }
 
 String buildExternalHikeShareText({
@@ -755,6 +921,31 @@ List<mapbox.Point> _checkInPoints(ActiveHikeSession activeHike) {
         ),
       )
       .toList();
+}
+
+List<TrailCheckpoint> _recordedRouteCheckpoints(ActiveHikeSession activeHike) {
+  final route = List<HikeCoordinate>.of(activeHike.routePoints)
+    ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
+  final checkpoints = <HikeCoordinate>[
+    if (route.isNotEmpty) route.first,
+    ...activeHike.checkInRecords
+        .map((record) => record.coordinate)
+        .whereType<HikeCoordinate>(),
+    if (route.length > 1) route.last,
+  ];
+  return [
+    for (var index = 0; index < checkpoints.length; index++)
+      TrailCheckpoint(
+        name: index == 0
+            ? 'Start'
+            : index == checkpoints.length - 1
+            ? 'End'
+            : 'Check-in $index',
+        latitude: checkpoints[index].latitude,
+        longitude: checkpoints[index].longitude,
+        order: index,
+      ),
+  ];
 }
 
 abstract final class _ShareColors {
