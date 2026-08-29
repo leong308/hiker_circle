@@ -101,6 +101,7 @@ class HikerBleBridge(
     private var testArmGatt: BluetoothGatt? = null
     private var testArmButton: PairedSosButtonRegistry.Button? = null
     private var testArmResult: MethodChannel.Result? = null
+    private var testServiceCacheRefreshAttempted = false
     private var testArmDurationMillis = 30_000L
     private val testArmTimeout = Runnable {
         finishPairedButtonTestArm(
@@ -1212,6 +1213,7 @@ class HikerBleBridge(
         }
         testArmButton = button
         testArmResult = result
+        testServiceCacheRefreshAttempted = false
         testArmDurationMillis = durationMillis
         mainHandler.postDelayed(testArmTimeout, GATT_OPERATION_TIMEOUT_MILLIS)
         testArmGatt = runCatching {
@@ -1263,6 +1265,9 @@ class HikerBleBridge(
                 HikerBleProtocol.PAIRED_BUTTON_TEST_CONTROL_CHARACTERISTIC_UUID,
             )
             if (characteristic == null || !gatt.readCharacteristic(characteristic)) {
+                if (recoverTestArmFromStaleGattCache(gatt, "missing test characteristic")) {
+                    return
+                }
                 finishPairedButtonTestArm(
                     false,
                     "paired_button_test_firmware_incompatible",
@@ -1326,12 +1331,67 @@ class HikerBleBridge(
             HikerBleProtocol.encodePairedButtonTestArm(value, button.pairingSecret, deviceId)
         } else null
         if (request == null || !startGattWrite(gatt, characteristic, request)) {
+            if (request == null && recoverTestArmFromStaleGattCache(
+                    gatt,
+                    "invalid challenge ${value.joinToString("") { "%02X".format(it.toInt().and(0xff)) }}",
+                )
+            ) {
+                return
+            }
+            val cacheWasRefreshed = testServiceCacheRefreshAttempted
             finishPairedButtonTestArm(
                 false,
                 "paired_button_test_challenge_invalid",
-                "The SOS button returned an invalid authenticated test challenge.",
+                if (cacheWasRefreshed) {
+                    "The refreshed test challenge identifies a different paired button. Unpair this entry and pair the physical button again."
+                } else {
+                    "The SOS button returned an invalid authenticated test challenge."
+                },
             )
         }
+    }
+
+    private fun recoverTestArmFromStaleGattCache(
+        gatt: BluetoothGatt,
+        reason: String,
+    ): Boolean {
+        if (testServiceCacheRefreshAttempted) return false
+        testServiceCacheRefreshAttempted = true
+        Log.w(TAG, "Refreshing SOS test GATT cache after $reason.")
+        val device = gatt.device
+        val cacheRefreshed = runCatching {
+            val refresh = gatt.javaClass.getMethod("refresh")
+            (refresh.invoke(gatt) as? Boolean) != false
+        }.onFailure { error ->
+            Log.w(TAG, "Android rejected the SOS test GATT cache refresh.", error)
+        }.getOrDefault(false)
+
+        testArmGatt = null
+        runCatching { gatt.disconnect() }
+        runCatching { gatt.close() }
+        if (!cacheRefreshed) {
+            finishPairedButtonTestArm(
+                false,
+                "paired_button_test_bluetooth_cache_stale",
+                "Android cached older SOS button services and could not refresh them automatically.",
+            )
+            return true
+        }
+
+        mainHandler.postDelayed({
+            if (testArmResult == null || testArmButton == null) return@postDelayed
+            testArmGatt = runCatching {
+                device.connectGatt(activity, false, testArmGattCallback)
+            }.getOrNull()
+            if (testArmGatt == null) {
+                finishPairedButtonTestArm(
+                    false,
+                    "paired_button_test_connect_failed",
+                    "Unable to reconnect after refreshing Android Bluetooth services.",
+                )
+            }
+        }, 700L)
+        return true
     }
 
     private fun finishPairedButtonTestArm(
@@ -1342,6 +1402,7 @@ class HikerBleBridge(
         mainHandler.removeCallbacks(testArmTimeout)
         val gatt = testArmGatt
         testArmGatt = null
+        testServiceCacheRefreshAttempted = false
         runCatching { gatt?.disconnect() }
         runCatching { gatt?.close() }
         val armedDeviceId = testArmButton?.deviceIdHex
@@ -2418,6 +2479,17 @@ class HikerBleBridge(
                 pairingSecret = button.pairingSecret,
             )
         }.getOrElse {
+            if (!logServiceCacheRefreshAttempted) {
+                Log.w(
+                    TAG,
+                    "Invalid SOS log challenge; refreshing GATT cache. bytes=" +
+                        challenge.joinToString("") { byte ->
+                            "%02X".format(byte.toInt().and(0xff))
+                        },
+                )
+                recoverFromIncompleteLogService(gatt)
+                return
+            }
             finishLogDownload(
                 success = false,
                 errorCode = "paired_button_log_challenge_invalid",

@@ -13,6 +13,10 @@ const {
 } = require('../mfa_helpers');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+const mobileUserRepositorySource = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'lib', 'app', 'Data', 'firebase_user_repository.dart'),
+  'utf8'
+);
 
 function exportedBlock(name, nextName) {
   const start = source.indexOf(`exports.${name}`);
@@ -37,6 +41,18 @@ test('legacy password and saved-device token bypasses stay disabled', () => {
   assert.match(recoveryBlock, /requires a fresh WhatsApp and second-factor sign-in/);
   assert.ok(passwordBlock.indexOf('throw new HttpsError') < passwordBlock.indexOf('createCustomToken'));
   assert.ok(recoveryBlock.indexOf('throw new HttpsError') < recoveryBlock.indexOf('createCustomToken'));
+});
+
+test('mobile post-MFA handoff reuses the authenticated Firebase session', () => {
+  assert.doesNotMatch(
+    mobileUserRepositorySource,
+    /httpsCallable\(\s*['"]authenticateAppSession['"]\s*\)/
+  );
+  assert.doesNotMatch(mobileUserRepositorySource, /signInWithCustomToken/);
+  assert.match(mobileUserRepositorySource, /currentUser/);
+  assert.match(mobileUserRepositorySource, /getIdTokenResult/);
+  assert.match(mobileUserRepositorySource, /claims\['mfa'\] != true/);
+  assert.match(mobileUserRepositorySource, /claims\['phoneNumber'\] != session\.phoneNumber/);
 });
 
 test('factor and challenge collections are explicitly denied to mobile SDKs', () => {

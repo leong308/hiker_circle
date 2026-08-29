@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../Model/app_session.dart';
@@ -22,17 +21,14 @@ class FirebaseUserRepository {
   FirebaseUserRepository({
     FirebaseFirestore? firestore,
     FirebaseAuth? firebaseAuth,
-    FirebaseFunctions? firebaseFunctions,
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
        _firebaseAuth = firebaseAuth,
-       _firebaseFunctions = firebaseFunctions,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   final FirebaseFirestore? _firestore;
   final FirebaseAuth? _firebaseAuth;
-  final FirebaseFunctions? _firebaseFunctions;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
   FirebaseFirestore get _resolvedFirestore =>
@@ -40,9 +36,6 @@ class FirebaseUserRepository {
 
   FirebaseAuth get _resolvedFirebaseAuth =>
       _firebaseAuth ?? FirebaseAuth.instance;
-
-  FirebaseFunctions get _resolvedFirebaseFunctions =>
-      _firebaseFunctions ?? FirebaseFunctions.instance;
 
   CollectionReference<Map<String, dynamic>> get _users {
     return _resolvedFirestore.collection('users');
@@ -61,6 +54,7 @@ class FirebaseUserRepository {
     }
 
     try {
+      await _requireAuthenticatedMfaSession(session);
       final now = DateTime.now().toUtc();
       final userDocument = _users.doc(
         documentIdForPhoneNumber(session.phoneNumber),
@@ -142,7 +136,6 @@ class FirebaseUserRepository {
           isOnboardingProfileComplete: isOnboardingProfileComplete,
         );
       });
-      await authenticateAppSession(registeredSession);
       return registeredSession;
     } on FirebaseException catch (error) {
       throw FirebaseUserRepositoryException(
@@ -160,7 +153,7 @@ class FirebaseUserRepository {
     }
 
     try {
-      await authenticateAppSession(session);
+      await _requireAuthenticatedMfaSession(session);
       final snapshot = await _users
           .doc(documentIdForPhoneNumber(session.phoneNumber))
           .get();
@@ -195,7 +188,7 @@ class FirebaseUserRepository {
     }
   }
 
-  Future<User> authenticateAppSession(AppSession session) async {
+  Future<User> _requireAuthenticatedMfaSession(AppSession session) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       throw FirebaseUserRepositoryException(
         'Firebase is not ready yet. ${_firebaseBootstrapResult.errorMessage ?? ''}'
@@ -211,43 +204,33 @@ class FirebaseUserRepository {
     }
 
     try {
-      final callable = _resolvedFirebaseFunctions.httpsCallable(
-        'authenticateAppSession',
-      );
-      final response = await callable.call(<String, Object?>{
-        'phoneNumber': session.phoneNumber,
-        'appInstanceId': session.appInstanceId,
-      });
-      final data = response.data;
-      if (data is! Map || data['customToken'] is! String) {
-        throw const FirebaseUserRepositoryException(
-          'Firebase returned an invalid authentication response.',
-          requiresSignIn: true,
-        );
-      }
       final expectedUserId = documentIdForPhoneNumber(session.phoneNumber);
-      final credential = await _resolvedFirebaseAuth.signInWithCustomToken(
-        data['customToken'] as String,
-      );
-      final user = credential.user;
+      final user = _resolvedFirebaseAuth.currentUser;
       if (user == null || user.uid != expectedUserId) {
         await _resolvedFirebaseAuth.signOut();
         throw const FirebaseUserRepositoryException(
-          'Firebase could not validate this HikerCircle account.',
+          'Your secure login has expired. Verify WhatsApp and your security method again.',
+          requiresSignIn: true,
+        );
+      }
+
+      // MFA completion already signed Firebase in with a short-lived custom
+      // token. Reuse that durable Firebase session instead of calling the
+      // retired saved-device token issuer, which would both bypass MFA and
+      // reject every legitimate post-MFA login.
+      final token = await user.getIdTokenResult();
+      final claims = token.claims ?? const <String, dynamic>{};
+      if (claims['mfa'] != true ||
+          claims['phoneNumber'] != session.phoneNumber) {
+        await _resolvedFirebaseAuth.signOut();
+        throw const FirebaseUserRepositoryException(
+          'This login was not completed with both required verification steps. Sign in again.',
           requiresSignIn: true,
         );
       }
       return user;
     } on FirebaseUserRepositoryException {
       rethrow;
-    } on FirebaseFunctionsException catch (error) {
-      throw FirebaseUserRepositoryException(
-        error.message ?? 'Firebase rejected the saved login.',
-        requiresSignIn: const {
-          'unauthenticated',
-          'permission-denied',
-        }.contains(error.code),
-      );
     } on FirebaseAuthException catch (error) {
       throw FirebaseUserRepositoryException(
         error.message ?? 'Firebase authentication failed.',
