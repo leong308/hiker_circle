@@ -76,7 +76,11 @@ test('history detail combines route, safety, telemetry, and rating data', () => 
       batteryLevel: 88,
       recordedAtLocal: '2026-08-20T01:10:00Z',
     }],
-    rating: { rating: 5, comment: 'Excellent route.' },
+    rating: {
+      rating: 5,
+      difficulty: 'moderate',
+      comment: 'Excellent route.',
+    },
     groupChatId: 'team_team_1',
     memberTracks: [{
       name: 'Aisha',
@@ -91,7 +95,11 @@ test('history detail combines route, safety, telemetry, and rating data', () => 
   assert.equal(detail.safety.manualPins.length, 1);
   assert.equal(detail.safety.checkIns.length, 1);
   assert.equal(detail.performance.minAltitudeMeters, 120);
-  assert.deepEqual(detail.rating, { stars: 5, comment: 'Excellent route.' });
+  assert.deepEqual(detail.rating, {
+    stars: 5,
+    difficulty: 'moderate',
+    comment: 'Excellent route.',
+  });
   assert.equal(detail.source.groupChatId, 'team_team_1');
   assert.equal(detail.team.memberTracks[0].name, 'Aisha');
   assert.equal(detail.team.memberTracks[0].routePoints.length, 2);

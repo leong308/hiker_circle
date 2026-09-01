@@ -7,13 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/services/geoapify_service.dart';
 import '../../core/services/hiking_route_service.dart';
-import '../../core/services/trail_cover_image_service.dart';
+import '../../core/widgets/cached_trail_image.dart';
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/loading_toast.dart';
@@ -46,8 +47,7 @@ String _normalizeTrailDifficulty(String raw) {
     'easy' => 'Easy',
     'moderate' || 'medium' => 'Moderate',
     'hard' => 'Hard',
-    'expert' => 'Expert',
-    _ => 'Moderate',
+    _ => '',
   };
 }
 
@@ -122,7 +122,9 @@ class _TrailPageState extends State<TrailPage> {
           trail.area.toLowerCase().contains(_query) ||
           trail.state.toLowerCase().contains(_query);
       final matchesFilter = switch (_filter) {
-        'Beginner' => _normalizeTrailDifficulty(trail.difficulty) == 'Easy',
+        'Beginner' =>
+          trail.hasCommunityDifficulty &&
+              _normalizeTrailDifficulty(trail.difficulty) == 'Easy',
         'Saved' => trail.isVerifiedTrail,
         'Popular' => trail.ratingAverage >= 4.5,
         _ => true,
@@ -501,12 +503,39 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
           final data = snapshot.data();
           if (data == null) return;
           final weatherData = data['weather'];
-          if (weatherData == null) return;
-          final weather = widget.hikerCircleRepository.weatherFromFirestore(
-            weatherData,
-          );
+          final rawDifficultyCounts = data['difficultyVoteCounts'];
+          final difficultyCounts = rawDifficultyCounts is Map
+              ? Map<String, dynamic>.from(rawDifficultyCounts)
+              : const <String, dynamic>{};
+          int voteCount(String key) {
+            final value = difficultyCounts[key];
+            return value is num ? math.max(0, value.toInt()) : 0;
+          }
+
+          final easyVotes = voteCount('easy');
+          final moderateVotes = voteCount('moderate');
+          final hardVotes = voteCount('hard');
+          final hasDifficultyVotes = easyVotes + moderateVotes + hardVotes > 0;
           setState(() {
-            _trail = _trail.copyWith(weather: weather);
+            _trail = _trail.copyWith(
+              weather: weatherData == null
+                  ? _trail.weather
+                  : widget.hikerCircleRepository.weatherFromFirestore(
+                      weatherData,
+                    ),
+              difficulty: hasDifficultyVotes
+                  ? _normalizeTrailDifficulty('${data['difficulty'] ?? ''}')
+                  : '',
+              ratingAverage: data['ratingAverage'] is num
+                  ? (data['ratingAverage'] as num).toDouble()
+                  : _trail.ratingAverage,
+              ratingCount: data['ratingCount'] is num
+                  ? math.max(0, (data['ratingCount'] as num).toInt())
+                  : _trail.ratingCount,
+              easyDifficultyVotes: easyVotes,
+              moderateDifficultyVotes: moderateVotes,
+              hardDifficultyVotes: hardVotes,
+            );
           });
         }, onError: (_) {});
     final weather = _trail.weather;
@@ -612,7 +641,15 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     onStartHike: () => _startTrailHike(trail),
                   ),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Route Preview'),
+                  _SectionTitle(
+                    label: 'Route Preview',
+                    trailing: trail.routeReferenceUrl.trim().isEmpty
+                        ? null
+                        : _RouteReferenceButton(
+                            referenceName: trail.routeReferenceName,
+                            referenceUrl: trail.routeReferenceUrl,
+                          ),
+                  ),
                   const SizedBox(height: 8),
                   if (trail.checkpoints.isEmpty)
                     const _EmptyState(
@@ -643,6 +680,12 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                       onShowOnMap: _showCheckpointOnMap,
                     ),
                   const SizedBox(height: 22),
+                  if (trail.hasCommunityDifficulty) ...[
+                    const _SectionTitle(label: 'Hiker Difficulty'),
+                    const SizedBox(height: 8),
+                    _DifficultyBreakdownCard(trail: trail),
+                    const SizedBox(height: 22),
+                  ],
                   _SectionTitle(
                     label: 'Conditions and Safety',
                     trailing: _WeatherInsightsButton(
@@ -1072,7 +1115,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   final _elevationController = TextEditingController();
   final _coverImageController = TextEditingController();
   final List<_CheckpointDraft> _checkpoints = [];
-  String _difficulty = 'Moderate';
   String? _errorMessage;
   bool _hasFetchedRoute = false;
   bool _locationFailed = false;
@@ -1357,7 +1399,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         latitude: checkpoints.first.latitude,
         longitude: checkpoints.first.longitude,
         distanceKm: 0,
-        difficulty: _difficulty,
+        difficulty: '',
         estimatedDurationMinutes: 0,
         elevationGainMeters: 0,
         ratingAverage: 0,
@@ -1608,7 +1650,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         latitude: latitude,
         longitude: longitude,
         distanceKm: distance,
-        difficulty: _difficulty,
+        difficulty: '',
         estimatedDurationMinutes: duration,
         elevationGainMeters: elevation,
         ratingAverage: 0,
@@ -1847,24 +1889,6 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                   ],
                 ),
               ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _difficulty,
-              decoration: const InputDecoration(labelText: 'Difficulty'),
-              items: const [
-                DropdownMenuItem(value: 'Easy', child: Text('Easy')),
-                DropdownMenuItem(value: 'Moderate', child: Text('Moderate')),
-                DropdownMenuItem(value: 'Hard', child: Text('Hard')),
-                DropdownMenuItem(value: 'Expert', child: Text('Expert')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _difficulty = value;
-                  });
-                }
-              },
-            ),
             const SizedBox(height: 10),
             _InsetGroup(
               child: Padding(
@@ -3267,7 +3291,11 @@ class _TrailCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${trail.distanceLabel} - ${trail.difficulty} - Approx. ${trail.durationLabel}',
+                        [
+                          trail.distanceLabel,
+                          if (trail.hasCommunityDifficulty) trail.difficulty,
+                          'Approx. ${trail.durationLabel}',
+                        ].join(' - '),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -3409,6 +3437,23 @@ class _TrailDetailHero extends StatelessWidget {
                 ),
               ),
             ),
+            if (trail.coverImageCredits.isNotEmpty)
+              Positioned(
+                left: 12,
+                top: 12,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => _showTrailImageCredits(context, trail),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xAA000000),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 36),
+                    padding: const EdgeInsets.symmetric(horizontal: 11),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.info_outline_rounded, size: 16),
+                  label: const Text('Image credits'),
+                ),
+              ),
             Positioned(
               left: 14,
               right: 14,
@@ -3421,7 +3466,8 @@ class _TrailDetailHero extends StatelessWidget {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        _HeroPill(label: trail.difficulty),
+                        if (trail.hasCommunityDifficulty)
+                          _HeroPill(label: trail.difficulty),
                         if (trail.isVerifiedTrail)
                           const _HeroPill(label: 'Verified trail'),
                         _HeroPill(label: trail.ratingLabel),
@@ -3458,6 +3504,112 @@ class _TrailDetailHero extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+void _showTrailImageCredits(BuildContext context, Trail trail) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (context) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+        ),
+        child: ListView.separated(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          itemCount: trail.coverImageCredits.length + 1,
+          separatorBuilder: (_, index) => index == 0
+              ? const SizedBox(height: 8)
+              : const Divider(height: 28),
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Text(
+                'Image credits',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              );
+            }
+            final credit = trail.coverImageCredits[index - 1];
+            return _TrailImageCreditTile(index: index, credit: credit);
+          },
+        ),
+      ),
+    ),
+  );
+}
+
+class _TrailImageCreditTile extends StatelessWidget {
+  const _TrailImageCreditTile({required this.index, required this.credit});
+
+  final int index;
+  final TrailImageCredit credit;
+
+  Future<void> _openLink(BuildContext context, String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl);
+    final launched =
+        uri != null &&
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to open this credit link.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sourceLabel = credit.sourceName.trim().isEmpty
+        ? 'Image source'
+        : credit.sourceName.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Image $index · $sourceLabel',
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        if (credit.description.trim().isNotEmpty) ...[
+          const SizedBox(height: 5),
+          Text(credit.description.trim()),
+        ],
+        if (credit.author.trim().isNotEmpty) ...[
+          const SizedBox(height: 5),
+          Text('By ${credit.author.trim()}'),
+        ],
+        if (credit.licenseName.trim().isNotEmpty) ...[
+          const SizedBox(height: 3),
+          Text('License: ${credit.licenseName.trim()}'),
+        ],
+        if (credit.sourcePageUrl.trim().isNotEmpty ||
+            credit.licenseUrl.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (credit.sourcePageUrl.trim().isNotEmpty)
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      _openLink(context, credit.sourcePageUrl.trim()),
+                  icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                  label: const Text('View source'),
+                ),
+              if (credit.licenseUrl.trim().isNotEmpty)
+                OutlinedButton(
+                  onPressed: () => _openLink(context, credit.licenseUrl.trim()),
+                  child: const Text('View license'),
+                ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -3536,7 +3688,6 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   late final _countryController = TextEditingController(
     text: widget.trail.country,
   );
-  late String _difficulty = _normalizeTrailDifficulty(widget.trail.difficulty);
   late final List<_CheckpointDraft> _checkpoints = widget.trail.checkpoints
       .map(
         (c) => _CheckpointDraft(order: c.order, name: c.name)
@@ -3820,7 +3971,10 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       latitude: checkpoints.first.latitude,
       longitude: checkpoints.first.longitude,
       distanceKm: 0,
-      difficulty: _difficulty,
+      difficulty: widget.trail.difficulty,
+      easyDifficultyVotes: widget.trail.easyDifficultyVotes,
+      moderateDifficultyVotes: widget.trail.moderateDifficultyVotes,
+      hardDifficultyVotes: widget.trail.hardDifficultyVotes,
       estimatedDurationMinutes: 0,
       elevationGainMeters: 0,
       ratingAverage: widget.trail.ratingAverage,
@@ -3830,6 +3984,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       routeFilePath: widget.trail.routeFilePath,
       coverColorValue: widget.trail.coverColorValue,
       coverImageUrls: widget.trail.coverImageUrls,
+      coverImageCredits: widget.trail.coverImageCredits,
       checkpoints: checkpoints,
       weather: widget.trail.weather,
       hazards: widget.trail.hazards,
@@ -3937,7 +4092,6 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       country: _countryController.text.trim().isEmpty
           ? widget.trail.country
           : _countryController.text.trim(),
-      difficulty: _difficulty,
       checkpoints: models.length >= 3 && models.length <= 12
           ? models
           : widget.trail.checkpoints,
@@ -4045,24 +4199,6 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                 prefixIcon: Icon(Icons.public_rounded),
                 suffixIcon: Icon(Icons.expand_more_rounded),
               ),
-            ),
-            const SizedBox(height: 14),
-            const _SectionTitle(label: 'Difficulty'),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _difficulty,
-              decoration: const InputDecoration(labelText: 'Difficulty'),
-              items: const [
-                DropdownMenuItem(value: 'Easy', child: Text('Easy')),
-                DropdownMenuItem(value: 'Moderate', child: Text('Moderate')),
-                DropdownMenuItem(value: 'Hard', child: Text('Hard')),
-                DropdownMenuItem(value: 'Expert', child: Text('Expert')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _difficulty = value);
-                }
-              },
             ),
             const SizedBox(height: 20),
             _InsetGroup(
@@ -4481,109 +4617,29 @@ class _TrailCoverImages extends StatefulWidget {
 }
 
 class _TrailCoverImagesState extends State<_TrailCoverImages> {
-  final _pageController = PageController();
-  String? _autoImageUrl;
-  bool _loadingAuto = false;
   int _currentPage = 0;
-  int _autoImageRequest = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_fetchAutoImageIfNeeded());
-  }
-
-  @override
-  void didUpdateWidget(_TrailCoverImages old) {
-    super.didUpdateWidget(old);
-    final trailChanged =
-        old.trail.trailId != widget.trail.trailId ||
-        old.trail.name != widget.trail.name ||
-        old.trail.area != widget.trail.area ||
-        old.trail.state != widget.trail.state ||
-        old.trail.latitude != widget.trail.latitude ||
-        old.trail.longitude != widget.trail.longitude;
-    final imagesChanged = !listEquals(
-      old.trail.coverImageUrls,
-      widget.trail.coverImageUrls,
-    );
-    if (trailChanged || imagesChanged) {
-      _autoImageRequest++;
-      _autoImageUrl = null;
-      _loadingAuto = false;
-      _currentPage = 0;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _pageController.hasClients) {
-          _pageController.jumpToPage(0);
-        }
-      });
-      unawaited(_fetchAutoImageIfNeeded());
-    }
-  }
-
-  Future<void> _fetchAutoImageIfNeeded() async {
-    if (widget.trail.coverImageUrls.isNotEmpty) return;
-    if (_loadingAuto || _autoImageUrl != null) return;
-    _loadingAuto = true;
-    final request = ++_autoImageRequest;
-    try {
-      final url = await TrailCoverImageService.instance.imageUrlForTrail(
-        widget.trail,
-      );
-      if (!mounted || request != _autoImageRequest) return;
-      setState(() {
-        _autoImageUrl = url;
-        _loadingAuto = false;
-      });
-    } catch (_) {
-      if (!mounted || request != _autoImageRequest) return;
-      setState(() {
-        _loadingAuto = false;
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  List<String> get _allUrls {
-    final urls = widget.trail.coverImageUrls;
-    if (urls.isNotEmpty) {
-      return urls;
-    }
-    if (_autoImageUrl != null && _autoImageUrl!.isNotEmpty) {
-      return [_autoImageUrl!];
-    }
-    return const [];
-  }
 
   @override
   Widget build(BuildContext context) {
-    final urls = _allUrls;
+    final trail = widget.trail;
+    final urls = trail.coverImageUrls;
     if (urls.isEmpty) {
-      return _TrailCoverFallback(trail: widget.trail);
+      return _TrailCoverFallback(trail: trail);
     }
 
     return Stack(
       fit: StackFit.expand,
       children: [
         PageView(
-          controller: _pageController,
-          onPageChanged: (page) {
-            if (page != _currentPage) {
-              setState(() => _currentPage = page);
-            }
-          },
+          onPageChanged: (page) => setState(() => _currentPage = page),
           children: urls
               .map(
-                (url) => Image.network(
-                  url,
+                (url) => CachedTrailImage(
+                  imageUrl: url,
                   fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      _TrailCoverFallback(trail: widget.trail),
+                  semanticLabel: '${trail.name} trail cover',
+                  fallbackBuilder: (context) =>
+                      _TrailCoverFallback(trail: trail),
                 ),
               )
               .toList(),
@@ -5149,6 +5205,143 @@ class _HourlyForecastRow extends StatelessWidget {
   }
 }
 
+class _DifficultyBreakdownCard extends StatelessWidget {
+  const _DifficultyBreakdownCard({required this.trail});
+
+  final Trail trail;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = trail.difficultyRatingCount;
+    return _InsetGroup(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Community result: ${trail.difficulty}',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _TrailColors.textFor(context),
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Based on $total completed-hike ${total == 1 ? 'vote' : 'votes'}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _TrailColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.groups_2_rounded, color: _TrailColors.green),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _DifficultyBarRow(
+              label: 'Easy',
+              votes: trail.easyDifficultyVotes,
+              fraction: trail.difficultyVoteFraction('easy'),
+              color: const Color(0xFF34A853),
+            ),
+            const SizedBox(height: 14),
+            _DifficultyBarRow(
+              label: 'Moderate',
+              votes: trail.moderateDifficultyVotes,
+              fraction: trail.difficultyVoteFraction('moderate'),
+              color: const Color(0xFFF59E0B),
+            ),
+            const SizedBox(height: 14),
+            _DifficultyBarRow(
+              label: 'Hard',
+              votes: trail.hardDifficultyVotes,
+              fraction: trail.difficultyVoteFraction('hard'),
+              color: const Color(0xFFE05252),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DifficultyBarRow extends StatelessWidget {
+  const _DifficultyBarRow({
+    required this.label,
+    required this.votes,
+    required this.fraction,
+    required this.color,
+  });
+
+  final String label;
+  final int votes;
+  final double fraction;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final percentage = (fraction * 100).round();
+    return Semantics(
+      label: '$label, $percentage percent, $votes votes',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 76,
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: _TrailColors.textFor(context),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: fraction.clamp(0, 1),
+                    minHeight: 10,
+                    color: color,
+                    backgroundColor: color.withValues(alpha: 0.14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 76,
+                child: Text(
+                  '$percentage% · $votes',
+                  textAlign: TextAlign.end,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: _TrailColors.secondaryTextFor(context),
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _WeatherCard extends StatelessWidget {
   const _WeatherCard({required this.trail});
 
@@ -5371,6 +5564,54 @@ class _SectionTitle extends StatelessWidget {
           if (trailing != null) const Spacer(),
           if (trailing != null) trailing!,
         ],
+      ),
+    );
+  }
+}
+
+class _RouteReferenceButton extends StatelessWidget {
+  const _RouteReferenceButton({
+    required this.referenceName,
+    required this.referenceUrl,
+  });
+
+  final String referenceName;
+  final String referenceUrl;
+
+  Future<void> _openReference(BuildContext context) async {
+    final uri = Uri.tryParse(referenceUrl.trim());
+    final opened =
+        uri != null &&
+        (uri.scheme == 'https' || uri.scheme == 'http') &&
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Unable to open the external route reference.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tooltip = referenceName.trim().isEmpty
+        ? 'View route reference on AllTrails'
+        : 'View $referenceName on AllTrails';
+    return Tooltip(
+      message: tooltip,
+      child: TextButton.icon(
+        onPressed: () => _openReference(context),
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        ),
+        icon: const Icon(Icons.open_in_new_rounded, size: 15),
+        label: const Text('AllTrails'),
       ),
     );
   }

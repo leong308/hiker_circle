@@ -794,7 +794,7 @@ class HikeSessionDraft {
       safetyCheckInInterval: const Duration(minutes: 30),
       locationRecordingInterval: defaultLocationRecordingInterval,
       emergencyContactNames: const [],
-      shareLiveLocation: true,
+      shareLiveLocation: false,
       fallDetectionEnabled: true,
       fallDetectionSettings: const FallDetectionSettings(
         sensorSensitivity: 5,

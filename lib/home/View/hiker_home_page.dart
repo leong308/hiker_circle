@@ -131,6 +131,9 @@ class _HikerHomePageState extends State<HikerHomePage>
   bool _isPinLocationBusy = false;
   bool _isEndingActiveHike = false;
   bool _liveLocationActivatedForActiveHike = false;
+  Future<void> _liveLocationSyncQueue = Future<void>.value();
+  final Set<String> _liveLocationNotificationCompletedSessionIds = <String>{};
+  final Set<String> _liveLocationNotificationStatusShownSessionIds = <String>{};
   bool isFallStillnessDialogVisible = false;
   bool isFallStillnessLocalAlarmActive = false;
   bool fallStillnessCountdownWasBackgrounded = false;
@@ -235,6 +238,12 @@ class _HikerHomePageState extends State<HikerHomePage>
     _activeHikeRestoreFuture = _restoreActiveHikeSession();
     _deepLinkChannel.setMethodCallHandler(_handleDeepLinkMethodCall);
     unawaited(LocationSnapshotService.instance.start());
+    unawaited(
+      LiveLocationSharingService.instance.loadExisting(
+        phoneNumber: widget.session.phoneNumber,
+        firebaseBootstrapResult: widget.firebaseBootstrapResult,
+      ),
+    );
     unawaited(_refreshBatteryLevel());
     batteryLevelTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       unawaited(_refreshBatteryLevel());
@@ -700,7 +709,12 @@ class _HikerHomePageState extends State<HikerHomePage>
         }
       }
     }
-    if (LiveLocationSharingService.instance.isActive) {
+    if (currentHike != null && currentHike.draft.shareLiveLocation) {
+      await _runReconnectStep(
+        'live location sharing',
+        () => _syncLiveLocationForActiveHike(currentHike),
+      );
+    } else if (LiveLocationSharingService.instance.isActive) {
       await _runReconnectStep(
         'live location',
         LiveLocationSharingService.instance.publishLatest,
@@ -2375,6 +2389,8 @@ class _HikerHomePageState extends State<HikerHomePage>
           emergencyContactNames: emergencyContacts
               .map((contact) => contact.name)
               .toList(),
+          initialShareLiveLocation:
+              LiveLocationSharingService.instance.autoShareOnHikeStart,
           onScheduled: _cacheConfirmedScheduledDraft,
           onStartNow: _startInstantHikeFromWizard,
         ),
@@ -3381,7 +3397,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     final safety = participant?.safetySettings ?? const <String, dynamic>{};
     return draft.copyWith(
-      shareLiveLocation: true,
+      shareLiveLocation: draft.shareLiveLocation,
       pathDeviationEnabled: true,
       fallDetectionEnabled: true,
       fallDetectionSettings: FallDetectionSettings(
@@ -3541,7 +3557,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           .firstOrNull;
       final safety = participant?.safetySettings ?? const <String, dynamic>{};
       final preparedDraft = draft.copyWith(
-        shareLiveLocation: true,
+        shareLiveLocation: draft.shareLiveLocation,
         pathDeviationEnabled: true,
         fallDetectionEnabled: true,
         fallDetectionSettings: FallDetectionSettings(
@@ -4247,6 +4263,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           sessionId: completedHike.sessionId,
           trailId: completedHike.trail.trailId,
           rating: feedback.rating,
+          difficulty: feedback.difficulty,
           comment: feedback.comment,
         ),
       ),
@@ -4256,7 +4273,9 @@ class _HikerHomePageState extends State<HikerHomePage>
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
-          content: Text('Thanks — your trail rating is now included.'),
+          content: Text(
+            'Thanks — your rating and difficulty vote are now included.',
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -5127,14 +5146,15 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<bool> _ensureBackgroundSafetyReady(HikeSessionDraft draft) async {
-    if (!draft.fallDetectionEnabled) return true;
+    if (!draft.fallDetectionEnabled && !draft.shareLiveLocation) return true;
     var status = await _activeHikeLiveStatusService.nativeSafetyStatus();
     if (!mounted || !status.supported) return true;
 
     if (status.platform == 'ios') {
       if (!status.backgroundLocationGranted ||
-          status.notificationAuthorizationStatus == 'not_determined' ||
-          status.motionAuthorizationStatus == 'not_determined') {
+          (draft.fallDetectionEnabled &&
+              (status.notificationAuthorizationStatus == 'not_determined' ||
+                  status.motionAuthorizationStatus == 'not_determined'))) {
         await _activeHikeLiveStatusService.requestIosSafetyPermissions();
         status = await _activeHikeLiveStatusService.nativeSafetyStatus();
         if (!mounted) return false;
@@ -5144,14 +5164,16 @@ class _HikerHomePageState extends State<HikerHomePage>
           status.fineLocationGranted && status.backgroundLocationGranted;
       final iosReady =
           locationReady &&
-          status.notificationsAuthorized &&
-          status.motionGranted;
+          (!draft.fallDetectionEnabled ||
+              (status.notificationsAuthorized && status.motionGranted));
       if (iosReady) return true;
 
       final missing = <String>[
         if (!locationReady) 'Location: Always',
-        if (!status.notificationsAuthorized) 'Notifications: Allow',
-        if (!status.motionGranted) 'Motion & Fitness: On',
+        if (draft.fallDetectionEnabled && !status.notificationsAuthorized)
+          'Notifications: Allow',
+        if (draft.fallDetectionEnabled && !status.motionGranted)
+          'Motion & Fitness: On',
       ];
       final openSettings =
           await showCupertinoDialog<bool>(
@@ -5187,6 +5209,9 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     final locationReady =
         status.fineLocationGranted && status.backgroundLocationGranted;
+    if (locationReady && !draft.fallDetectionEnabled) {
+      return true;
+    }
     if (locationReady &&
         status.fullScreenIntentGranted &&
         status.overlayGranted) {
@@ -5319,6 +5344,17 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _syncLiveLocationForActiveHike(ActiveHikeSession? hike) async {
+    _liveLocationSyncQueue = _liveLocationSyncQueue
+        .then((_) => _performLiveLocationSyncForActiveHike(hike))
+        .catchError((Object error, StackTrace stackTrace) {
+          debugPrint('Unable to synchronize live hike location: $error');
+        });
+    return _liveLocationSyncQueue;
+  }
+
+  Future<void> _performLiveLocationSyncForActiveHike(
+    ActiveHikeSession? hike,
+  ) async {
     final service = LiveLocationSharingService.instance;
     if (hike == null || !hike.draft.shareLiveLocation) {
       if (_liveLocationActivatedForActiveHike) {
@@ -5340,7 +5376,65 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     if (activeHike?.sessionId == hike.sessionId && service.isActive) {
       _liveLocationActivatedForActiveHike = true;
-      unawaited(service.publishLatest());
+      await service.publishLatest();
+      _syncActiveHikeLiveStatus(hike, force: true);
+      final share = service.share;
+      if (share == null ||
+          _liveLocationNotificationCompletedSessionIds.contains(
+            hike.sessionId,
+          )) {
+        return;
+      }
+      try {
+        final result = await hikerCircleRepository
+            .notifyEmergencyContactsOfLiveLocation(
+              activeHikeSessionId: hike.sessionId,
+              shareId: share.id,
+            );
+        if (!result.shouldRetry) {
+          _liveLocationNotificationCompletedSessionIds.add(hike.sessionId);
+        }
+        if (!mounted ||
+            activeHike?.sessionId != hike.sessionId ||
+            !_liveLocationNotificationStatusShownSessionIds.add(
+              hike.sessionId,
+            )) {
+          return;
+        }
+        final message = result.contactCount == 0
+            ? 'Live location is active, but no SOS contacts are saved.'
+            : result.sentCount == result.contactCount
+            ? 'Live location was sent to all ${result.contactCount} SOS contacts.'
+            : result.uncertainCount > 0
+            ? 'Live location is active, but delivery to ${result.uncertainCount} SOS contact(s) could not be confirmed.'
+            : 'Live location is active. ${result.sentCount} of ${result.contactCount} SOS contacts were notified; remaining deliveries will retry when connected.';
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(message),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      } on HikerCircleFirebaseRepositoryException catch (error) {
+        if (!mounted ||
+            activeHike?.sessionId != hike.sessionId ||
+            !_liveLocationNotificationStatusShownSessionIds.add(
+              hike.sessionId,
+            )) {
+          return;
+        }
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                'Hike tracking and the live link are active, but SOS contacts were not notified yet. ${error.message}',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
     }
   }
 

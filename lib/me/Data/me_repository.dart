@@ -81,6 +81,11 @@ class MeRepository {
             title: 'Help center',
             subtitle: 'Support, guides, and app information',
           ),
+          MeActionItem(
+            icon: Icons.privacy_tip_rounded,
+            title: 'Privacy Policy',
+            subtitle: 'How HikerCircle collects, uses, and protects data',
+          ),
         ],
       ),
     ];

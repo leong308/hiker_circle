@@ -28,6 +28,9 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
@@ -61,6 +64,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         private const val KEY_REST_MILLIS = "rest_millis"
         private const val KEY_RESPONSE_MILLIS = "response_millis"
         private const val KEY_SENSITIVITY = "sensitivity"
+        private const val KEY_FALL_DETECTION_ENABLED = "fall_detection_enabled"
         private const val KEY_LAST_MOTION_WALL = "last_motion_wall"
         private const val KEY_EVENT_ID = "event_id"
         private const val KEY_EVENT_KIND = "event_kind"
@@ -92,6 +96,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 putExtra(KEY_REST_MILLIS, config.longestRestMillis)
                 putExtra(KEY_RESPONSE_MILLIS, config.responseMillis)
                 putExtra(KEY_SENSITIVITY, config.sensitivity)
+                putExtra(KEY_FALL_DETECTION_ENABLED, config.fallDetectionEnabled)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -171,6 +176,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         val longestRestMillis: Long,
         val responseMillis: Long,
         val sensitivity: Double,
+        val fallDetectionEnabled: Boolean,
     )
 
     private enum class DetectionState {
@@ -208,6 +214,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     private var pendingSpeechMessage: String? = null
     private lateinit var physicalAlarm: NativeSosAlarmController
     private var wasDeviceLockedDuringWarning = false
+    private var lastFirebasePublishAtMillis = 0L
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -298,6 +305,13 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             } else {
                 prefs.getFloat(KEY_SENSITIVITY, 5f).toDouble()
             }).coerceIn(1.0, 10.0),
+            fallDetectionEnabled = if (
+                intent?.hasExtra(KEY_FALL_DETECTION_ENABLED) == true
+            ) {
+                intent.getBooleanExtra(KEY_FALL_DETECTION_ENABLED, true)
+            } else {
+                prefs.getBoolean(KEY_FALL_DETECTION_ENABLED, true)
+            },
         )
     }
 
@@ -311,6 +325,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             .putLong(KEY_REST_MILLIS, value.longestRestMillis)
             .putLong(KEY_RESPONSE_MILLIS, value.responseMillis)
             .putFloat(KEY_SENSITIVITY, value.sensitivity.toFloat())
+            .putBoolean(KEY_FALL_DETECTION_ENABLED, value.fallDetectionEnabled)
         if (existingSession != value.sessionId) {
             editor.putLong(KEY_LAST_MOTION_WALL, System.currentTimeMillis())
             clearPendingEvent(editor)
@@ -327,10 +342,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         restoreMotionClock()
         restorePendingState()
         acquireWakeLock()
-        registerSensors()
+        if (config?.fallDetectionEnabled == true) registerSensors()
         registerLocationUpdates()
         handler.removeCallbacks(ticker)
-        handler.post(ticker)
+        if (config?.fallDetectionEnabled == true) handler.post(ticker)
     }
 
     private fun stopMonitoring() {
@@ -502,6 +517,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             .putString(KEY_LAST_LONGITUDE, location.longitude.toString())
             .putString(KEY_LAST_ACCURACY, accuracy.toString())
             .apply()
+        publishLocationTelemetry(location, accuracy)
         val reference = referenceLocation
         if (reference == null) {
             referenceLocation = Location(location)
@@ -525,8 +541,43 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         }
     }
 
+    private fun publishLocationTelemetry(location: Location, accuracy: Double) {
+        val settings = config ?: return
+        val nowMillis = System.currentTimeMillis()
+        if (nowMillis - lastFirebasePublishAtMillis < LOCATION_INTERVAL_MILLIS) return
+        lastFirebasePublishAtMillis = nowMillis
+        val capturedAtMillis = if (location.time > 0L) location.time else nowMillis
+        val capturedAt = java.time.Instant.ofEpochMilli(capturedAtMillis).toString()
+        val now = java.time.Instant.ofEpochMilli(nowMillis).toString()
+        val latestLocation = mapOf(
+            "latitude" to location.latitude,
+            "longitude" to location.longitude,
+            "accuracyMeters" to accuracy,
+            "capturedAtLocal" to capturedAt,
+            "source" to "android_native_background_location",
+        )
+        FirebaseFirestore.getInstance()
+            .collection("hikeSessions")
+            .document(settings.sessionId)
+            .set(
+                mapOf(
+                    "monitoringHeartbeatAt" to FieldValue.serverTimestamp(),
+                    "monitoringHeartbeatAtLocal" to now,
+                    "monitoringLifecycleState" to "android_native_monitoring",
+                    "monitoringExpected" to true,
+                    "latestLocation" to latestLocation,
+                    "latestLocationUpdatedAt" to FieldValue.serverTimestamp(),
+                    "latestLocationUpdatedAtLocal" to capturedAt,
+                    "updatedAt" to FieldValue.serverTimestamp(),
+                    "updatedAtLocal" to now,
+                ),
+                SetOptions.merge(),
+            )
+    }
+
     private fun evaluateTimers() {
         val settings = config ?: return
+        if (!settings.fallDetectionEnabled) return
         val now = SystemClock.elapsedRealtime()
         when (state) {
             DetectionState.NORMAL -> {

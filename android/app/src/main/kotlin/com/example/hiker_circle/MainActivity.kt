@@ -244,7 +244,7 @@ class MainActivity : FlutterActivity() {
                         )
                     } else {
                         startOrUpdateActiveHikeLiveStatus(status)
-                        if (status.fallDetectionEnabled) {
+                        if (status.fallDetectionEnabled || status.shareLiveLocation) {
                             HikeSafetyMonitorService.startOrUpdate(
                                 this,
                                 HikeSafetyMonitorService.SafetyConfig(
@@ -253,6 +253,8 @@ class MainActivity : FlutterActivity() {
                                     longestRestMillis = status.longestRestMillis,
                                     responseMillis = status.fallResponseMillis,
                                     sensitivity = status.sensorSensitivity,
+                                    fallDetectionEnabled =
+                                        status.fallDetectionEnabled,
                                 ),
                             )
                         } else {
@@ -981,6 +983,7 @@ class MainActivity : FlutterActivity() {
         val queuedUpdates: Int,
         val batteryLevel: Int,
         val fallDetectionEnabled: Boolean,
+        val shareLiveLocation: Boolean,
         val sensorSensitivity: Double,
         val fallResponseMillis: Long,
         val longestRestMillis: Long,
@@ -1004,6 +1007,8 @@ class MainActivity : FlutterActivity() {
                     batteryLevel = (data["batteryLevel"] as? Number)?.toInt() ?: 0,
                     fallDetectionEnabled = data["fallDetectionEnabled"] as? Boolean
                         ?: true,
+                    shareLiveLocation = data["shareLiveLocation"] as? Boolean
+                        ?: false,
                     sensorSensitivity = (data["sensorSensitivity"] as? Number)
                         ?.toDouble()?.coerceIn(1.0, 10.0) ?: 5.0,
                     fallResponseMillis = (data["fallResponseMillis"] as? Number)

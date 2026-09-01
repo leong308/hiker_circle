@@ -195,6 +195,7 @@ class HikeHistoryDetail {
     required this.memberTracks,
     required this.insights,
     required this.ratingStars,
+    required this.ratingDifficulty,
     required this.ratingComment,
     required this.sourceUpcomingHikeId,
     required this.teamHikeSessionId,
@@ -288,6 +289,7 @@ class HikeHistoryDetail {
           ? List<String>.from(data['insights'])
           : const [],
       ratingStars: _integer(rating['stars']).clamp(0, 5),
+      ratingDifficulty: _text(rating['difficulty']),
       ratingComment: _text(rating['comment']),
       sourceUpcomingHikeId: _text(source['sourceUpcomingHikeId']),
       teamHikeSessionId: _text(source['teamHikeSessionId']),
@@ -334,6 +336,7 @@ class HikeHistoryDetail {
   final List<HikeHistoryMemberTrack> memberTracks;
   final List<String> insights;
   final int ratingStars;
+  final String ratingDifficulty;
   final String ratingComment;
   final String sourceUpcomingHikeId;
   final String teamHikeSessionId;

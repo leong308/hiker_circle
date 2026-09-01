@@ -4,7 +4,19 @@
 // Seeds verified, route-backed Malaysian trails without overwriting a trail
 // that already has the same name. Run without --apply for a read-only preview.
 
+const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
+
+const { trails } = require('./malaysia_trail_manifest');
+const {
+  assemblePrimaryRelation,
+  haversine,
+  mirrorOutAndBack,
+  pointsFromGeoJsonGeometry,
+  shortestPathInRelation,
+  validateGeometry,
+} = require('./lib/trail_route_geometry');
 
 const projectId = 'hiker-circle';
 const applyChanges = process.argv.includes('--apply');
@@ -13,29 +25,6 @@ const firestoreRoot =
   '/databases/(default)/documents';
 const firestoreDocumentRoot =
   `projects/${projectId}/databases/(default)/documents`;
-
-const trails = [
-  { relationId: 3112158, name: 'Mount Kinabalu Summit Trail', area: 'Kundasang', state: 'Sabah', distanceKm: 8.5, duration: 720, elevation: 2300, difficulty: 'hard' },
-  { relationId: 17919247, name: 'Gunung Tahan Trans Trail', area: 'Taman Negara', state: 'Pahang', distanceKm: 56.5, duration: 3000, elevation: 2400, difficulty: 'hard' },
-  { relationId: 19008365, name: 'Gunung Irau Mossy Forest Trail', area: 'Brinchang', state: 'Pahang', distanceKm: 5.6, duration: 240, elevation: 420, difficulty: 'hard' },
-  { relationId: 17921986, name: 'Chemerong-Berembun-Lansir Trail', area: 'Hutan Lipur Chemerong', state: 'Terengganu', distanceKm: 15, duration: 720, elevation: 1200, difficulty: 'hard' },
-  { relationId: 18027800, name: 'Gunung Baling Trail', area: 'Baling', state: 'Kedah', distanceKm: 4, duration: 240, elevation: 480, difficulty: 'hard' },
-  { relationId: 11758413, name: 'Gunung Jasar Cameron Valley Trail', area: 'Tanah Rata', state: 'Pahang', distanceKm: 5, duration: 210, elevation: 470, difficulty: 'moderate' },
-  { relationId: 11758337, name: 'Gunung Berembun via Trail 6', area: 'Tanah Rata', state: 'Pahang', distanceKm: 5.8, duration: 240, elevation: 520, difficulty: 'moderate' },
-  { relationId: 19353291, name: 'Bukit Kiara Main Loop', area: 'Taman Tun Dr Ismail', state: 'Kuala Lumpur', distanceKm: 4, duration: 90, elevation: 180, difficulty: 'moderate' },
-  { relationId: 19523909, name: 'The Habitat Penang Hill Route', area: 'Air Itam', state: 'Penang', distanceKm: 1.4, duration: 75, elevation: 120, difficulty: 'easy' },
-  { relationId: 20372063, name: 'Bukit Kutu via Kampung Pertak', area: 'Kuala Kubu Bharu', state: 'Selangor', distanceKm: 10, duration: 360, elevation: 1050, difficulty: 'hard' },
-  { relationId: 20376847, name: 'Gunung Rajah Trail', area: 'Bentong', state: 'Pahang', distanceKm: 23.2, duration: 600, elevation: 1400, difficulty: 'hard' },
-  { relationId: 20378122, name: 'Bukit Batu Pahat Loop', area: 'Kuala Kubu Bharu', state: 'Selangor', distanceKm: 5, duration: 240, elevation: 500, difficulty: 'moderate' },
-  { relationId: 20410216, name: 'Gunung Nuang via Janda Baik', area: 'Janda Baik', state: 'Pahang', distanceKm: 12, duration: 480, elevation: 1000, difficulty: 'hard' },
-  { relationId: 21013108, name: 'Chiling Waterfall Trail', area: 'Kuala Kubu Bharu', state: 'Selangor', distanceKm: 4, duration: 180, elevation: 160, difficulty: 'moderate' },
-  { relationId: 19203652, name: 'Bukit Ketumbar Loop', area: 'Cheras', state: 'Kuala Lumpur', distanceKm: 2, duration: 90, elevation: 250, difficulty: 'moderate' },
-  { relationId: 17995342, name: 'Bukit Besar Round Trip', area: 'Kuala Terengganu', state: 'Terengganu', distanceKm: 4.5, duration: 180, elevation: 300, difficulty: 'moderate' },
-  { relationId: 20410215, name: 'Bukit Repin via Janda Baik', area: 'Janda Baik', state: 'Pahang', distanceKm: 8.4, duration: 300, elevation: 700, difficulty: 'hard' },
-  { relationId: 20623409, name: 'Pisang Falls Loop', area: 'Gombak', state: 'Selangor', distanceKm: 3.1, duration: 150, elevation: 250, difficulty: 'moderate' },
-  { relationId: 20672000, name: 'Bukit Jugra Hiking Trail', area: 'Banting', state: 'Selangor', distanceKm: 3.4, duration: 120, elevation: 220, difficulty: 'moderate' },
-  { relationId: 17941450, name: 'Gunung Panti Trail', area: 'Kota Tinggi', state: 'Johor', distanceKm: 16, duration: 480, elevation: 700, difficulty: 'hard' },
-];
 
 const validStates = new Set([
   'Johor', 'Kedah', 'Kelantan', 'Malacca', 'Negeri Sembilan', 'Pahang',
@@ -59,43 +48,6 @@ function normalizedName(value) {
 
 function slug(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
-function haversine(a, b) {
-  const radians = (degrees) => degrees * Math.PI / 180;
-  const dLat = radians(b.lat - a.lat);
-  const dLon = radians(b.lon - a.lon);
-  const lat1 = radians(a.lat);
-  const lat2 = radians(b.lat);
-  const sinLat = Math.sin(dLat / 2);
-  const sinLon = Math.sin(dLon / 2);
-  const value = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
-  return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
-}
-
-function routePoints(relation, waysById) {
-  const result = [];
-  for (const member of relation.members || []) {
-    if (member.type !== 'way') continue;
-    const way = waysById.get(member.ref);
-    let geometry = (way && way.geometry || [])
-      .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon))
-      .map((point) => ({ lat: point.lat, lon: point.lon }));
-    if (geometry.length < 2) continue;
-    if (member.role === 'backward' || member.role === 'reverse') {
-      geometry = geometry.reverse();
-    } else if (result.length > 0) {
-      const tail = result[result.length - 1];
-      if (haversine(tail, geometry[geometry.length - 1]) < haversine(tail, geometry[0])) {
-        geometry = geometry.reverse();
-      }
-    }
-    for (const point of geometry) {
-      const previous = result[result.length - 1];
-      if (!previous || haversine(previous, point) > 0.5) result.push(point);
-    }
-  }
-  return result;
 }
 
 function sampleRoute(points, count) {
@@ -200,9 +152,11 @@ function fromFirestoreValue(value) {
 }
 
 async function firebaseAccessToken() {
-  const firebaseToolsRoot = path.join(
-    process.env.APPDATA || '', 'npm', 'node_modules', 'firebase-tools', 'lib',
-  );
+  const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const globalNodeModules = execFileSync(npmExecutable, ['root', '-g'], {
+    encoding: 'utf8',
+  }).trim();
+  const firebaseToolsRoot = path.join(globalNodeModules, 'firebase-tools', 'lib');
   const auth = require(path.join(firebaseToolsRoot, 'auth.js'));
   const scopes = require(path.join(firebaseToolsRoot, 'scopes.js'));
   const account = auth.getGlobalDefaultAccount();
@@ -247,52 +201,115 @@ async function existingTrails(token) {
 }
 
 async function fetchRelation(relationId) {
-  const query = `[out:json][timeout:90];relation(${relationId});out body;>;out geom;`;
-  const endpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.private.coffee/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-  ];
+  const url = `https://api.openstreetmap.org/api/0.6/relation/${relationId}/full.json`;
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    for (const endpoint of endpoints) {
-      try {
-        const url = new URL(endpoint);
-        url.searchParams.set('data', query);
-        const response = await fetch(url, {
-          headers: { 'User-Agent': 'HikerCircleTrailSeeder/1.0' },
-          signal: AbortSignal.timeout(90000),
-        });
-        if (!response.ok) throw new Error(`Overpass ${response.status}`);
-        return await response.json();
-      } catch (error) {
-        lastError = error;
-      }
+    try {
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'HikerCircleTrailSeeder/2.0' },
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok) throw new Error(`OpenStreetMap ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
   }
   throw lastError;
 }
 
-async function buildTrail(definition) {
+function dotenvValue(key) {
+  if (process.env[key] && process.env[key].trim()) return process.env[key].trim();
+  const dotenvPath = path.join(__dirname, '..', '.env');
+  if (!fs.existsSync(dotenvPath)) return '';
+  const prefix = `${key}=`;
+  const line = fs.readFileSync(dotenvPath, 'utf8').split(/\r?\n/)
+    .find((candidate) => candidate.startsWith(prefix));
+  if (!line) return '';
+  return line.slice(prefix.length).trim().replace(/^(['"])(.*)\1$/, '$2');
+}
+
+async function fetchGeoapifyHike(definition) {
+  const apiKey = dotenvValue('GEOAPIFY_API_KEY');
+  if (!apiKey) {
+    throw new Error('GEOAPIFY_API_KEY is required for the Bukit Besar hiking repair.');
+  }
+  const url = new URL('https://api.geoapify.com/v1/routing');
+  url.searchParams.set(
+    'waypoints',
+    definition.routeWaypoints.map((point) => `${point.lat},${point.lon}`).join('|'),
+  );
+  url.searchParams.set('mode', 'hike');
+  url.searchParams.set('format', 'geojson');
+  url.searchParams.set('details', 'elevation');
+  url.searchParams.set('apiKey', apiKey);
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'HikerCircleTrailSeeder/2.0' },
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!response.ok) {
+    throw new Error(`Geoapify hiking route ${response.status}: ${await response.text()}`);
+  }
+  const data = await response.json();
+  const feature = data.features && data.features[0];
+  if (!feature) throw new Error('Geoapify returned no hiking route for Bukit Besar.');
+  return {
+    points: pointsFromGeoJsonGeometry(feature.geometry),
+    providerDistanceMeters: feature.properties && feature.properties.distance,
+  };
+}
+
+async function buildRouteGeometry(definition) {
+  if (definition.routeMode === 'geoapify-hike') {
+    const result = await fetchGeoapifyHike(definition);
+    return {
+      ...result,
+      dataSource: 'Geoapify hike routing over OpenStreetMap, verified against AllTrails',
+      dataSourceUrl:
+        'https://www.openstreetmap.org/?mlat=5.3070715&mlon=103.1349390#map=16/5.3070715/103.1349390',
+      routeProvider: 'geoapify-hike',
+      excludedRoles: [],
+    };
+  }
+
   const data = await fetchRelation(definition.relationId);
-  const relation = (data.elements || []).find(
-    (element) => element.type === 'relation' && element.id === definition.relationId,
-  );
-  if (!relation) throw new Error(`OSM relation ${definition.relationId} was not found.`);
-  const ways = new Map(
-    (data.elements || []).filter((element) => element.type === 'way')
-      .map((way) => [way.id, way]),
-  );
-  const points = routePoints(relation, ways);
-  if (points.length < 3) throw new Error(`OSM route geometry is incomplete for ${definition.name}.`);
+  const result = definition.routeMode === 'osm-shortest-path'
+    ? shortestPathInRelation(
+      data,
+      definition.relationId,
+      definition.routeStart,
+      definition.routeEnd,
+      { maxSnapMeters: 350 },
+    )
+    : assemblePrimaryRelation(data, definition.relationId, {
+      startHint: definition.routeStart,
+    });
+  const points = definition.routeShape === 'out-and-back'
+    ? mirrorOutAndBack(result.points)
+    : result.points;
+  return {
+    ...result,
+    points,
+    dataSource: 'OpenStreetMap hiking relation, verified against AllTrails',
+    dataSourceUrl: `https://www.openstreetmap.org/relation/${definition.relationId}`,
+    routeProvider: definition.routeMode || 'osm-hiking-relation',
+  };
+}
+
+async function buildTrail(definition) {
+  const route = await buildRouteGeometry(definition);
+  const points = route.points;
+  const audit = validateGeometry(points, definition.routeShape);
   const checkpointPoints = sampleRoute(points, 7);
   const now = new Date().toISOString();
   const checkpoints = checkpointPoints.map((point, index) => ({
     name: index === 0
       ? 'Trailhead'
       : index === checkpointPoints.length - 1
-        ? 'End point'
+        ? definition.routeShape === 'point-to-point'
+          ? 'End point'
+          : 'Return to trailhead'
         : `Waypoint ${index}`,
     latitude: point.lat,
     longitude: point.lon,
@@ -307,7 +324,7 @@ async function buildTrail(definition) {
     country: 'Malaysia',
     latitude: checkpoints[0].latitude,
     longitude: checkpoints[0].longitude,
-    distanceKm: definition.distanceKm,
+    distanceKm: Math.round(audit.distanceMeters / 100) / 10,
     difficulty: definition.difficulty,
     estimatedDurationMinutes: definition.duration,
     elevationGainMeters: definition.elevation,
@@ -329,14 +346,28 @@ async function buildTrail(definition) {
     },
     hazards: [],
     routeEncodedPolyline: encodePolyline(points),
-    dataSource: 'OpenStreetMap hiking relation',
-    dataSourceUrl: `https://www.openstreetmap.org/relation/${definition.relationId}`,
-    osmRelationId: String(definition.relationId),
+    dataSource: route.dataSource,
+    dataSourceUrl: route.dataSourceUrl,
+    ...(definition.relationId ? { osmRelationId: String(definition.relationId) } : {}),
+    routeProvider: route.routeProvider,
+    routeActivity: 'hiking',
+    routeShape: definition.routeShape,
+    routeReferenceName: definition.allTrailsName,
+    routeReferenceUrl: definition.allTrailsUrl,
+    ...(definition.referenceNote ? { routeReferenceNote: definition.referenceNote } : {}),
+    routeVerifiedAtLocal: now,
     seededAtLocal: now,
     createdAtLocal: now,
     updatedAtLocal: now,
   };
   validateTrail(trail);
+  Object.defineProperty(trail, 'routeAudit', {
+    enumerable: false,
+    value: {
+      ...audit,
+      excludedRoles: route.excludedRoles || [],
+    },
+  });
   return trail;
 }
 
@@ -373,7 +404,14 @@ async function main() {
       continue;
     }
     console.log(`[${index + 1}/${trails.length}] Fetch route: ${definition.name}`);
-    built.push(await buildTrail(definition));
+    const trail = await buildTrail(definition);
+    const audit = trail.routeAudit;
+    console.log(
+      `  ${trail.distanceKm.toFixed(1)} km, ${audit.maxSegmentMeters.toFixed(0)}m max gap, ` +
+      `${audit.endpointGapMeters.toFixed(0)}m endpoint gap, ` +
+      `${audit.excludedRoles.length} non-primary member(s) excluded`,
+    );
+    built.push(trail);
   }
 
   console.log(
@@ -405,7 +443,23 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(error && error.stack || error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error && error.stack || error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  buildTrail,
+  existingTrails,
+  firebaseAccessToken,
+  firestoreDocumentRoot,
+  firestoreFields,
+  firestoreRequest,
+  firestoreRoot,
+  fromFirestoreValue,
+  normalizedName,
+  projectId,
+  slug,
+};

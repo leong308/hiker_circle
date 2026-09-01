@@ -75,6 +75,7 @@ void main() {
       scrollable: find.byType(Scrollable).last,
     );
     expect(find.text('5 / 5 stars'), findsOneWidget);
+    expect(find.text('Moderate'), findsWidgets);
     expect(find.text('Excellent route.'), findsOneWidget);
   });
 
@@ -226,7 +227,11 @@ final _detailMap = <String, dynamic>{
   ],
   'telemetryPointCount': 80,
   'insights': ['Good tracking coverage.'],
-  'rating': {'stars': 5, 'comment': 'Excellent route.'},
+  'rating': {
+    'stars': 5,
+    'difficulty': 'moderate',
+    'comment': 'Excellent route.',
+  },
   'source': {
     'sourceUpcomingHikeId': '',
     'teamHikeSessionId': '',

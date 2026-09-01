@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  trailDifficultyAggregate,
   trailRatingAggregate,
+  validDifficultyVote,
   validRating,
 } = require('../trail_rating_helpers');
 
@@ -14,6 +16,58 @@ test('rating validation accepts only whole stars from one to five', () => {
   assert.equal(validRating(3.5), false);
   assert.equal(validRating(0), false);
   assert.equal(validRating(6), false);
+});
+
+test('difficulty accepts only the three hiker-facing levels', () => {
+  assert.equal(validDifficultyVote('easy'), true);
+  assert.equal(validDifficultyVote('Moderate'), true);
+  assert.equal(validDifficultyVote('hard'), true);
+  assert.equal(validDifficultyVote('expert'), false);
+  assert.equal(validDifficultyVote(''), false);
+});
+
+test('first difficulty vote creates the community aggregate', () => {
+  assert.deepEqual(
+    trailDifficultyAggregate({}, null, 'hard'),
+    {
+      difficulty: 'hard',
+      difficultyVoteCounts: { easy: 0, moderate: 0, hard: 1 },
+      difficultyRatingCount: 1,
+      difficultyScoreAverage: 3,
+    }
+  );
+});
+
+test('community difficulty is derived from the weighted hiker votes', () => {
+  assert.deepEqual(
+    trailDifficultyAggregate(
+      { difficultyVoteCounts: { easy: 2, moderate: 3, hard: 1 } },
+      null,
+      'hard'
+    ),
+    {
+      difficulty: 'moderate',
+      difficultyVoteCounts: { easy: 2, moderate: 3, hard: 2 },
+      difficultyRatingCount: 7,
+      difficultyScoreAverage: 2,
+    }
+  );
+});
+
+test('resubmitting replaces the previous difficulty vote', () => {
+  assert.deepEqual(
+    trailDifficultyAggregate(
+      { difficultyVoteCounts: { easy: 1, moderate: 2, hard: 1 } },
+      'easy',
+      'hard'
+    ),
+    {
+      difficulty: 'hard',
+      difficultyVoteCounts: { easy: 0, moderate: 2, hard: 2 },
+      difficultyRatingCount: 4,
+      difficultyScoreAverage: 2.5,
+    }
+  );
 });
 
 test('first real rating replaces a legacy dummy average', () => {

@@ -221,6 +221,44 @@ class TrailHazard {
   }
 }
 
+class TrailImageCredit {
+  const TrailImageCredit({
+    required this.sourceName,
+    required this.sourcePageUrl,
+    required this.author,
+    required this.licenseName,
+    required this.licenseUrl,
+    required this.description,
+  });
+
+  factory TrailImageCredit.fromPersistence(Map<String, dynamic> data) {
+    return TrailImageCredit(
+      sourceName: _trailStringFrom(data['sourceName']),
+      sourcePageUrl: _trailStringFrom(data['sourcePageUrl']),
+      author: _trailStringFrom(data['author']),
+      licenseName: _trailStringFrom(data['licenseName']),
+      licenseUrl: _trailStringFrom(data['licenseUrl']),
+      description: _trailStringFrom(data['description']),
+    );
+  }
+
+  final String sourceName;
+  final String sourcePageUrl;
+  final String author;
+  final String licenseName;
+  final String licenseUrl;
+  final String description;
+
+  Map<String, dynamic> toFirestore() => {
+    'sourceName': sourceName,
+    'sourcePageUrl': sourcePageUrl,
+    'author': author,
+    'licenseName': licenseName,
+    'licenseUrl': licenseUrl,
+    'description': description,
+  };
+}
+
 class Trail {
   const Trail({
     required this.trailId,
@@ -236,17 +274,31 @@ class Trail {
     required this.elevationGainMeters,
     required this.ratingAverage,
     this.ratingCount = 0,
+    this.easyDifficultyVotes = 0,
+    this.moderateDifficultyVotes = 0,
+    this.hardDifficultyVotes = 0,
     required this.offlineMapAvailable,
     required this.offlineMapDownloaded,
     required this.isVerifiedTrail,
     required this.routeFilePath,
     required this.coverColorValue,
     this.coverImageUrls = const <String>[],
+    this.coverImageCredits = const <TrailImageCredit>[],
     required this.checkpoints,
     required this.weather,
     required this.hazards,
     this.routeEncodedPolyline,
     this.routeCheckpointsHash,
+    this.dataSource = '',
+    this.dataSourceUrl = '',
+    this.osmRelationId = '',
+    this.routeProvider = '',
+    this.routeActivity = '',
+    this.routeShape = '',
+    this.routeReferenceName = '',
+    this.routeReferenceUrl = '',
+    this.routeReferenceNote = '',
+    this.routeVerifiedAtLocal = '',
   });
 
   factory Trail.fromPersistence(Map<String, dynamic> data) {
@@ -267,6 +319,7 @@ class Trail {
             .map(TrailCheckpoint.fromPersistence)
             .toList()
           ..sort((a, b) => a.order.compareTo(b.order));
+    final difficultyVoteCounts = _trailMapFrom(data['difficultyVoteCounts']);
     return Trail(
       trailId: _trailStringFrom(data['trailId']),
       name: _trailStringFrom(data['name']),
@@ -281,12 +334,18 @@ class Trail {
       elevationGainMeters: _trailIntFrom(data['elevationGainMeters']),
       ratingAverage: _trailDoubleFrom(data['ratingAverage']),
       ratingCount: _trailIntFrom(data['ratingCount']),
+      easyDifficultyVotes: _trailIntFrom(difficultyVoteCounts['easy']),
+      moderateDifficultyVotes: _trailIntFrom(difficultyVoteCounts['moderate']),
+      hardDifficultyVotes: _trailIntFrom(difficultyVoteCounts['hard']),
       offlineMapAvailable: data['offlineMapAvailable'] == true,
       offlineMapDownloaded: data['offlineMapDownloaded'] == true,
       isVerifiedTrail: data['isVerifiedTrail'] == true,
       routeFilePath: _trailStringFrom(data['routeFilePath']),
       coverColorValue: _trailIntFrom(data['coverColorValue']),
       coverImageUrls: coverImageUrls,
+      coverImageCredits: _trailListOfMaps(
+        data['coverImageCredits'],
+      ).map(TrailImageCredit.fromPersistence).toList(),
       checkpoints: checkpoints,
       weather: TrailWeather.fromPersistence(_trailMapFrom(data['weather'])),
       hazards: _trailListOfMaps(
@@ -298,6 +357,16 @@ class Trail {
       routeCheckpointsHash: _trailNullableStringFrom(
         data['routeCheckpointsHash'],
       ),
+      dataSource: _trailStringFrom(data['dataSource']),
+      dataSourceUrl: _trailStringFrom(data['dataSourceUrl']),
+      osmRelationId: _trailStringFrom(data['osmRelationId']),
+      routeProvider: _trailStringFrom(data['routeProvider']),
+      routeActivity: _trailStringFrom(data['routeActivity']),
+      routeShape: _trailStringFrom(data['routeShape']),
+      routeReferenceName: _trailStringFrom(data['routeReferenceName']),
+      routeReferenceUrl: _trailStringFrom(data['routeReferenceUrl']),
+      routeReferenceNote: _trailStringFrom(data['routeReferenceNote']),
+      routeVerifiedAtLocal: _trailStringFrom(data['routeVerifiedAtLocal']),
     );
   }
 
@@ -314,12 +383,16 @@ class Trail {
   final int elevationGainMeters;
   final double ratingAverage;
   final int ratingCount;
+  final int easyDifficultyVotes;
+  final int moderateDifficultyVotes;
+  final int hardDifficultyVotes;
   final bool offlineMapAvailable;
   final bool offlineMapDownloaded;
   final bool isVerifiedTrail;
   final String routeFilePath;
   final int coverColorValue;
   final List<String> coverImageUrls;
+  final List<TrailImageCredit> coverImageCredits;
 
   String get coverImageUrl =>
       coverImageUrls.isNotEmpty ? coverImageUrls.first : '';
@@ -328,6 +401,33 @@ class Trail {
   final List<TrailHazard> hazards;
   final String? routeEncodedPolyline;
   final String? routeCheckpointsHash;
+  final String dataSource;
+  final String dataSourceUrl;
+  final String osmRelationId;
+  final String routeProvider;
+  final String routeActivity;
+  final String routeShape;
+  final String routeReferenceName;
+  final String routeReferenceUrl;
+  final String routeReferenceNote;
+  final String routeVerifiedAtLocal;
+
+  int get difficultyRatingCount =>
+      easyDifficultyVotes + moderateDifficultyVotes + hardDifficultyVotes;
+
+  bool get hasCommunityDifficulty =>
+      difficultyRatingCount > 0 && difficulty.trim().isNotEmpty;
+
+  double difficultyVoteFraction(String value) {
+    if (difficultyRatingCount <= 0) return 0;
+    final votes = switch (value.trim().toLowerCase()) {
+      'easy' => easyDifficultyVotes,
+      'moderate' => moderateDifficultyVotes,
+      'hard' => hardDifficultyVotes,
+      _ => 0,
+    };
+    return votes / difficultyRatingCount;
+  }
 
   Map<String, dynamic> toFirestore() {
     return {
@@ -339,7 +439,13 @@ class Trail {
       'latitude': latitude,
       'longitude': longitude,
       'distanceKm': distanceKm,
-      'difficulty': difficulty.toLowerCase(),
+      if (hasCommunityDifficulty) 'difficulty': difficulty.toLowerCase(),
+      'difficultyVoteCounts': {
+        'easy': easyDifficultyVotes,
+        'moderate': moderateDifficultyVotes,
+        'hard': hardDifficultyVotes,
+      },
+      'difficultyRatingCount': difficultyRatingCount,
       'estimatedDurationMinutes': estimatedDurationMinutes,
       'elevationGainMeters': elevationGainMeters,
       'ratingAverage': ratingAverage,
@@ -350,6 +456,9 @@ class Trail {
       'routeFilePath': routeFilePath,
       'coverColorValue': coverColorValue,
       'coverImageUrl': coverImageUrls,
+      'coverImageCredits': coverImageCredits
+          .map((credit) => credit.toFirestore())
+          .toList(),
       'checkpoints': checkpoints
           .where((checkpoint) => checkpoint.hasValidCoordinate)
           .map((checkpoint) => checkpoint.toFirestore())
@@ -360,6 +469,24 @@ class Trail {
         'routeEncodedPolyline': routeEncodedPolyline,
       if (routeCheckpointsHash != null)
         'routeCheckpointsHash': routeCheckpointsHash,
+      if (dataSource.trim().isNotEmpty) 'dataSource': dataSource.trim(),
+      if (dataSourceUrl.trim().isNotEmpty)
+        'dataSourceUrl': dataSourceUrl.trim(),
+      if (osmRelationId.trim().isNotEmpty)
+        'osmRelationId': osmRelationId.trim(),
+      if (routeProvider.trim().isNotEmpty)
+        'routeProvider': routeProvider.trim(),
+      if (routeActivity.trim().isNotEmpty)
+        'routeActivity': routeActivity.trim(),
+      if (routeShape.trim().isNotEmpty) 'routeShape': routeShape.trim(),
+      if (routeReferenceName.trim().isNotEmpty)
+        'routeReferenceName': routeReferenceName.trim(),
+      if (routeReferenceUrl.trim().isNotEmpty)
+        'routeReferenceUrl': routeReferenceUrl.trim(),
+      if (routeReferenceNote.trim().isNotEmpty)
+        'routeReferenceNote': routeReferenceNote.trim(),
+      if (routeVerifiedAtLocal.trim().isNotEmpty)
+        'routeVerifiedAtLocal': routeVerifiedAtLocal.trim(),
       'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
     };
   }
@@ -406,17 +533,31 @@ class Trail {
     int? elevationGainMeters,
     double? ratingAverage,
     int? ratingCount,
+    int? easyDifficultyVotes,
+    int? moderateDifficultyVotes,
+    int? hardDifficultyVotes,
     bool? offlineMapAvailable,
     bool? offlineMapDownloaded,
     bool? isVerifiedTrail,
     String? routeFilePath,
     int? coverColorValue,
     List<String>? coverImageUrls,
+    List<TrailImageCredit>? coverImageCredits,
     List<TrailCheckpoint>? checkpoints,
     TrailWeather? weather,
     List<TrailHazard>? hazards,
     String? routeEncodedPolyline,
     String? routeCheckpointsHash,
+    String? dataSource,
+    String? dataSourceUrl,
+    String? osmRelationId,
+    String? routeProvider,
+    String? routeActivity,
+    String? routeShape,
+    String? routeReferenceName,
+    String? routeReferenceUrl,
+    String? routeReferenceNote,
+    String? routeVerifiedAtLocal,
   }) {
     return Trail(
       trailId: trailId ?? this.trailId,
@@ -433,17 +574,32 @@ class Trail {
       elevationGainMeters: elevationGainMeters ?? this.elevationGainMeters,
       ratingAverage: ratingAverage ?? this.ratingAverage,
       ratingCount: ratingCount ?? this.ratingCount,
+      easyDifficultyVotes: easyDifficultyVotes ?? this.easyDifficultyVotes,
+      moderateDifficultyVotes:
+          moderateDifficultyVotes ?? this.moderateDifficultyVotes,
+      hardDifficultyVotes: hardDifficultyVotes ?? this.hardDifficultyVotes,
       offlineMapAvailable: offlineMapAvailable ?? this.offlineMapAvailable,
       offlineMapDownloaded: offlineMapDownloaded ?? this.offlineMapDownloaded,
       isVerifiedTrail: isVerifiedTrail ?? this.isVerifiedTrail,
       routeFilePath: routeFilePath ?? this.routeFilePath,
       coverColorValue: coverColorValue ?? this.coverColorValue,
       coverImageUrls: coverImageUrls ?? this.coverImageUrls,
+      coverImageCredits: coverImageCredits ?? this.coverImageCredits,
       checkpoints: checkpoints ?? this.checkpoints,
       weather: weather ?? this.weather,
       hazards: hazards ?? this.hazards,
       routeEncodedPolyline: routeEncodedPolyline ?? this.routeEncodedPolyline,
       routeCheckpointsHash: routeCheckpointsHash ?? this.routeCheckpointsHash,
+      dataSource: dataSource ?? this.dataSource,
+      dataSourceUrl: dataSourceUrl ?? this.dataSourceUrl,
+      osmRelationId: osmRelationId ?? this.osmRelationId,
+      routeProvider: routeProvider ?? this.routeProvider,
+      routeActivity: routeActivity ?? this.routeActivity,
+      routeShape: routeShape ?? this.routeShape,
+      routeReferenceName: routeReferenceName ?? this.routeReferenceName,
+      routeReferenceUrl: routeReferenceUrl ?? this.routeReferenceUrl,
+      routeReferenceNote: routeReferenceNote ?? this.routeReferenceNote,
+      routeVerifiedAtLocal: routeVerifiedAtLocal ?? this.routeVerifiedAtLocal,
     );
   }
 }
@@ -500,12 +656,11 @@ String _trailDifficultyFrom(Object? value) {
       return 'Easy';
     case 'hard':
       return 'Hard';
-    case 'expert':
-      return 'Expert';
     case 'moderate':
     case 'medium':
-    default:
       return 'Moderate';
+    default:
+      return '';
   }
 }
 

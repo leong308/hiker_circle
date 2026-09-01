@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/Data/session_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/privacy_policy_link.dart';
 import '../Model/auth_status.dart';
 import '../ModelView/auth_view_model.dart';
 import 'auth_brand_panel.dart';
@@ -199,6 +200,11 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
                                 ],
                               ),
                             ),
+                          ),
+                          const SizedBox(height: 10),
+                          const Align(
+                            alignment: Alignment.center,
+                            child: PrivacyPolicyLink(),
                           ),
                         ],
                       ),

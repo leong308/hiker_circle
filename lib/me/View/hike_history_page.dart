@@ -12,6 +12,7 @@ import '../../circle/View/group_chat_detail_page.dart';
 import '../../core/models/hike_route_analysis.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/cached_trail_image.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../trail/Model/trail_models.dart';
@@ -553,6 +554,11 @@ class _HikeHistoryDetailBody extends StatelessWidget {
                     ? '${detail.ratingStars} / 5 stars'
                     : 'Not rated',
               ),
+              if (detail.ratingDifficulty.isNotEmpty)
+                _RowData(
+                  'Your difficulty vote',
+                  _titleCaseWords(detail.ratingDifficulty),
+                ),
               if (detail.ratingComment.isNotEmpty)
                 _RowData('Your comment', detail.ratingComment),
             ],
@@ -1489,12 +1495,14 @@ class _HikeHistoryCard extends StatelessWidget {
                   width: 72,
                   height: 82,
                   child: hike.coverImageUrl.isNotEmpty
-                      ? Image.network(
-                          hike.coverImageUrl,
+                      ? CachedTrailImage(
                           key: Key('hike-history-cover-${hike.sessionId}'),
+                          imageUrl: hike.coverImageUrl,
+                          width: 72,
+                          height: 82,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) =>
-                              const _HistoryImageFallback(),
+                          semanticLabel: '${hike.trailName} trail cover',
+                          fallbackBuilder: (_) => const _HistoryImageFallback(),
                         )
                       : const _HistoryImageFallback(),
                 ),
@@ -2321,6 +2329,12 @@ String _historyError(Object? error) =>
     : 'Check your connection and try again.';
 String _valueOrUnavailable(String value) =>
     value.trim().isEmpty ? 'Not recorded' : value.trim();
+String _titleCaseWords(String value) => value
+    .trim()
+    .split(RegExp(r'\s+'))
+    .where((word) => word.isNotEmpty)
+    .map((word) => '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}')
+    .join(' ');
 String _formatDuration(Duration duration) {
   final hours = duration.inHours;
   final minutes = duration.inMinutes.remainder(60);

@@ -22,12 +22,14 @@ void main() {
     );
 
     var startAttempts = 0;
+    bool? submittedShareLiveLocation;
     await tester.pumpWidget(
       MaterialApp(
         home: StartHikeWizardPage(
           availableTrails: [_trail()],
           onStartNow: (draft) async {
             startAttempts += 1;
+            submittedShareLiveLocation = draft.shareLiveLocation;
             return false;
           },
         ),
@@ -59,7 +61,12 @@ void main() {
     await tester.pump();
 
     expect(startAttempts, 1);
+    expect(submittedShareLiveLocation, isFalse);
     expect(find.text('Safety Settings'), findsOneWidget);
+    expect(
+      find.text('Share live location with SOS contacts when hike starts'),
+      findsOneWidget,
+    );
     expect(find.text('Start Hiking Session'), findsOneWidget);
     expect(find.text('Create Hiking Session'), findsOneWidget);
   });

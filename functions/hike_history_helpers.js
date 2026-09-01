@@ -305,6 +305,7 @@ function detailData({
     rating: rating && typeof rating === 'object'
       ? {
           stars: Math.round(numberValue(rating.rating, 0, 5)),
+          difficulty: stringValue(rating.difficulty, 20),
           comment: stringValue(rating.comment, 500),
         }
       : { stars: 0, comment: '' },

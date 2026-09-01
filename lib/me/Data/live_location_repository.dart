@@ -40,6 +40,39 @@ class LiveLocationRepository {
     return _resolvedFirestore.collection('live_location_shares');
   }
 
+  Future<bool> loadAutoShareOnHikeStart({required String phoneNumber}) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      final snapshot = await _userDocumentFor(phoneNumber).get();
+      return snapshot.data()?['autoShareLiveLocationOnHikeStart'] == true;
+    } on FirebaseException catch (error) {
+      throw LiveLocationRepositoryException(
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
+      );
+    }
+  }
+
+  Future<void> setAutoShareOnHikeStart({
+    required String phoneNumber,
+    required bool enabled,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      final now = DateTime.now().toUtc();
+      await _userDocumentFor(phoneNumber).set({
+        'phoneNumber': phoneNumber,
+        'autoShareLiveLocationOnHikeStart': enabled,
+        'autoShareLiveLocationPreferenceUpdatedAt':
+            FieldValue.serverTimestamp(),
+        'autoShareLiveLocationPreferenceUpdatedAtLocal': now.toIso8601String(),
+      }, SetOptions(merge: true));
+    } on FirebaseException catch (error) {
+      throw LiveLocationRepositoryException(
+        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
+      );
+    }
+  }
+
   Future<LiveLocationShare?> loadForUser({required String phoneNumber}) async {
     _throwIfFirebaseUnavailable();
 

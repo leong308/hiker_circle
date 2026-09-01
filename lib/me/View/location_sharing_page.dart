@@ -132,6 +132,19 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
     _showLiveLocationMessage(fallbackMessage: 'Live location link ready.');
   }
 
+  Future<void> _setAutoShareOnHikeStart(bool enabled) async {
+    await _liveLocationSharingService.setAutoShareOnHikeStart(
+      phoneNumber: widget.phoneNumber,
+      firebaseBootstrapResult: widget.firebaseBootstrapResult,
+      enabled: enabled,
+    );
+    _showLiveLocationMessage(
+      fallbackMessage: enabled
+          ? 'Automatic hike-start sharing is on.'
+          : 'Automatic hike-start sharing is off.',
+    );
+  }
+
   void _showLiveLocationMessage({String? fallbackMessage}) {
     if (!mounted) {
       return;
@@ -190,8 +203,14 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
                     isBusy: _liveLocationSharingService.isBusy,
                     isSharing: _liveLocationSharingService.isSharing,
                     shareUrl: _liveLocationSharingService.share?.shareUrl,
+                    autoShareOnHikeStart:
+                        _liveLocationSharingService.autoShareOnHikeStart,
+                    isPreferenceBusy:
+                        _liveLocationSharingService.isPreferenceBusy,
                     onToggle: () => unawaited(_toggleLiveLocation()),
                     onShare: () => unawaited(_shareLiveLocation()),
+                    onAutoShareChanged: (value) =>
+                        unawaited(_setAutoShareOnHikeStart(value)),
                   ),
                 ],
               ),
@@ -615,16 +634,22 @@ class _LiveLocationControls extends StatelessWidget {
     required this.isBusy,
     required this.isSharing,
     required this.shareUrl,
+    required this.autoShareOnHikeStart,
+    required this.isPreferenceBusy,
     required this.onToggle,
     required this.onShare,
+    required this.onAutoShareChanged,
   });
 
   final bool isActive;
   final bool isBusy;
   final bool isSharing;
   final String? shareUrl;
+  final bool autoShareOnHikeStart;
+  final bool isPreferenceBusy;
   final VoidCallback onToggle;
   final VoidCallback onShare;
+  final ValueChanged<bool> onAutoShareChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -692,6 +717,53 @@ class _LiveLocationControls extends StatelessWidget {
                         ),
                       ],
                     ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Divider(
+                height: 1,
+                color: _LocationColors.secondaryTextFor(
+                  context,
+                ).withValues(alpha: 0.22),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Share automatically when a hike starts',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(
+                                color: _LocationColors.textFor(context),
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0,
+                              ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Creates a live link after tracking starts and sends it to every saved SOS contact. This is a safety update, not an SOS alert.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: _LocationColors.secondaryTextFor(
+                                  context,
+                                ),
+                                height: 1.35,
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  CupertinoSwitch(
+                    value: autoShareOnHikeStart,
+                    activeTrackColor: _LocationColors.green,
+                    onChanged: isPreferenceBusy ? null : onAutoShareChanged,
                   ),
                 ],
               ),

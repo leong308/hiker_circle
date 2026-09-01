@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#173f35">
   <meta name="description" content="HikerCircle Privacy Policy">
   <title>Privacy Policy | HikerCircle</title>
-  <link rel="icon" type="image/png" href="/favicon.png?v=hc-1">
+  <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
   <style>
     @font-face {
       font-family: "Inter";
@@ -304,6 +304,12 @@
       font-size: 0.82rem;
     }
 
+    .site-footer nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem;
+    }
+
     @media (max-width: 860px) {
       .layout { grid-template-columns: 1fr; }
       .toc { position: static; }
@@ -348,7 +354,7 @@
       <p class="eyebrow">Your data on the trail</p>
       <h1>Privacy Policy</h1>
       <p class="hero-copy">This policy explains what HikerCircle collects, why it is used, when it may be shared, and the choices available to you.</p>
-      <span class="updated">Last updated 31 August 2026</span>
+      <span class="updated">Last updated 1 September 2026</span>
     </header>
 
     <div class="layout">
@@ -367,6 +373,7 @@
           <li><a href="#security">Security</a></li>
           <li><a href="#transfers">International transfers</a></li>
           <li><a href="#choices">Your choices and rights</a></li>
+          <li><a href="#regional">Regional disclosures</a></li>
           <li><a href="#children">Children</a></li>
           <li><a href="#third-parties">Third-party services</a></li>
           <li><a href="#changes">Changes to this policy</a></li>
@@ -376,16 +383,18 @@
 
       <article class="policy">
         <section id="scope">
-          <h2>1. Scope</h2>
+          <h2>1. Scope and controller</h2>
           <p>This Privacy Policy describes how HikerCircle ("HikerCircle", "we", "us", or "our") handles personal information when you use the HikerCircle mobile application, HikerCircle web pages, live-location pages, connected safety features, and related services (together, the "Services").</p>
-          <p>By using the Services, you acknowledge the practices described in this policy. Some features ask for separate permission or confirmation before collecting or sharing sensitive information, such as precise location, contacts, camera or photo access, Bluetooth, motion signals, or notifications.</p>
+          <p>HikerCircle is operated from Malaysia by its independent developer, who determines why and how personal information is processed and is therefore the controller unless a feature-specific notice says otherwise. The Services may be made available worldwide, although features, providers, and legal rights can differ by country or region.</p>
+          <p>"Personal information" means information that identifies, relates to, describes, or can reasonably be linked directly or indirectly to an individual. Depending on applicable law, precise location, SOS circumstances, authentication information, and some profile details may be treated as sensitive personal information and receive additional protection.</p>
+          <p>By using the Services, you acknowledge the practices described in this policy. Some features ask for separate permission or confirmation before collecting or sharing sensitive information, such as precise location, contacts, camera or photo access, Bluetooth, motion signals, or notifications. A shorter notice shown inside a feature supplements this policy; if it provides more specific information for that feature, the more specific notice applies to that processing.</p>
         </section>
 
         <section id="information">
           <h2>2. Information we collect</h2>
 
           <h3>Account and authentication information</h3>
-          <p>We may collect your telephone number, Firebase user identifier, account and session identifiers, authentication status, passkey information, multi-factor authentication settings, encrypted authentication secrets, security-question responses or derived values, login and password-reset records, and related security logs. Authentication credentials are handled in protected or derived form where the feature permits; HikerCircle does not need to know the private key stored by your passkey provider.</p>
+          <p>We may collect your telephone number, Firebase user identifier, account and session identifiers, authentication status, passkey credential identifiers and public keys, multi-factor authentication settings, encrypted authentication secrets, security-question responses or derived values, login and password-reset records, and related security logs. Authentication credentials are handled in protected or derived form where the feature permits. A passkey private key and any fingerprint, face, or device unlock data used to release it remain with your device, operating system, or passkey provider and are not received by HikerCircle.</p>
 
           <h3>Profile information</h3>
           <p>This may include your username, profile photograph, gender, hiking experience, hiking frequency, residential city or area and its approximate coordinates, hiker level, achievements, buddies, and preferences.</p>
@@ -404,6 +413,9 @@
 
           <h3>Support communications</h3>
           <p>If you contact us, we collect the information in your request, your contact details, and any files or context you provide so we can respond.</p>
+
+          <h3>Website and aggregate information</h3>
+          <p>The public website requests aggregate community totals, such as registered-user and completed-hike counts, from HikerCircle's servers. These published totals do not identify individual users. We may also create aggregated or de-identified information for service reliability, safety analysis, and statistics. If that information is combined with identifiable information, we treat the combined information as personal information while it remains identifiable.</p>
         </section>
 
         <section id="collection">
@@ -430,10 +442,11 @@
             <li>send transactional, safety, invitation, chat, and reminder notifications;</li>
             <li>moderate content, investigate reports, prevent spam, fraud, misuse, or unauthorized access, and enforce service rules;</li>
             <li>troubleshoot, maintain, measure, and improve the reliability, accessibility, safety, and performance of the Services;</li>
+            <li>produce de-identified or aggregate service statistics, including the community totals displayed on the public website;</li>
             <li>respond to support, privacy, and legal requests; and</li>
             <li>comply with applicable law and protect users, the public, our rights, and the integrity of the Services.</li>
           </ul>
-          <div class="plain-language"><strong>HikerCircle does not sell your personal information.</strong> We do not use precise location, SOS information, private messages, contacts, or authentication information for third-party behavioural advertising.</div>
+          <div class="plain-language"><strong>HikerCircle does not sell your personal information or share it for cross-context behavioural advertising.</strong> We do not use precise location, SOS information, private messages, contacts, or authentication information for third-party behavioural advertising.</div>
         </section>
 
         <section id="location">
@@ -448,7 +461,7 @@
           <p>We may disclose information in the following circumstances:</p>
           <ul>
             <li><strong>At your direction or as part of a feature.</strong> We share data with buddies, hike hosts and participants, chat recipients, community viewers, emergency contacts, nearby users, or anyone with a live-location link when you use the corresponding feature.</li>
-            <li><strong>With service providers.</strong> Providers process data for cloud infrastructure, authentication, databases, file storage, push notifications, maps, weather, communications, and security. These may include Google Firebase and Google Cloud, Google Maps, Mapbox or map-tile providers, OpenStreetMap contributors or related tile services, Open-Meteo, Apple platform services, and a WhatsApp delivery provider when that channel is configured.</li>
+            <li><strong>With service providers.</strong> Providers process data for cloud infrastructure, authentication, databases, file storage, push notifications, maps, routes, elevation, weather, communications, and security. Depending on the feature and configuration, these may include Google Firebase and Google Cloud, Google Maps and Routes, Mapbox, Geoapify, OpenRouteService, OpenTopoData, OpenStreetMap-based services, Open-Meteo, Apple platform services, and GREEN-API or WhatsApp services. A provider may receive the request data needed for its feature, which can include IP and device information and, for a map, route, weather, or safety request, coordinates.</li>
             <li><strong>For legal and safety reasons.</strong> We may preserve or disclose information when we reasonably believe it is necessary to comply with law or a valid legal process; respond to an emergency; prevent harm; investigate abuse, fraud, or security incidents; or protect users, the public, HikerCircle, or others.</li>
             <li><strong>During an organizational change.</strong> If HikerCircle is involved in a merger, acquisition, financing, reorganization, or transfer of assets, information may be disclosed subject to appropriate confidentiality and legal safeguards. We will notify users where required.</li>
             <li><strong>With your consent.</strong> We may disclose information for another purpose that we explain and to which you agree.</li>
@@ -463,7 +476,7 @@
             <li><strong>Location:</strong> maps, nearby features, active-hike tracking, check-ins, live-location sharing, and SOS handoff;</li>
             <li><strong>Motion or sensors:</strong> detecting a possible fall followed by stillness during an active hike;</li>
             <li><strong>Bluetooth and nearby devices:</strong> pairing or listening for an SOS button and exchanging supported nearby team-hike or safety signals;</li>
-            <li><strong>Camera:</strong> profile or trail photos, QR-code scanning, and flashlight-based SOS alerts;</li>
+            <li><strong>Camera:</strong> profile or trail photos and flashlight-based SOS alerts;</li>
             <li><strong>Photos, videos, and files:</strong> media or attachments that you choose to upload;</li>
             <li><strong>Contacts:</strong> selecting emergency contacts when you initiate that action; and</li>
             <li><strong>Notifications:</strong> safety alerts, messages, invitations, reminders, and service updates.</li>
@@ -473,53 +486,84 @@
 
         <section id="legal-bases">
           <h2>8. Legal bases for processing</h2>
-          <p>Where applicable law requires a legal basis, we process information as needed to provide the Services you request; with your consent, including permission for sensitive device data; for legitimate interests such as securing and improving the Services, preventing abuse, and protecting users; to comply with legal obligations; and to protect vital interests in an emergency. You may withdraw consent through device or app settings where available, without affecting processing already carried out lawfully.</p>
+          <p>Where applicable law requires a legal basis, the basis depends on the purpose and context:</p>
+          <ul>
+            <li><strong>Contract or requested service:</strong> creating and authenticating an account and providing the profile, hike, chat, route, reminder, and sharing features you request;</li>
+            <li><strong>Consent:</strong> optional access to precise or background location, contacts, photos, camera, Bluetooth, motion signals, or notifications where consent is required;</li>
+            <li><strong>Legitimate interests:</strong> securing and improving the Services, preventing abuse, maintaining reliable operations, responding to support, and protecting users, after considering the impact on individual rights;</li>
+            <li><strong>Legal obligation:</strong> complying with applicable law, valid legal process, recordkeeping, or regulatory requests; and</li>
+            <li><strong>Vital interests:</strong> processing reasonably necessary to protect a person's life or safety during an emergency where the law permits.</li>
+          </ul>
+          <p>You may decline optional information, but the related feature may then be unavailable. You may withdraw consent through device or app settings or by contacting us, without affecting processing already carried out lawfully.</p>
         </section>
 
         <section id="retention">
           <h2>9. Data retention</h2>
           <p>We retain personal information for as long as reasonably necessary to provide the Services, keep accounts and hike histories functioning, meet the purposes described in this policy, resolve disputes, enforce agreements, maintain security and abuse-prevention records, and comply with legal obligations. Retention differs by data type and context.</p>
-          <p>For example, active sharing data may be kept for a shorter period than account or completed-hike records; messages or content may remain visible to their recipients or associated groups; and security, rate-limit, transaction, deletion, or backup records may remain for a limited period after other data is removed. Data stored only on your device may remain until you remove it, clear app data, or uninstall the app. We may retain de-identified or aggregated information that can no longer reasonably identify you.</p>
+          <p>For example, public live-location share links are configured to expire no later than 24 hours after creation; temporary authentication and multi-factor challenges expire after their short verification window and are removed by scheduled cleanup; account, profile, hike-history, and user-content records may remain while the account or associated feature remains active; and messages or shared content may remain visible to their recipients or groups. Security, rate-limit, transaction, deletion, and backup records may remain for a limited period after other data is removed where needed for the purposes above.</p>
+          <p>Data and cached trail media stored only on your device may remain until you remove it, clear the app's data or cache, or uninstall the app. When retention is no longer necessary, information is deleted, anonymized, or isolated from further use as appropriate. We may retain de-identified or aggregated information that can no longer reasonably identify you.</p>
         </section>
 
         <section id="security">
           <h2>10. Data security</h2>
           <p>We use administrative, technical, and organizational safeguards designed to protect personal information. These include authenticated access, database and storage access rules, transport encryption, restricted security fields, protected or derived credential storage where appropriate, rate limits, and service monitoring. No method of storage or transmission is completely secure, so we cannot guarantee absolute security.</p>
+          <p>If a personal-data breach occurs, we will investigate and take reasonable containment and remediation steps. We will notify affected individuals and relevant authorities when required by applicable law.</p>
           <p>You are responsible for keeping your device, telephone account, passkeys, verification codes, and login methods secure. Contact us promptly if you believe your account or information has been compromised.</p>
         </section>
 
         <section id="transfers">
           <h2>11. International data transfers</h2>
-          <p>HikerCircle and its service providers may process or store information in Malaysia, the United States, or other countries where they operate. Those countries may have different data-protection laws from your country. Where required, we use appropriate contractual, technical, or other safeguards for international transfers.</p>
+          <p>HikerCircle is operated from Malaysia. HikerCircle and its service providers may process, route, back up, or store information in Malaysia, the United States, or other countries where those providers operate. This means information may be transferred outside your country of residence, and those countries may have different data-protection laws.</p>
+          <p>Where applicable law requires transfer safeguards, we rely on legally recognized mechanisms made available for the relevant service, contractual protections, adequacy decisions, or other permitted safeguards, together with technical and organizational measures. You may contact us for information about safeguards relevant to your data.</p>
         </section>
 
         <section id="choices">
           <h2>12. Your choices and privacy rights</h2>
-          <p>Depending on your location and applicable law, you may have the right to ask for access to, correction of, a copy of, restriction of, objection to processing of, or deletion of your personal information, and to withdraw consent. You may also have the right to complain to your local data-protection authority.</p>
-          <p>You can manage some information and choices directly in the app, including profile details, live-location sharing, hike settings, emergency contacts, notifications, and device permissions. You can delete content where the feature offers that control. To request account or data deletion, or to exercise another privacy right, email us using the contact below. We may need to verify your identity and may retain information where permitted or required by law, including records needed for security, fraud prevention, dispute resolution, or legal compliance.</p>
+          <p>Depending on your location and applicable law, you may have rights to confirmation and information about processing; access; correction; deletion or anonymization; restriction or blocking; objection; portability; withdrawal of consent; information about recipients; and review of qualifying automated decisions. You may also have the right to complain to, or appeal to, a privacy or data-protection authority.</p>
+          <p>You can manage some information and choices directly in the app, including profile details, live-location sharing, hike settings, emergency contacts, notifications, and device permissions. You can delete content where the feature offers that control. To request account or data deletion, or to exercise another privacy right, email us using the contact below. We may ask for information reasonably necessary to verify your identity or an authorized agent. We will respond within the period required by applicable law and will not discriminate against you for exercising a privacy right. We may retain information where permitted or required by law, including records needed for security, fraud prevention, dispute resolution, or legal compliance.</p>
+
+          <h3>Automated processing</h3>
+          <p>HikerCircle uses rules and device signals to provide features such as possible fall or stillness detection, trail ordering, safety status, and route or weather suggestions. These features assist you and do not make decisions based solely on automated processing that produce legal or similarly significant effects. Sensor-based alerts can be inaccurate and should not replace personal judgment or emergency services.</p>
+        </section>
+
+        <section id="regional">
+          <h2>13. Regional disclosures</h2>
+
+          <h3>European Economic Area, United Kingdom, and Switzerland</h3>
+          <p>Where the relevant law applies, you may request access, rectification, erasure, restriction, portability, or objection; withdraw consent; and complain to the supervisory authority where you live, work, or believe an infringement occurred. You may object at any time to direct marketing. HikerCircle does not currently conduct direct marketing or solely automated decision-making with legal or similarly significant effects.</p>
+
+          <h3>California and certain other United States jurisdictions</h3>
+          <p>Subject to legal applicability and exceptions, residents may request the categories and specific pieces of personal information collected, sources, purposes, and recipient categories; request correction or deletion; opt out of sale or sharing for cross-context behavioural advertising; limit certain uses of sensitive personal information; use an authorized agent; and exercise rights without discriminatory treatment. HikerCircle does not currently sell personal information, share it for cross-context behavioural advertising, or use sensitive personal information to infer characteristics beyond providing the requested Services.</p>
+
+          <h3>Brazil</h3>
+          <p>Where Brazil's LGPD applies, you may request confirmation of processing; access; correction; anonymization, blocking, or deletion of unnecessary or non-compliant data; portability where regulated; information about sharing and consent choices; withdrawal of consent; and review of qualifying automated decisions. You may petition the Brazilian National Data Protection Authority after first contacting us about the request.</p>
+
+          <h3>Other countries and regions</h3>
+          <p>Privacy laws in Malaysia, Australia, Canada, New Zealand, Singapore, and other jurisdictions may provide additional rights or complaint channels. We honor applicable local rights even if they are not listed word-for-word here. Contact us and identify your country or region so the request can be handled under the appropriate law.</p>
         </section>
 
         <section id="children">
-          <h2>13. Children's privacy</h2>
+          <h2>14. Children's privacy</h2>
           <p>The Services are not directed to children under 13. If the law where you live requires a higher age for a person to consent to personal-data processing, a parent or legal guardian must authorize use of the Services. If you believe a child has provided personal information without the required authorization, contact us so we can investigate and take appropriate action.</p>
         </section>
 
         <section id="third-parties">
-          <h2>14. Third-party services and links</h2>
-          <p>The Services may open or rely on third-party services, such as mapping, navigation, weather, platform, Firebase, WhatsApp, or external web services. Their handling of information is governed by their own terms and privacy policies. HikerCircle is not responsible for the privacy practices of a third party once you leave or directly interact with that service.</p>
-          <p>This public privacy page does not include advertising trackers. Firebase Hosting and network infrastructure may still process ordinary request information, such as IP address, browser information, requested URL, and timestamps, to deliver and protect the page.</p>
+          <h2>15. Third-party services and website technologies</h2>
+          <p>The Services may open or rely on third-party services, such as mapping, navigation, trail-reference, weather, platform, Firebase, WhatsApp, or external web services. Their handling of information is governed by their own terms and privacy policies. HikerCircle is not responsible for the privacy practices of a third party once you leave or directly interact with that service.</p>
+          <p>The public HikerCircle website does not currently use advertising trackers, analytics cookies, browser local storage, or cross-site behavioural advertising. It requests aggregate community statistics and website files from HikerCircle infrastructure. Firebase Hosting and network infrastructure may process ordinary request information, such as IP address, browser information, requested URL, and timestamps, to deliver and protect the page.</p>
+          <p>Because HikerCircle does not currently sell personal information or share it for cross-context behavioural advertising, browser signals such as Global Privacy Control do not change those practices. If website tracking or advertising practices change, this policy and any legally required consent or opt-out controls will be updated before that processing begins.</p>
         </section>
 
         <section id="changes">
-          <h2>15. Changes to this policy</h2>
+          <h2>16. Changes to this policy</h2>
           <p>We may update this policy as HikerCircle changes or as legal requirements develop. We will post the revised policy here and update the date at the top. If a change materially affects how we handle personal information, we will provide additional notice where reasonably possible or legally required.</p>
         </section>
 
         <section id="contact">
-          <h2>16. Contact us</h2>
-          <p>For privacy questions, requests, complaints, or account and data deletion, contact the HikerCircle developer:</p>
+          <h2>17. Contact us</h2>
+          <p>For privacy questions, requests, complaints, or account and data deletion, contact the HikerCircle developer and data controller. Include the email or telephone number associated with the account, the country or region whose law applies, and the request you want us to consider. Do not email passwords, verification codes, authenticator secrets, or passkey data.</p>
           <div class="contact-card">
-            <strong>HikerCircle Privacy</strong><br>
+            <strong>HikerCircle Privacy — Malaysia</strong><br>
             Email: <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">leongziqi@gmail.com</a><br>
             Website: <a href="https://hiker-circle.web.app">hiker-circle.web.app</a>
           </div>
@@ -530,7 +574,10 @@
 
   <footer class="site-footer">
     <span>&copy; 2026 HikerCircle</span>
-    <span>Independent from Senzo and Senzo CrossGuard.</span>
+    <nav aria-label="Footer links">
+      <a href="/">Home</a>
+      <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">Privacy contact</a>
+    </nav>
   </footer>
 </body>
 </html>

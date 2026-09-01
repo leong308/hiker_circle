@@ -172,6 +172,7 @@ class ActiveHikeLiveStatusService {
       'distanceKm': activeHike.recordedDistanceKm,
       'routePointCount': activeHike.routePointCount,
       'fallDetectionEnabled': activeHike.draft.fallDetectionEnabled,
+      'shareLiveLocation': activeHike.draft.shareLiveLocation,
       'sensorSensitivity':
           activeHike.draft.fallDetectionSettings.sensorSensitivity,
       'fallResponseMillis': activeHike

@@ -34,6 +34,12 @@ const {
   greenApiStateReadiness,
 } = require('./green_api_helpers');
 const {
+  LiveLocationNotificationValidationError,
+  composeLiveLocationStartMessage,
+  liveLocationDispatchDocumentId,
+  parseLiveLocationNotificationRequest,
+} = require('./live_location_notification_helpers');
+const {
   buildUpcomingHikePreview,
   effectiveUpcomingHikeType,
 } = require('./upcoming_hike_helpers');
@@ -47,7 +53,9 @@ const {
   summaryData: hikeHistorySummaryData,
 } = require('./hike_history_helpers');
 const {
+  trailDifficultyAggregate,
   trailRatingAggregate,
+  validDifficultyVote,
   validRating,
 } = require('./trail_rating_helpers');
 const {
@@ -1266,6 +1274,380 @@ exports.sendSosWhatsAppMessage = onCall(
       return sosDispatchClientResponse({ status: 'delivery_uncertain' });
     }
     return sosDispatchClientResponse({ status: 'sent', providerMessageId });
+  }
+);
+
+async function sendLiveLocationStartToContact({
+  db,
+  credentials,
+  uid,
+  ownerPhone,
+  sessionId,
+  recipientPhone,
+  message,
+}) {
+  const dispatchReference = db
+    .collection('liveLocationContactDispatches')
+    .doc(liveLocationDispatchDocumentId(uid, sessionId, recipientPhone));
+  const attemptNonce = crypto.randomBytes(24).toString('hex');
+  const claim = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(dispatchReference);
+    const previous = snapshot.data() || {};
+    const now = Date.now();
+    if (snapshot.exists) {
+      const status = String(previous.status || '');
+      if (status === 'sent') return { send: false, status: 'sent' };
+      if (status === 'delivery_uncertain') {
+        return { send: false, status: 'delivery_uncertain' };
+      }
+      if (status === 'sending') {
+        if (Number(previous.leaseExpiresAtMillis || 0) <= now) {
+          transaction.set(
+            dispatchReference,
+            {
+              status: 'delivery_uncertain',
+              retryable: false,
+              deliveryUncertain: true,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAtLocal: new Date(now).toISOString(),
+            },
+            { merge: true }
+          );
+          return { send: false, status: 'delivery_uncertain' };
+        }
+        return { send: false, status: 'in_progress' };
+      }
+      if (
+        status === 'failed'
+        && (previous.retryable !== true || Number(previous.attemptCount || 0) >= 3)
+      ) {
+        return { send: false, status: 'failed' };
+      }
+      if (
+        status === 'claimed'
+        && Number(previous.leaseExpiresAtMillis || 0) > now
+      ) {
+        return { send: false, status: 'in_progress' };
+      }
+    }
+
+    const attemptCount = Math.max(0, Number(previous.attemptCount || 0)) + 1;
+    transaction.set(
+      dispatchReference,
+      {
+        ownerUid: uid,
+        senderPhoneNumber: ownerPhone,
+        recipientPhoneNumber: recipientPhone,
+        sessionId,
+        messageType: 'live_location_hike_start',
+        status: 'claimed',
+        retryable: true,
+        deliveryUncertain: false,
+        attemptCount,
+        attemptNonce,
+        leaseExpiresAtMillis: now + 30 * 1000,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: new Date(now).toISOString(),
+        ...(!snapshot.exists
+          ? {
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              createdAtLocal: new Date(now).toISOString(),
+            }
+          : {}),
+      },
+      { merge: true }
+    );
+    return {
+      send: true,
+      recipientDigits: recipientPhone.replace(/\D/g, ''),
+    };
+  });
+  if (!claim.send) return claim.status;
+
+  const markedSending = await transitionSosDispatch(
+    dispatchReference,
+    attemptNonce,
+    new Set(['claimed']),
+    {
+      status: 'sending',
+      outboundStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+      outboundStartedAtLocal: new Date().toISOString(),
+    }
+  );
+  if (!markedSending) return 'in_progress';
+
+  let response;
+  try {
+    response = await fetch(greenApiEndpoint('sendMessage', credentials), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chatId: `${claim.recipientDigits}@c.us`,
+        message,
+      }),
+      signal: AbortSignal.timeout(12 * 1000),
+    });
+  } catch (error) {
+    const definitelyUnsent = providerFailureWasDefinitelyUnsent(error);
+    await transitionSosDispatch(
+      dispatchReference,
+      attemptNonce,
+      new Set(['sending']),
+      {
+        status: definitelyUnsent ? 'failed' : 'delivery_uncertain',
+        retryable: definitelyUnsent,
+        deliveryUncertain: !definitelyUnsent,
+        transportErrorCode: providerTransportErrorCode(error).slice(0, 80),
+      }
+    );
+    return definitelyUnsent ? 'retryable_failure' : 'delivery_uncertain';
+  }
+  if (!response.ok) {
+    const classification = classifySosProviderHttpFailure(response.status);
+    await transitionSosDispatch(
+      dispatchReference,
+      attemptNonce,
+      new Set(['sending']),
+      {
+        status: classification.status,
+        retryable: classification.retryable,
+        deliveryUncertain: classification.deliveryUncertain,
+        providerHttpStatus: response.status,
+      }
+    );
+    return classification.retryable
+      ? 'retryable_failure'
+      : classification.status;
+  }
+  const responseData = await response.json().catch(() => ({}));
+  const providerMessageId = greenApiMessageId(responseData);
+  if (!providerMessageId) {
+    await transitionSosDispatch(
+      dispatchReference,
+      attemptNonce,
+      new Set(['sending']),
+      {
+        status: 'delivery_uncertain',
+        retryable: false,
+        deliveryUncertain: true,
+      }
+    );
+    return 'delivery_uncertain';
+  }
+  const finalized = await transitionSosDispatch(
+    dispatchReference,
+    attemptNonce,
+    new Set(['sending']),
+    {
+      status: 'sent',
+      retryable: false,
+      deliveryUncertain: false,
+      providerMessageId,
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      sentAtLocal: new Date().toISOString(),
+    }
+  );
+  return finalized ? 'sent' : 'delivery_uncertain';
+}
+
+// This is a routine safety update, deliberately separate from SOS dispatches.
+// The server resolves saved contacts and canonical hike/share data so the app
+// cannot use this callable to message arbitrary recipients or arbitrary text.
+exports.notifyEmergencyContactsOfLiveLocation = onCall(
+  {
+    secrets: [greenApiInstanceId, greenApiToken],
+    timeoutSeconds: 120,
+  },
+  async (request) => {
+    const { phoneNumber: ownerPhone, uid } = authenticatedPhoneFor(
+      request,
+      'Sign in to share live hike location.'
+    );
+    let notification;
+    try {
+      notification = parseLiveLocationNotificationRequest(request.data);
+    } catch (error) {
+      if (error instanceof LiveLocationNotificationValidationError) {
+        throw new HttpsError('invalid-argument', error.message);
+      }
+      throw new HttpsError(
+        'internal',
+        'The live location notification could not be validated.'
+      );
+    }
+
+    const db = admin.firestore();
+    const userReference = db.collection('users').doc(uid);
+    const hikeReference = db.collection('hikeSessions').doc(notification.sessionId);
+    const shareReference = db
+      .collection('live_location_shares')
+      .doc(notification.shareId);
+    const [userSnapshot, hikeSnapshot, shareSnapshot] = await Promise.all([
+      userReference.get(),
+      hikeReference.get(),
+      shareReference.get(),
+    ]);
+    const user = userSnapshot.data() || {};
+    const hike = hikeSnapshot.data() || {};
+    const share = shareSnapshot.data() || {};
+    const expiresAtMillis = dateMillis(share.expiresAtLocal || share.expiresAt);
+    if (
+      !userSnapshot.exists
+      || String(user.phoneNumber || '') !== ownerPhone
+      || user.accountDisabled === true
+      || user.status === 'disabled'
+    ) {
+      throw new HttpsError('permission-denied', 'The signed-in account is invalid.');
+    }
+    if (
+      !hikeSnapshot.exists
+      || String(hike.userId || '') !== uid
+      || String(hike.userPhoneNumber || '') !== ownerPhone
+      || String(hike.status || '') !== 'active'
+      || hike.shareLiveLocation !== true
+    ) {
+      throw new HttpsError(
+        'failed-precondition',
+        'This hike is not active for automatic live location sharing.'
+      );
+    }
+    if (
+      !shareSnapshot.exists
+      || String(share.ownerUserId || '') !== uid
+      || share.isActive !== true
+      || !Number.isFinite(expiresAtMillis)
+      || expiresAtMillis <= Date.now()
+    ) {
+      throw new HttpsError(
+        'failed-precondition',
+        'The live location link is inactive or expired.'
+      );
+    }
+
+    await hikeReference.set(
+      {
+        liveLocationShareId: notification.shareId,
+        liveLocationShareLinkedAt:
+          admin.firestore.FieldValue.serverTimestamp(),
+        liveLocationShareLinkedAtLocal: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    const contacts = [...new Set(
+      (Array.isArray(user.sos_contacts) ? user.sos_contacts : [])
+        .map((contact) => String(contact?.phoneNumber || '').trim())
+        .filter((phone) => /^\+[1-9]\d{7,14}$/.test(phone))
+    )];
+    if (contacts.length === 0) {
+      return {
+        contactCount: 0,
+        sentCount: 0,
+        retryableFailureCount: 0,
+        uncertainCount: 0,
+      };
+    }
+
+    const startedAt = String(hike.startedAtLocal || '').trim()
+      || new Date().toISOString();
+    const shareUrl =
+      `https://hiker-circle.web.app/live-location?share=${notification.shareId}`;
+    const message = composeLiveLocationStartMessage({
+      hikerName: user.username || user.profile?.username || '',
+      ownerPhone,
+      trailName: hike.trailName,
+      startedAt,
+      shareUrl,
+    });
+    const credentials = greenApiCredentials();
+    const statuses = await Promise.all(
+      contacts.map((recipientPhone) => sendLiveLocationStartToContact({
+        db,
+        credentials,
+        uid,
+        ownerPhone,
+        sessionId: notification.sessionId,
+        recipientPhone,
+        message,
+      }))
+    );
+    return {
+      contactCount: contacts.length,
+      sentCount: statuses.filter((status) => status === 'sent').length,
+      retryableFailureCount:
+        statuses.filter((status) => status === 'retryable_failure').length,
+      uncertainCount:
+        statuses.filter((status) => status === 'delivery_uncertain').length,
+      inProgressCount:
+        statuses.filter((status) => status === 'in_progress').length,
+      failedCount: statuses.filter((status) => status === 'failed').length,
+    };
+  }
+);
+
+// Native iOS/Android hike monitors keep hikeSessions.latestLocation fresh
+// while Flutter is suspended. Mirror that authenticated telemetry into the
+// public, expiring share rather than relying on a background Dart timer.
+exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
+  'hikeSessions/{sessionId}',
+  async (event) => {
+    const before = event.data?.before.data() || {};
+    const after = event.data?.after.data() || {};
+    const shareId = String(after.liveLocationShareId || '').trim();
+    const location = after.latestLocation;
+    if (
+      String(after.status || '') !== 'active'
+      || after.shareLiveLocation !== true
+      || !validFirestoreDocumentId(shareId)
+      || !location
+      || typeof location !== 'object'
+      || !Number.isFinite(Number(location.latitude))
+      || !Number.isFinite(Number(location.longitude))
+      || (
+        String(before.liveLocationShareId || '') === shareId
+        && JSON.stringify(before.latestLocation || null)
+          === JSON.stringify(location)
+      )
+    ) {
+      return;
+    }
+    const shareReference = admin
+      .firestore()
+      .collection('live_location_shares')
+      .doc(shareId);
+    await admin.firestore().runTransaction(async (transaction) => {
+      const shareSnapshot = await transaction.get(shareReference);
+      const share = shareSnapshot.data() || {};
+      const expiresAtMillis = dateMillis(share.expiresAtLocal || share.expiresAt);
+      if (
+        !shareSnapshot.exists
+        || String(share.ownerUserId || '') !== String(after.userId || '')
+        || share.isActive !== true
+        || !Number.isFinite(expiresAtMillis)
+        || expiresAtMillis <= Date.now()
+      ) {
+        return;
+      }
+      const nowIso = new Date().toISOString();
+      transaction.set(
+        shareReference,
+        {
+          latestLocation: sanitizedPlainValue(location),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAtLocal: nowIso,
+        },
+        { merge: true }
+      );
+      transaction.set(
+        admin.firestore().collection('users').doc(String(after.userId || '')),
+        {
+          liveLocation: sanitizedPlainValue(location),
+          liveLocationUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          liveLocationUpdatedAtLocal: nowIso,
+        },
+        { merge: true }
+      );
+    });
   }
 );
 
@@ -5030,16 +5412,18 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
   const sessionId = String(request.data?.sessionId || '').trim();
   const trailId = String(request.data?.trailId || '').trim();
   const rating = Number(request.data?.rating);
+  const difficulty = String(request.data?.difficulty || '').trim().toLowerCase();
   const comment = String(request.data?.comment || '').trim();
   if (
     !validFirestoreDocumentId(sessionId)
     || !validFirestoreDocumentId(trailId)
     || !validRating(rating)
+    || !validDifficultyVote(difficulty)
     || comment.length > 500
   ) {
     throw new HttpsError(
       'invalid-argument',
-      'Choose 1 to 5 stars and keep the optional comment under 500 characters.'
+      'Choose 1 to 5 stars, select Easy, Moderate, or Hard, and keep the optional comment under 500 characters.'
     );
   }
 
@@ -5076,6 +5460,11 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
       reviewSnapshot.exists ? review.rating : null,
       rating
     );
+    const difficultyAggregate = trailDifficultyAggregate(
+      trailSnapshot.data() || {},
+      reviewSnapshot.exists ? review.difficulty : null,
+      difficulty
+    );
     const nowIso = new Date().toISOString();
     transaction.set(
       reviewReference,
@@ -5084,6 +5473,7 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
         trailId,
         userId: uid,
         rating,
+        difficulty,
         comment,
         ...(reviewSnapshot.exists
           ? {}
@@ -5095,8 +5485,11 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
     );
     transaction.update(trailReference, {
       ...aggregate,
+      ...difficultyAggregate,
       ratingUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       ratingUpdatedAtLocal: nowIso,
+      difficultyUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      difficultyUpdatedAtLocal: nowIso,
     });
     return aggregate;
   });

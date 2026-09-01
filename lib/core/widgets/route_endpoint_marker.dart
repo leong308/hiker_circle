@@ -3,7 +3,10 @@ import 'dart:ui' as ui;
 
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
+import 'map_utils.dart';
+
 const int routeEndpointRed = 0xFFE53935;
+const double _overlappingEndpointDistanceMeters = 75;
 
 Future<Uint8List>? _routeEndpointPinImageFuture;
 
@@ -13,27 +16,39 @@ Future<Uint8List> routeEndpointPinImage() {
   return _routeEndpointPinImageFuture ??= _drawRouteEndpointPin();
 }
 
+bool shouldSeparateRouteEndpointLabels(mapbox.Point start, mapbox.Point end) {
+  return distanceMeters(start, end) <= _overlappingEndpointDistanceMeters;
+}
+
 mapbox.PointAnnotationOptions routeEndpointAnnotation({
   required mapbox.Point geometry,
   required String label,
   required Uint8List pinImage,
+  bool separateLabel = false,
 }) {
+  final isEnd = label == 'End';
+  final textOffset = separateLabel
+      ? (isEnd ? const [1.15, -1.7] : const [-1.15, -1.7])
+      : const [0.0, -2.05];
+  final textAnchor = separateLabel
+      ? (isEnd ? mapbox.TextAnchor.BOTTOM_LEFT : mapbox.TextAnchor.BOTTOM_RIGHT)
+      : mapbox.TextAnchor.BOTTOM;
+
   return mapbox.PointAnnotationOptions(
     geometry: geometry,
     image: pinImage,
     iconAnchor: mapbox.IconAnchor.BOTTOM,
-    iconSize: 0.5,
+    iconSize: 0.72,
     symbolSortKey: 1000,
     textField: label,
     textSize: 13,
     textColor: routeEndpointRed,
     textHaloColor: 0xFFFFFFFF,
     textHaloWidth: 2.4,
-    // Keep the caption visually attached to the top of the half-scale pin.
-    // Mapbox offsets are expressed in ems, so reducing the negative offset
-    // moves Start/End down without shifting the geographic pin itself.
-    textOffset: const [0.0, -2.5],
-    textAnchor: mapbox.TextAnchor.BOTTOM,
+    // Most captions stay centered and attached to their own pin. Only nearby
+    // loop endpoints fan out beside the pin to avoid overlapping each other.
+    textOffset: textOffset,
+    textAnchor: textAnchor,
   );
 }
 

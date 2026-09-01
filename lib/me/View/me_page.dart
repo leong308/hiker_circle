@@ -14,6 +14,7 @@ import '../../app/Model/app_session.dart';
 import '../../app/Model/preferred_time_zone.dart';
 import '../../authentication/View/security_methods_page.dart';
 import '../../core/models/hiker_level.dart';
+import '../../core/services/privacy_policy_launcher.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
@@ -355,18 +356,8 @@ class _MePageState extends State<MePage> {
             ),
           ),
         );
-      case 'Privacy':
-        _openSettingsDetail(
-          title: 'Privacy',
-          subtitle: 'Profile visibility and sharing',
-          icon: Icons.lock_rounded,
-          rows: const [
-            ('Profile visibility', 'Buddies and team members'),
-            ('Hike history', 'Show completed public hikes'),
-            ('Live location', 'Only during active hike'),
-            ('QR discovery', 'Ask before adding as buddy'),
-          ],
-        );
+      case 'Privacy Policy':
+        unawaited(_openPrivacyPolicy());
       case 'Help center':
         _openHelpCenter();
       case 'Account preferences':
@@ -387,6 +378,21 @@ class _MePageState extends State<MePage> {
           ],
         );
     }
+  }
+
+  Future<void> _openPrivacyPolicy() async {
+    final launched = await launchPrivacyPolicy();
+    if (!mounted || launched) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to open the Privacy Policy. Check your connection and try again.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   Future<void> _openEmergencyContacts() async {

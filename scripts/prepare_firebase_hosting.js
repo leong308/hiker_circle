@@ -5,7 +5,10 @@ const projectRoot = path.resolve(__dirname, '..');
 const targetDirectory = path.join(projectRoot, 'build', 'web');
 fs.mkdirSync(targetDirectory, { recursive: true });
 const entries = [
-  { source: ['web', 'favicon.png'], target: ['favicon.png'] },
+  {
+    source: ['assets', 'icons', 'HikerCircle-Loader-Transparent.png'],
+    target: ['favicon.png'],
+  },
   { source: ['web', 'index.html'], target: ['index.html'] },
   { source: ['web', 'site'], target: ['site'] },
   { source: ['web', 'live-location.html'], target: ['live-location.html'] },

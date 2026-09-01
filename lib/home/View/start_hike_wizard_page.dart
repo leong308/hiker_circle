@@ -26,6 +26,7 @@ class StartHikeWizardPage extends StatefulWidget {
     this.repository,
     this.session,
     this.emergencyContactNames = const [],
+    this.initialShareLiveLocation = false,
     this.onScheduled,
     this.onStartNow,
   });
@@ -35,6 +36,7 @@ class StartHikeWizardPage extends StatefulWidget {
   final HikerCircleFirebaseRepository? repository;
   final AppSession? session;
   final List<String> emergencyContactNames;
+  final bool initialShareLiveLocation;
   final Future<void> Function(HikeSessionDraft draft)? onScheduled;
   final Future<bool> Function(HikeSessionDraft draft)? onStartNow;
 
@@ -93,6 +95,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           for (final name in widget.emergencyContactNames)
             if (name.trim().isNotEmpty) name.trim(),
         }.toList(),
+        shareLiveLocation: widget.initialShareLiveLocation,
       ),
     );
   }
@@ -1541,7 +1544,7 @@ class _SafetySettingsStep extends StatelessWidget {
         _ContactsPreview(names: draft.emergencyContactNames),
         const SizedBox(height: 12),
         _SwitchRow(
-          label: 'Live Location Sharing',
+          label: 'Share live location with SOS contacts when hike starts',
           value: draft.shareLiveLocation,
           onChanged: (value) =>
               onChanged(draft.copyWith(shareLiveLocation: value)),
@@ -1962,7 +1965,11 @@ class _TrailSummary extends StatelessWidget {
             ),
             const SizedBox(height: 3),
             Text(
-              '${trail.locationLabel} - ${trail.distanceLabel} - ${trail.difficulty}',
+              [
+                trail.locationLabel,
+                trail.distanceLabel,
+                if (trail.hasCommunityDifficulty) trail.difficulty,
+              ].join(' - '),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: _WizardColors.secondaryTextFor(context),
                 letterSpacing: 0,

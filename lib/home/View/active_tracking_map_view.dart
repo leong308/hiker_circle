@@ -817,16 +817,22 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
           renderGeneration != _renderGeneration) {
         return;
       }
+      final separateEndpointLabels = shouldSeparateRouteEndpointLabels(
+        _startPoint,
+        _endPoint,
+      );
       await pointManager.createMulti([
         routeEndpointAnnotation(
           geometry: _startPoint,
           label: 'Start',
           pinImage: endpointPin,
+          separateLabel: separateEndpointLabels,
         ),
         routeEndpointAnnotation(
           geometry: _endPoint,
           label: 'End',
           pinImage: endpointPin,
+          separateLabel: separateEndpointLabels,
         ),
       ]);
       created = true;

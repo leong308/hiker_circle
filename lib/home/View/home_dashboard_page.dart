@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/cached_trail_image.dart';
 import '../../core/widgets/worldwide_region_picker.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../sos/Data/location_snapshot_service.dart';
@@ -849,10 +850,11 @@ class _BestMatchTrailCard extends StatelessWidget {
                                   ? '${(nearbyDistanceKm! * 1000).round()} m from you'
                                   : '${nearbyDistanceKm!.toStringAsFixed(1)} km from you',
                             ),
-                          _TrailMeta(
-                            icon: Icons.signal_cellular_alt_rounded,
-                            label: trail.difficulty,
-                          ),
+                          if (trail.hasCommunityDifficulty)
+                            _TrailMeta(
+                              icon: Icons.signal_cellular_alt_rounded,
+                              label: trail.difficulty,
+                            ),
                           _TrailMeta(
                             icon: CupertinoIcons.clock_fill,
                             label: trail.durationLabel,
@@ -989,24 +991,23 @@ class _BestMatchTrailCover extends StatelessWidget {
         height: 96,
         child: url.trim().isEmpty
             ? _TrailCoverFallback(color: fallbackColor)
-            : Image.network(
-                url.trim(),
+            : CachedTrailImage(
+                imageUrl: url,
                 fit: BoxFit.cover,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _TrailCoverFallback(color: fallbackColor),
-                      const Center(
-                        child: HikerCircleMinorLoadingIndicator(size: 28),
-                      ),
-                    ],
-                  );
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  return _TrailCoverFallback(color: fallbackColor);
-                },
+                width: 96,
+                height: 96,
+                semanticLabel: '${trail.name} trail cover',
+                loadingBuilder: (context) => Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _TrailCoverFallback(color: fallbackColor),
+                    const Center(
+                      child: HikerCircleMinorLoadingIndicator(size: 28),
+                    ),
+                  ],
+                ),
+                fallbackBuilder: (context) =>
+                    _TrailCoverFallback(color: fallbackColor),
               ),
       ),
     );
@@ -1516,8 +1517,11 @@ class _HazardDetailPage extends StatelessWidget {
                           ),
                           _InfoLine(
                             label: 'Trail',
-                            value:
-                                '${trail.distanceLabel} - ${trail.difficulty}',
+                            value: [
+                              trail.distanceLabel,
+                              if (trail.hasCommunityDifficulty)
+                                trail.difficulty,
+                            ].join(' - '),
                           ),
                         ],
                       ),
@@ -2743,8 +2747,15 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                     ),
                     _InfoLine(
                       label: 'Trail',
-                      value:
-                          '${hike.distanceKm.toStringAsFixed(1)} km · ${hike.difficulty} · ${[hike.area, hike.state, hike.country].where((part) => part.trim().isNotEmpty).join(', ')}',
+                      value: [
+                        '${hike.distanceKm.toStringAsFixed(1)} km',
+                        if (hike.difficulty.trim().isNotEmpty) hike.difficulty,
+                        [
+                          hike.area,
+                          hike.state,
+                          hike.country,
+                        ].where((part) => part.trim().isNotEmpty).join(', '),
+                      ].where((part) => part.trim().isNotEmpty).join(' · '),
                     ),
                   ],
                 ),

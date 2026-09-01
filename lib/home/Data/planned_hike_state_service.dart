@@ -217,6 +217,7 @@ class PlannedHikeStateResolver {
       isVerifiedTrail: liveTrail.isVerifiedTrail,
       coverColorValue: liveTrail.coverColorValue,
       coverImageUrls: liveTrail.coverImageUrls,
+      coverImageCredits: liveTrail.coverImageCredits,
       routeFilePath: trail.routeFilePath.trim().isEmpty
           ? liveTrail.routeFilePath
           : trail.routeFilePath,

@@ -23,16 +23,21 @@ class LiveLocationSharingService extends ChangeNotifier {
   LiveLocationShare? _share;
   bool _isActive = false;
   bool _isBusy = false;
+  bool _isPreferenceBusy = false;
   bool _isSharing = false;
   bool _isPublishing = false;
   String? _errorMessage;
+  bool _autoShareOnHikeStart = false;
   int _configurationGeneration = 0;
+  Future<void>? _loadFuture;
   Future<void>? _publishFuture;
 
   LiveLocationShare? get share => _share;
   bool get isActive => _isActive;
-  bool get isBusy => _isBusy;
+  bool get isBusy => _isBusy || _isPreferenceBusy;
+  bool get isPreferenceBusy => _isPreferenceBusy;
   bool get isSharing => _isSharing;
+  bool get autoShareOnHikeStart => _autoShareOnHikeStart;
   String? get errorMessage => _errorMessage;
 
   Map<String, Object?> get debugSnapshot => {
@@ -43,6 +48,8 @@ class LiveLocationSharingService extends ChangeNotifier {
     'publishTimerActive': _publishTimer?.isActive == true,
     'isActive': _isActive,
     'isBusy': _isBusy,
+    'isPreferenceBusy': _isPreferenceBusy,
+    'autoShareOnHikeStart': _autoShareOnHikeStart,
     'isSharing': _isSharing,
     'isPublishing': _isPublishing,
     'errorMessage': _errorMessage,
@@ -66,10 +73,27 @@ class LiveLocationSharingService extends ChangeNotifier {
       firebaseBootstrapResult: firebaseBootstrapResult,
     );
 
-    if (_isActive || _isBusy) {
+    final pendingLoad = _loadFuture;
+    if (pendingLoad != null) {
+      await pendingLoad;
       return;
     }
+    if (_isActive || _isBusy) return;
 
+    late final Future<void> operation;
+    operation = _loadExistingForCurrentConfiguration(phoneNumber: phoneNumber)
+        .whenComplete(() {
+          if (identical(_loadFuture, operation)) {
+            _loadFuture = null;
+          }
+        });
+    _loadFuture = operation;
+    await operation;
+  }
+
+  Future<void> _loadExistingForCurrentConfiguration({
+    required String phoneNumber,
+  }) async {
     final repository = _repository!;
     final generation = _configurationGeneration;
     _isBusy = true;
@@ -77,6 +101,9 @@ class LiveLocationSharingService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final autoShareOnHikeStart = await repository.loadAutoShareOnHikeStart(
+        phoneNumber: phoneNumber,
+      );
       final existingShare = await repository.loadForUser(
         phoneNumber: phoneNumber,
       );
@@ -90,6 +117,7 @@ class LiveLocationSharingService extends ChangeNotifier {
         }
         return;
       }
+      _autoShareOnHikeStart = autoShareOnHikeStart;
       if (existingShare != null) {
         _share = existingShare;
         _isActive = true;
@@ -114,6 +142,46 @@ class LiveLocationSharingService extends ChangeNotifier {
     } finally {
       if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
         _isBusy = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> setAutoShareOnHikeStart({
+    required String phoneNumber,
+    required FirebaseBootstrapResult firebaseBootstrapResult,
+    required bool enabled,
+  }) async {
+    _configure(
+      phoneNumber: phoneNumber,
+      firebaseBootstrapResult: firebaseBootstrapResult,
+    );
+    if (_isPreferenceBusy) return;
+
+    final repository = _repository!;
+    final generation = _configurationGeneration;
+    _isPreferenceBusy = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await repository.setAutoShareOnHikeStart(
+        phoneNumber: phoneNumber,
+        enabled: enabled,
+      );
+      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _autoShareOnHikeStart = enabled;
+      }
+    } on LiveLocationRepositoryException catch (error) {
+      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _errorMessage = error.message;
+      }
+    } catch (_) {
+      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _errorMessage = 'Unable to save the automatic sharing preference.';
+      }
+    } finally {
+      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _isPreferenceBusy = false;
         notifyListeners();
       }
     }
@@ -367,10 +435,13 @@ class LiveLocationSharingService extends ChangeNotifier {
     _share = null;
     _isActive = false;
     _isBusy = false;
+    _isPreferenceBusy = false;
     _isSharing = false;
     _isPublishing = false;
     _publishFuture = null;
+    _loadFuture = null;
     _errorMessage = null;
+    _autoShareOnHikeStart = false;
     notifyListeners();
     if (shouldDeactivate) {
       _deactivateBestEffort(
@@ -401,10 +472,13 @@ class LiveLocationSharingService extends ChangeNotifier {
     _share = null;
     _isActive = false;
     _isBusy = false;
+    _isPreferenceBusy = false;
     _isSharing = false;
     _isPublishing = false;
     _publishFuture = null;
+    _loadFuture = null;
     _errorMessage = null;
+    _autoShareOnHikeStart = false;
     if (previousWasActive &&
         previousRepository != null &&
         previousPhoneNumber != null) {

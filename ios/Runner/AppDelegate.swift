@@ -1086,6 +1086,8 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private var trailName = "Active hike"
   private var longestRestDuration: TimeInterval = 180
   private var sensitivity = 5.0
+  private var fallDetectionEnabled = true
+  private var shareLiveLocation = false
   private var lastMotionAt = Date()
   private var referenceLocation: CLLocation?
   private var latestLocation: CLLocation?
@@ -1130,8 +1132,15 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   func startOrUpdate(arguments: Any?) {
     guard let data = arguments as? [String: Any],
           let incomingSessionId = data["sessionId"] as? String,
-          !incomingSessionId.isEmpty,
-          (data["fallDetectionEnabled"] as? Bool) == true else {
+          !incomingSessionId.isEmpty else {
+      stop()
+      return
+    }
+    let incomingFallDetectionEnabled =
+      (data["fallDetectionEnabled"] as? Bool) == true
+    let incomingShareLiveLocation =
+      (data["shareLiveLocation"] as? Bool) == true
+    guard incomingFallDetectionEnabled || incomingShareLiveLocation else {
       stop()
       return
     }
@@ -1145,6 +1154,8 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       Self.doubleValue(data["longestRestMillis"]) / 1000
     )
     sensitivity = min(10, max(1, Self.doubleValue(data["sensorSensitivity"], fallback: 5)))
+    fallDetectionEnabled = incomingFallDetectionEnabled
+    shareLiveLocation = incomingShareLiveLocation
 
     if previousSessionId != incomingSessionId {
       phase = .monitoring
@@ -1158,15 +1169,26 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     defaults.set(trailName, forKey: key("trail_name"))
     defaults.set(longestRestDuration, forKey: key("rest_seconds"))
     defaults.set(sensitivity, forKey: key("sensitivity"))
+    defaults.set(fallDetectionEnabled, forKey: key("fall_detection_enabled"))
+    defaults.set(shareLiveLocation, forKey: key("share_live_location"))
     persistMotionClock()
     startLocationUpdates()
-    startMotionUpdates()
-    startTimer()
-    refreshTerminationWatchdog(force: true)
+    if fallDetectionEnabled {
+      startMotionUpdates()
+      startTimer()
+      refreshTerminationWatchdog(force: true)
+    } else {
+      motionManager.stopDeviceMotionUpdates()
+      timer?.cancel()
+      timer = nil
+      clearEventState()
+      phase = .monitoring
+    }
     publishTelemetry(force: true)
-    if phase == .warning {
+    if fallDetectionEnabled && phase == .warning {
       warningStarted()
-    } else if phase == .readyForFlutterDispatch || phase == .dispatched {
+    } else if fallDetectionEnabled
+      && (phase == .readyForFlutterDispatch || phase == .dispatched) {
       escalationStarted()
     }
   }
@@ -1179,15 +1201,26 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     trailName = defaults.string(forKey: key("trail_name")) ?? "Active hike"
     longestRestDuration = max(30, defaults.double(forKey: key("rest_seconds")))
     sensitivity = min(10, max(1, defaults.double(forKey: key("sensitivity"))))
+    fallDetectionEnabled = defaults.object(
+      forKey: key("fall_detection_enabled")
+    ) == nil || defaults.bool(forKey: key("fall_detection_enabled"))
+    shareLiveLocation = defaults.bool(forKey: key("share_live_location"))
+    guard fallDetectionEnabled || shareLiveLocation else {
+      stop()
+      return
+    }
     restoreState()
     startLocationUpdates()
-    startMotionUpdates()
-    startTimer()
-    refreshTerminationWatchdog(force: true)
+    if fallDetectionEnabled {
+      startMotionUpdates()
+      startTimer()
+      refreshTerminationWatchdog(force: true)
+    }
     publishTelemetry(force: true)
-    if phase == .warning {
+    if fallDetectionEnabled && phase == .warning {
       warningStarted()
-    } else if phase == .readyForFlutterDispatch || phase == .dispatched {
+    } else if fallDetectionEnabled
+      && (phase == .readyForFlutterDispatch || phase == .dispatched) {
       escalationStarted()
     }
   }
@@ -1218,6 +1251,8 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     clearEventState()
     phase = .monitoring
     sessionId = ""
+    fallDetectionEnabled = false
+    shareLiveLocation = false
     monitoringReset()
   }
 
@@ -1298,6 +1333,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   }
 
   private func handleMotion(_ motion: CMDeviceMotion) {
+    guard fallDetectionEnabled else { return }
     let accelerationMagnitude = sqrt(
       pow(motion.userAcceleration.x, 2)
         + pow(motion.userAcceleration.y, 2)
@@ -1365,7 +1401,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   }
 
   private func evaluateState() {
-    guard isActive else { return }
+    guard isActive, fallDetectionEnabled else { return }
     refreshTerminationWatchdog()
     publishTelemetry()
     switch phase {
@@ -1429,14 +1465,14 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       )
       if location.distance(from: referenceLocation) > threshold {
         self.referenceLocation = location
-        if phase == .monitoring { noteMeaningfulMotion() }
+        if fallDetectionEnabled && phase == .monitoring { noteMeaningfulMotion() }
       } else if location.horizontalAccuracy < referenceLocation.horizontalAccuracy {
         self.referenceLocation = location
       }
     } else {
       referenceLocation = location
     }
-    refreshTerminationWatchdog()
+    if fallDetectionEnabled { refreshTerminationWatchdog() }
     publishTelemetry()
   }
 

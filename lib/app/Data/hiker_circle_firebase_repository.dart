@@ -114,6 +114,26 @@ class NearbySosForwardResult {
   final int reporterCount;
 }
 
+class LiveLocationContactNotificationResult {
+  const LiveLocationContactNotificationResult({
+    required this.contactCount,
+    required this.sentCount,
+    required this.retryableFailureCount,
+    required this.uncertainCount,
+    required this.inProgressCount,
+    required this.failedCount,
+  });
+
+  final int contactCount;
+  final int sentCount;
+  final int retryableFailureCount;
+  final int uncertainCount;
+  final int inProgressCount;
+  final int failedCount;
+
+  bool get shouldRetry => retryableFailureCount > 0 || inProgressCount > 0;
+}
+
 @visibleForTesting
 bool activeHikeStartAllowsOfflineFallbackForFunctionsCode(String code) {
   return const {
@@ -2345,6 +2365,41 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  Future<LiveLocationContactNotificationResult>
+  notifyEmergencyContactsOfLiveLocation({
+    required String activeHikeSessionId,
+    required String shareId,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('notifyEmergencyContactsOfLiveLocation')
+          .call<Map<String, dynamic>>({
+            'sessionId': activeHikeSessionId.trim(),
+            'shareId': shareId.trim(),
+          })
+          .timeout(const Duration(seconds: 120));
+      final data = response.data;
+      return LiveLocationContactNotificationResult(
+        contactCount: _intFrom(data['contactCount']),
+        sentCount: _intFrom(data['sentCount']),
+        retryableFailureCount: _intFrom(data['retryableFailureCount']),
+        uncertainCount: _intFrom(data['uncertainCount']),
+        inProgressCount: _intFrom(data['inProgressCount']),
+        failedCount: _intFrom(data['failedCount']),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ??
+            'The live location link could not be sent to SOS contacts.',
+      );
+    } on TimeoutException {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Live location contact delivery is still being processed.',
+      );
+    }
+  }
+
   Future<TeamHikeSession> createTeamHikeSession({
     required AppSession session,
     required HikeSessionDraft draft,
@@ -2957,16 +3012,19 @@ class HikerCircleFirebaseRepository {
     required String sessionId,
     required String trailId,
     required int rating,
+    required String difficulty,
     String comment = '',
   }) async {
     _throwIfFirebaseUnavailable();
+    final normalizedDifficulty = difficulty.trim().toLowerCase();
     if (sessionId.trim().isEmpty ||
         trailId.trim().isEmpty ||
         rating < 1 ||
         rating > 5 ||
+        !const {'easy', 'moderate', 'hard'}.contains(normalizedDifficulty) ||
         comment.trim().length > 500) {
       throw const HikerCircleFirebaseRepositoryException(
-        'Choose 1 to 5 stars and keep the optional comment under 500 characters.',
+        'Choose 1 to 5 stars, select Easy, Moderate, or Hard, and keep the optional comment under 500 characters.',
       );
     }
     try {
@@ -2974,6 +3032,7 @@ class HikerCircleFirebaseRepository {
         'sessionId': sessionId.trim(),
         'trailId': trailId.trim(),
         'rating': rating,
+        'difficulty': normalizedDifficulty,
         'comment': comment.trim(),
       });
     } on FirebaseFunctionsException catch (error) {
@@ -3365,7 +3424,10 @@ class HikerCircleFirebaseRepository {
     _throwIfAdminUnavailable(session);
     final trailData = trail.toFirestore()
       ..remove('ratingAverage')
-      ..remove('ratingCount');
+      ..remove('ratingCount')
+      ..remove('difficulty')
+      ..remove('difficultyVoteCounts')
+      ..remove('difficultyRatingCount');
     await _trails.doc(trail.trailId).set({
       ...trailData,
       'updatedByAdminId': _userIdFor(session),
@@ -3389,6 +3451,8 @@ class HikerCircleFirebaseRepository {
       'ratingAverage': 0,
       'ratingCount': 0,
       'ratingSum': 0,
+      'difficultyVoteCounts': const {'easy': 0, 'moderate': 0, 'hard': 0},
+      'difficultyRatingCount': 0,
       'createdByAdminId': _userIdFor(session),
       'createdByAdminPhoneNumber': session.phoneNumber,
       'createdAt': FieldValue.serverTimestamp(),
@@ -4527,6 +4591,10 @@ class HikerCircleFirebaseRepository {
     if (checkpoints.length < 2) {
       return null;
     }
+    final rawDifficultyVoteCounts = data['difficultyVoteCounts'];
+    final difficultyVoteCounts = rawDifficultyVoteCounts is Map
+        ? Map<String, dynamic>.from(rawDifficultyVoteCounts)
+        : const <String, dynamic>{};
 
     return Trail(
       trailId: _stringFrom(data['trailId']),
@@ -4542,12 +4610,18 @@ class HikerCircleFirebaseRepository {
       elevationGainMeters: _intFrom(data['elevationGainMeters']),
       ratingAverage: _doubleFrom(data['ratingAverage']),
       ratingCount: _intFrom(data['ratingCount']),
+      easyDifficultyVotes: _intFrom(difficultyVoteCounts['easy']),
+      moderateDifficultyVotes: _intFrom(difficultyVoteCounts['moderate']),
+      hardDifficultyVotes: _intFrom(difficultyVoteCounts['hard']),
       offlineMapAvailable: data['offlineMapAvailable'] == true,
       offlineMapDownloaded: data['offlineMapDownloaded'] == true,
       isVerifiedTrail: data['isVerifiedTrail'] == true,
       routeFilePath: _stringFrom(data['routeFilePath']),
       coverColorValue: _intFrom(data['coverColorValue']),
       coverImageUrls: _coverImageUrlsFrom(data),
+      coverImageCredits: _listOfMaps(
+        data['coverImageCredits'],
+      ).map(TrailImageCredit.fromPersistence).toList(),
       checkpoints: checkpoints,
       weather: weatherFromFirestore(data['weather']),
       hazards: _listOfMaps(
@@ -4555,6 +4629,16 @@ class HikerCircleFirebaseRepository {
       ).map(_hazardFromFirestore).whereType<TrailHazard>().toList(),
       routeEncodedPolyline: _nullableStringFrom(data['routeEncodedPolyline']),
       routeCheckpointsHash: _nullableStringFrom(data['routeCheckpointsHash']),
+      dataSource: _stringFrom(data['dataSource']),
+      dataSourceUrl: _stringFrom(data['dataSourceUrl']),
+      osmRelationId: _stringFrom(data['osmRelationId']),
+      routeProvider: _stringFrom(data['routeProvider']),
+      routeActivity: _stringFrom(data['routeActivity']),
+      routeShape: _stringFrom(data['routeShape']),
+      routeReferenceName: _stringFrom(data['routeReferenceName']),
+      routeReferenceUrl: _stringFrom(data['routeReferenceUrl']),
+      routeReferenceNote: _stringFrom(data['routeReferenceNote']),
+      routeVerifiedAtLocal: _stringFrom(data['routeVerifiedAtLocal']),
     );
   }
 

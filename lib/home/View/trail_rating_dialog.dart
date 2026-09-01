@@ -3,9 +3,14 @@ import 'package:flutter/material.dart';
 import '../../core/widgets/loading_toast.dart';
 
 class TrailRatingFeedback {
-  const TrailRatingFeedback({required this.rating, required this.comment});
+  const TrailRatingFeedback({
+    required this.rating,
+    required this.difficulty,
+    required this.comment,
+  });
 
   final int rating;
+  final String difficulty;
   final String comment;
 }
 
@@ -26,6 +31,7 @@ class TrailRatingDialog extends StatefulWidget {
 class _TrailRatingDialogState extends State<TrailRatingDialog> {
   final _commentController = TextEditingController();
   int _rating = 0;
+  String? _difficulty;
   bool _isSubmitting = false;
   String? _errorMessage;
 
@@ -36,7 +42,7 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
   }
 
   Future<void> _submit() async {
-    if (_rating == 0 || _isSubmitting) return;
+    if (_rating == 0 || _difficulty == null || _isSubmitting) return;
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
@@ -45,6 +51,7 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
       await widget.onSubmit(
         TrailRatingFeedback(
           rating: _rating,
+          difficulty: _difficulty!,
           comment: _commentController.text.trim(),
         ),
       );
@@ -168,6 +175,36 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
                 ),
               ),
               const SizedBox(height: 18),
+              Text(
+                'How difficult did this hike feel?',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final difficulty in const ['Easy', 'Moderate', 'Hard'])
+                    ChoiceChip(
+                      key: Key('trail-difficulty-${difficulty.toLowerCase()}'),
+                      label: Text(difficulty),
+                      selected: _difficulty == difficulty.toLowerCase(),
+                      onSelected: _isSubmitting
+                          ? null
+                          : (selected) => setState(() {
+                              _difficulty = selected
+                                  ? difficulty.toLowerCase()
+                                  : null;
+                            }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 18),
               TextField(
                 key: const Key('trail-rating-comment'),
                 controller: _commentController,
@@ -200,7 +237,7 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
                 const SizedBox(height: 8),
               ],
               Text(
-                'Your rating contributes to this route’s public score.',
+                'Your rating and difficulty vote contribute to this route’s public community results.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: colorScheme.onSurfaceVariant,
@@ -218,7 +255,9 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
           ),
           FilledButton(
             key: const Key('submit-trail-rating'),
-            onPressed: _rating == 0 || _isSubmitting ? null : _submit,
+            onPressed: _rating == 0 || _difficulty == null || _isSubmitting
+                ? null
+                : _submit,
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF34A853),
               foregroundColor: Colors.white,

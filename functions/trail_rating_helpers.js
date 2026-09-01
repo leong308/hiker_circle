@@ -5,6 +5,59 @@ function validRating(value) {
   return Number.isInteger(rating) && rating >= 1 && rating <= 5;
 }
 
+const difficultyValues = Object.freeze(['easy', 'moderate', 'hard']);
+
+function validDifficultyVote(value) {
+  return difficultyValues.includes(String(value || '').trim().toLowerCase());
+}
+
+function normalizedDifficultyVote(value) {
+  const difficulty = String(value || '').trim().toLowerCase();
+  if (!validDifficultyVote(difficulty)) {
+    throw new TypeError('Difficulty must be easy, moderate, or hard.');
+  }
+  return difficulty;
+}
+
+function trailDifficultyAggregate(trail, previousDifficulty, nextDifficulty) {
+  const next = normalizedDifficultyVote(nextDifficulty);
+  const previous = validDifficultyVote(previousDifficulty)
+    ? normalizedDifficultyVote(previousDifficulty)
+    : null;
+  const rawCounts = trail?.difficultyVoteCounts;
+  const counts = Object.fromEntries(
+    difficultyValues.map((difficulty) => {
+      const value = Number(rawCounts?.[difficulty]);
+      return [
+        difficulty,
+        Number.isInteger(value) && value > 0 ? value : 0,
+      ];
+    })
+  );
+
+  if (previous && counts[previous] > 0) counts[previous] -= 1;
+  counts[next] += 1;
+
+  const difficultyRatingCount = difficultyValues.reduce(
+    (total, difficulty) => total + counts[difficulty],
+    0
+  );
+  const scoreSum = counts.easy + counts.moderate * 2 + counts.hard * 3;
+  const average = scoreSum / difficultyRatingCount;
+  const difficulty = average < 1.5
+    ? 'easy'
+    : average < 2.5
+      ? 'moderate'
+      : 'hard';
+
+  return {
+    difficulty,
+    difficultyVoteCounts: counts,
+    difficultyRatingCount,
+    difficultyScoreAverage: Math.round(average * 100) / 100,
+  };
+}
+
 function trailRatingAggregate(trail, previousRating, nextRating) {
   if (!validRating(nextRating)) {
     throw new TypeError('Rating must be an integer from 1 to 5.');
@@ -34,4 +87,9 @@ function trailRatingAggregate(trail, previousRating, nextRating) {
   };
 }
 
-module.exports = { trailRatingAggregate, validRating };
+module.exports = {
+  trailDifficultyAggregate,
+  trailRatingAggregate,
+  validDifficultyVote,
+  validRating,
+};

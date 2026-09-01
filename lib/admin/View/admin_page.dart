@@ -8,7 +8,6 @@ import '../../app/Data/app_settings_controller.dart';
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
-import '../../core/services/trail_cover_image_service.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
@@ -547,8 +546,11 @@ class _AdminPageState extends State<AdminPage> {
             LocationSnapshotService.instance.debugSnapshot,
         'Live-location sharing singleton':
             LiveLocationSharingService.instance.debugSnapshot,
-        'Trail cover image lookup cache':
-            TrailCoverImageService.instance.debugSnapshot,
+        'Trail cover image cache': {
+          'storageType': 'Firebase Storage covers with persistent device cache',
+          'persistence':
+              'Up to 1,000 files; cached files stay fresh for 365 days',
+        },
         'Admin screen memory': {
           'storageType': 'Widget state',
           'persistence': 'Exists only while this AdminPage is mounted',
@@ -1348,8 +1350,11 @@ class _TrailAdminRow extends StatelessWidget {
               Expanded(
                 child: _AdminTextBlock(
                   title: trail.name,
-                  subtitle:
-                      '${trail.locationLabel} - ${trail.distanceLabel} - ${trail.difficulty}',
+                  subtitle: [
+                    trail.locationLabel,
+                    trail.distanceLabel,
+                    if (trail.hasCommunityDifficulty) trail.difficulty,
+                  ].join(' - '),
                   body:
                       '$checkpointLabel - ${trail.durationLabel} - Rating ${trail.ratingAverage.toStringAsFixed(1)}',
                 ),
