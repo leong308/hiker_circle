@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lottie/lottie.dart';
 
 import '../../core/services/hiker_ble_service.dart';
 import '../../core/widgets/loading_toast.dart';
@@ -494,7 +495,14 @@ class _SosButtonPairingSheetState extends State<SosButtonPairingSheet>
       _PairingStep.scanning => _GuideStep(
         key: const ValueKey('scanning'),
         icon: Icons.bluetooth_searching_rounded,
-        animatedIcon: _pulseController,
+        hero: SizedBox.square(
+          dimension: 132,
+          child: Lottie.asset(
+            'assets/animations/bluetooth_search.json',
+            repeat: true,
+            fit: BoxFit.contain,
+          ),
+        ),
         title: 'Searching nearby…',
         subtitle:
             'Listening for a HikerCircle SOS button in setup mode. Usually this takes only a few seconds.',
@@ -747,6 +755,7 @@ class _GuideStep extends StatelessWidget {
     required this.subtitle,
     required this.child,
     this.animatedIcon,
+    this.hero,
     this.primaryLabel,
     this.primaryIcon,
     this.onPrimary,
@@ -759,6 +768,7 @@ class _GuideStep extends StatelessWidget {
   final String subtitle;
   final Widget child;
   final Animation<double>? animatedIcon;
+  final Widget? hero;
   final String? primaryLabel;
   final IconData? primaryIcon;
   final VoidCallback? onPrimary;
@@ -784,9 +794,11 @@ class _GuideStep extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Align(
-            child: animatedIcon == null
-                ? iconWidget
-                : ScaleTransition(scale: animatedIcon!, child: iconWidget),
+            child:
+                hero ??
+                (animatedIcon == null
+                    ? iconWidget
+                    : ScaleTransition(scale: animatedIcon!, child: iconWidget)),
           ),
           const SizedBox(height: 18),
           Text(

@@ -119,8 +119,37 @@ test('TOTP ciphertext cannot be decrypted with another key', () => {
 test('WebAuthn validation uses exact RP ID, allowlisted origins, and user verification', () => {
   assert.match(source, /const MFA_RP_ID = 'hiker-circle\.web\.app'/);
   assert.doesNotMatch(source, /MFA_EXPECTED_ORIGINS[\s\S]{0,250}\*/);
+  assert.match(source, /android:apk-key-hash:h2Rnre_qN7trjII_aQvnR10eWfZBnmoel4_NUXRj93A/);
+  assert.match(source, /android:apk-key-hash:flOmOJZmCgW6d7EWNq5_y29ComAJ7bbBTChNAdUmaYI/);
   assert.ok((source.match(/requireUserVerification: true/g) || []).length >= 2);
   assert.ok((source.match(/userVerification: 'required'/g) || []).length >= 2);
+});
+
+test('every Android Digital Asset Link certificate is accepted by WebAuthn', () => {
+  const assetLinks = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', '..', 'web', '.well-known', 'assetlinks.json'),
+    'utf8'
+  ));
+  const fingerprints = assetLinks
+    .filter((statement) => statement?.target?.package_name === 'com.leongziqi.hikercircle')
+    .flatMap((statement) => statement.target.sha256_cert_fingerprints || []);
+  const appStatement = assetLinks.find(
+    (statement) => statement?.target?.package_name === 'com.leongziqi.hikercircle'
+  );
+  assert.ok(
+    appStatement?.relation?.includes('delegate_permission/common.handle_all_urls'),
+    'Passkeys require the Android App Links relationship for RP ID validation'
+  );
+  assert.ok(
+    appStatement?.relation?.includes('delegate_permission/common.get_login_creds'),
+    'Credential sharing relationship must remain declared'
+  );
+  assert.ok(fingerprints.length >= 2);
+  for (const fingerprint of fingerprints) {
+    const originHash = Buffer.from(String(fingerprint).replaceAll(':', ''), 'hex')
+      .toString('base64url');
+    assert.match(source, new RegExp(`android:apk-key-hash:${originHash}`));
+  }
 });
 
 test('Android passkey transports are normalized before storage and authentication', () => {

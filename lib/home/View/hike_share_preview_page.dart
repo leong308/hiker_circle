@@ -9,6 +9,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/services/hiking_route_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../Model/hike_session_models.dart';
 import '../../trail/Model/trail_models.dart';
@@ -757,7 +758,7 @@ class _ShareActionBar extends StatelessWidget {
       icon: isSharingExternally
           ? const SizedBox.square(
               dimension: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
             )
           : const Icon(Icons.ios_share_rounded),
       label: const Text('Other apps'),
@@ -772,7 +773,7 @@ class _ShareActionBar extends StatelessWidget {
       icon: isPosting
           ? const SizedBox.square(
               dimension: 18,
-              child: CircularProgressIndicator(
+              child: HikerCircleMinorLoadingIndicator(
                 strokeWidth: 2,
                 color: Colors.white,
               ),

@@ -196,7 +196,9 @@ void main() {
     expect(find.textContaining('Sending in 10 seconds'), findsOneWidget);
 
     await tester.tap(find.text('Cancel SOS'));
-    await tester.pumpAndSettle();
+    // Reachability can keep the compact loading Lottie active after the
+    // cancel sheet closes; pump the dismissal transition directly.
+    await tester.pump(const Duration(milliseconds: 500));
     await disposePage(tester);
   });
 

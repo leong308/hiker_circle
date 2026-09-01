@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../../home/Model/hike_session_models.dart';
 
 const _green = Color(0xFF34A853);
@@ -1864,7 +1865,7 @@ class _MessageBubble extends StatelessWidget {
       statusIndicator = SizedBox(
         width: 14,
         height: 14,
-        child: CircularProgressIndicator(
+        child: HikerCircleMinorLoadingIndicator(
           strokeWidth: 1.5,
           color: isMe
               ? Colors.white.withValues(alpha: 0.7)
@@ -2133,7 +2134,7 @@ class _MessageAttachmentView extends StatelessWidget {
                 return const SizedBox(
                   width: 230,
                   height: 170,
-                  child: Center(child: CircularProgressIndicator()),
+                  child: Center(child: HikerCircleMinorLoadingIndicator()),
                 );
               },
               errorBuilder: (context, error, stackTrace) => _AttachmentFileTile(
@@ -2475,7 +2476,7 @@ class _SharedMediaPageState extends State<_SharedMediaPage>
                     return Container(
                       color: isDark ? _darkSurface2 : const Color(0xFFE8ECE8),
                       child: const Center(
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                       ),
                     );
                   },
@@ -2736,7 +2737,9 @@ class _ChatInput extends StatelessWidget {
                   icon: isUploadingAttachment
                       ? const SizedBox.square(
                           dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: HikerCircleMinorLoadingIndicator(
+                            strokeWidth: 2,
+                          ),
                         )
                       : const Icon(Icons.add_circle_outline_rounded),
                   color: _green,

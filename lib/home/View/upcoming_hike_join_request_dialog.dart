@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Model/hike_session_models.dart';
 
 class UpcomingHikeJoinRequestDialog extends StatefulWidget {
@@ -453,7 +454,7 @@ class _UpcomingHikeJoinRequestDialogState
                         child: _isResolving
                             ? const SizedBox.square(
                                 dimension: 18,
-                                child: CircularProgressIndicator(
+                                child: HikerCircleMinorLoadingIndicator(
                                   strokeWidth: 2,
                                   color: Colors.white,
                                 ),

@@ -1,5 +1,8 @@
+import 'dart:developer' as developer;
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:passkeys/authenticator.dart';
 import 'package:passkeys/types.dart';
 
@@ -23,6 +26,26 @@ class MultiFactorAuthService {
   FirebaseFunctions get _functions =>
       _functionsOverride ?? FirebaseFunctions.instance;
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
+
+  Future<String> authenticatedPhoneNumber() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw FirebaseAuthException(
+        code: 'user-not-found',
+        message: 'Sign in again before changing security methods.',
+      );
+    }
+    final token = await user.getIdTokenResult();
+    final phoneNumber = token.claims?['phoneNumber'];
+    if (phoneNumber is String &&
+        RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phoneNumber)) {
+      return phoneNumber;
+    }
+    throw FirebaseAuthException(
+      code: 'missing-phone-number',
+      message: 'Your verified phone number is unavailable. Sign in again.',
+    );
+  }
 
   Future<TotpEnrollment> beginTotpEnrollment({String? mfaToken}) async {
     final data = await _call(
@@ -59,8 +82,9 @@ class MultiFactorAuthService {
       mfaToken == null ? const {} : {'mfaToken': mfaToken},
     );
     final options = _requiredMap(begin, 'options');
-    final platformResponse = await _passkeys.register(
-      RegisterRequestType.fromJson(options),
+    final platformResponse = await _runPasskeyOperation(
+      operation: 'register',
+      callback: () => _passkeys.register(RegisterRequestType.fromJson(options)),
     );
     final completed = await _call('finishPasskeyEnrollment', {
       'challengeId': _requiredString(begin, 'challengeId'),
@@ -85,8 +109,11 @@ class MultiFactorAuthService {
   Future<AppSession> verifyPasskeyLogin({required String mfaToken}) async {
     _requirePasskeysEnabled();
     final begin = await _call('beginPasskeyLogin', {'mfaToken': mfaToken});
-    final platformResponse = await _passkeys.authenticate(
-      AuthenticateRequestType.fromJson(_requiredMap(begin, 'options')),
+    final platformResponse = await _runPasskeyOperation(
+      operation: 'authenticate',
+      callback: () => _passkeys.authenticate(
+        AuthenticateRequestType.fromJson(_requiredMap(begin, 'options')),
+      ),
     );
     final data = await _call('finishPasskeyLogin', {
       'mfaToken': mfaToken,
@@ -129,6 +156,40 @@ class MultiFactorAuthService {
   void _requirePasskeysEnabled() {
     if (!nativePasskeysEnabledForBuild()) {
       throw const PasskeysUnavailableForBuildException();
+    }
+  }
+
+  Future<T> _runPasskeyOperation<T>({
+    required String operation,
+    required Future<T> Function() callback,
+  }) async {
+    try {
+      return await callback();
+    } catch (error, stackTrace) {
+      if (error is UnhandledAuthenticatorException) {
+        debugPrint(
+          'HikerCircle.Passkey $operation provider failure: '
+          'code=${error.code}; message=${error.message}; '
+          'details=${error.details}',
+        );
+        developer.log(
+          'Android passkey $operation failed: code=${error.code}; '
+          'message=${error.message}; details=${error.details}',
+          name: 'HikerCircle.Passkey',
+          error: error,
+          stackTrace: stackTrace,
+          level: 1000,
+        );
+      } else {
+        developer.log(
+          'Passkey $operation failed with ${error.runtimeType}: $error',
+          name: 'HikerCircle.Passkey',
+          error: error,
+          stackTrace: stackTrace,
+          level: 900,
+        );
+      }
+      rethrow;
     }
   }
 
@@ -238,6 +299,33 @@ String readableMfaError(Object error) {
   if (error is SyncAccountNotAvailableException) {
     return 'The passkey sync account is unavailable on this device.';
   }
+  if (error is NoCreateOptionException) {
+    return 'No passkey provider is enabled. Enable Google Password Manager or another credential provider in Android Settings.';
+  }
+  if (error is UnhandledAuthenticatorException) {
+    final diagnostic = <String>[
+      if (error.message?.trim().isNotEmpty == true) error.message!.trim(),
+      if (error.details?.toString().trim().isNotEmpty == true)
+        error.details.toString().trim(),
+    ].join(' - ');
+    final normalized = diagnostic.toLowerCase();
+    if (normalized.contains('incoming request cannot be validated') ||
+        normalized.contains('not associated')) {
+      return 'Android could not validate HikerCircle for passkeys. Check your internet connection, update Google Play services, and try again.';
+    }
+    if (normalized.contains('sync account') ||
+        normalized.contains('google account')) {
+      return 'Google Password Manager could not access its sync account. Confirm that Google Password Manager sync is enabled and try again.';
+    }
+    if (normalized.contains('unable to create key') ||
+        normalized.contains('key creation')) {
+      return 'Android could not create the passkey after device verification. Restart the phone, confirm a screen lock is enabled, and retry.';
+    }
+    final safeCode = error.code.replaceAll(RegExp(r'[^A-Za-z0-9._:/-]'), '');
+    return 'Android Credential Manager rejected the passkey request '
+        '(${safeCode.isEmpty ? 'unknown-provider-error' : safeCode}). '
+        'Update Google Play services and Google Password Manager, then retry.';
+  }
   final text = error.toString().toLowerCase();
   if (text.contains('cancelled') || text.contains('canceled')) {
     return 'The passkey request was cancelled.';
@@ -250,4 +338,14 @@ String readableMfaError(Object error) {
     return 'No matching passkey is available on this device.';
   }
   return 'The security request could not be completed. Please try again.';
+}
+
+bool requiresRecentMfaAuthentication(Object error) {
+  if (error is! FirebaseFunctionsException ||
+      error.code != 'failed-precondition') {
+    return false;
+  }
+  final message = (error.message ?? '').toLowerCase();
+  return message.contains('sign in again before') &&
+      message.contains('security method');
 }

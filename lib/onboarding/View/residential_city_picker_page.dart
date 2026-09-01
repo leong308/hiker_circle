@@ -5,6 +5,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Data/google_city_geocoding_service.dart';
 
 class ResidentialCityPickerPage extends StatefulWidget {
@@ -360,7 +361,9 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                       icon: _isResolving
                           ? const SizedBox.square(
                               dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child: HikerCircleMinorLoadingIndicator(
+                                strokeWidth: 2,
+                              ),
                             )
                           : const Icon(Icons.location_city_rounded),
                       label: Padding(

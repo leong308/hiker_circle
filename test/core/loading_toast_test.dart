@@ -97,4 +97,48 @@ void main() {
     );
     expect(indicator.value, 0.8);
   });
+
+  testWidgets('uses the linked compact Lottie for constrained loading states', (
+    tester,
+  ) async {
+    final raw = await rootBundle.loadString(
+      'assets/animations/loading_spinner.json',
+    );
+    final animation = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    expect(animation['layers'], isA<List>());
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox.square(
+              dimension: 20,
+              child: HikerCircleMinorLoadingIndicator(size: 20),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(Lottie), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(
+      tester.getSize(find.byType(HikerCircleMinorLoadingIndicator)),
+      const Size.square(20),
+    );
+  });
+
+  testWidgets('keeps measurable progress determinate', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: HikerCircleMinorLoadingIndicator(value: 0.6)),
+      ),
+    );
+
+    final indicator = tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator),
+    );
+    expect(indicator.value, 0.6);
+    expect(find.byType(Lottie), findsNothing);
+  });
 }

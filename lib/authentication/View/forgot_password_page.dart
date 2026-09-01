@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/loading_toast.dart';
+
 import '../ModelView/auth_view_model.dart';
 import 'auth_brand_panel.dart';
 import 'inline_notice.dart';
@@ -104,7 +106,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           ),
           actions: [
             FilledButton(
-              onPressed: () => Navigator.of(ctx)..pop()..pop(),
+              onPressed: () => Navigator.of(ctx)
+                ..pop()
+                ..pop(),
               child: const Text('Sign In'),
             ),
           ],
@@ -170,8 +174,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         icon: _isProcessing
                             ? const SizedBox.square(
                                 dimension: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
+                                child: HikerCircleMinorLoadingIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.send),
                         label: const Text('Send Reset Code'),
@@ -203,8 +208,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         icon: _isProcessing
                             ? const SizedBox.square(
                                 dimension: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
+                                child: HikerCircleMinorLoadingIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.verified_user),
                         label: const Text('Verify Code'),
@@ -226,8 +232,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         ),
                         child: Row(
                           children: [
-                            Icon(Icons.help_outline,
-                                color: scheme.onSecondaryContainer),
+                            Icon(
+                              Icons.help_outline,
+                              color: scheme.onSecondaryContainer,
+                            ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
@@ -280,7 +288,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                   : Icons.visibility,
                             ),
                             onPressed: () => setState(
-                                () => _obscurePassword = !_obscurePassword),
+                              () => _obscurePassword = !_obscurePassword,
+                            ),
                           ),
                         ),
                         validator: (v) {
@@ -305,7 +314,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                   : Icons.visibility,
                             ),
                             onPressed: () => setState(
-                                () => _obscureConfirm = !_obscureConfirm),
+                              () => _obscureConfirm = !_obscureConfirm,
+                            ),
                           ),
                         ),
                         validator: (v) {
@@ -322,8 +332,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         icon: _isProcessing
                             ? const SizedBox.square(
                                 dimension: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
+                                child: HikerCircleMinorLoadingIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.lock_reset),
                         label: const Text('Reset Password'),
@@ -388,12 +399,16 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                   color: isActive
                       ? scheme.primary
                       : isPast
-                          ? scheme.primaryContainer
-                          : scheme.surfaceContainerHighest,
+                      ? scheme.primaryContainer
+                      : scheme.surfaceContainerHighest,
                 ),
                 child: Center(
                   child: isPast
-                      ? Icon(Icons.check, size: 16, color: scheme.onPrimaryContainer)
+                      ? Icon(
+                          Icons.check,
+                          size: 16,
+                          color: scheme.onPrimaryContainer,
+                        )
                       : Text(
                           '${i + 1}',
                           style: TextStyle(
@@ -410,9 +425,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 Expanded(
                   child: Container(
                     height: 2,
-                    color: isPast
-                        ? scheme.primary
-                        : scheme.outlineVariant,
+                    color: isPast ? scheme.primary : scheme.outlineVariant,
                   ),
                 ),
             ],

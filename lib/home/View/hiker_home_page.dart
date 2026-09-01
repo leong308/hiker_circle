@@ -29,6 +29,7 @@ import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/network_reachability_service.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../core/widgets/worldwide_region_picker.dart';
@@ -110,6 +111,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   String? _activeTeamNamingChatId;
   String? _activeUpcomingJoinRequestReviewId;
   final Set<String> _completedUpcomingJoinRequestReviewIds = <String>{};
+  final Map<String, DateTime> _recentUpcomingJoinRequestAttempts =
+      <String, DateTime>{};
   List<GroupChat> _pendingFormedTeamChats = const [];
   NetworkReachabilitySnapshot _networkReachabilitySnapshot =
       const NetworkReachabilitySnapshot(
@@ -335,19 +338,84 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (!mounted) return;
     _activeTeamNamingChatId = null;
     if (created == true) {
-      final circleTabIndex = tabs.indexWhere((tab) => tab.label == 'Circle');
-      if (circleTabIndex >= 0 && activeHike == null) {
-        onTabTap(circleTabIndex);
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Your group chat is ready.'),
-            behavior: SnackBarBehavior.floating,
+      HikerCircleToast.show(
+        context,
+        'The team has been added and the conversation is ready.',
+        tone: HikerCircleToastTone.success,
+        title: 'Group chat ready',
+      );
+      final namedChat = await hikerCircleRepository.loadGroupChatById(chat.id);
+      if (!mounted) return;
+      if (namedChat != null) {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (context) => GroupChatDetailPage(
+              chat: namedChat,
+              session: widget.session,
+              repository: hikerCircleRepository,
+            ),
           ),
         );
+      }
     }
+  }
+
+  Future<void> _openAcceptedHikeGroupChat(String hikeId) async {
+    final normalizedHikeId = hikeId.trim();
+    if (!mounted || normalizedHikeId.isEmpty) return;
+    final chatId = 'hike_$normalizedHikeId';
+    if (_activeTeamNamingChatId == chatId) {
+      // The mandatory first-team naming dialog owns navigation once saved.
+      return;
+    }
+    GroupChat? chat;
+    try {
+      for (var attempt = 0; attempt < 3 && chat == null; attempt++) {
+        chat = await hikerCircleRepository.loadGroupChatById(chatId);
+        if (chat == null && attempt < 2) {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
+      }
+    } catch (_) {
+      if (!mounted) return;
+      HikerCircleToast.show(
+        context,
+        'The hiker was accepted, but the group chat could not be opened yet.',
+        tone: HikerCircleToastTone.warning,
+        title: 'Chat is still syncing',
+      );
+      return;
+    }
+    if (!mounted) return;
+    if (chat == null) {
+      HikerCircleToast.show(
+        context,
+        'The hiker was accepted. Open the hike conversation from Circle if it is still being created.',
+        tone: HikerCircleToastTone.warning,
+        title: 'Group chat is still syncing',
+      );
+      return;
+    }
+    final ownPhoneKey = _formedChatPhoneKey(widget.session.phoneNumber);
+    final isHost = _formedChatPhoneKey(chat.creatorPhone) == ownPhoneKey;
+    if (isHost &&
+        chat.requiresHostNaming &&
+        !chat.namingPromptShown &&
+        chat.hikeEndedAt == null &&
+        !chat.isDeleted) {
+      _activeTeamNamingChatId = chat.id;
+      await _showFormedTeamNamingDialog(chat);
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => GroupChatDetailPage(
+          chat: chat!,
+          session: widget.session,
+          repository: hikerCircleRepository,
+        ),
+      ),
+    );
   }
 
   Future<void> _initializeFirebaseMessaging() async {
@@ -885,7 +953,14 @@ class _HikerHomePageState extends State<HikerHomePage>
     // banner. Foreground users should see the ready interface immediately;
     // background and terminated users follow the same deep link after tapping
     // the FCM notification.
-    if (type == 'team_hike_invite' && deepLink != null) {
+    if (const {
+          'team_hike_invite',
+          'team_hike_ready',
+          'team_hike_countdown',
+          'team_hike_started',
+          'team_hike_start',
+        }.contains(type) &&
+        deepLink != null) {
       _enqueueFcmOpen(
         _PendingFcmOpen(
           key: message.messageId?.trim().isNotEmpty == true
@@ -1515,12 +1590,21 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   Future<void> _openUpcomingHikeJoinRequest(String requestId) async {
     final normalizedId = requestId.trim();
+    final now = DateTime.now();
+    _recentUpcomingJoinRequestAttempts.removeWhere(
+      (_, attemptedAt) =>
+          now.difference(attemptedAt) > const Duration(minutes: 2),
+    );
+    final recentAttempt = _recentUpcomingJoinRequestAttempts[normalizedId];
     if (!mounted ||
         !RegExp(r'^join_[a-f0-9]{48}$').hasMatch(normalizedId) ||
         _activeUpcomingJoinRequestReviewId == normalizedId ||
-        _completedUpcomingJoinRequestReviewIds.contains(normalizedId)) {
+        _completedUpcomingJoinRequestReviewIds.contains(normalizedId) ||
+        (recentAttempt != null &&
+            now.difference(recentAttempt) < const Duration(seconds: 30))) {
       return;
     }
+    _recentUpcomingJoinRequestAttempts[normalizedId] = now;
     _activeUpcomingJoinRequestReviewId = normalizedId;
     final progressReady = Completer<BuildContext>();
     unawaited(
@@ -1547,9 +1631,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     final progressContext = await progressReady.future;
     UpcomingHikeJoinRequestReview? review;
     try {
-      review = await hikerCircleRepository.loadUpcomingHikeJoinRequest(
-        normalizedId,
-      );
+      review = await hikerCircleRepository
+          .loadUpcomingHikeJoinRequest(normalizedId)
+          .timeout(const Duration(seconds: 15));
     } on HikerCircleFirebaseRepositoryException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -1560,6 +1644,23 @@ class _HikerHomePageState extends State<HikerHomePage>
               behavior: SnackBarBehavior.floating,
             ),
           );
+      }
+    } on TimeoutException {
+      if (mounted) {
+        HikerCircleToast.show(
+          context,
+          'The request is taking too long to load. Check your connection and try the link again.',
+          tone: HikerCircleToastTone.warning,
+          title: 'Request timed out',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        HikerCircleToast.show(
+          context,
+          'Unable to check this join request right now.',
+          tone: HikerCircleToastTone.error,
+        );
       }
     } finally {
       if (progressContext.mounted) Navigator.of(progressContext).pop();
@@ -1622,6 +1723,9 @@ class _HikerHomePageState extends State<HikerHomePage>
       if (result.needsJoinPolicyChoice) {
         await _chooseFutureJoinPolicy(result.hikeId);
       }
+      _finishUpcomingJoinRequestReview();
+      await _openAcceptedHikeGroupChat(result.hikeId);
+      return;
     } else if (result.status == 'rejected') {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -4812,9 +4916,41 @@ class _HikerHomePageState extends State<HikerHomePage>
       );
       return;
     }
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      // iOS delivers the native detector event to Flutter when the app is in
+      // the foreground. Unlike Android, there is no overlay activity to own
+      // this screen, so the app must present the explicit cancellation UI.
+      isNativeSafetyDialogVisible = true;
+      var wasCancelled = false;
+      try {
+        await showCupertinoDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => _NativeSafetyCountdownDialog(
+            event: event,
+            onCancel: () async {
+              wasCancelled = true;
+              await _cancelNativeSafetyCountdown();
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext).pop();
+              }
+            },
+          ),
+        );
+      } finally {
+        isNativeSafetyDialogVisible = false;
+      }
+      if (!wasCancelled && mounted) {
+        // The native event changes from countdown to dispatch-ready when the
+        // deadline expires. Re-read it instead of treating a displayed dialog
+        // as a handled emergency.
+        unawaited(_consumePendingNativeSafetyEvent());
+      }
+      return;
+    }
     // Android owns the response UI so it can appear above the lock screen and
-    // other apps. Flutter only observes the persisted outcome and never stacks
-    // a second countdown dialog underneath the native safety surface.
+    // other apps. Flutter observes the persisted outcome without stacking a
+    // second countdown dialog underneath the native safety surface.
     Future<void>.delayed(
       const Duration(seconds: 2),
       _consumePendingNativeSafetyEvent,
@@ -5819,6 +5955,34 @@ class _HikerHomePageState extends State<HikerHomePage>
     _showFallStillnessSnackBar('$reason. Fall SOS countdown cancelled.');
   }
 
+  Future<void> _cancelNativeSafetyCountdown() async {
+    Future<void> ignoreFailure(Future<void> operation) async {
+      try {
+        await operation;
+      } catch (_) {
+        // One unavailable native output must not prevent the safety state from
+        // being cancelled or leave the confirmation dialog stuck onscreen.
+      }
+    }
+
+    await Future.wait<void>([
+      ignoreFailure(
+        _sosDeviceAlertService.stopFallStillnessCountdownVibration(),
+      ),
+      ignoreFailure(_sosDeviceAlertService.stopSpokenPrompt()),
+      ignoreFailure(_sosDeviceAlertService.stopManualSosPattern()),
+      ignoreFailure(_activeHikeLiveStatusService.cancelNativeSafetyAlert()),
+    ]);
+    isFallStillnessLocalAlarmActive = false;
+    if (!mounted) return;
+    HikerCircleToast.show(
+      context,
+      'The stillness alert and SOS countdown were cancelled.',
+      tone: HikerCircleToastTone.success,
+      title: 'You are marked safe',
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -6547,7 +6711,7 @@ class _BleSosHelpMapState extends State<_BleSosHelpMap> {
                     if (_isRefreshingLocation)
                       const SizedBox.square(
                         dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                       ),
                   ],
                 ),
@@ -6577,25 +6741,92 @@ class _TeamHikeLaunchPage extends StatefulWidget {
   State<_TeamHikeLaunchPage> createState() => _TeamHikeLaunchPageState();
 }
 
-class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
+class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
+    with WidgetsBindingObserver {
   Timer? _countdownTicker;
+  Timer? _teamRefreshTimer;
   bool _isMarkingReady = false;
   bool _isActivating = false;
+  bool _isPollingTeam = false;
+  late TeamHikeSession _latestTeamSession;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _latestTeamSession = widget.initialTeamSession;
     _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() {});
       }
     });
+    _teamRefreshTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_pollTeamSession()),
+    );
+    unawaited(_pollTeamSession());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_pollTeamSession());
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _countdownTicker?.cancel();
+    _teamRefreshTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _pollTeamSession() async {
+    if (_isPollingTeam || !mounted) return;
+    _isPollingTeam = true;
+    try {
+      final refreshed = await widget.repository.loadTeamHikeSession(
+        widget.initialTeamSession.id,
+      );
+      if (!mounted || refreshed == null) return;
+      if (_isNewerTeamState(refreshed, _latestTeamSession)) {
+        setState(() => _latestTeamSession = refreshed);
+      }
+      _closeWhenReady(refreshed);
+    } catch (_) {
+      // Firestore remains the primary real-time channel. Polling is a recovery
+      // path for delayed listeners and temporary cache-only snapshots.
+    } finally {
+      _isPollingTeam = false;
+    }
+  }
+
+  bool _isNewerTeamState(TeamHikeSession candidate, TeamHikeSession current) {
+    const phaseOrder = <TeamHikePhase, int>{
+      TeamHikePhase.inviting: 0,
+      TeamHikePhase.readyCheck: 1,
+      TeamHikePhase.countdown: 2,
+      TeamHikePhase.active: 3,
+      TeamHikePhase.completed: 4,
+    };
+    final candidatePhase = phaseOrder[candidate.phase] ?? 0;
+    final currentPhase = phaseOrder[current.phase] ?? 0;
+    if (candidatePhase != currentPhase) return candidatePhase > currentPhase;
+    final candidateUpdated = candidate.updatedAt;
+    final currentUpdated = current.updatedAt;
+    if (candidateUpdated != null && currentUpdated != null) {
+      return candidateUpdated.isAfter(currentUpdated);
+    }
+    return candidate.readyCount != current.readyCount ||
+        candidate.participants.length != current.participants.length;
+  }
+
+  TeamHikeSession _visibleTeamSession(TeamHikeSession? streamed) {
+    if (streamed == null) return _latestTeamSession;
+    return _isNewerTeamState(streamed, _latestTeamSession)
+        ? streamed
+        : _latestTeamSession;
   }
 
   @override
@@ -6609,7 +6840,7 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
             widget.initialTeamSession.id,
           ),
           builder: (context, snapshot) {
-            final teamSession = snapshot.data ?? widget.initialTeamSession;
+            final teamSession = _visibleTeamSession(snapshot.data);
             _closeWhenReady(teamSession);
             return SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -6863,11 +7094,12 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
             ),
           );
       if (safetySettings == null || !mounted) return;
-      await widget.repository.markTeamParticipantReady(
+      final readySession = await widget.repository.markTeamParticipantReady(
         session: widget.session,
         teamHikeSessionId: teamSession.id,
         safetySettings: safetySettings,
       );
+      if (mounted) setState(() => _latestTeamSession = readySession);
     } catch (error) {
       if (!mounted) return;
       final message = error is HikerCircleFirebaseRepositoryException
@@ -6932,6 +7164,21 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage> {
   }
 
   void _closeWhenReady(TeamHikeSession teamSession) {
+    if (teamSession.phase == TeamHikePhase.completed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final route = ModalRoute.of(context);
+        if (mounted && route != null && route.isCurrent) {
+          Navigator.of(context).pop();
+          HikerCircleToast.show(
+            context,
+            'This team hike is no longer active.',
+            tone: HikerCircleToastTone.info,
+            title: 'Team hike ended',
+          );
+        }
+      });
+      return;
+    }
     if (_isActivating) {
       return;
     }
@@ -7561,7 +7808,7 @@ class _ReadyLaunchButton extends StatelessWidget {
           child: busy
               ? const SizedBox.square(
                   dimension: 28,
-                  child: CircularProgressIndicator(strokeWidth: 3),
+                  child: HikerCircleMinorLoadingIndicator(strokeWidth: 3),
                 )
               : Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -8792,6 +9039,7 @@ class _NativeSafetyCountdownDialog extends StatefulWidget {
 class _NativeSafetyCountdownDialogState
     extends State<_NativeSafetyCountdownDialog> {
   Timer? _timer;
+  bool _isCancelling = false;
 
   @override
   void initState() {
@@ -8849,8 +9097,22 @@ class _NativeSafetyCountdownDialogState
       ),
       actions: [
         CupertinoDialogAction(
-          onPressed: () => unawaited(widget.onCancel()),
-          child: const Text('I’M SAFE — CANCEL SOS'),
+          onPressed: _isCancelling
+              ? null
+              : () {
+                  setState(() => _isCancelling = true);
+                  unawaited(widget.onCancel());
+                },
+          child: _isCancelling
+              ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    HikerCircleMinorLoadingIndicator(size: 24),
+                    SizedBox(width: 8),
+                    Text('Cancelling SOS…'),
+                  ],
+                )
+              : const Text('I’M SAFE — CANCEL SOS'),
         ),
       ],
     );
@@ -9360,7 +9622,9 @@ class _ActiveHikeTopBar extends StatelessWidget {
                   icon: isWeatherLoading && currentWeather == null
                       ? const SizedBox.square(
                           dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: HikerCircleMinorLoadingIndicator(
+                            strokeWidth: 2,
+                          ),
                         )
                       : Icon(
                           _activeWeatherIconForCode(
@@ -9740,6 +10004,7 @@ class _ActiveHikeBottomBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
+                  flex: 2,
                   child: OutlinedButton.icon(
                     onPressed: onPinLocation,
                     icon: const Icon(Icons.push_pin_rounded, size: 18),
@@ -9752,6 +10017,7 @@ class _ActiveHikeBottomBar extends StatelessWidget {
             Row(
               children: [
                 Expanded(
+                  flex: 2,
                   child: OutlinedButton.icon(
                     onPressed: onReportHazard,
                     icon: const Icon(Icons.warning_amber_rounded, size: 18),
@@ -9964,12 +10230,15 @@ class _UpcomingHikeDetailSheet extends StatelessWidget {
                         ? () => Navigator.of(context).pop('viewTrail')
                         : null,
                     icon: const Icon(Icons.map_rounded, size: 18),
-                    label: const Text('View Trail'),
+                    label: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('View Trail', maxLines: 1),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  flex: 2,
+                  flex: 3,
                   child: FilledButton.icon(
                     onPressed: canStart
                         ? () => Navigator.of(context).pop('start')

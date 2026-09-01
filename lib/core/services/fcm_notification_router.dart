@@ -55,6 +55,8 @@ abstract final class FcmNotificationRouter {
         );
       case 'team_hike_invite':
       case 'team_hike_ready':
+      case 'team_hike_countdown':
+      case 'team_hike_started':
       case 'team_hike_start':
         return _link(
           host: 'team-hike',

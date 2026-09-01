@@ -23,6 +23,39 @@
         { "fieldPath": "visibility", "order": "ASCENDING" },
         { "fieldPath": "createdAtLocal", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "checkIns", "order": "ASCENDING" },
+        { "fieldPath": "distanceKm", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "distanceKm", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "checkIns", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "hikeType", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

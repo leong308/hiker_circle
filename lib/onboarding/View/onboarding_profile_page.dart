@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../authentication/Model/password_validator.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Data/google_city_geocoding_service.dart';
 import '../Model/onboarding_profile.dart';
 import 'residential_city_picker_page.dart';
@@ -469,7 +470,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                           child: _isSaving
                               ? const SizedBox.square(
                                   dimension: 20,
-                                  child: CircularProgressIndicator(
+                                  child: HikerCircleMinorLoadingIndicator(
                                     strokeWidth: 2,
                                   ),
                                 )

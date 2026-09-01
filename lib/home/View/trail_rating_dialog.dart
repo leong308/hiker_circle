@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/loading_toast.dart';
+
 class TrailRatingFeedback {
   const TrailRatingFeedback({required this.rating, required this.comment});
 
@@ -224,7 +226,7 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
             child: _isSubmitting
                 ? const SizedBox.square(
                     dimension: 18,
-                    child: CircularProgressIndicator(
+                    child: HikerCircleMinorLoadingIndicator(
                       strokeWidth: 2,
                       color: Colors.white,
                     ),

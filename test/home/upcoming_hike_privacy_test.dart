@@ -157,4 +157,64 @@ void main() {
     expect(find.text('Phone'), findsNothing);
     expect(find.text(hostPhone), findsNothing);
   });
+
+  testWidgets('urgent upcoming hike uses a smooth sine-driven wiggle', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    final hike = UpcomingHike(
+      id: 'urgent-hike',
+      sessionId: 'urgent-session',
+      trailId: 'trail-1',
+      trailName: 'Urgent Trail',
+      latitude: 3.139,
+      longitude: 101.687,
+      area: 'Kuala Lumpur',
+      state: 'Wilayah Persekutuan',
+      distanceKm: 4.2,
+      durationMinutes: 90,
+      difficulty: 'Moderate',
+      startPointName: 'North Gate',
+      destinationName: 'Summit',
+      departureTime: now.add(const Duration(minutes: 5)),
+      expectedReturnTime: now.add(const Duration(hours: 2)),
+      hikeType: 'team',
+      participantCount: 1,
+      creatorPhone: '+60123456789',
+      creatorName: 'Host',
+      createdAt: now,
+    );
+    final repository = HikerCircleFirebaseRepository(
+      firebaseBootstrapResult: const FirebaseBootstrapResult.unavailable(
+        'test',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: UpcomingHikeCard(
+              hike: hike,
+              session: AppSession(phoneNumber: '+60999999999', signedInAt: now),
+              repository: repository,
+              onJoin: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final wiggle = find.byKey(const ValueKey('upcoming-hike-urgent-wiggle'));
+    expect(wiggle, findsOneWidget);
+    final initialTransform = tester.widget<Transform>(wiggle).transform;
+    final initialX = initialTransform.getTranslation().x;
+
+    await tester.pump(const Duration(milliseconds: 90));
+    final movedTransform = tester.widget<Transform>(wiggle).transform;
+    final movedX = movedTransform.getTranslation().x;
+
+    expect((movedX - initialX).abs(), greaterThan(0.5));
+    expect(find.byIcon(Icons.notifications_active_rounded), findsOneWidget);
+  });
 }

@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/widgets/loading_toast.dart';
+
 import '../Data/multi_factor_auth_service.dart';
 import '../Data/passkey_build_support.dart';
 import '../Model/mfa_models.dart';
+import 'recent_security_verification_page.dart';
 
 class SecurityMethodsPage extends StatefulWidget {
   const SecurityMethodsPage({super.key});
@@ -43,7 +46,14 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
   Future<void> _addPasskey() async {
     setState(() => _busy = true);
     try {
-      await _service.enrollPasskey(label: 'Mobile passkey');
+      try {
+        await _service.enrollPasskey(label: 'Mobile passkey');
+      } catch (error) {
+        if (!requiresRecentMfaAuthentication(error)) rethrow;
+        final verified = await _verifyRecentLogin();
+        if (!verified) return;
+        await _service.enrollPasskey(label: 'Mobile passkey');
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Passkey added successfully.')),
@@ -56,10 +66,41 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
     }
   }
 
+  Future<bool> _verifyRecentLogin() async {
+    final phoneNumber = await _service.authenticatedPhoneNumber();
+    if (!mounted) return false;
+    return await Navigator.of(context).push<bool>(
+          MaterialPageRoute<bool>(
+            builder: (context) =>
+                RecentSecurityVerificationPage(phoneNumber: phoneNumber),
+          ),
+        ) ==
+        true;
+  }
+
   Future<void> _addAuthenticator() async {
+    setState(() => _busy = true);
+    TotpEnrollment enrollment;
+    try {
+      try {
+        enrollment = await _service.beginTotpEnrollment();
+      } catch (error) {
+        if (!requiresRecentMfaAuthentication(error)) rethrow;
+        final verified = await _verifyRecentLogin();
+        if (!verified) return;
+        enrollment = await _service.beginTotpEnrollment();
+      }
+    } catch (error) {
+      _showError(error);
+      return;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (!mounted) return;
     final added = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (context) => _AuthenticatorSetupPage(service: _service),
+        builder: (context) =>
+            _AuthenticatorSetupPage(service: _service, enrollment: enrollment),
       ),
     );
     if (added == true) _reload();
@@ -98,7 +139,14 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
     if (confirmed != true) return;
     setState(() => _busy = true);
     try {
-      await _service.removeFactor(factor.id);
+      try {
+        await _service.removeFactor(factor.id);
+      } catch (error) {
+        if (!requiresRecentMfaAuthentication(error)) rethrow;
+        final verified = await _verifyRecentLogin();
+        if (!verified) return;
+        await _service.removeFactor(factor.id);
+      }
       _reload();
     } catch (error) {
       _showError(error);
@@ -123,7 +171,10 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
             future: _statusFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
+                return const HikerCircleLoadingView(
+                  message: 'Loading login security…',
+                  detail: 'Checking your bound verification methods.',
+                );
               }
               if (snapshot.hasError || !snapshot.hasData) {
                 return ListView(
@@ -270,9 +321,13 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
 }
 
 class _AuthenticatorSetupPage extends StatefulWidget {
-  const _AuthenticatorSetupPage({required this.service});
+  const _AuthenticatorSetupPage({
+    required this.service,
+    required this.enrollment,
+  });
 
   final MultiFactorAuthService service;
+  final TotpEnrollment enrollment;
 
   @override
   State<_AuthenticatorSetupPage> createState() =>
@@ -281,31 +336,13 @@ class _AuthenticatorSetupPage extends StatefulWidget {
 
 class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
   final TextEditingController _codeController = TextEditingController();
-  TotpEnrollment? _enrollment;
-  bool _busy = true;
+  bool _busy = false;
   String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _start();
-  }
 
   @override
   void dispose() {
     _codeController.dispose();
     super.dispose();
-  }
-
-  Future<void> _start() async {
-    try {
-      final enrollment = await widget.service.beginTotpEnrollment();
-      if (mounted) setState(() => _enrollment = enrollment);
-    } catch (error) {
-      if (mounted) setState(() => _error = readableMfaError(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   Future<void> _finish() async {
@@ -320,7 +357,7 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
     });
     try {
       await widget.service.finishTotpEnrollment(
-        challengeId: _enrollment!.challengeId,
+        challengeId: widget.enrollment.challengeId,
         code: code,
       );
       if (mounted) Navigator.of(context).pop(true);
@@ -333,7 +370,7 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
 
   @override
   Widget build(BuildContext context) {
-    final enrollment = _enrollment;
+    final enrollment = widget.enrollment;
     return Scaffold(
       appBar: AppBar(title: const Text('Add Authenticator')),
       body: SafeArea(
@@ -344,9 +381,7 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
               '1. Open Google Authenticator, Authy, 1Password, or another TOTP app.\n2. Scan the QR code or enter the key.\n3. Enter the current code to confirm.',
             ),
             const SizedBox(height: 18),
-            if (_busy && enrollment == null)
-              const Center(child: CircularProgressIndicator())
-            else if (enrollment != null) ...[
+            ...[
               Center(
                 child: Container(
                   color: Colors.white,
@@ -385,7 +420,7 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
                 child: _busy
                     ? const SizedBox.square(
                         dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                       )
                     : const Text('Verify and add'),
               ),

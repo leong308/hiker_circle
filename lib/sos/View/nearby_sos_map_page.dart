@@ -423,7 +423,7 @@ class _WalkingRouteStatusCard extends StatelessWidget {
             if (isLoading)
               const SizedBox.square(
                 dimension: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
               )
             else if (errorMessage != null)
               IconButton(

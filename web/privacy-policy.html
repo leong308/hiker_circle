@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173f35">
+  <meta name="description" content="HikerCircle Privacy Policy">
+  <title>Privacy Policy | HikerCircle</title>
+  <link rel="icon" type="image/png" href="/favicon.png?v=hc-1">
+  <style>
+    @font-face {
+      font-family: "Inter";
+      src: url("/privacy-assets/InterVariable.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+    }
+
+    :root {
+      color-scheme: light;
+      --pine-950: #0c2923;
+      --pine-900: #173f35;
+      --pine-700: #2d6656;
+      --sage-100: #e7efe9;
+      --sage-50: #f4f7f2;
+      --paper: #fffdfa;
+      --ink: #17231f;
+      --muted: #5f6d67;
+      --line: #d9e1dc;
+      --amber: #d98936;
+      --shadow: 0 24px 60px rgba(18, 52, 43, 0.11);
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 2rem;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(217, 137, 54, 0.13), transparent 25rem),
+        linear-gradient(180deg, #edf3ed 0, #f7f8f4 26rem, #f4f7f2 100%);
+      color: var(--ink);
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.72;
+    }
+
+    a {
+      color: var(--pine-700);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    a:hover { color: var(--pine-950); }
+
+    .site-header {
+      width: min(1180px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 1.4rem 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: var(--pine-950);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      text-decoration: none;
+    }
+
+    .brand img {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      box-shadow: 0 8px 20px rgba(12, 41, 35, 0.14);
+    }
+
+    .header-link {
+      border: 1px solid rgba(23, 63, 53, 0.25);
+      border-radius: 999px;
+      padding: 0.55rem 0.95rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .hero {
+      width: min(1180px, calc(100% - 2rem));
+      margin: 1.2rem auto 2rem;
+      padding: clamp(2.5rem, 7vw, 5.5rem);
+      position: relative;
+      overflow: hidden;
+      border-radius: 32px;
+      background: var(--pine-950);
+      color: white;
+      box-shadow: var(--shadow);
+    }
+
+    .hero::before,
+    .hero::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .hero::before {
+      width: 30rem;
+      height: 30rem;
+      right: -12rem;
+      top: -19rem;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      box-shadow: 0 0 0 5rem rgba(255, 255, 255, 0.025), 0 0 0 10rem rgba(255, 255, 255, 0.018);
+    }
+
+    .hero::after {
+      width: 11rem;
+      height: 11rem;
+      right: 11%;
+      bottom: -7rem;
+      background: var(--amber);
+      opacity: 0.74;
+      filter: blur(1px);
+    }
+
+    .eyebrow {
+      margin: 0 0 1rem;
+      color: #afd0c4;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2 {
+      font-family: Georgia, "Times New Roman", serif;
+      font-weight: 400;
+      letter-spacing: -0.025em;
+    }
+
+    h1 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(2.9rem, 8vw, 5.8rem);
+      line-height: 0.98;
+    }
+
+    .hero-copy {
+      max-width: 720px;
+      margin: 1.6rem 0 0;
+      color: #d7e4de;
+      font-size: clamp(1rem, 2vw, 1.17rem);
+    }
+
+    .updated {
+      display: inline-flex;
+      margin-top: 2rem;
+      padding: 0.55rem 0.85rem;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.07);
+      color: #eef6f2;
+      font-size: 0.86rem;
+      font-weight: 600;
+    }
+
+    .layout {
+      width: min(1180px, calc(100% - 2rem));
+      margin: 0 auto 5rem;
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap: 2rem;
+      align-items: start;
+    }
+
+    .toc {
+      position: sticky;
+      top: 1.5rem;
+      padding: 1.35rem;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255, 253, 250, 0.86);
+      backdrop-filter: blur(12px);
+    }
+
+    .toc-title {
+      margin: 0 0 0.8rem;
+      color: var(--muted);
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .toc ol {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: policy-section;
+    }
+
+    .toc li {
+      counter-increment: policy-section;
+      margin: 0.3rem 0;
+    }
+
+    .toc a {
+      display: grid;
+      grid-template-columns: 1.6rem 1fr;
+      gap: 0.3rem;
+      padding: 0.2rem 0;
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.4;
+      text-decoration: none;
+    }
+
+    .toc a::before {
+      content: counter(policy-section, decimal-leading-zero);
+      color: var(--amber);
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding-top: 0.17rem;
+    }
+
+    .toc a:hover { color: var(--pine-950); }
+
+    .policy {
+      min-width: 0;
+      padding: clamp(1.5rem, 5vw, 4.5rem);
+      border: 1px solid rgba(217, 225, 220, 0.9);
+      border-radius: 28px;
+      background: var(--paper);
+      box-shadow: 0 14px 45px rgba(20, 50, 43, 0.06);
+    }
+
+    section + section {
+      margin-top: 3.4rem;
+      padding-top: 3.4rem;
+      border-top: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0 0 1rem;
+      color: var(--pine-950);
+      font-size: clamp(1.85rem, 4vw, 2.55rem);
+      line-height: 1.12;
+    }
+
+    h3 {
+      margin: 2rem 0 0.55rem;
+      color: var(--pine-900);
+      font-size: 1.05rem;
+      line-height: 1.4;
+    }
+
+    p { margin: 0.85rem 0; }
+
+    ul {
+      margin: 0.9rem 0 1.2rem;
+      padding-left: 1.3rem;
+    }
+
+    li { margin: 0.55rem 0; }
+
+    li::marker { color: var(--amber); }
+
+    .plain-language {
+      margin-top: 1.5rem;
+      padding: 1.1rem 1.25rem;
+      border: 1px solid #cbdcd3;
+      border-radius: 14px;
+      background: var(--sage-50);
+      color: var(--pine-900);
+    }
+
+    .contact-card {
+      margin-top: 1.4rem;
+      padding: 1.4rem;
+      border-radius: 18px;
+      background: var(--pine-950);
+      color: #e7f0ec;
+    }
+
+    .contact-card a { color: #ffca8e; }
+
+    .site-footer {
+      width: min(1180px, calc(100% - 2rem));
+      margin: -2rem auto 2rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+      .toc { position: static; }
+      .toc ol { columns: 2; }
+      .toc li { break-inside: avoid; }
+    }
+
+    @media (max-width: 560px) {
+      .site-header { padding: 1rem 0; }
+      .header-link { display: none; }
+      .hero { margin-top: 0.4rem; border-radius: 22px; }
+      .layout { width: min(100% - 1rem, 1180px); gap: 1rem; }
+      .toc ol { columns: 1; }
+      .policy { border-radius: 20px; }
+      .site-footer { flex-direction: column; }
+    }
+
+    @media print {
+      body { background: white; font-size: 11pt; }
+      .site-header, .toc, .site-footer { display: none; }
+      .hero, .policy { width: 100%; margin: 0; box-shadow: none; border: 0; }
+      .hero { padding: 2rem 0; background: white; color: black; }
+      .hero-copy, .eyebrow, .updated { color: black; }
+      .layout { display: block; width: 100%; margin: 0; }
+      .policy { padding: 0; }
+      section + section { break-before: auto; }
+      a { color: black; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Go to HikerCircle home page">
+      <img src="/privacy-assets/app-icon.png" alt="" width="42" height="42">
+      <span>HikerCircle</span>
+    </a>
+    <a class="header-link" href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20question">Privacy contact</a>
+  </header>
+
+  <main>
+    <header class="hero">
+      <p class="eyebrow">Your data on the trail</p>
+      <h1>Privacy Policy</h1>
+      <p class="hero-copy">This policy explains what HikerCircle collects, why it is used, when it may be shared, and the choices available to you.</p>
+      <span class="updated">Last updated 31 August 2026</span>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="Privacy policy sections">
+        <p class="toc-title">On this page</p>
+        <ol>
+          <li><a href="#scope">Scope</a></li>
+          <li><a href="#information">Information collected</a></li>
+          <li><a href="#collection">How information is collected</a></li>
+          <li><a href="#use">How information is used</a></li>
+          <li><a href="#location">Location and safety data</a></li>
+          <li><a href="#sharing">When information is shared</a></li>
+          <li><a href="#permissions">Device permissions</a></li>
+          <li><a href="#legal-bases">Legal bases</a></li>
+          <li><a href="#retention">Retention</a></li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#transfers">International transfers</a></li>
+          <li><a href="#choices">Your choices and rights</a></li>
+          <li><a href="#children">Children</a></li>
+          <li><a href="#third-parties">Third-party services</a></li>
+          <li><a href="#changes">Changes to this policy</a></li>
+          <li><a href="#contact">Contact</a></li>
+        </ol>
+      </nav>
+
+      <article class="policy">
+        <section id="scope">
+          <h2>1. Scope</h2>
+          <p>This Privacy Policy describes how HikerCircle ("HikerCircle", "we", "us", or "our") handles personal information when you use the HikerCircle mobile application, HikerCircle web pages, live-location pages, connected safety features, and related services (together, the "Services").</p>
+          <p>By using the Services, you acknowledge the practices described in this policy. Some features ask for separate permission or confirmation before collecting or sharing sensitive information, such as precise location, contacts, camera or photo access, Bluetooth, motion signals, or notifications.</p>
+        </section>
+
+        <section id="information">
+          <h2>2. Information we collect</h2>
+
+          <h3>Account and authentication information</h3>
+          <p>We may collect your telephone number, Firebase user identifier, account and session identifiers, authentication status, passkey information, multi-factor authentication settings, encrypted authentication secrets, security-question responses or derived values, login and password-reset records, and related security logs. Authentication credentials are handled in protected or derived form where the feature permits; HikerCircle does not need to know the private key stored by your passkey provider.</p>
+
+          <h3>Profile information</h3>
+          <p>This may include your username, profile photograph, gender, hiking experience, hiking frequency, residential city or area and its approximate coordinates, hiker level, achievements, buddies, and preferences.</p>
+
+          <h3>Hike, location, and safety information</h3>
+          <p>Depending on the features you use and permissions you grant, we may process precise or approximate location, background location during an active hike or SOS handoff, route points, map pins, trail selections, start and destination points, checkpoints, hike schedules, check-ins, distance, duration, timestamps, battery percentages, live-location sharing status, and fall or stillness events inferred from device motion sensors.</p>
+
+          <h3>SOS and emergency information</h3>
+          <p>This may include the type and time of an SOS, your location, nearby SOS reports, incident identifiers, emergency-contact names and telephone numbers that you provide or select, contact-delivery status, and messages or map links sent to your selected contacts or eligible nearby HikerCircle users. An SOS may reveal sensitive information about your circumstances.</p>
+
+          <h3>Social, community, and user content</h3>
+          <p>We may collect buddy requests, team-hike participation, group or direct chat messages, read status, community posts, comments, reactions, trail ratings, hazard reports, group names, and photographs, videos, files, or other attachments you choose to upload. Content you share with other users can be copied or reshared by them outside HikerCircle.</p>
+
+          <h3>Device and technical information</h3>
+          <p>We may collect device and app identifiers, app version and platform, push-notification tokens, IP address and request metadata processed by our hosting and cloud providers, Bluetooth device identifiers and pairing status for supported SOS devices, connectivity status, crash or diagnostic details, rate-limit and abuse-prevention records, and local app database records needed for offline operation.</p>
+
+          <h3>Support communications</h3>
+          <p>If you contact us, we collect the information in your request, your contact details, and any files or context you provide so we can respond.</p>
+        </section>
+
+        <section id="collection">
+          <h2>3. How we collect information</h2>
+          <p>We collect information:</p>
+          <ul>
+            <li><strong>directly from you</strong>, such as when you register, complete your profile, plan a hike, add an emergency contact, post content, or contact us;</li>
+            <li><strong>from your device</strong>, when you grant permissions or use features involving location, motion, camera, photos, files, Bluetooth, or notifications;</li>
+            <li><strong>through your activity</strong>, such as hike progress, check-ins, messages, safety actions, and feature settings;</li>
+            <li><strong>from other users</strong>, when they invite you, add you as a buddy, include you in a hike, communicate with you, or report nearby safety information; and</li>
+            <li><strong>from service providers</strong>, such as authentication, cloud hosting, maps, weather, messaging, and notification providers.</li>
+          </ul>
+        </section>
+
+        <section id="use">
+          <h2>4. How we use information</h2>
+          <p>We use personal information to:</p>
+          <ul>
+            <li>create, authenticate, secure, and maintain your account;</li>
+            <li>provide profiles, buddy connections, community features, chats, trail discovery, hike planning, hike histories, ratings, reminders, and achievements;</li>
+            <li>record active hikes and restore relevant hike information across supported devices;</li>
+            <li>provide maps, routes, weather context, nearby hike information, and live-location sharing that you activate;</li>
+            <li>operate SOS features, fall-and-stillness alerts, nearby safety notices, paired SOS buttons, emergency-contact delivery, and related status updates;</li>
+            <li>send transactional, safety, invitation, chat, and reminder notifications;</li>
+            <li>moderate content, investigate reports, prevent spam, fraud, misuse, or unauthorized access, and enforce service rules;</li>
+            <li>troubleshoot, maintain, measure, and improve the reliability, accessibility, safety, and performance of the Services;</li>
+            <li>respond to support, privacy, and legal requests; and</li>
+            <li>comply with applicable law and protect users, the public, our rights, and the integrity of the Services.</li>
+          </ul>
+          <div class="plain-language"><strong>HikerCircle does not sell your personal information.</strong> We do not use precise location, SOS information, private messages, contacts, or authentication information for third-party behavioural advertising.</div>
+        </section>
+
+        <section id="location">
+          <h2>5. Location and safety data</h2>
+          <p>Location is central to some HikerCircle features and can be sensitive. The app may request foreground location for maps, trail context, nearby safety information, navigation, check-ins, and SOS location sharing. If you enable active-hike monitoring, live-location sharing, or a paired SOS handoff, the app may request background location so those features can continue when the app is not visible. Operating systems may pause or limit background delivery.</p>
+          <p>When you intentionally share live location, join a team hike, create certain hike plans, or trigger an SOS, relevant location and hike details may be visible to the people you select, hike participants, emergency contacts, or eligible nearby HikerCircle users. A person who receives a live-location link may be able to open it without a HikerCircle account and may forward it. Share links only with people you trust and stop sharing when it is no longer needed.</p>
+          <p>HikerCircle safety features support situational awareness but are not an emergency service, medical device, or guaranteed rescue system. Network, battery, sensor, device, operating-system, and third-party service limitations may affect delivery.</p>
+        </section>
+
+        <section id="sharing">
+          <h2>6. When we share information</h2>
+          <p>We may disclose information in the following circumstances:</p>
+          <ul>
+            <li><strong>At your direction or as part of a feature.</strong> We share data with buddies, hike hosts and participants, chat recipients, community viewers, emergency contacts, nearby users, or anyone with a live-location link when you use the corresponding feature.</li>
+            <li><strong>With service providers.</strong> Providers process data for cloud infrastructure, authentication, databases, file storage, push notifications, maps, weather, communications, and security. These may include Google Firebase and Google Cloud, Google Maps, Mapbox or map-tile providers, OpenStreetMap contributors or related tile services, Open-Meteo, Apple platform services, and a WhatsApp delivery provider when that channel is configured.</li>
+            <li><strong>For legal and safety reasons.</strong> We may preserve or disclose information when we reasonably believe it is necessary to comply with law or a valid legal process; respond to an emergency; prevent harm; investigate abuse, fraud, or security incidents; or protect users, the public, HikerCircle, or others.</li>
+            <li><strong>During an organizational change.</strong> If HikerCircle is involved in a merger, acquisition, financing, reorganization, or transfer of assets, information may be disclosed subject to appropriate confidentiality and legal safeguards. We will notify users where required.</li>
+            <li><strong>With your consent.</strong> We may disclose information for another purpose that we explain and to which you agree.</li>
+          </ul>
+          <p>Public profile or community information is visible according to the feature's design and your settings. Private account, authentication, emergency-contact, and push-token fields are not intended to be public.</p>
+        </section>
+
+        <section id="permissions">
+          <h2>7. Device permissions</h2>
+          <p>HikerCircle may request the following permissions only on supported devices and when relevant to a feature:</p>
+          <ul>
+            <li><strong>Location:</strong> maps, nearby features, active-hike tracking, check-ins, live-location sharing, and SOS handoff;</li>
+            <li><strong>Motion or sensors:</strong> detecting a possible fall followed by stillness during an active hike;</li>
+            <li><strong>Bluetooth and nearby devices:</strong> pairing or listening for an SOS button and exchanging supported nearby team-hike or safety signals;</li>
+            <li><strong>Camera:</strong> profile or trail photos, QR-code scanning, and flashlight-based SOS alerts;</li>
+            <li><strong>Photos, videos, and files:</strong> media or attachments that you choose to upload;</li>
+            <li><strong>Contacts:</strong> selecting emergency contacts when you initiate that action; and</li>
+            <li><strong>Notifications:</strong> safety alerts, messages, invitations, reminders, and service updates.</li>
+          </ul>
+          <p>You can change permissions in your device settings. Disabling a permission may stop the related feature from working. Selecting a contact does not authorize HikerCircle to upload your entire address book; only the contact details you choose for the feature should be processed.</p>
+        </section>
+
+        <section id="legal-bases">
+          <h2>8. Legal bases for processing</h2>
+          <p>Where applicable law requires a legal basis, we process information as needed to provide the Services you request; with your consent, including permission for sensitive device data; for legitimate interests such as securing and improving the Services, preventing abuse, and protecting users; to comply with legal obligations; and to protect vital interests in an emergency. You may withdraw consent through device or app settings where available, without affecting processing already carried out lawfully.</p>
+        </section>
+
+        <section id="retention">
+          <h2>9. Data retention</h2>
+          <p>We retain personal information for as long as reasonably necessary to provide the Services, keep accounts and hike histories functioning, meet the purposes described in this policy, resolve disputes, enforce agreements, maintain security and abuse-prevention records, and comply with legal obligations. Retention differs by data type and context.</p>
+          <p>For example, active sharing data may be kept for a shorter period than account or completed-hike records; messages or content may remain visible to their recipients or associated groups; and security, rate-limit, transaction, deletion, or backup records may remain for a limited period after other data is removed. Data stored only on your device may remain until you remove it, clear app data, or uninstall the app. We may retain de-identified or aggregated information that can no longer reasonably identify you.</p>
+        </section>
+
+        <section id="security">
+          <h2>10. Data security</h2>
+          <p>We use administrative, technical, and organizational safeguards designed to protect personal information. These include authenticated access, database and storage access rules, transport encryption, restricted security fields, protected or derived credential storage where appropriate, rate limits, and service monitoring. No method of storage or transmission is completely secure, so we cannot guarantee absolute security.</p>
+          <p>You are responsible for keeping your device, telephone account, passkeys, verification codes, and login methods secure. Contact us promptly if you believe your account or information has been compromised.</p>
+        </section>
+
+        <section id="transfers">
+          <h2>11. International data transfers</h2>
+          <p>HikerCircle and its service providers may process or store information in Malaysia, the United States, or other countries where they operate. Those countries may have different data-protection laws from your country. Where required, we use appropriate contractual, technical, or other safeguards for international transfers.</p>
+        </section>
+
+        <section id="choices">
+          <h2>12. Your choices and privacy rights</h2>
+          <p>Depending on your location and applicable law, you may have the right to ask for access to, correction of, a copy of, restriction of, objection to processing of, or deletion of your personal information, and to withdraw consent. You may also have the right to complain to your local data-protection authority.</p>
+          <p>You can manage some information and choices directly in the app, including profile details, live-location sharing, hike settings, emergency contacts, notifications, and device permissions. You can delete content where the feature offers that control. To request account or data deletion, or to exercise another privacy right, email us using the contact below. We may need to verify your identity and may retain information where permitted or required by law, including records needed for security, fraud prevention, dispute resolution, or legal compliance.</p>
+        </section>
+
+        <section id="children">
+          <h2>13. Children's privacy</h2>
+          <p>The Services are not directed to children under 13. If the law where you live requires a higher age for a person to consent to personal-data processing, a parent or legal guardian must authorize use of the Services. If you believe a child has provided personal information without the required authorization, contact us so we can investigate and take appropriate action.</p>
+        </section>
+
+        <section id="third-parties">
+          <h2>14. Third-party services and links</h2>
+          <p>The Services may open or rely on third-party services, such as mapping, navigation, weather, platform, Firebase, WhatsApp, or external web services. Their handling of information is governed by their own terms and privacy policies. HikerCircle is not responsible for the privacy practices of a third party once you leave or directly interact with that service.</p>
+          <p>This public privacy page does not include advertising trackers. Firebase Hosting and network infrastructure may still process ordinary request information, such as IP address, browser information, requested URL, and timestamps, to deliver and protect the page.</p>
+        </section>
+
+        <section id="changes">
+          <h2>15. Changes to this policy</h2>
+          <p>We may update this policy as HikerCircle changes or as legal requirements develop. We will post the revised policy here and update the date at the top. If a change materially affects how we handle personal information, we will provide additional notice where reasonably possible or legally required.</p>
+        </section>
+
+        <section id="contact">
+          <h2>16. Contact us</h2>
+          <p>For privacy questions, requests, complaints, or account and data deletion, contact the HikerCircle developer:</p>
+          <div class="contact-card">
+            <strong>HikerCircle Privacy</strong><br>
+            Email: <a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20privacy%20request">leongziqi@gmail.com</a><br>
+            Website: <a href="https://hiker-circle.web.app">hiker-circle.web.app</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <span>&copy; 2026 HikerCircle</span>
+    <span>Independent from Senzo and Senzo CrossGuard.</span>
+  </footer>
+</body>
+</html>

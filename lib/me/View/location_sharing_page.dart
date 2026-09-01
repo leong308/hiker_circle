@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Data/live_location_sharing_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../../sos/Model/sos_models.dart';
@@ -302,7 +303,9 @@ class _MapPanel extends StatelessWidget {
                 left: 0,
                 right: 0,
                 top: 0,
-                child: const LinearProgressIndicator(minHeight: 2),
+                child: const Center(
+                  child: HikerCircleMinorLoadingIndicator(size: 24),
+                ),
               ),
             if (errorMessage case final errorMessage?)
               Align(
@@ -721,12 +724,12 @@ class _LiveLocationControls extends StatelessWidget {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: isDisabled ? null : onShare,
-                      icon: Icon(
-                        isSharing
-                            ? Icons.hourglass_top_rounded
-                            : Icons.ios_share_rounded,
-                        size: 18,
-                      ),
+                      icon: isSharing
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: HikerCircleMinorLoadingIndicator(size: 18),
+                            )
+                          : const Icon(Icons.ios_share_rounded, size: 18),
                       label: const Text('Share Live'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: _LocationColors.green,

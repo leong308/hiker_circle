@@ -1,11 +1,16 @@
 [
   {
-    "relation": ["delegate_permission/common.get_login_creds"],
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
     "target": {
       "namespace": "android_app",
       "package_name": "com.leongziqi.hikercircle",
       "sha256_cert_fingerprints": [
-        "73:6F:D0:E3:68:8D:B2:47:26:44:B2:B3:10:3D:4A:7B:E6:C5:AC:D7:DC:DF:42:09:8E:B7:0C:27:F4:DE:96:5E"
+        "73:6F:D0:E3:68:8D:B2:47:26:44:B2:B3:10:3D:4A:7B:E6:C5:AC:D7:DC:DF:42:09:8E:B7:0C:27:F4:DE:96:5E",
+        "87:64:67:AD:EF:EA:37:BB:6B:8C:82:3F:69:0B:E7:47:5D:1E:59:F6:41:9E:6A:1E:97:8F:CD:51:74:63:F7:70",
+        "7E:53:A6:38:96:66:0A:05:BA:77:B1:16:36:AE:7F:CB:6F:42:A2:60:09:ED:B6:C1:4C:28:4D:01:D5:26:69:82"
       ]
     }
   }

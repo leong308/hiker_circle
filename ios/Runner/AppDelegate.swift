@@ -53,6 +53,13 @@ import ActivityKit
         "Are you okay? Tap I'm Safe on the notification or Live Activity within 15 seconds."
       )
       self.updateLiveActivitySafetyState()
+      // Foreground iOS users need the in-app, non-dismissable countdown as
+      // soon as the warning begins. Previously Flutter was notified only
+      // after escalation, so there was nothing visible to cancel in time.
+      self.activeHikeLiveStatusChannel?.invokeMethod(
+        "onNativeSafetyEvent",
+        arguments: nil
+      )
     },
     escalationStarted: { [weak self] in
       guard let self else { return }

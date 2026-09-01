@@ -75,6 +75,33 @@ const _cupertinoPickerTextStyle = TextStyle(
   decoration: TextDecoration.none,
 );
 
+SnackBarThemeData _buildSnackBarTheme(Brightness brightness) {
+  final isDark = brightness == Brightness.dark;
+  final foreground = isDark ? const Color(0xFFEAF4EE) : const Color(0xFF183122);
+  return SnackBarThemeData(
+    behavior: SnackBarBehavior.floating,
+    backgroundColor: isDark ? const Color(0xFF17221B) : const Color(0xFFF7FBF8),
+    contentTextStyle: TextStyle(
+      color: foreground,
+      fontFamily: _appFontFamily,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0,
+    ),
+    actionTextColor: isDark ? const Color(0xFF7AD69C) : const Color(0xFF3F8F5E),
+    disabledActionTextColor: foreground.withValues(alpha: 0.5),
+    closeIconColor: foreground.withValues(alpha: 0.72),
+    showCloseIcon: true,
+    elevation: 10,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: BorderSide(
+        color: isDark ? const Color(0xFF365442) : const Color(0xFFCFE5D6),
+      ),
+    ),
+    insetPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+  );
+}
+
 class HikerCircleApp extends StatefulWidget {
   const HikerCircleApp({
     super.key,
@@ -229,6 +256,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           surface: Colors.white,
         ),
         cardColor: Colors.white,
+        snackBarTheme: _buildSnackBarTheme(Brightness.light),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
@@ -270,6 +298,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
         ),
         cardColor: const Color(0xFF141C17),
         dividerColor: const Color(0xFF2B3A31),
+        snackBarTheme: _buildSnackBarTheme(Brightness.dark),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: const Color(0xFF111915),

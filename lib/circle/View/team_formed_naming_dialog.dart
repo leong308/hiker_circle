@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../core/widgets/loading_toast.dart';
 
 class TeamFormedNamingDialog extends StatefulWidget {
   const TeamFormedNamingDialog({
@@ -225,7 +226,7 @@ class _TeamFormedNamingDialogState extends State<TeamFormedNamingDialog> {
                   icon: _isSaving
                       ? const SizedBox.square(
                           dimension: 18,
-                          child: CircularProgressIndicator(
+                          child: HikerCircleMinorLoadingIndicator(
                             strokeWidth: 2,
                             color: Colors.white,
                           ),

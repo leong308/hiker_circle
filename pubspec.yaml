@@ -62,6 +62,8 @@ dependencies:
   country_state_city: ^0.1.6
   passkeys: ^2.22.3
   qr_flutter: ^4.1.0
+  path_provider: ^2.1.6
+  video_player: ^2.14.0
 
 
 dev_dependencies:
@@ -95,6 +97,9 @@ flutter:
     - assets/audios/med_alarm.mp3
     - assets/guides/first_aid_guide.json
     - assets/animations/hiker_circle_loading.json
+    - assets/animations/processing_checkmark.json
+    - assets/animations/loading_spinner.json
+    - assets/animations/bluetooth_search.json
     - assets/animations/file_transfer.gif
     - assets/icons/AppIcon-Default-1024.png
     - assets/icons/HikerCircle-Loader-Transparent.png

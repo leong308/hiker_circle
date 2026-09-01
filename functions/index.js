@@ -13,6 +13,7 @@ const {
   FieldValue,
   GeoPoint,
   Timestamp,
+  AggregateField,
   getFirestore,
 } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
@@ -55,6 +56,7 @@ const {
 const {
   normalizeNearbySosReport,
 } = require('./nearby_sos_helpers');
+const { publicStatsPayload } = require('./public_stats_helpers');
 const {
   SHARED_HIKE_PLAN_PRIVACY_VERSION,
   projectSharedHikePlan,
@@ -97,6 +99,97 @@ admin.messaging = () => getMessaging();
 const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
 const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
+
+// Public, privacy-safe community totals for the marketing site. All values are
+// aggregate-only. A completed team hike contributes one session and its
+// recorded distance for each participant, matching each hiker's history.
+exports.getPublicHikerCircleStats = onRequest(
+  { timeoutSeconds: 30, memory: '256MiB' },
+  async (request, response) => {
+    if (!['GET', 'HEAD'].includes(request.method)) {
+      response.set('Allow', 'GET, HEAD');
+      response.status(405).json({ error: 'Method not allowed.' });
+      return;
+    }
+
+    try {
+      const db = admin.firestore();
+      const completedHikes = db
+        .collection('hikeSessions')
+        .where('status', '==', 'completed');
+      let rawStats;
+      try {
+        const [
+          users,
+          completedHikeCount,
+          distanceTotal,
+          checkInTotal,
+          soloHikes,
+          groupHikes,
+        ] = await Promise.all([
+          db.collection('users').count().get(),
+          completedHikes.count().get(),
+          completedHikes.aggregate({
+            totalDistanceKm: AggregateField.sum('distanceKm'),
+          }).get(),
+          completedHikes.aggregate({
+            safetyCheckIns: AggregateField.sum('checkIns'),
+          }).get(),
+          completedHikes.where('hikeType', '==', 'solo').count().get(),
+          completedHikes.where('hikeType', '==', 'team').count().get(),
+        ]);
+        rawStats = {
+          registeredHikers: users.data().count,
+          completedHikes: completedHikeCount.data().count,
+          totalDistanceKm: distanceTotal.data().totalDistanceKm,
+          safetyCheckIns: checkInTotal.data().safetyCheckIns,
+          soloHikes: soloHikes.data().count,
+          groupHikes: groupHikes.data().count,
+        };
+      } catch (error) {
+        if (Number(error?.code) !== 9) throw error;
+        logger.warn('Public stats indexes are not ready; using a field-projection fallback.');
+        const [users, hikes] = await Promise.all([
+          db.collection('users').count().get(),
+          completedHikes.select('distanceKm', 'checkIns', 'hikeType').get(),
+        ]);
+        rawStats = {
+          registeredHikers: users.data().count,
+          completedHikes: hikes.size,
+          totalDistanceKm: 0,
+          safetyCheckIns: 0,
+          soloHikes: 0,
+          groupHikes: 0,
+        };
+        for (const document of hikes.docs) {
+          const hike = document.data() || {};
+          const distanceKm = Number(hike.distanceKm);
+          const checkIns = Number(hike.checkIns);
+          if (Number.isFinite(distanceKm) && distanceKm > 0) {
+            rawStats.totalDistanceKm += distanceKm;
+          }
+          if (Number.isFinite(checkIns) && checkIns > 0) {
+            rawStats.safetyCheckIns += checkIns;
+          }
+          if (String(hike.hikeType || '') === 'team') {
+            rawStats.groupHikes += 1;
+          } else {
+            rawStats.soloHikes += 1;
+          }
+        }
+      }
+      const payload = publicStatsPayload(rawStats);
+
+      response.set('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
+      response.set('Content-Type', 'application/json; charset=utf-8');
+      response.status(200).send(request.method === 'HEAD' ? '' : JSON.stringify(payload));
+    } catch (error) {
+      logger.error('Unable to calculate public HikerCircle stats.', error);
+      response.set('Cache-Control', 'no-store');
+      response.status(503).json({ error: 'Community totals are temporarily unavailable.' });
+    }
+  }
+);
 
 // Accepts an explicitly unverified observation from a signed-in nearby phone.
 // A deterministic device/counter incident ID and one report per account prevent
@@ -6478,11 +6571,23 @@ exports.cleanExpiredTeamHikeInvitations = onSchedule(
 
 const MFA_RP_ID = 'hiker-circle.web.app';
 const MFA_RP_NAME = 'HikerCircle';
-const MFA_ANDROID_DEBUG_ORIGIN =
+// Android's WebAuthn origin is derived from the APK signing certificate, not
+// from the package name. Keep every actively distributed signing identity in
+// this exact allowlist. The legacy entry preserves passkeys created by older
+// local builds; the current debug and upload-key entries cover development and
+// locally installed release builds. Play App Signing must be added separately
+// before an internal/production Play build is distributed.
+const MFA_ANDROID_LEGACY_ORIGIN =
   'android:apk-key-hash:c2_Q42iNskcmRLKzED1Ke-bFrNfc30IJjrcMJ_Tell4';
+const MFA_ANDROID_DEBUG_ORIGIN =
+  'android:apk-key-hash:h2Rnre_qN7trjII_aQvnR10eWfZBnmoel4_NUXRj93A';
+const MFA_ANDROID_UPLOAD_ORIGIN =
+  'android:apk-key-hash:flOmOJZmCgW6d7EWNq5_y29ComAJ7bbBTChNAdUmaYI';
 const MFA_EXPECTED_ORIGINS = Object.freeze([
   `https://${MFA_RP_ID}`,
+  MFA_ANDROID_LEGACY_ORIGIN,
   MFA_ANDROID_DEBUG_ORIGIN,
+  MFA_ANDROID_UPLOAD_ORIGIN,
 ]);
 let simpleWebAuthnModulePromise;
 

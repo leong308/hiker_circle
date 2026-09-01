@@ -84,6 +84,14 @@ service firebase.storage {
       allow delete: if admin();
     }
 
+    // Curated, versioned public-domain safety tutorials. Only the deployment
+    // account uploads these objects; any authenticated app user may cache them.
+    match /first_aid/videos/{fileName} {
+      allow read: if request.auth != null
+        && fileName.lower().matches('^[a-z0-9_-]+_v[0-9]+\\.mp4$');
+      allow write: if false;
+    }
+
     match /profile_photos/{userId}/{fileName} {
       allow read: if signedIn();
       allow create, update: if signedIn()

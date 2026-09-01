@@ -1,11 +1,26 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/core/services/hiker_ble_service.dart';
 import 'package:hiker_circle/sos/View/sos_button_pairing_sheet.dart';
+import 'package:lottie/lottie.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('bundles the requested Bluetooth searching animation', () async {
+    final bluetoothAnimation = Map<String, dynamic>.from(
+      jsonDecode(
+            await rootBundle.loadString(
+              'assets/animations/bluetooth_search.json',
+            ),
+          )
+          as Map,
+    );
+    expect(bluetoothAnimation['layers'], isA<List>());
+  });
 
   testWidgets(
     'guided pairing instructions remain reachable on a phone screen',
@@ -110,6 +125,7 @@ void main() {
     await tester.pump();
     expect(find.text('Searching nearby…'), findsOneWidget);
     expect(find.text('App scan: 0:30 remaining'), findsOneWidget);
+    expect(find.byType(Lottie), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('App scan: 0:29 remaining'), findsOneWidget);

@@ -56,9 +56,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     await tester.ensureVisible(find.text('SOS events'));
-    await tester.pumpAndSettle();
+    // The compact loading Lottie intentionally loops while reachability is
+    // unresolved, so wait for the scroll transition instead of all tickers.
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.text('SOS events'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('NEARBY SOS'), findsOneWidget);
     expect(find.textContaining('Over 1 hour old'), findsOneWidget);
     final historyEventCard = find.ancestor(

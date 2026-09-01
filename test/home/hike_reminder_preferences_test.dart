@@ -72,7 +72,8 @@ void main() {
     );
 
     await tester.tap(find.text('Join Group Hike'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('Set your hike reminders'), findsOneWidget);
     expect(find.text('World Ridge'), findsWidgets);
@@ -80,7 +81,8 @@ void main() {
 
     await tester.ensureVisible(find.text('Save reminders'));
     await tester.tap(find.text('Save reminders'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(repository.savedHikeId, 'hike-reminder-1');
     expect(repository.savedPreference, isNotNull);

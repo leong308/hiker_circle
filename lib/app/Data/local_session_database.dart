@@ -17,8 +17,11 @@ class LocalSessionDatabase {
     : _databasePathOverride = databasePath;
 
   Database? _database;
+  Future<Database>? _openingDatabase;
   final String? _databasePathOverride;
   static bool _isDesktopFactoryConfigured = false;
+  static Future<Database>? _sharedDefaultDatabaseOpening;
+  static final Set<String> _loggedDatabasePaths = <String>{};
 
   Future<AppSession?> loadSession() async {
     final database = await _openDatabase();
@@ -981,15 +984,34 @@ class LocalSessionDatabase {
     if (existingDatabase != null) {
       return existingDatabase;
     }
+    final existingOpening = _openingDatabase;
+    if (existingOpening != null) {
+      return existingOpening;
+    }
 
     _configureDatabaseFactory();
     final databaseDirectory = await getDatabasesPath();
     final databasePath =
         _databasePathOverride ??
         path.join(databaseDirectory, 'hiker_circle.db');
-    debugPrint('HikerCircle SQLite database path: $databasePath');
+    if (_databasePathOverride == null) {
+      final sharedOpening = _sharedDefaultDatabaseOpening;
+      if (sharedOpening != null) {
+        _openingDatabase = sharedOpening;
+        try {
+          final database = await sharedOpening;
+          _database = database;
+          return database;
+        } finally {
+          _openingDatabase = null;
+        }
+      }
+    }
+    if (_loggedDatabasePaths.add(databasePath)) {
+      debugPrint('HikerCircle SQLite database path: $databasePath');
+    }
 
-    _database = await openDatabase(
+    final opening = openDatabase(
       databasePath,
       version: 23,
       onCreate: (database, version) async {
@@ -1191,6 +1213,10 @@ class LocalSessionDatabase {
           );
         }
         if (oldVersion < 23) {
+          // Some legacy and partially restored databases can report a recent
+          // version while omitting this optional local-only table. Recreate it
+          // before applying the v23 column migration so startup remains safe.
+          await _createDeviceNotificationsTable(database);
           await _addColumnIfMissing(
             database,
             tableName: 'device_notifications',
@@ -1200,14 +1226,32 @@ class LocalSessionDatabase {
         }
       },
     );
-
-    return _database!;
+    _openingDatabase = opening;
+    if (_databasePathOverride == null) {
+      _sharedDefaultDatabaseOpening = opening;
+    }
+    try {
+      final database = await opening;
+      _database = database;
+      return database;
+    } catch (_) {
+      if (identical(_sharedDefaultDatabaseOpening, opening)) {
+        _sharedDefaultDatabaseOpening = null;
+      }
+      rethrow;
+    } finally {
+      _openingDatabase = null;
+    }
   }
 
   @visibleForTesting
   Future<void> close() async {
     final database = _database;
     _database = null;
+    _openingDatabase = null;
+    if (_databasePathOverride == null) {
+      _sharedDefaultDatabaseOpening = null;
+    }
     await database?.close();
   }
 

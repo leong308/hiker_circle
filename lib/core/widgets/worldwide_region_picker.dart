@@ -2,6 +2,8 @@ import 'package:country_state_city/country_state_city.dart' as csc;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import 'loading_toast.dart';
+
 class WorldwideRegion {
   const WorldwideRegion({
     required this.country,
@@ -17,12 +19,53 @@ class WorldwideRegion {
 }
 
 abstract final class WorldwideRegionCatalog {
+  static Future<List<csc.Country>>? _countriesFuture;
+  static final Map<String, Future<List<csc.State>>> _statesFutures = {};
+
+  static const Map<String, ({String name, String code})> _malaysiaStates = {
+    'johor': (name: 'Johor', code: '01'),
+    'kedah': (name: 'Kedah', code: '02'),
+    'kelantan': (name: 'Kelantan', code: '03'),
+    'malacca': (name: 'Malacca', code: '04'),
+    'melaka': (name: 'Malacca', code: '04'),
+    'negerisembilan': (name: 'Negeri Sembilan', code: '05'),
+    'pahang': (name: 'Pahang', code: '06'),
+    'penang': (name: 'Penang', code: '07'),
+    'pulaupinang': (name: 'Penang', code: '07'),
+    'perak': (name: 'Perak', code: '08'),
+    'perlis': (name: 'Perlis', code: '09'),
+    'selangor': (name: 'Selangor', code: '10'),
+    'terengganu': (name: 'Terengganu', code: '11'),
+    'sabah': (name: 'Sabah', code: '12'),
+    'sarawak': (name: 'Sarawak', code: '13'),
+    'kualalumpur': (name: 'Kuala Lumpur', code: '14'),
+    'wilayahpersekutuankualalumpur': (name: 'Kuala Lumpur', code: '14'),
+    'labuan': (name: 'Labuan', code: '15'),
+    'wilayahpersekutuanlabuan': (name: 'Labuan', code: '15'),
+    'putrajaya': (name: 'Putrajaya', code: '16'),
+    'wilayahpersekutuanputrajaya': (name: 'Putrajaya', code: '16'),
+  };
+
   static Future<WorldwideRegion?> normalize({
     required String country,
     required String state,
   }) async {
-    final countries = await csc.getAllCountries();
     final countryKey = _key(country);
+    final stateKey = _key(state);
+    final malaysiaState = _malaysiaStates[stateKey];
+    if (malaysiaState != null &&
+        (countryKey.isEmpty ||
+            countryKey == 'malaysia' ||
+            countryKey == 'my')) {
+      return WorldwideRegion(
+        country: 'Malaysia',
+        countryCode: 'MY',
+        state: malaysiaState.name,
+        stateCode: malaysiaState.code,
+      );
+    }
+
+    final countries = await (_countriesFuture ??= csc.getAllCountries());
     final matchedCountry = countries.cast<csc.Country?>().firstWhere(
       (item) =>
           item != null &&
@@ -31,8 +74,8 @@ abstract final class WorldwideRegionCatalog {
       orElse: () => null,
     );
     if (matchedCountry == null) return null;
-    final states = await csc.getStatesOfCountry(matchedCountry.isoCode);
-    final stateKey = _key(state);
+    final states = await (_statesFutures[matchedCountry.isoCode] ??= csc
+        .getStatesOfCountry(matchedCountry.isoCode));
     if (stateKey.isEmpty) return null;
     final matchedState = states.cast<csc.State?>().firstWhere(
       (item) =>
@@ -203,7 +246,23 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
             const SizedBox(height: 12),
             Expanded(
               child: _loading && _countries.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          HikerCircleMinorLoadingIndicator(
+                            size: 82,
+                            semanticsLabel: 'Loading worldwide regions',
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            'Loading worldwide regions…',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ],
+                      ),
+                    )
                   : Row(
                       children: [
                         Expanded(
@@ -284,7 +343,7 @@ class _RegionWheel<T> extends StatelessWidget {
         const SizedBox(height: 6),
         Expanded(
           child: loading
-              ? const Center(child: CupertinoActivityIndicator())
+              ? const Center(child: HikerCircleMinorLoadingIndicator())
               : values.isEmpty
               ? Center(child: Text('No $label available'))
               : CupertinoPicker(

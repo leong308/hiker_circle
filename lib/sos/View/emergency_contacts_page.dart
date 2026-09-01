@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/Model/app_session.dart';
 import '../../authentication/Data/phone_number_formatter.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Data/sos_device_alert_service.dart';
 import '../Model/sos_models.dart';
@@ -439,7 +440,7 @@ class _SummaryCard extends StatelessWidget {
             ),
             if (isSaving) ...[
               const SizedBox(height: 12),
-              const LinearProgressIndicator(minHeight: 2),
+              const Center(child: HikerCircleMinorLoadingIndicator(size: 24)),
             ],
             if (saveErrorMessage case final message?) ...[
               const SizedBox(height: 10),
@@ -524,7 +525,7 @@ class _DeviceContactsPicker extends StatelessWidget {
             ),
             if (isLoading) ...[
               const SizedBox(height: 12),
-              const LinearProgressIndicator(minHeight: 2),
+              const Center(child: HikerCircleMinorLoadingIndicator(size: 24)),
             ] else if (candidates.isEmpty) ...[
               const SizedBox(height: 12),
               Text(

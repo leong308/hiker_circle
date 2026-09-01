@@ -899,7 +899,7 @@ class _AdminHeader extends StatelessWidget {
               icon: isLoading
                   ? const SizedBox.square(
                       dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.refresh_rounded),
             ),

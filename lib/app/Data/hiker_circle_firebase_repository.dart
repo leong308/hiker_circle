@@ -900,8 +900,18 @@ class HikerCircleFirebaseRepository {
       return parseUpcomingHikePreviewPayload(
         response.data,
       ).where(_shouldRenderUpcomingHike).toList();
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to load upcoming hikes (${error.code}).',
+      );
+    } on TimeoutException {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Upcoming hikes are taking too long to load. Try again shortly.',
+      );
     } catch (_) {
-      return const [];
+      throw const HikerCircleFirebaseRepositoryException(
+        'Unable to load upcoming hikes right now.',
+      );
     }
   }
 
@@ -4523,6 +4533,7 @@ class HikerCircleFirebaseRepository {
       name: _stringFrom(data['name']),
       area: _stringFrom(data['area']),
       state: _stringFrom(data['state']),
+      country: _stringFrom(data['country']),
       latitude: _doubleFrom(data['latitude']),
       longitude: _doubleFrom(data['longitude']),
       distanceKm: _doubleFrom(data['distanceKm']),

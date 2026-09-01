@@ -12,7 +12,6 @@ import '../../sos/Model/sos_models.dart';
 import '../Model/hike_session_models.dart';
 import '../ModelView/fall_stillness_monitor.dart';
 import 'active_tracking_map_view.dart';
-import 'gear_checklist_page.dart';
 
 class HomeDashboardPage extends StatelessWidget {
   const HomeDashboardPage({
@@ -112,7 +111,6 @@ class HomeDashboardPage extends StatelessWidget {
                             onAddTrailByAdmin: onAddTrailByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
                             onDeleteTrailByAdmin: onDeleteTrailByAdmin,
-                            onPlannedHikeChanged: onPlannedHikeChanged,
                           )
                   : _ActiveHikeDashboard(
                       currentPhoneNumber: phoneNumber,
@@ -282,7 +280,6 @@ class _PreparationDashboard extends StatelessWidget {
     this.onAddTrailByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
-    this.onPlannedHikeChanged,
   });
 
   final List<UpcomingHike> myUpcomingHikes;
@@ -297,7 +294,6 @@ class _PreparationDashboard extends StatelessWidget {
   final VoidCallback? onAddTrailByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
-  final Future<void> Function(PlannedHike)? onPlannedHikeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -312,12 +308,6 @@ class _PreparationDashboard extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _StartHikeActions(onStartHike: onStartHike, onFindHike: onFindHike),
-        const SizedBox(height: 18),
-        _UpcomingHikeCard(
-          plannedHike: plannedHike,
-          onContinuePreparation: () => unawaited(_openChecklist(context)),
-          onOpenTrail: () => onOpenTrailDetail(plannedHike.trail),
-        ),
         if (myUpcomingHikes.isNotEmpty) ...[
           const SizedBox(height: 22),
           _MyUpcomingHikesSection(
@@ -372,24 +362,6 @@ class _PreparationDashboard extends StatelessWidget {
             const SizedBox(height: 8),
           ],
       ],
-    );
-  }
-
-  Future<void> _openChecklist(BuildContext context) async {
-    final completedItems = await Navigator.of(context).push<Set<String>>(
-      MaterialPageRoute<Set<String>>(
-        builder: (context) => GearChecklistPage(plannedHike: plannedHike),
-      ),
-    );
-    if (completedItems == null || !context.mounted) {
-      return;
-    }
-    await onPlannedHikeChanged?.call(
-      plannedHike.copyWith(
-        completedChecklistItems: completedItems,
-        checklistCompleted: completedItems.length,
-        checklistTotal: GearChecklistPage.checklistItemCount,
-      ),
     );
   }
 }
@@ -662,7 +634,7 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
     } else {
       filteredTrails.sort((a, b) => b.ratingAverage.compareTo(a.ratingAverage));
     }
-    final visibleTrails = filteredTrails.take(5).toList();
+    final visibleTrails = filteredTrails;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1022,7 +994,15 @@ class _BestMatchTrailCover extends StatelessWidget {
                 fit: BoxFit.cover,
                 loadingBuilder: (context, child, loadingProgress) {
                   if (loadingProgress == null) return child;
-                  return _TrailCoverFallback(color: fallbackColor);
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _TrailCoverFallback(color: fallbackColor),
+                      const Center(
+                        child: HikerCircleMinorLoadingIndicator(size: 28),
+                      ),
+                    ],
+                  );
                 },
                 errorBuilder: (context, error, stackTrace) {
                   return _TrailCoverFallback(color: fallbackColor);
@@ -1125,101 +1105,6 @@ class _StartHikeActions extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _UpcomingHikeCard extends StatelessWidget {
-  const _UpcomingHikeCard({
-    required this.plannedHike,
-    required this.onContinuePreparation,
-    required this.onOpenTrail,
-  });
-
-  final PlannedHike plannedHike;
-  final VoidCallback onContinuePreparation;
-  final VoidCallback onOpenTrail;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const _Glyph(icon: Icons.event_available_rounded),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Upcoming Hike',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              color: _HomeColors.secondaryTextFor(context),
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                      Text(
-                        plannedHike.trail.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: _HomeColors.textFor(context),
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'View trail',
-                  onPressed: onOpenTrail,
-                  icon: const Icon(Icons.chevron_right_rounded),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _InfoLine(
-              label: 'Departure',
-              value:
-                  '${_formatDate(plannedHike.plannedStartTime)} | ${_formatTime(plannedHike.plannedStartTime)}',
-            ),
-            _InfoLine(
-              label: 'Estimated Return',
-              value: _formatTime(plannedHike.expectedReturnTime),
-            ),
-            _InfoLine(
-              label: 'Weather Preview',
-              value: plannedHike.trail.weather.summary,
-            ),
-            _InfoLine(
-              label: 'Emergency Contacts',
-              value: plannedHike.emergencyContactsSelected
-                  ? 'Configured'
-                  : 'None selected',
-            ),
-            _InfoLine(
-              label: 'Checklist',
-              value:
-                  '${plannedHike.checklistCompleted} / ${plannedHike.checklistTotal} Completed',
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: onContinuePreparation,
-              icon: const Icon(Icons.task_alt_rounded),
-              label: const Text('Continue Preparation'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -2707,7 +2592,7 @@ class _TeamParticipantRow extends StatelessWidget {
                 child: isPinging
                     ? const SizedBox.square(
                         dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                       )
                     : const Text('Ping'),
               ),

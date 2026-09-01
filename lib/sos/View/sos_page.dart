@@ -1090,14 +1090,18 @@ class _NetworkSosStatusCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _Glyph(
-              icon: isCheckingNetwork
-                  ? Icons.sync_rounded
-                  : isNetworkAvailable
-                  ? Icons.cloud_done_rounded
-                  : Icons.signal_wifi_connected_no_internet_4_rounded,
-              color: color,
-            ),
+            if (isCheckingNetwork)
+              const SizedBox.square(
+                dimension: 32,
+                child: HikerCircleMinorLoadingIndicator(size: 28),
+              )
+            else
+              _Glyph(
+                icon: isNetworkAvailable
+                    ? Icons.cloud_done_rounded
+                    : Icons.signal_wifi_connected_no_internet_4_rounded,
+                color: color,
+              ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -1523,7 +1527,9 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
                   icon: isLoading
                       ? const SizedBox.square(
                           dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: HikerCircleMinorLoadingIndicator(
+                            strokeWidth: 2,
+                          ),
                         )
                       : const Icon(Icons.refresh_rounded),
                 ),
@@ -1566,7 +1572,7 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
                         icon: isLoading
                             ? const SizedBox.square(
                                 dimension: 18,
-                                child: CircularProgressIndicator(
+                                child: HikerCircleMinorLoadingIndicator(
                                   strokeWidth: 2,
                                 ),
                               )
@@ -2071,7 +2077,7 @@ class _EmergencySosControlCardState extends State<_EmergencySosControlCard>
                           if (holdProgress > 0)
                             SizedBox.square(
                               dimension: 204,
-                              child: CircularProgressIndicator(
+                              child: HikerCircleMinorLoadingIndicator(
                                 value: holdProgress,
                                 strokeWidth: 5,
                                 color: _SosColors.duress,

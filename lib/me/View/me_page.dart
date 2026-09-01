@@ -1738,11 +1738,11 @@ class _DeviceNotificationsPageState extends State<_DeviceNotificationsPage> {
                         ),
                         const SizedBox(height: 16),
                         if (isLoading)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 80),
-                            child: Center(
-                              child: CircularProgressIndicator.adaptive(),
-                            ),
+                          const HikerCircleLoadingView(
+                            message: 'Loading notifications…',
+                            detail:
+                                'Collecting notifications saved on this device.',
+                            padding: EdgeInsets.only(top: 28, bottom: 12),
                           )
                         else if (notifications.isEmpty)
                           _NotificationEmptyState(onRefresh: _refresh)
@@ -2682,7 +2682,7 @@ class _AchievementsSummaryCard extends StatelessWidget {
                               SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(
+                                child: HikerCircleMinorLoadingIndicator(
                                   strokeWidth: 2,
                                   color: _MeColors.green,
                                   backgroundColor: _MeColors.greenSoftFor(
@@ -2757,6 +2757,7 @@ class _AchievementsPageState extends State<_AchievementsPage> {
   late Future<List<Map<String, dynamic>>> _achievementsFuture;
   late Future<List<Map<String, dynamic>>> _leaderboardFuture;
   String _leaderboardPeriod = 'month';
+  bool _isRefreshingAchievements = false;
 
   @override
   void initState() {
@@ -2772,12 +2773,17 @@ class _AchievementsPageState extends State<_AchievementsPage> {
       session: widget.session,
     );
     setState(() {
+      _isRefreshingAchievements = true;
       _achievementsFuture = future;
       _leaderboardFuture = widget.repository.loadAchievementLeaderboard(
         period: _leaderboardPeriod,
       );
     });
-    await future;
+    try {
+      await future;
+    } finally {
+      if (mounted) setState(() => _isRefreshingAchievements = false);
+    }
   }
 
   @override
@@ -2785,113 +2791,127 @@ class _AchievementsPageState extends State<_AchievementsPage> {
     return Scaffold(
       backgroundColor: _MeColors.backgroundFor(context),
       body: SafeArea(
-        child: RefreshIndicator(
-          color: _MeColors.green,
-          onRefresh: _refreshAchievements,
-          child: FutureBuilder<List<Map<String, dynamic>>>(
-            future: _achievementsFuture,
-            builder: (context, snapshot) {
-              final isLoading =
-                  snapshot.connectionState == ConnectionState.waiting &&
-                  !snapshot.hasData;
-              final achievements = _achievementItemsFromRows(
-                snapshot.data ?? const [],
-              );
-              final earned = achievements
-                  .where((item) => item.isUnlocked)
-                  .toList();
-              final locked = achievements
-                  .where((item) => !item.isUnlocked)
-                  .toList();
+        child: Stack(
+          children: [
+            RefreshIndicator(
+              color: Colors.transparent,
+              backgroundColor: Colors.transparent,
+              strokeWidth: 0.01,
+              onRefresh: _refreshAchievements,
+              child: FutureBuilder<List<Map<String, dynamic>>>(
+                future: _achievementsFuture,
+                builder: (context, snapshot) {
+                  final isLoading =
+                      snapshot.connectionState == ConnectionState.waiting &&
+                      !snapshot.hasData;
+                  final achievements = _achievementItemsFromRows(
+                    snapshot.data ?? const [],
+                  );
+                  final earned = achievements
+                      .where((item) => item.isUnlocked)
+                      .toList();
+                  final locked = achievements
+                      .where((item) => !item.isUnlocked)
+                      .toList();
 
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-                children: [
-                  Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 640),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _DetailHeader(
-                            title: 'Achievements',
-                            subtitle: 'Safety badges and hike milestones',
-                            onBack: () => Navigator.of(context).pop(),
-                          ),
-                          const SizedBox(height: 16),
-                          if (!widget.firebaseBootstrapResult.isAvailable) ...[
-                            _AchievementNoticeCard(
-                              icon: Icons.cloud_off_rounded,
-                              title: 'Cloud achievements unavailable',
-                              message:
-                                  'Showing the local badge catalog until Firebase reconnects.',
-                            ),
-                            const SizedBox(height: 12),
-                          ],
-                          if (isLoading)
-                            const _AchievementLoadingCard()
-                          else ...[
-                            _AchievementProgressPanel(items: achievements),
-                            const SizedBox(height: 12),
-                            FutureBuilder<List<Map<String, dynamic>>>(
-                              future: _leaderboardFuture,
-                              builder: (context, leaderboardSnapshot) {
-                                return _AchievementLeaderboardCard(
-                                  period: _leaderboardPeriod,
-                                  entries: leaderboardSnapshot.data ?? const [],
-                                  isLoading:
-                                      leaderboardSnapshot.connectionState ==
-                                      ConnectionState.waiting,
-                                  onPeriodChanged: (period) {
-                                    setState(() {
-                                      _leaderboardPeriod = period;
-                                      _leaderboardFuture = widget.repository
-                                          .loadAchievementLeaderboard(
-                                            period: period,
-                                          );
-                                    });
-                                  },
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 18),
-                            const _SectionTitle(label: 'Earned'),
-                            const SizedBox(height: 8),
-                            if (earned.isEmpty)
-                              const _AchievementNoticeCard(
-                                icon: Icons.emoji_events_outlined,
-                                title: 'No badges unlocked yet',
-                                message:
-                                    'Complete safe hikes, check-ins, and community actions to earn your first badge.',
-                              )
-                            else
-                              for (final item in earned) ...[
-                                _AchievementTile(
-                                  item: item,
-                                  onTap: () => _showAchievementDetail(item),
-                                ),
-                                const SizedBox(height: 10),
-                              ],
-                            const SizedBox(height: 8),
-                            const _SectionTitle(label: 'Locked'),
-                            const SizedBox(height: 8),
-                            for (final item in locked) ...[
-                              _AchievementTile(
-                                item: item,
-                                onTap: () => _showAchievementDetail(item),
+                  return ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+                    children: [
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 640),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _DetailHeader(
+                                title: 'Achievements',
+                                subtitle: 'Safety badges and hike milestones',
+                                onBack: () => Navigator.of(context).pop(),
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 16),
+                              if (!widget
+                                  .firebaseBootstrapResult
+                                  .isAvailable) ...[
+                                _AchievementNoticeCard(
+                                  icon: Icons.cloud_off_rounded,
+                                  title: 'Cloud achievements unavailable',
+                                  message:
+                                      'Showing the local badge catalog until Firebase reconnects.',
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                              if (isLoading)
+                                const _AchievementLoadingCard()
+                              else ...[
+                                _AchievementProgressPanel(items: achievements),
+                                const SizedBox(height: 12),
+                                FutureBuilder<List<Map<String, dynamic>>>(
+                                  future: _leaderboardFuture,
+                                  builder: (context, leaderboardSnapshot) {
+                                    return _AchievementLeaderboardCard(
+                                      period: _leaderboardPeriod,
+                                      entries:
+                                          leaderboardSnapshot.data ?? const [],
+                                      isLoading:
+                                          leaderboardSnapshot.connectionState ==
+                                          ConnectionState.waiting,
+                                      onPeriodChanged: (period) {
+                                        setState(() {
+                                          _leaderboardPeriod = period;
+                                          _leaderboardFuture = widget.repository
+                                              .loadAchievementLeaderboard(
+                                                period: period,
+                                              );
+                                        });
+                                      },
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 18),
+                                const _SectionTitle(label: 'Earned'),
+                                const SizedBox(height: 8),
+                                if (earned.isEmpty)
+                                  const _AchievementNoticeCard(
+                                    icon: Icons.emoji_events_outlined,
+                                    title: 'No badges unlocked yet',
+                                    message:
+                                        'Complete safe hikes, check-ins, and community actions to earn your first badge.',
+                                  )
+                                else
+                                  for (final item in earned) ...[
+                                    _AchievementTile(
+                                      item: item,
+                                      onTap: () => _showAchievementDetail(item),
+                                    ),
+                                    const SizedBox(height: 10),
+                                  ],
+                                const SizedBox(height: 8),
+                                const _SectionTitle(label: 'Locked'),
+                                const SizedBox(height: 8),
+                                for (final item in locked) ...[
+                                  _AchievementTile(
+                                    item: item,
+                                    onTap: () => _showAchievementDetail(item),
+                                  ),
+                                  const SizedBox(height: 10),
+                                ],
+                              ],
                             ],
-                          ],
-                        ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            if (_isRefreshingAchievements)
+              const HikerCircleLoadingToastOverlay(
+                message: 'Refreshing achievements…',
+                detail: 'Updating rank, badges, and leaderboard progress.',
+              ),
+          ],
         ),
       ),
     );
@@ -2974,7 +2994,7 @@ class _AchievementLeaderboardCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             if (isLoading)
-              const Center(child: CupertinoActivityIndicator())
+              const Center(child: HikerCircleMinorLoadingIndicator(size: 72))
             else if (entries.isEmpty)
               Text(
                 'No achievement points have been earned in this period yet.',
@@ -3049,107 +3069,182 @@ class _AchievementProgressPanel extends StatelessWidget {
       (total, item) => total + item.pointsAwarded,
     );
     final level = HikerLevel.fromPoints(points);
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(
-                    color: _MeColors.greenSoftFor(context),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.emoji_events_rounded,
-                    color: _MeColors.green,
-                    size: 31,
-                  ),
+    final nextLevelName = level.nextLevelPoints == null
+        ? 'Peak rank reached'
+        : HikerLevel.tiers[level.number].name;
+    final remaining = level.pointsToNextLevel(points);
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0F5132), Color(0xFF1F7A48), Color(0xFF34A853)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.white24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF34A853).withValues(alpha: 0.24),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 82,
+                height: 82,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF07140D).withValues(alpha: 0.48),
+                  border: Border.all(color: const Color(0xFFFFD166), width: 3),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x55FFD166), blurRadius: 18),
+                  ],
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        level.badgeLabel,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: _MeColors.textFor(context),
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0,
-                        ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.military_tech_rounded,
+                      color: Color(0xFFFFD166),
+                      size: 30,
+                    ),
+                    Text(
+                      'LV ${level.number}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.6,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        level.nextLevelPoints == null
-                            ? '$points points - maximum level reached'
-                            : '$points points - ${level.pointsToNextLevel(points)} to ${HikerLevel.tiers[level.number].name}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _MeColors.secondaryTextFor(context),
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: level.progressFor(points),
-                minHeight: 8,
-                backgroundColor: _MeColors.greenSoftFor(context),
-                valueColor: const AlwaysStoppedAnimation<Color>(
-                  _MeColors.green,
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'TRAIL RANK',
+                      style: TextStyle(
+                        color: Color(0xFFC8F3D6),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.8,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      level.name,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0,
+                          ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      level.nextLevelPoints == null
+                          ? '$points points · $nextLevelName'
+                          : '$remaining points to $nextLevelName',
+                      style: const TextStyle(
+                        color: Color(0xFFE2F7E9),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: level.progressFor(points),
+              minHeight: 11,
+              backgroundColor: Colors.black26,
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                Color(0xFFFFD166),
+              ),
             ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _AchievementMetric(
-                    label: 'Earned',
-                    value: '${earned.length}',
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _AchievementMetric(label: 'Locked', value: '$locked'),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _AchievementMetric(label: 'Points', value: '$points'),
-                ),
-              ],
+          ),
+          const SizedBox(height: 7),
+          Text(
+            level.nextLevelPoints == null
+                ? 'All level progress complete'
+                : '$points / ${level.nextLevelPoints} rank points',
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _AchievementMetric(
+                  label: 'Earned',
+                  value: '${earned.length}',
+                  onDark: true,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _AchievementMetric(
+                  label: 'Locked',
+                  value: '$locked',
+                  onDark: true,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _AchievementMetric(
+                  label: 'Points',
+                  value: '$points',
+                  onDark: true,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 }
 
 class _AchievementMetric extends StatelessWidget {
-  const _AchievementMetric({required this.label, required this.value});
+  const _AchievementMetric({
+    required this.label,
+    required this.value,
+    this.onDark = false,
+  });
 
   final String label;
   final String value;
+  final bool onDark;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
-        color: _MeColors.greenSoftFor(context),
-        borderRadius: BorderRadius.circular(8),
+        color: onDark
+            ? Colors.black.withValues(alpha: 0.2)
+            : _MeColors.greenSoftFor(context),
+        borderRadius: BorderRadius.circular(12),
+        border: onDark ? Border.all(color: Colors.white12) : null,
       ),
       child: Column(
         children: [
@@ -3158,7 +3253,7 @@ class _AchievementMetric extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: _MeColors.textFor(context),
+              color: onDark ? Colors.white : _MeColors.textFor(context),
               fontWeight: FontWeight.w900,
               letterSpacing: 0,
             ),
@@ -3169,7 +3264,9 @@ class _AchievementMetric extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _MeColors.secondaryTextFor(context),
+              color: onDark
+                  ? const Color(0xFFC8F3D6)
+                  : _MeColors.secondaryTextFor(context),
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
@@ -3510,8 +3607,7 @@ class _AchievementLoadingCard extends StatelessWidget {
       child: HikerCircleLoadingView(
         message: 'Loading achievements…',
         detail: 'Checking your progress, levels and unlocked badges.',
-        compact: true,
-        padding: EdgeInsets.all(12),
+        padding: EdgeInsets.all(18),
       ),
     );
   }
@@ -3650,7 +3746,7 @@ class _TimeZoneSettingCard extends StatelessWidget {
                 if (isBusy)
                   const SizedBox.square(
                     dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2.2),
+                    child: HikerCircleMinorLoadingIndicator(strokeWidth: 2.2),
                   )
                 else
                   Icon(
@@ -3947,7 +4043,9 @@ class _CacheUsageCard extends StatelessWidget {
                       icon: isClearing
                           ? const SizedBox.square(
                               dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child: HikerCircleMinorLoadingIndicator(
+                                strokeWidth: 2,
+                              ),
                             )
                           : const Icon(Icons.cleaning_services_rounded),
                       label: Text(isClearing ? 'Clearing' : 'Clear cache data'),

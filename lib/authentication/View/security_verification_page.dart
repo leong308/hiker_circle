@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/Model/app_session.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Data/multi_factor_auth_service.dart';
 import '../Data/passkey_build_support.dart';
 import '../Model/mfa_models.dart';
@@ -361,7 +362,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
               icon: _busy
                   ? const SizedBox.square(
                       dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.verified_user_rounded),
               label: Text(

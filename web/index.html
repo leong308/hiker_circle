@@ -1,40 +1,257 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
-  <base href="$FLUTTER_BASE_HREF">
-
-  <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
-
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="HikerCircle">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>HikerCircle</title>
-  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-  <link href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet"/>
-  <link rel="manifest" href="manifest.json">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173f35">
+  <meta name="description" content="HikerCircle helps hikers discover trails, plan together, share live progress, check in, and access safety tools when they matter.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hiker-circle.web.app/">
+  <meta property="og:title" content="HikerCircle — Better connected on every trail">
+  <meta property="og:description" content="Plan hikes, keep your circle connected, and carry practical safety tools wherever the trail leads.">
+  <meta property="og:image" content="https://hiker-circle.web.app/site-assets/hiker-circle-hero.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="HikerCircle — Better connected on every trail">
+  <meta name="twitter:description" content="Plan hikes, keep your circle connected, and carry practical safety tools wherever the trail leads.">
+  <meta name="twitter:image" content="https://hiker-circle.web.app/site-assets/hiker-circle-hero.jpg">
+  <title>HikerCircle — Better connected on every trail</title>
+  <link rel="icon" type="image/png" href="/favicon.png?v=hc-1">
+  <link rel="apple-touch-icon" href="/privacy-assets/app-icon.png">
+  <link rel="stylesheet" href="/site/styles.css">
+  <script src="/site/app.js" defer></script>
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header" data-header>
+    <a class="brand" href="/" aria-label="HikerCircle home">
+      <img src="/privacy-assets/app-icon.png" alt="" width="42" height="42">
+      <span>HikerCircle</span>
+    </a>
+    <nav class="nav" aria-label="Main navigation">
+      <a href="#community">Community</a>
+      <a href="#showcase">App showcase</a>
+      <a href="#journey">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#safety">Safety</a>
+      <a class="nav-pill" href="/privacy-policy">Privacy</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <div class="hero-wrap">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy reveal is-visible">
+          <p class="eyebrow"><span></span> Plan · Connect · Stay safer</p>
+          <h1 id="hero-title">Better connected on every trail.</h1>
+          <p>HikerCircle brings trail discovery, hike planning, live progress, check-ins, and practical safety tools into one circle—before, during, and after the hike.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#showcase">See the app <span aria-hidden="true">↓</span></a>
+            <a class="button button-secondary" href="#journey">How it works</a>
+          </div>
+        </div>
+
+        <div class="hero-visual reveal is-visible">
+          <div class="hero-image">
+            <img src="/site-assets/hiker-circle-hero.jpg" alt="Three hikers moving together along a green highland trail" width="1440" height="960" fetchpriority="high">
+          </div>
+          <div class="trail-status" aria-label="Example team connection status">
+            <span class="status-pulse" aria-hidden="true"></span>
+            <span><strong>Your circle is connected</strong><small>Shared team progress</small></span>
+            <span class="avatars" aria-hidden="true"><i>A</i><i>M</i><i>J</i></span>
+          </div>
+        </div>
+      </section>
+
+      <div class="promise-strip" aria-label="HikerCircle principles">
+        <div><span>01</span><strong>Plan with your people</strong></div>
+        <div><span>02</span><strong>Stay aware on the move</strong></div>
+        <div><span>03</span><strong>Remember every trail</strong></div>
+      </div>
+    </div>
+
+    <section class="community-section" id="community" aria-labelledby="community-title">
+      <div class="community-layout">
+        <header class="community-intro reveal">
+          <p class="eyebrow"><span></span> HikerCircle in motion</p>
+          <h2 id="community-title">Real journeys.<br>One growing circle.</h2>
+          <p>These community totals come from registered HikerCircle accounts and server-confirmed completed hiking sessions.</p>
+        </header>
+
+        <div class="community-stats-wrap reveal">
+          <div class="community-stats" data-community-stats aria-busy="true" aria-live="polite">
+            <article class="community-stat community-stat-distance">
+              <strong><span data-stat="totalDistanceKm">—</span><small> km</small></strong>
+              <span>Total distance hiked</span>
+            </article>
+            <article class="community-stat">
+              <strong data-stat="registeredHikers">—</strong>
+              <span>Registered hikers</span>
+            </article>
+            <article class="community-stat">
+              <strong data-stat="completedHikes">—</strong>
+              <span>Hikes completed</span>
+            </article>
+            <article class="community-stat">
+              <strong data-stat="soloHikes">—</strong>
+              <span>Solo hikes</span>
+            </article>
+            <article class="community-stat">
+              <strong data-stat="groupHikes">—</strong>
+              <span>Group hikes</span>
+            </article>
+            <article class="community-stat">
+              <strong data-stat="safetyCheckIns">—</strong>
+              <span>Safety check-ins</span>
+            </article>
+          </div>
+          <p class="community-note" data-stats-status>Loading verified community totals…</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="app-showcase" id="showcase" aria-labelledby="showcase-title">
+      <div class="showcase-inner">
+        <header class="showcase-heading reveal">
+          <p class="dark-eyebrow"><span></span> Inside HikerCircle</p>
+          <h2 id="showcase-title">The whole hike,<br><em>screen by screen.</em></h2>
+          <p>From finding the right trail to reaching safety tools, the app keeps the journey connected without getting in the way.</p>
+        </header>
+
+        <div class="phone-hero reveal" aria-label="HikerCircle app screens">
+          <figure class="phone phone-left" aria-label="Trail detail screen">
+            <img src="/site-assets/screens/trail-detail.jpeg" alt="HikerCircle trail detail screen showing route information" width="590" height="1280">
+          </figure>
+          <figure class="phone phone-main" aria-label="Plan your hike screen">
+            <img src="/site-assets/screens/plan-home.jpeg" alt="HikerCircle plan your hike screen" width="590" height="1280">
+          </figure>
+          <figure class="phone phone-right" aria-label="SOS screen">
+            <img src="/site-assets/screens/sos-center.jpeg" alt="HikerCircle SOS screen with emergency controls" width="590" height="1280">
+          </figure>
+        </div>
+
+        <div class="showcase-detail">
+          <div class="showcase-tabs reveal" role="tablist" aria-label="HikerCircle feature screens">
+            <button class="showcase-tab is-active" type="button" role="tab" aria-selected="true" data-showcase-tab="0">
+              <span>01</span><div><strong>Schedule the plan</strong><small>Set joining rules and personal departure reminders.</small></div><i aria-hidden="true"></i>
+            </button>
+            <button class="showcase-tab" type="button" role="tab" aria-selected="false" data-showcase-tab="1">
+              <span>02</span><div><strong>Explore the trail</strong><small>Review route, elevation, timing, and map context.</small></div><i aria-hidden="true"></i>
+            </button>
+            <button class="showcase-tab" type="button" role="tab" aria-selected="false" data-showcase-tab="2">
+              <span>03</span><div><strong>Launch together</strong><small>Confirm the team is ready before anyone starts.</small></div><i aria-hidden="true"></i>
+            </button>
+            <button class="showcase-tab" type="button" role="tab" aria-selected="false" data-showcase-tab="3">
+              <span>04</span><div><strong>Follow the team</strong><small>Check in, pin locations, and see the active hike together.</small></div><i aria-hidden="true"></i>
+            </button>
+            <button class="showcase-tab" type="button" role="tab" aria-selected="false" data-showcase-tab="4">
+              <span>05</span><div><strong>Share trail feedback</strong><small>Rate the completed route and help the next hiker.</small></div><i aria-hidden="true"></i>
+            </button>
+            <button class="showcase-tab" type="button" role="tab" aria-selected="false" data-showcase-tab="5">
+              <span>06</span><div><strong>Reach safety tools</strong><small>Open SOS controls and practical first-aid guidance.</small></div><i aria-hidden="true"></i>
+            </button>
+          </div>
+
+          <div class="showcase-stage reveal" data-showcase-stage>
+            <div class="stage-ring" aria-hidden="true"></div>
+            <div class="stage-phone">
+              <span class="phone-speaker" aria-hidden="true"></span>
+              <div class="stage-scenes">
+                <img class="stage-scene is-active" data-showcase-scene="0" src="/site-assets/screens/hike-reminders.jpeg" alt="Hike reminder and scheduling options screen" width="498" height="1080">
+                <img class="stage-scene" data-showcase-scene="1" src="/site-assets/screens/trail-detail.jpeg" alt="Trail detail and route preview screen" width="590" height="1280" loading="lazy">
+                <img class="stage-scene" data-showcase-scene="2" src="/site-assets/screens/team-launch.jpeg" alt="Team hike launch and readiness screen" width="498" height="1080" loading="lazy">
+                <img class="stage-scene" data-showcase-scene="3" src="/site-assets/screens/active-team-hike.jpeg" alt="Active team hike map with check-in and team tools" width="498" height="1080" loading="lazy">
+                <img class="stage-scene" data-showcase-scene="4" src="/site-assets/screens/route-rating.jpeg" alt="Completed route rating dialog" width="498" height="1080" loading="lazy">
+                <img class="stage-scene" data-showcase-scene="5" src="/site-assets/screens/sos-center.jpeg" alt="SOS safety controls screen" width="590" height="1280" loading="lazy">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="gallery-block reveal">
+          <div class="gallery-heading">
+            <div>
+              <p class="dark-eyebrow"><span></span> Explore the full experience</p>
+              <h3>Every stage of the hike, within reach.</h3>
+              <p>Drag, swipe, use your arrow keys, or choose the controls to browse.</p>
+            </div>
+            <div class="gallery-controls" aria-label="Screenshot gallery controls">
+              <button type="button" data-carousel-previous aria-label="Show previous app screen">←</button>
+              <button type="button" data-carousel-next aria-label="Show next app screen">→</button>
+            </div>
+          </div>
+
+          <div class="screen-marquee" data-screen-carousel tabindex="0" role="region" aria-roledescription="carousel" aria-label="HikerCircle app screenshot gallery">
+            <div class="screen-track">
+              <figure data-carousel-slide><img src="/site-assets/screens/plan-home.jpeg" alt="Plan your hike screen" width="590" height="1280" loading="lazy" draggable="false"><figcaption><span>01</span>Plan</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/trail-detail.jpeg" alt="Trail detail screen" width="590" height="1280" loading="lazy" draggable="false"><figcaption><span>02</span>Discover</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/create-session.jpeg" alt="Choose solo or team hiking mode screen" width="590" height="1280" loading="lazy" draggable="false"><figcaption><span>03</span>Create</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/hike-reminders.jpeg" alt="Hike reminders and schedule options screen" width="498" height="1080" loading="lazy" draggable="false"><figcaption><span>04</span>Schedule</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/team-launch.jpeg" alt="Team hike launch readiness screen" width="498" height="1080" loading="lazy" draggable="false"><figcaption><span>05</span>Launch</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/active-team-hike.jpeg" alt="Active team hike map screen" width="498" height="1080" loading="lazy" draggable="false"><figcaption><span>06</span>Track</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/weather.jpeg" alt="Hourly weather forecast screen" width="590" height="1280" loading="lazy" draggable="false"><figcaption><span>07</span>Forecast</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/hazard-report.jpeg" alt="Report trail hazard screen" width="590" height="1280" loading="lazy" draggable="false"><figcaption><span>08</span>Report</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/first-aid.jpeg" alt="First-aid guide screen" width="590" height="1280" loading="lazy" draggable="false"><figcaption><span>09</span>First aid</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/sos-center.jpeg" alt="Emergency SOS screen" width="590" height="1280" loading="lazy" draggable="false"><figcaption><span>10</span>SOS</figcaption></figure>
+              <figure data-carousel-slide><img src="/site-assets/screens/route-rating.jpeg" alt="Rate a completed route dialog" width="498" height="1080" loading="lazy" draggable="false"><figcaption><span>11</span>Reflect</figcaption></figure>
+            </div>
+          </div>
+          <div class="gallery-progress" aria-hidden="true"><span data-carousel-progress></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="journey section" id="journey" aria-labelledby="journey-title">
+      <header class="section-heading reveal">
+        <p class="eyebrow"><span></span> One circle, the whole journey</p>
+        <h2 id="journey-title">From the first plan to the final check-in.</h2>
+        <p>HikerCircle keeps the useful details together so your group can spend less time coordinating and more time moving with confidence.</p>
+      </header>
+      <div class="journey-grid">
+        <article class="journey-card reveal"><span>01 · BEFORE</span><h3>Choose and plan</h3><p>Discover trails, review essential details, invite your hiking buddies, and agree on the plan before anyone leaves home.</p></article>
+        <article class="journey-card journey-dark reveal"><span>02 · DURING</span><h3>Move as a circle</h3><p>Track hike progress, share location when needed, check in, and keep everyone connected through one shared hike.</p></article>
+        <article class="journey-card reveal"><span>03 · AFTER</span><h3>Keep the story</h3><p>Finish with a useful hike summary, route history, memories, and trail feedback that helps the next adventure.</p></article>
+      </div>
+    </section>
+
+    <section class="features-section" id="features" aria-labelledby="features-title">
+      <div class="section">
+        <header class="section-heading reveal">
+          <p class="eyebrow"><span></span> What HikerCircle does</p>
+          <h2 id="features-title">The essentials, without the trail clutter.</h2>
+        </header>
+        <div class="feature-grid">
+          <article class="feature-card reveal"><span>01</span><h3>Trail discovery</h3><p>Browse trails with useful location, distance, difficulty, route, and weather context in one place.</p></article>
+          <article class="feature-card reveal"><span>02</span><h3>Shared hike plans</h3><p>Set the route, timing, checkpoints, and team so everyone starts with the same expectations.</p></article>
+          <article class="feature-card reveal"><span>03</span><h3>Buddy circles</h3><p>Invite trusted hikers, form a team, and keep group conversations attached to the hike they belong to.</p></article>
+          <article class="feature-card reveal"><span>04</span><h3>Live progress</h3><p>Record the route, place manual pins, share live location intentionally, and check in along the way.</p></article>
+          <article class="feature-card reveal"><span>05</span><h3>SOS and safety tools</h3><p>Access manual SOS options, emergency-contact delivery, nearby alerts, and supported paired-button features.</p></article>
+          <article class="feature-card reveal"><span>06</span><h3>Hike history</h3><p>See completed hikes, route summaries, achievements, ratings, and the progress behind every adventure.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="safety section" id="safety" aria-labelledby="safety-title">
+      <div class="safety-panel reveal">
+        <div><p class="dark-eyebrow"><span></span> Designed with care</p><h2 id="safety-title">Safety should travel with the group.</h2></div>
+        <div><p>HikerCircle helps hikers share the right information with the right people when it matters—without making every hike feel like an emergency.</p>
+          <ul><li><span>✓</span>Live location is shared intentionally and can be stopped.</li><li><span>✓</span>Emergency contacts and nearby alerts support faster awareness.</li><li><span>✓</span>Fall-and-stillness monitoring can begin a cancellable SOS countdown on supported devices.</li></ul>
+          <small>HikerCircle supports preparedness and situational awareness. It is not an emergency service, medical device, or guarantee of rescue.</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="closing section reveal" aria-labelledby="closing-title">
+      <h2 id="closing-title">A better hike starts with a better-connected circle.</h2>
+      <a class="button button-primary" href="#main">Back to the top <span aria-hidden="true">↑</span></a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <a class="brand" href="/"><img src="/privacy-assets/app-icon.png" alt="" width="42" height="42"><span>HikerCircle</span></a>
+      <div><span>&copy; 2026 HikerCircle</span><a href="/privacy-policy">Privacy Policy</a><a href="mailto:leongziqi@gmail.com?subject=HikerCircle%20enquiry">Contact</a></div>
+    </div>
+  </footer>
 </body>
 </html>

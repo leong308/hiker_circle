@@ -1,6 +1,8 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/loading_toast.dart';
+
 import '../Model/safety_questions.dart';
 
 class SafetyQuestionsSetupPage extends StatefulWidget {
@@ -193,7 +195,9 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
                       icon: _isSaving
                           ? const SizedBox.square(
                               dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child: HikerCircleMinorLoadingIndicator(
+                                strokeWidth: 2,
+                              ),
                             )
                           : const Icon(Icons.arrow_forward),
                       label: Text(_isSaving ? 'Saving...' : 'Continue'),

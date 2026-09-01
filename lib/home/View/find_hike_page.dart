@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/hike_session_models.dart';
@@ -55,7 +56,8 @@ class FindHikePage extends StatefulWidget {
   State<FindHikePage> createState() => _FindHikePageState();
 }
 
-class _FindHikePageState extends State<FindHikePage> {
+class _FindHikePageState extends State<FindHikePage>
+    with WidgetsBindingObserver {
   List<UpcomingHike> _hikes = const [];
   bool _isLoading = true;
   double? _userLat;
@@ -67,22 +69,25 @@ class _FindHikePageState extends State<FindHikePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_load());
     _refreshTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (mounted &&
-          _hikes.any(
-            (hike) =>
-                hike.joinRequestStatus == 'pending' ||
-                hike.departureTime.difference(DateTime.now()) <
-                    const Duration(minutes: 16),
-          )) {
-        unawaited(_load(silent: true));
-      }
+      // An empty or ordinary list must still learn about hikes created by
+      // another account. The previous conditional made those lists stale.
+      if (mounted) unawaited(_load(silent: true));
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_load(silent: true));
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
     super.dispose();
   }
@@ -98,13 +103,14 @@ class _FindHikePageState extends State<FindHikePage> {
       });
     }
     try {
-      final location = silent
-          ? null
-          : await LocationSnapshotService.instance.refresh();
+      // Discovery must never wait on GPS. A slow or unresolved location
+      // permission previously prevented this account from seeing a hike until
+      // a later refresh happened to complete.
+      if (!silent) unawaited(_refreshLocationAndResort());
       final hikes = await widget.repository.loadUpcomingHikes();
       if (!mounted) return;
-      final userLat = location?.latitude ?? _userLat;
-      final userLng = location?.longitude ?? _userLng;
+      final userLat = _userLat;
+      final userLng = _userLng;
 
       final now = DateTime.now();
       final active = hikes
@@ -140,6 +146,26 @@ class _FindHikePageState extends State<FindHikePage> {
       });
     } finally {
       _isRefreshingSilently = false;
+    }
+  }
+
+  Future<void> _refreshLocationAndResort() async {
+    try {
+      final location = await LocationSnapshotService.instance.refresh();
+      if (!mounted || location == null) return;
+      final sorted = List<UpcomingHike>.of(_hikes)
+        ..sort(
+          (a, b) => a
+              .distanceFrom(location.latitude, location.longitude)
+              .compareTo(b.distanceFrom(location.latitude, location.longitude)),
+        );
+      setState(() {
+        _userLat = location.latitude;
+        _userLng = location.longitude;
+        _hikes = sorted;
+      });
+    } catch (_) {
+      // Location only affects distance ordering. Discovery remains available.
     }
   }
 
@@ -260,7 +286,8 @@ class UpcomingHikeCard extends StatefulWidget {
   State<UpcomingHikeCard> createState() => _UpcomingHikeCardState();
 }
 
-class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
+class _UpcomingHikeCardState extends State<UpcomingHikeCard>
+    with SingleTickerProviderStateMixin {
   bool _joining = false;
   bool _joinedLocally = false;
   bool _remindingHost = false;
@@ -269,27 +296,25 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
   late String _joinRequestStatus = widget.hike.joinRequestStatus;
   DateTime _clock = DateTime.now();
   Timer? _clockTimer;
-  int _wiggleTick = 0;
+  late final AnimationController _wiggleController;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
     super.initState();
-    _clockTimer = Timer.periodic(const Duration(milliseconds: 450), (_) {
+    _wiggleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    _syncUrgentAnimation(_clock);
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       final now = DateTime.now();
-      final urgent =
-          now.isAfter(
-            widget.hike.departureTime.subtract(const Duration(minutes: 15)),
-          ) &&
-          now.isBefore(
-            widget.hike.departureTime.add(const Duration(minutes: 15)),
-          );
-      if (urgent || now.minute != _clock.minute) {
-        setState(() {
-          _clock = now;
-          if (urgent) _wiggleTick += 1;
-        });
-      }
+      final previousClock = _clock;
+      final phaseChanged = _urgencyPhase(now) != _urgencyPhase(previousClock);
+      _clock = now;
+      _syncUrgentAnimation(now);
+      if (phaseChanged || now.minute != previousClock.minute) setState(() {});
       if (now.isAfter(
         widget.hike.departureTime.add(const Duration(minutes: 15)),
       )) {
@@ -301,7 +326,19 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
   @override
   void dispose() {
     _clockTimer?.cancel();
+    _wiggleController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion =
+        MediaQuery.disableAnimationsOf(context) ||
+        MediaQuery.accessibleNavigationOf(context);
+    if (_reduceMotion == reduceMotion) return;
+    _reduceMotion = reduceMotion;
+    _syncUrgentAnimation(_clock);
   }
 
   @override
@@ -312,6 +349,29 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
       _joinRequestStatus = widget.hike.joinRequestStatus;
       _departureReminderCount = widget.hike.departureReminderCount;
       _departureReminderSentByMe = widget.hike.departureReminderSentByMe;
+    }
+    if (oldWidget.hike.departureTime != widget.hike.departureTime) {
+      _syncUrgentAnimation(_clock);
+    }
+  }
+
+  int _urgencyPhase(DateTime now) {
+    final untilDeparture = widget.hike.departureTime.difference(now);
+    if (untilDeparture > const Duration(minutes: 15)) return 0;
+    if (!untilDeparture.isNegative) return 1;
+    if (untilDeparture > const Duration(minutes: -15)) return 2;
+    return 3;
+  }
+
+  void _syncUrgentAnimation(DateTime now) {
+    final phase = _urgencyPhase(now);
+    final shouldAnimate = !_reduceMotion && (phase == 1 || phase == 2);
+    if (shouldAnimate) {
+      if (!_wiggleController.isAnimating) _wiggleController.repeat();
+    } else if (_wiggleController.isAnimating || _wiggleController.value != 0) {
+      _wiggleController
+        ..stop()
+        ..reset();
     }
   }
 
@@ -450,7 +510,10 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
   Future<void> _remindHost() async {
     if (_remindingHost || _departureReminderSentByMe) return;
     if (_departureReminderCount >= 3) {
-      _showMessage('A few reminders were already sent to the host.');
+      _showMessage(
+        'A few reminders were already sent to the host.',
+        tone: HikerCircleToastTone.warning,
+      );
       return;
     }
     setState(() => _remindingHost = true);
@@ -469,6 +532,9 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
         result['alreadySent'] == true || count >= 3
             ? 'A few reminders were already sent to the host.'
             : 'The host was reminded through HikerCircle and WhatsApp.',
+        tone: result['alreadySent'] == true || count >= 3
+            ? HikerCircleToastTone.warning
+            : HikerCircleToastTone.success,
       );
     } on HikerCircleFirebaseRepositoryException catch (error) {
       _showError(error.message);
@@ -479,20 +545,15 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
 
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    HikerCircleToast.show(context, message, tone: HikerCircleToastTone.error);
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message, {
+    HikerCircleToastTone tone = HikerCircleToastTone.success,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
+    HikerCircleToast.show(context, message, tone: tone);
   }
 
   @override
@@ -520,337 +581,343 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
         untilDeparture.isNegative &&
         untilDeparture > const Duration(minutes: -15);
     final isUrgent = isApproaching || isOverdue;
-    final rotation = isUrgent
-        ? math.sin(_wiggleTick * math.pi / 2) * 0.009
-        : 0.0;
-
-    return Transform.rotate(
-      angle: rotation,
-      child: _InsetGroup(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: isOverdue
-                ? Theme.of(context).colorScheme.error.withValues(
-                    alpha: Theme.of(context).brightness == Brightness.dark
-                        ? 0.18
-                        : 0.09,
-                  )
-                : Colors.transparent,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _Glyph(icon: Icons.hiking_rounded),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.hike.trailName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleMedium
+    final cardBody = _InsetGroup(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: isOverdue
+              ? Theme.of(context).colorScheme.error.withValues(
+                  alpha: Theme.of(context).brightness == Brightness.dark
+                      ? 0.18
+                      : 0.09,
+                )
+              : Colors.transparent,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _Glyph(icon: Icons.hiking_rounded),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.hike.trailName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: _AppColors.textFor(context),
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0,
+                              ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          [
+                                widget.hike.area,
+                                widget.hike.state,
+                                widget.hike.country,
+                              ]
+                              .map((part) => part.trim())
+                              .where((part) => part.isNotEmpty)
+                              .join(', '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: _AppColors.secondaryTextFor(context),
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _StatusPill(
+                    label: widget.hike.hikeType == 'team' ? 'Group' : 'Solo',
+                    color: widget.hike.hikeType == 'team'
+                        ? _AppColors.green
+                        : _AppColors.secondaryTextFor(context),
+                  ),
+                  if (isUrgent) ...[
+                    const SizedBox(width: 7),
+                    _VibratingHikeBell(
+                      animation: _wiggleController,
+                      color: isOverdue
+                          ? Theme.of(context).colorScheme.error
+                          : _AppColors.orange,
+                    ),
+                  ],
+                ],
+              ),
+              if (isOverdue) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 11,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: const Text(
+                    'EXPIRING SOON · This hike disappears 15 minutes after departure',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              const _HorizontalSeparator(),
+              const SizedBox(height: 10),
+              _infoRow(
+                context,
+                Icons.directions_walk_rounded,
+                'Start',
+                widget.hike.startPointName,
+              ),
+              const SizedBox(height: 4),
+              _infoRow(
+                context,
+                Icons.flag_rounded,
+                'Destination',
+                widget.hike.destinationName,
+              ),
+              const SizedBox(height: 4),
+              _infoRow(
+                context,
+                Icons.person_rounded,
+                'Host',
+                widget.hike.creatorName.isNotEmpty
+                    ? widget.hike.creatorName
+                    : 'Hike host',
+              ),
+              const SizedBox(height: 10),
+              const _HorizontalSeparator(),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  _chip(context, Icons.schedule_rounded, '$dateText $timeText'),
+                  const SizedBox(width: 8),
+                  _chip(context, Icons.straighten_rounded, distText),
+                  const SizedBox(width: 8),
+                  _chip(
+                    context,
+                    Icons.people_rounded,
+                    '${widget.hike.participantCount}',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    Icons.timeline_rounded,
+                    size: 13,
+                    color: _AppColors.secondaryTextFor(context),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${widget.hike.distanceKm.toStringAsFixed(1)} km \u00b7 ${widget.hike.durationMinutes} min \u00b7 ${widget.hike.difficulty}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _AppColors.secondaryTextFor(context),
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Material(
+                color: _AppColors.green.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: _openDirections,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 11,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Get a route to this hike',
+                            style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(
-                                  color: _AppColors.textFor(context),
+                                  color: _AppColors.green,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0,
                                 ),
                           ),
-                          const SizedBox(height: 3),
-                          Text(
-                            [
-                                  widget.hike.area,
-                                  widget.hike.state,
-                                  widget.hike.country,
-                                ]
-                                .map((part) => part.trim())
-                                .where((part) => part.isNotEmpty)
-                                .join(', '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: _AppColors.secondaryTextFor(context),
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    _StatusPill(
-                      label: widget.hike.hikeType == 'team' ? 'Group' : 'Solo',
-                      color: widget.hike.hikeType == 'team'
-                          ? _AppColors.green
-                          : _AppColors.secondaryTextFor(context),
-                    ),
-                    if (isUrgent) ...[
-                      const SizedBox(width: 7),
-                      Icon(
-                        Icons.notifications_active_rounded,
-                        color: isOverdue
-                            ? Theme.of(context).colorScheme.error
-                            : _AppColors.orange,
-                      ),
-                    ],
-                  ],
-                ),
-                if (isOverdue) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 11,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.error,
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: const Text(
-                      'EXPIRING SOON · This hike disappears 15 minutes after departure',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
+                        ),
+                        const Icon(
+                          Icons.navigation_rounded,
+                          size: 19,
+                          color: _AppColors.green,
+                        ),
+                      ],
                     ),
                   ),
-                ],
-                const SizedBox(height: 12),
-                const _HorizontalSeparator(),
-                const SizedBox(height: 10),
-                _infoRow(
-                  context,
-                  Icons.directions_walk_rounded,
-                  'Start',
-                  widget.hike.startPointName,
                 ),
-                const SizedBox(height: 4),
-                _infoRow(
-                  context,
-                  Icons.flag_rounded,
-                  'Destination',
-                  widget.hike.destinationName,
-                ),
-                const SizedBox(height: 4),
-                _infoRow(
-                  context,
-                  Icons.person_rounded,
-                  'Host',
-                  widget.hike.creatorName.isNotEmpty
-                      ? widget.hike.creatorName
-                      : 'Hike host',
-                ),
+              ),
+              if (participating) ...[
                 const SizedBox(height: 10),
                 const _HorizontalSeparator(),
                 const SizedBox(height: 10),
-                Row(
-                  children: [
-                    _chip(
-                      context,
-                      Icons.schedule_rounded,
-                      '$dateText $timeText',
-                    ),
-                    const SizedBox(width: 8),
-                    _chip(context, Icons.straighten_rounded, distText),
-                    const SizedBox(width: 8),
-                    _chip(
-                      context,
-                      Icons.people_rounded,
-                      '${widget.hike.participantCount}',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
                 Row(
                   children: [
                     Icon(
-                      Icons.timeline_rounded,
-                      size: 13,
-                      color: _AppColors.secondaryTextFor(context),
+                      isCreator
+                          ? Icons.star_rounded
+                          : Icons.check_circle_rounded,
+                      size: 16,
+                      color: isCreator ? _AppColors.orange : _AppColors.green,
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 6),
                     Text(
-                      '${widget.hike.distanceKm.toStringAsFixed(1)} km \u00b7 ${widget.hike.durationMinutes} min \u00b7 ${widget.hike.difficulty}',
+                      isCreator ? 'Created by you' : 'You joined this hike',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _AppColors.secondaryTextFor(context),
-                        fontWeight: FontWeight.w500,
+                        color: isCreator ? _AppColors.orange : _AppColors.green,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 0,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Material(
-                  color: _AppColors.green.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: _openDirections,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 11,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Get a route to this hike',
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(
-                                    color: _AppColors.green,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0,
-                                  ),
-                            ),
-                          ),
-                          const Icon(
-                            Icons.navigation_rounded,
-                            size: 19,
-                            color: _AppColors.green,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                if (participating) ...[
-                  const SizedBox(height: 10),
-                  const _HorizontalSeparator(),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Icon(
-                        isCreator
-                            ? Icons.star_rounded
-                            : Icons.check_circle_rounded,
-                        size: 16,
-                        color: isCreator ? _AppColors.orange : _AppColors.green,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        isCreator ? 'Created by you' : 'You joined this hike',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: isCreator
-                              ? _AppColors.orange
-                              : _AppColors.green,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      const Spacer(),
-                      TextButton.icon(
-                        onPressed: _editReminders,
-                        icon: const Icon(
-                          Icons.notifications_outlined,
-                          size: 17,
-                        ),
-                        label: const Text('Reminders'),
-                      ),
-                    ],
-                  ),
-                  if (!isCreator && isUrgent) ...[
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            _remindingHost ||
-                                _departureReminderSentByMe ||
-                                _departureReminderCount >= 3
-                            ? (_departureReminderCount >= 3 &&
-                                      !_departureReminderSentByMe
-                                  ? () => _showMessage(
-                                      'A few reminders were already sent to the host.',
-                                    )
-                                  : null)
-                            : _remindHost,
-                        icon: _remindingHost
-                            ? const SizedBox.square(
-                                dimension: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.notification_important_rounded),
-                        label: Text(
-                          _departureReminderSentByMe ||
-                                  _departureReminderCount >= 3
-                              ? 'Reminders sent'
-                              : 'Remind host',
-                        ),
-                      ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: _editReminders,
+                      icon: const Icon(Icons.notifications_outlined, size: 17),
+                      label: const Text('Reminders'),
                     ),
                   ],
-                ] else ...[
-                  const SizedBox(height: 12),
-                  const _HorizontalSeparator(),
-                  const SizedBox(height: 10),
+                ),
+                if (!isCreator && isUrgent) ...[
+                  const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
-                    child: FilledButton.icon(
+                    child: OutlinedButton.icon(
                       onPressed:
-                          _joining ||
-                              ((widget.hike.hikeType != 'team' ||
-                                      widget.hike.requiresJoinApproval) &&
-                                  _joinRequestStatus.isNotEmpty)
-                          ? null
-                          : _join,
-                      icon: _joining
+                          _remindingHost ||
+                              _departureReminderSentByMe ||
+                              _departureReminderCount >= 3
+                          ? (_departureReminderCount >= 3 &&
+                                    !_departureReminderSentByMe
+                                ? () => _showMessage(
+                                    'A few reminders were already sent to the host.',
+                                    tone: HikerCircleToastTone.warning,
+                                  )
+                                : null)
+                          : _remindHost,
+                      icon: _remindingHost
                           ? const SizedBox.square(
                               dimension: 16,
-                              child: CircularProgressIndicator(
+                              child: HikerCircleMinorLoadingIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
                               ),
                             )
-                          : Icon(
-                              widget.hike.hikeType == 'team' &&
-                                      !widget.hike.requiresJoinApproval
-                                  ? Icons.person_add_rounded
-                                  : _joinRequestStatus == 'pending'
-                                  ? Icons.hourglass_top_rounded
-                                  : _joinRequestStatus == 'accepted'
-                                  ? Icons.check_circle_rounded
-                                  : _joinRequestStatus == 'rejected'
-                                  ? Icons.block_rounded
-                                  : Icons.how_to_reg_rounded,
-                              size: 18,
-                            ),
+                          : const Icon(Icons.notification_important_rounded),
                       label: Text(
-                        _joining
-                            ? widget.hike.hikeType == 'team' &&
-                                      !widget.hike.requiresJoinApproval
-                                  ? 'Joining...'
-                                  : 'Sending request...'
-                            : widget.hike.hikeType == 'team' &&
-                                  !widget.hike.requiresJoinApproval
-                            ? 'Join Group Hike'
-                            : switch (_joinRequestStatus) {
-                                'pending' => 'Request pending',
-                                'accepted' => 'Request accepted',
-                                'rejected' => 'Request declined',
-                                'expired' => 'Request expired',
-                                _ => 'Request to join',
-                              },
+                        _departureReminderSentByMe ||
+                                _departureReminderCount >= 3
+                            ? 'Reminders sent'
+                            : 'Remind host',
                       ),
                     ),
                   ),
                 ],
+              ] else ...[
+                const SizedBox(height: 12),
+                const _HorizontalSeparator(),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed:
+                        _joining ||
+                            ((widget.hike.hikeType != 'team' ||
+                                    widget.hike.requiresJoinApproval) &&
+                                _joinRequestStatus.isNotEmpty)
+                        ? null
+                        : _join,
+                    icon: Icon(
+                      widget.hike.hikeType == 'team' &&
+                              !widget.hike.requiresJoinApproval
+                          ? Icons.person_add_rounded
+                          : _joinRequestStatus == 'pending'
+                          ? Icons.hourglass_top_rounded
+                          : _joinRequestStatus == 'accepted'
+                          ? Icons.check_circle_rounded
+                          : _joinRequestStatus == 'rejected'
+                          ? Icons.block_rounded
+                          : Icons.how_to_reg_rounded,
+                      size: 18,
+                    ),
+                    label: Text(
+                      _joining
+                          ? widget.hike.hikeType == 'team' &&
+                                    !widget.hike.requiresJoinApproval
+                                ? 'Joining...'
+                                : 'Sending request...'
+                          : widget.hike.hikeType == 'team' &&
+                                !widget.hike.requiresJoinApproval
+                          ? 'Join Group Hike'
+                          : switch (_joinRequestStatus) {
+                              'pending' => 'Request pending',
+                              'accepted' => 'Request accepted',
+                              'rejected' => 'Request declined',
+                              'expired' => 'Request expired',
+                              _ => 'Request to join',
+                            },
+                    ),
+                  ),
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
+    );
+    final card = Stack(
+      children: [
+        cardBody,
+        if (_joining)
+          HikerCircleLoadingToastOverlay(
+            compact: true,
+            message:
+                widget.hike.hikeType == 'team' &&
+                    !widget.hike.requiresJoinApproval
+                ? 'Joining group hike…'
+                : 'Sending join request…',
+            detail: 'Confirming the hike and updating the participant list.',
+          ),
+      ],
+    );
+    if (!isUrgent || _reduceMotion) return card;
+
+    return AnimatedBuilder(
+      animation: _wiggleController,
+      child: card,
+      builder: (context, child) {
+        final wave = math.sin(_wiggleController.value * math.pi * 2);
+        return Transform.translate(
+          key: const ValueKey('upcoming-hike-urgent-wiggle'),
+          offset: Offset(wave * 1.8, 0),
+          child: Transform.rotate(angle: wave * 0.006, child: child),
+        );
+      },
     );
   }
 
@@ -909,6 +976,52 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _VibratingHikeBell extends StatelessWidget {
+  const _VibratingHikeBell({required this.animation, required this.color});
+
+  final Animation<double> animation;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        final wave = math.sin(animation.value * math.pi * 2);
+        return Transform.translate(
+          offset: Offset(wave * 1.8, 0),
+          child: Transform.rotate(angle: wave * 0.09, child: child),
+        );
+      },
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.86),
+            width: 1.3,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: 0.34),
+              blurRadius: 9,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: const Icon(
+          Icons.notifications_active_rounded,
+          color: Colors.white,
+          size: 18,
+        ),
       ),
     );
   }

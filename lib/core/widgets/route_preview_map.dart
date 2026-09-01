@@ -1146,7 +1146,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
                   children: [
                     const SizedBox.square(
                       dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(width: 8),
                     Expanded(

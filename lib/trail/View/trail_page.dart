@@ -1707,27 +1707,10 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   }
 
   Widget _buildLoading() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 48),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              width: 36,
-              height: 36,
-              child: CircularProgressIndicator(strokeWidth: 3),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Finding a route through your checkpoints…',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: _TrailColors.secondaryTextFor(context),
-              ),
-            ),
-          ],
-        ),
+    return const SafeArea(
+      child: HikerCircleLoadingView(
+        message: 'Building your trail route…',
+        detail: 'Finding a reliable path through every checkpoint.',
       ),
     );
   }
@@ -2143,7 +2126,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
               icon: _isUploadingImages
                   ? const SizedBox.square(
                       dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.cloud_upload_rounded),
               label: Text(
@@ -4008,7 +3991,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
             icon: _isRefreshing
                 ? const SizedBox.square(
                     dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.save_rounded),
             label: Text(_isRefreshing ? 'Refreshing route' : 'Save'),
@@ -4106,7 +4089,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                           icon: _isRefreshing
                               ? const SizedBox.square(
                                   dimension: 16,
-                                  child: CircularProgressIndicator(
+                                  child: HikerCircleMinorLoadingIndicator(
                                     strokeWidth: 2,
                                   ),
                                 )

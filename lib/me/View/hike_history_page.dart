@@ -1195,7 +1195,7 @@ class _HistoryTeamTabState extends State<_HistoryTeamTab> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(
+                      child: HikerCircleMinorLoadingIndicator(
                         strokeWidth: 2,
                         color: Colors.white,
                       ),

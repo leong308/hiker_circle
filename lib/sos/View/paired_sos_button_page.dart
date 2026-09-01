@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/services/hiker_ble_service.dart';
+import '../../core/widgets/loading_toast.dart';
 import 'sos_button_pairing_sheet.dart';
 
 class _PairingHeroCard extends StatelessWidget {
@@ -195,7 +196,7 @@ class _ReadinessCard extends StatelessWidget {
                 if (loading)
                   const SizedBox.square(
                     dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                   )
                 else
                   IconButton(
@@ -1091,7 +1092,9 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
                           padding: EdgeInsets.symmetric(horizontal: 12),
                           child: SizedBox.square(
                             dimension: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                            child: HikerCircleMinorLoadingIndicator(
+                              strokeWidth: 2,
+                            ),
                           ),
                         )
                       else
@@ -1109,7 +1112,9 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
                         const SizedBox(
                           width: 24,
                           height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: HikerCircleMinorLoadingIndicator(
+                            strokeWidth: 2,
+                          ),
                         )
                       else
                         IconButton(

@@ -7,9 +7,16 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/services/emergency_number_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
+import '../Model/first_aid_video.dart';
+import 'first_aid_tutorial_video.dart';
 
 class FirstAidGuidePage extends StatefulWidget {
-  const FirstAidGuidePage({super.key, this.emergencyLatitude, this.emergencyLongitude, this.emergencyNumberResolver});
+  const FirstAidGuidePage({
+    super.key,
+    this.emergencyLatitude,
+    this.emergencyLongitude,
+    this.emergencyNumberResolver,
+  });
 
   final double? emergencyLatitude;
   final double? emergencyLongitude;
@@ -45,11 +52,16 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
 
   Future<List<FirstAidTopic>> _loadTopics() async {
     try {
-      final rawJson = await rootBundle.loadString('assets/guides/first_aid_guide.json');
+      final rawJson = await rootBundle.loadString(
+        'assets/guides/first_aid_guide.json',
+      );
       final data = jsonDecode(rawJson);
       final topics = data is Map<String, dynamic> ? data['topics'] : null;
       if (topics is List) {
-        return topics.whereType<Map<String, dynamic>>().map(FirstAidTopic.fromJson).toList();
+        return topics
+            .whereType<Map<String, dynamic>>()
+            .map(FirstAidTopic.fromJson)
+            .toList();
       }
     } catch (_) {
       return FirstAidTopic.defaults;
@@ -63,7 +75,9 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
     var longitude = widget.emergencyLongitude;
     if (!_hasValidCoordinate(latitude, longitude)) {
       try {
-        final location = LocationSnapshotService.instance.latestLocation ?? await LocationSnapshotService.instance.refresh();
+        final location =
+            LocationSnapshotService.instance.latestLocation ??
+            await LocationSnapshotService.instance.refresh();
         latitude = location?.latitude;
         longitude = location?.longitude;
       } catch (_) {
@@ -72,9 +86,14 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
       }
     }
 
-    final localeCountryCode = WidgetsBinding.instance.platformDispatcher.locale.countryCode;
+    final localeCountryCode =
+        WidgetsBinding.instance.platformDispatcher.locale.countryCode;
     final resolver = widget.emergencyNumberResolver ?? EmergencyNumberService();
-    return resolver.resolve(latitude: latitude, longitude: longitude, fallbackCountryCode: localeCountryCode);
+    return resolver.resolve(
+      latitude: latitude,
+      longitude: longitude,
+      fallbackCountryCode: localeCountryCode,
+    );
   }
 
   Future<void> _callEmergencyServices(EmergencyDialTarget target) async {
@@ -92,7 +111,9 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
   }
 
   void _showDialError(String number) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Unable to open the dialer. Call $number.')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Unable to open the dialer. Call $number.')),
+    );
   }
 
   static bool _hasValidCoordinate(double? latitude, double? longitude) {
@@ -115,11 +136,16 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
           future: _topicsFuture,
           builder: (context, snapshot) {
             final topics = snapshot.data ?? FirstAidTopic.defaults;
-            final categories = _FirstAidCategory.fromTopics(topics).where((category) {
+            final categories = _FirstAidCategory.fromTopics(topics).where((
+              category,
+            ) {
               if (_query.isEmpty) {
                 return true;
               }
-              return category.title.toLowerCase().contains(_query) || category.topics.any((topic) => topic.title.toLowerCase().contains(_query));
+              return category.title.toLowerCase().contains(_query) ||
+                  category.topics.any(
+                    (topic) => topic.title.toLowerCase().contains(_query),
+                  );
             }).toList();
 
             return SingleChildScrollView(
@@ -134,7 +160,10 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
                       const SizedBox(height: 16),
                       TextField(
                         controller: _searchController,
-                        decoration: const InputDecoration(hintText: 'Search first-aid category...', prefixIcon: Icon(Icons.search_rounded)),
+                        decoration: const InputDecoration(
+                          hintText: 'Search first-aid category...',
+                          prefixIcon: Icon(Icons.search_rounded),
+                        ),
                       ),
                       const SizedBox(height: 16),
                       FutureBuilder<EmergencyDialTarget>(
@@ -143,8 +172,13 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
                           final target = emergencySnapshot.data;
                           return _EmergencyShortcut(
                             target: target,
-                            isLoading: emergencySnapshot.connectionState != ConnectionState.done && target == null,
-                            onPressed: target == null ? null : () => _callEmergencyServices(target),
+                            isLoading:
+                                emergencySnapshot.connectionState !=
+                                    ConnectionState.done &&
+                                target == null,
+                            onPressed: target == null
+                                ? null
+                                : () => _callEmergencyServices(target),
                           );
                         },
                       ),
@@ -152,20 +186,23 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
                       _SectionTitle(label: 'First choose a category'),
                       const SizedBox(height: 8),
                       if (categories.isEmpty)
-                        const _EmptyState(message: 'No first-aid categories match this search.')
+                        const _EmptyState(
+                          message: 'No first-aid categories match this search.',
+                        )
                       else
                         for (final category in categories) ...[
                           _CategoryCard(
                             category: category,
                             onTap: () => Navigator.of(context).push(
                               MaterialPageRoute<void>(
-                                builder: (detailContext) => _FirstAidCategoryPage(
-                                  category: category,
-                                  onOpenSos: () {
-                                    Navigator.of(detailContext).pop();
-                                    Navigator.of(context).pop('sos');
-                                  },
-                                ),
+                                builder: (detailContext) =>
+                                    _FirstAidCategoryPage(
+                                      category: category,
+                                      onOpenSos: () {
+                                        Navigator.of(detailContext).pop();
+                                        Navigator.of(context).pop('sos');
+                                      },
+                                    ),
                               ),
                             ),
                           ),
@@ -184,7 +221,15 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
 }
 
 class FirstAidTopic {
-  const FirstAidTopic({required this.id, required this.title, required this.category, required this.steps});
+  const FirstAidTopic({
+    required this.id,
+    required this.title,
+    required this.category,
+    required this.steps,
+    this.guidanceSource = '',
+    this.guidanceSourceUrl = '',
+    this.video,
+  });
 
   factory FirstAidTopic.fromJson(Map<String, dynamic> json) {
     final rawSteps = json['steps'];
@@ -192,7 +237,14 @@ class FirstAidTopic {
       id: _stringFrom(json['id']),
       title: _stringFrom(json['title']),
       category: _stringFrom(json['category']),
-      steps: rawSteps is List ? rawSteps.whereType<String>().toList() : const [],
+      steps: rawSteps is List
+          ? rawSteps.whereType<String>().toList()
+          : const [],
+      guidanceSource: _stringFrom(json['guidanceSource']),
+      guidanceSourceUrl: _stringFrom(json['guidanceSourceUrl']),
+      video: json['video'] is Map<String, dynamic>
+          ? FirstAidVideo.fromJson(json['video'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -200,6 +252,9 @@ class FirstAidTopic {
   final String title;
   final String category;
   final List<String> steps;
+  final String guidanceSource;
+  final String guidanceSourceUrl;
+  final FirstAidVideo? video;
 
   static const List<FirstAidTopic> defaults = [
     FirstAidTopic(
@@ -244,7 +299,11 @@ class _FirstAidCategory {
       final key = topic.category.isEmpty ? topic.title : topic.category;
       grouped.putIfAbsent(key, () => []).add(topic);
     }
-    return grouped.entries.map((entry) => _FirstAidCategory(title: entry.key, topics: entry.value)).toList()
+    return grouped.entries
+        .map(
+          (entry) => _FirstAidCategory(title: entry.key, topics: entry.value),
+        )
+        .toList()
       ..sort((a, b) => a.title.compareTo(b.title));
   }
 
@@ -336,9 +395,11 @@ class _Header extends StatelessWidget {
               ),
               Text(
                 'Categories, steps, and tutorial media',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: _GuideColors.secondaryTextFor(context), fontWeight: FontWeight.w600, letterSpacing: 0),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _GuideColors.secondaryTextFor(context),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                ),
               ),
             ],
           ),
@@ -349,7 +410,10 @@ class _Header extends StatelessWidget {
 }
 
 class _FirstAidCategoryPage extends StatelessWidget {
-  const _FirstAidCategoryPage({required this.category, required this.onOpenSos});
+  const _FirstAidCategoryPage({
+    required this.category,
+    required this.onOpenSos,
+  });
 
   final _FirstAidCategory category;
   final VoidCallback onOpenSos;
@@ -369,11 +433,15 @@ class _FirstAidCategoryPage extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _DetailHeader(title: category.title, subtitle: 'Detailed response guide', onBack: () => Navigator.of(context).pop()),
+                  _DetailHeader(
+                    title: category.title,
+                    subtitle: 'Detailed response guide',
+                    onBack: () => Navigator.of(context).pop(),
+                  ),
                   const SizedBox(height: 16),
                   _CategoryHero(category: category),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Image and video tutorial'),
+                  _SectionTitle(label: 'Offline video tutorial'),
                   const SizedBox(height: 8),
                   _TutorialMediaStrip(category: category),
                   const SizedBox(height: 22),
@@ -383,10 +451,15 @@ class _FirstAidCategoryPage extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
                       child: Column(
-                        children: [for (var index = 0; index < allSteps.length; index++) _StepRow(index: index, step: allSteps[index])],
+                        children: [
+                          for (var index = 0; index < allSteps.length; index++)
+                            _StepRow(index: index, step: allSteps[index]),
+                        ],
                       ),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  _GuidanceSourceCard(topic: category.topics.first),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'When to use SOS'),
                   const SizedBox(height: 8),
@@ -396,7 +469,10 @@ class _FirstAidCategoryPage extends StatelessWidget {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const _Glyph(icon: Icons.sos_rounded, color: _GuideColors.red),
+                          const _Glyph(
+                            icon: Icons.sos_rounded,
+                            color: _GuideColors.red,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -404,24 +480,32 @@ class _FirstAidCategoryPage extends StatelessWidget {
                               children: [
                                 Text(
                                   'Escalate when safety is uncertain',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    color: _GuideColors.textFor(context),
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0,
-                                  ),
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(
+                                        color: _GuideColors.textFor(context),
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0,
+                                      ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Use SOS if the person cannot move safely, symptoms worsen, or the group cannot return without help.',
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.bodySmall?.copyWith(color: _GuideColors.secondaryTextFor(context), letterSpacing: 0),
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: _GuideColors.secondaryTextFor(
+                                          context,
+                                        ),
+                                        letterSpacing: 0,
+                                      ),
                                 ),
                               ],
                             ),
                           ),
                           const SizedBox(width: 8),
-                          FilledButton(onPressed: onOpenSos, child: const Text('Open SOS')),
+                          FilledButton(
+                            onPressed: onOpenSos,
+                            child: const Text('Open SOS'),
+                          ),
                         ],
                       ),
                     ),
@@ -463,22 +547,32 @@ class _CategoryCard extends StatelessWidget {
                         category.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(
-                          context,
-                        ).textTheme.titleMedium?.copyWith(color: _GuideColors.textFor(context), fontWeight: FontWeight.w700, letterSpacing: 0),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: _GuideColors.textFor(context),
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0,
+                            ),
                       ),
                       const SizedBox(height: 3),
                       Text(
                         category.summary,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: _GuideColors.secondaryTextFor(context), letterSpacing: 0),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _GuideColors.secondaryTextFor(context),
+                          letterSpacing: 0,
+                        ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(CupertinoIcons.chevron_forward, color: _GuideColors.chevronFor(context), size: 16),
+                Icon(
+                  CupertinoIcons.chevron_forward,
+                  color: _GuideColors.chevronFor(context),
+                  size: 16,
+                ),
               ],
             ),
           ),
@@ -508,9 +602,11 @@ class _CategoryHero extends StatelessWidget {
                 Expanded(
                   child: Text(
                     category.summary,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleMedium?.copyWith(color: _GuideColors.textFor(context), fontWeight: FontWeight.w700, letterSpacing: 0),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: _GuideColors.textFor(context),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
                   ),
                 ),
               ],
@@ -519,7 +615,10 @@ class _CategoryHero extends StatelessWidget {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [for (final topic in category.topics) _InfoPill(label: topic.title, color: category.color)],
+              children: [
+                for (final topic in category.topics)
+                  _InfoPill(label: topic.title, color: category.color),
+              ],
             ),
           ],
         ),
@@ -535,85 +634,80 @@ class _TutorialMediaStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 172,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          _MediaCard(category: category, title: 'Field diagram', subtitle: 'Image guide', icon: Icons.image_rounded),
-          const SizedBox(width: 10),
-          _MediaCard(category: category, title: 'Step tutorial', subtitle: 'Video 01:20', icon: Icons.play_circle_fill_rounded, isVideo: true),
-          const SizedBox(width: 10),
-          _MediaCard(category: category, title: 'Pack setup', subtitle: 'Image checklist', icon: Icons.backpack_rounded),
-        ],
-      ),
+    final topic = category.topics.first;
+    final video = topic.video;
+    if (video == null) {
+      return const _EmptyState(
+        message: 'No offline tutorial is available for this category yet.',
+      );
+    }
+    return FirstAidTutorialVideoCard(
+      topicId: topic.id,
+      video: video,
+      color: category.color,
     );
   }
 }
 
-class _MediaCard extends StatelessWidget {
-  const _MediaCard({required this.category, required this.title, required this.subtitle, required this.icon, this.isVideo = false});
+class _GuidanceSourceCard extends StatelessWidget {
+  const _GuidanceSourceCard({required this.topic});
 
-  final _FirstAidCategory category;
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final bool isVideo;
+  final FirstAidTopic topic;
+
+  Future<void> _openSource() async {
+    final uri = Uri.tryParse(topic.guidanceSourceUrl);
+    if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 220,
-      child: _InsetGroup(
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: CustomPaint(painter: _GuideMediaPainter(color: category.color)),
-            ),
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12,
-              child: Row(
-                children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: isVideo ? _GuideColors.red : Colors.white.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(icon, color: isVideo ? Colors.white : category.color, size: 20),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w800, letterSpacing: 0),
+    if (topic.guidanceSource.isEmpty || topic.guidanceSourceUrl.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return _InsetGroup(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _openSource,
+          child: Padding(
+            padding: const EdgeInsets.all(13),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.verified_rounded,
+                  color: _GuideColors.green,
+                  size: 21,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Medical guidance source',
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(
+                              color: _GuideColors.textFor(context),
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      Text(
+                        topic.guidanceSource,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _GuideColors.secondaryTextFor(context),
                         ),
-                        Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.82),
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                Icon(
+                  Icons.open_in_new_rounded,
+                  color: _GuideColors.secondaryTextFor(context),
+                  size: 18,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -637,19 +731,28 @@ class _StepRow extends StatelessWidget {
             width: 28,
             height: 28,
             alignment: Alignment.center,
-            decoration: BoxDecoration(color: _GuideColors.greenSoftFor(context), borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(
+              color: _GuideColors.greenSoftFor(context),
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: Text(
               '${index + 1}',
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(color: _GuideColors.green, fontWeight: FontWeight.w800, letterSpacing: 0),
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: _GuideColors.green,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+              ),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               step,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: _GuideColors.textFor(context), fontWeight: FontWeight.w500, letterSpacing: 0),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: _GuideColors.textFor(context),
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0,
+              ),
             ),
           ),
         ],
@@ -659,7 +762,11 @@ class _StepRow extends StatelessWidget {
 }
 
 class _DetailHeader extends StatelessWidget {
-  const _DetailHeader({required this.title, required this.subtitle, required this.onBack});
+  const _DetailHeader({
+    required this.title,
+    required this.subtitle,
+    required this.onBack,
+  });
 
   final String title;
   final String subtitle;
@@ -698,7 +805,10 @@ class _DetailHeader extends StatelessWidget {
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: _GuideColors.secondaryTextFor(context), letterSpacing: 0),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _GuideColors.secondaryTextFor(context),
+                  letterSpacing: 0,
+                ),
               ),
             ],
           ),
@@ -709,7 +819,11 @@ class _DetailHeader extends StatelessWidget {
 }
 
 class _EmergencyShortcut extends StatelessWidget {
-  const _EmergencyShortcut({required this.target, required this.isLoading, required this.onPressed});
+  const _EmergencyShortcut({
+    required this.target,
+    required this.isLoading,
+    required this.onPressed,
+  });
 
   final EmergencyDialTarget? target;
   final bool isLoading;
@@ -730,15 +844,20 @@ class _EmergencyShortcut extends StatelessWidget {
                 children: [
                   Text(
                     'Call emergency services',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleMedium?.copyWith(color: _GuideColors.textFor(context), fontWeight: FontWeight.w700, letterSpacing: 0),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: _GuideColors.textFor(context),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
                   ),
                   Text(
                     isLoading
                         ? 'Finding the emergency number for this region...'
                         : '${target?.description ?? 'Local emergency service'} • ${target?.number ?? ''}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: _GuideColors.secondaryTextFor(context), letterSpacing: 0),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _GuideColors.secondaryTextFor(context),
+                      letterSpacing: 0,
+                    ),
                   ),
                 ],
               ),
@@ -747,7 +866,11 @@ class _EmergencyShortcut extends StatelessWidget {
               onPressed: onPressed,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
-                children: [const Icon(Icons.call_rounded, size: 18), const SizedBox(width: 8), Text(target == null ? 'Call' : target!.number)],
+                children: [
+                  const Icon(Icons.call_rounded, size: 18),
+                  const SizedBox(width: 8),
+                  Text(target == null ? 'Call' : target!.number),
+                ],
               ),
             ),
           ],
@@ -768,9 +891,12 @@ class _SectionTitle extends StatelessWidget {
       padding: const EdgeInsets.only(left: 14),
       child: Text(
         label.toUpperCase(),
-        style: Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(color: _GuideColors.secondaryTextFor(context), fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: _GuideColors.secondaryTextFor(context),
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0,
+        ),
       ),
     );
   }
@@ -790,7 +916,10 @@ class _EmptyState extends StatelessWidget {
           child: Text(
             message,
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: _GuideColors.secondaryTextFor(context), letterSpacing: 0),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: _GuideColors.secondaryTextFor(context),
+              letterSpacing: 0,
+            ),
           ),
         ),
       ),
@@ -808,10 +937,17 @@ class _InfoPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Text(
         label,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color, fontWeight: FontWeight.w800, letterSpacing: 0),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        ),
       ),
     );
   }
@@ -827,7 +963,10 @@ class _CircleIcon extends StatelessWidget {
     return Container(
       width: 36,
       height: 36,
-      decoration: BoxDecoration(color: _GuideColors.surfaceFor(context), shape: BoxShape.circle),
+      decoration: BoxDecoration(
+        color: _GuideColors.surfaceFor(context),
+        shape: BoxShape.circle,
+      ),
       child: Icon(icon, color: _GuideColors.green, size: 20),
     );
   }
@@ -844,7 +983,10 @@ class _Glyph extends StatelessWidget {
     return Container(
       width: 32,
       height: 32,
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(7)),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(7),
+      ),
       child: Icon(icon, color: Colors.white, size: 18),
     );
   }
@@ -860,42 +1002,13 @@ class _InsetGroup extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
-        decoration: BoxDecoration(color: _GuideColors.surfaceFor(context), borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+          color: _GuideColors.surfaceFor(context),
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: child,
       ),
     );
-  }
-}
-
-class _GuideMediaPainter extends CustomPainter {
-  const _GuideMediaPainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final background = Paint()..color = color;
-    final soft = Paint()..color = Colors.white.withValues(alpha: 0.18);
-    final line = Paint()
-      ..color = Colors.white.withValues(alpha: 0.34)
-      ..strokeWidth = 4
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawRect(Offset.zero & size, background);
-    canvas.drawCircle(Offset(size.width * 0.18, size.height * 0.20), 42, soft);
-    canvas.drawCircle(Offset(size.width * 0.88, size.height * 0.18), 60, soft);
-
-    final path = Path()
-      ..moveTo(size.width * 0.12, size.height * 0.70)
-      ..cubicTo(size.width * 0.28, size.height * 0.52, size.width * 0.44, size.height * 0.82, size.width * 0.62, size.height * 0.58)
-      ..cubicTo(size.width * 0.72, size.height * 0.45, size.width * 0.82, size.height * 0.55, size.width * 0.92, size.height * 0.38);
-    canvas.drawPath(path, line);
-  }
-
-  @override
-  bool shouldRepaint(covariant _GuideMediaPainter oldDelegate) {
-    return oldDelegate.color != color;
   }
 }
 
@@ -909,17 +1022,24 @@ abstract final class _GuideColors {
   static const Color chevron = Color(0xFFC7C7CC);
   static const Color red = Color(0xFFFF3B30);
 
-  static bool isDark(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
 
-  static Color backgroundFor(BuildContext context) => isDark(context) ? const Color(0xFF0C120F) : background;
+  static Color backgroundFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF0C120F) : background;
 
-  static Color surfaceFor(BuildContext context) => isDark(context) ? const Color(0xFF141C17) : Colors.white;
+  static Color surfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF141C17) : Colors.white;
 
-  static Color greenSoftFor(BuildContext context) => isDark(context) ? const Color(0xFF183625) : greenSoft;
+  static Color greenSoftFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF183625) : greenSoft;
 
-  static Color textFor(BuildContext context) => isDark(context) ? const Color(0xFFEAF4EE) : text;
+  static Color textFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFEAF4EE) : text;
 
-  static Color secondaryTextFor(BuildContext context) => isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
+  static Color secondaryTextFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFFA8B8AE) : secondaryText;
 
-  static Color chevronFor(BuildContext context) => isDark(context) ? const Color(0xFF6F8175) : chevron;
+  static Color chevronFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF6F8175) : chevron;
 }

@@ -2028,7 +2028,7 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                               icon: _isPostingComment
                                   ? const SizedBox.square(
                                       dimension: 16,
-                                      child: CircularProgressIndicator(
+                                      child: HikerCircleMinorLoadingIndicator(
                                         strokeWidth: 2,
                                         color: Colors.white,
                                       ),

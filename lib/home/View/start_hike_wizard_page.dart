@@ -427,76 +427,84 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
 
     return Scaffold(
       backgroundColor: _WizardColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(onBack: _isScheduling || _isStarting ? () {} : _back),
-                  const SizedBox(height: 16),
-                  _StepProgress(
-                    currentStep: _visibleStepIndex,
-                    totalSteps: _stepCount,
-                  ),
-                  const SizedBox(height: 18),
-                  KeyedSubtree(key: ValueKey(_stepIndex), child: step),
-                  const SizedBox(height: 18),
-                  Row(
+      body: Stack(
+        children: [
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 640),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
-                        flex: 2,
-                        child: OutlinedButton(
-                          onPressed: _isScheduling || _isStarting
-                              ? null
-                              : _back,
-                          child: Text(_stepIndex <= 0 ? 'Cancel' : 'Back'),
-                        ),
+                      _Header(
+                        onBack: _isScheduling || _isStarting ? () {} : _back,
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        flex: 3,
-                        child: FilledButton.icon(
-                          onPressed: _isScheduling || _isStarting
-                              ? null
-                              : _next,
-                          icon: _isScheduling || _isStarting
-                              ? const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Icon(
-                                  _isFinalStep
-                                      ? _isUpcomingHike
-                                            ? Icons.event_available_rounded
-                                            : Icons.play_arrow_rounded
-                                      : Icons.arrow_forward_rounded,
-                                ),
-                          label: Text(
-                            _isScheduling
-                                ? 'Scheduling...'
-                                : _isStarting
-                                ? 'Starting...'
-                                : _isFinalStep
-                                ? _isUpcomingHike
-                                      ? 'Schedule Hike'
-                                      : 'Start Hiking Session'
-                                : 'Continue',
+                      const SizedBox(height: 16),
+                      _StepProgress(
+                        currentStep: _visibleStepIndex,
+                        totalSteps: _stepCount,
+                      ),
+                      const SizedBox(height: 18),
+                      KeyedSubtree(key: ValueKey(_stepIndex), child: step),
+                      const SizedBox(height: 18),
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: OutlinedButton(
+                              onPressed: _isScheduling || _isStarting
+                                  ? null
+                                  : _back,
+                              child: Text(_stepIndex <= 0 ? 'Cancel' : 'Back'),
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            flex: 3,
+                            child: FilledButton.icon(
+                              onPressed: _isScheduling || _isStarting
+                                  ? null
+                                  : _next,
+                              icon: Icon(
+                                _isFinalStep
+                                    ? _isUpcomingHike
+                                          ? Icons.event_available_rounded
+                                          : Icons.play_arrow_rounded
+                                    : Icons.arrow_forward_rounded,
+                              ),
+                              label: Text(
+                                _isScheduling
+                                    ? 'Scheduling...'
+                                    : _isStarting
+                                    ? 'Starting...'
+                                    : _isFinalStep
+                                    ? _isUpcomingHike
+                                          ? 'Schedule Hike'
+                                          : 'Start Hiking Session'
+                                    : 'Continue',
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+          if (_isScheduling || _isStarting)
+            HikerCircleLoadingToastOverlay(
+              message: _isScheduling
+                  ? 'Scheduling your hike…'
+                  : 'Preparing your hike…',
+              detail: _isScheduling
+                  ? 'Saving the route, reminders, and join settings.'
+                  : 'Completing safety checks and preparing live tracking.',
+            ),
+        ],
       ),
     );
   }
@@ -839,12 +847,7 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
             future: _routeFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return const HikerCircleLoadingView(
-                  message: 'Preparing your route…',
-                  detail: 'Calculating the trail and checkpoints.',
-                  compact: true,
-                  padding: EdgeInsets.all(10),
-                );
+                return const _PreparingRouteLoader();
               }
               return RoutePreviewMap(
                 trail: widget.draft.trail,
@@ -1140,12 +1143,7 @@ class _CheckpointStepState extends State<_CheckpointStep> {
             future: _routeFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return const HikerCircleLoadingView(
-                  message: 'Preparing your route…',
-                  detail: 'Calculating the trail and checkpoints.',
-                  compact: true,
-                  padding: EdgeInsets.all(10),
-                );
+                return const _PreparingRouteLoader();
               }
               return RoutePreviewMap(
                 trail: widget.draft.trail,
@@ -1202,6 +1200,36 @@ class _CheckpointStepState extends State<_CheckpointStep> {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _PreparingRouteLoader extends StatelessWidget {
+  const _PreparingRouteLoader();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          HikerCircleMinorLoadingIndicator(
+            size: 108,
+            semanticsLabel: 'Preparing route map',
+          ),
+          SizedBox(height: 6),
+          Text(
+            'Preparing your route…',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          SizedBox(height: 3),
+          Text(
+            'Calculating the trail and checkpoints.',
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 }

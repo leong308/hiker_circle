@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/Data/session_repository.dart';
 import '../../app/Model/app_session.dart';
+import '../../core/widgets/loading_toast.dart';
 import '../Model/auth_status.dart';
 import '../ModelView/auth_view_model.dart';
 import 'auth_brand_panel.dart';
@@ -239,7 +240,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
           icon: _viewModel.isSendingCode
               ? const SizedBox.square(
                   dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                 )
               : Icon(
                   _viewModel.hasCodeBeenSent
@@ -271,7 +272,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
             icon: _viewModel.isVerifyingCode || _isCompletingSignIn
                 ? const SizedBox.square(
                     dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.verified_user),
             label: const Text('Verify and continue'),

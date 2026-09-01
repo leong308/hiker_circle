@@ -2,6 +2,81 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:lottie/lottie.dart';
 
+const _minorLoadingAnimation = 'assets/animations/loading_spinner.json';
+
+/// Compact loading motion for buttons, tiles, map callouts, and other places
+/// where the full branded loading card cannot fit without obscuring content.
+///
+/// A non-null [value] remains a determinate Material progress ring because it
+/// communicates measurable progress rather than an indeterminate wait.
+class HikerCircleMinorLoadingIndicator extends StatelessWidget {
+  const HikerCircleMinorLoadingIndicator({
+    super.key,
+    this.value,
+    this.size = 36,
+    this.strokeWidth = 4,
+    this.strokeAlign = 0,
+    this.color,
+    this.backgroundColor,
+    this.valueColor,
+    this.semanticsLabel,
+    this.semanticsValue,
+  });
+
+  const HikerCircleMinorLoadingIndicator.adaptive({
+    super.key,
+    this.value,
+    this.size = 36,
+    this.strokeWidth = 4,
+    this.strokeAlign = 0,
+    this.color,
+    this.backgroundColor,
+    this.valueColor,
+    this.semanticsLabel,
+    this.semanticsValue,
+  });
+
+  final double? value;
+  final double size;
+  final double strokeWidth;
+  final double strokeAlign;
+  final Color? color;
+  final Color? backgroundColor;
+  final Animation<Color?>? valueColor;
+  final String? semanticsLabel;
+  final String? semanticsValue;
+
+  @override
+  Widget build(BuildContext context) {
+    if (value != null) {
+      return CircularProgressIndicator(
+        value: value,
+        strokeWidth: strokeWidth,
+        strokeAlign: strokeAlign,
+        color: color,
+        backgroundColor: backgroundColor,
+        valueColor: valueColor,
+        semanticsLabel: semanticsLabel,
+        semanticsValue: semanticsValue,
+      );
+    }
+    return Semantics(
+      label: semanticsLabel ?? 'Loading',
+      liveRegion: true,
+      child: SizedBox.square(
+        dimension: size,
+        child: ExcludeSemantics(
+          child: Lottie.asset(
+            _minorLoadingAnimation,
+            fit: BoxFit.contain,
+            repeat: true,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// HikerCircle's shared loading treatment, based on SenzoCG's animated
 /// [LoadingToast]. The original animation's word layer is removed at render
 /// time and the real HikerCircle app icon is placed inside the animation.
@@ -78,7 +153,7 @@ class _HikerCircleLoadingToastState extends State<HikerCircleLoadingToast> {
                 },
                 child: SizedBox(
                   width: double.infinity,
-                  height: compact ? 72 : 180,
+                  height: compact ? 108 : 180,
                   child: _showFileTransfer
                       ? Image.asset(
                           'assets/animations/file_transfer.gif',

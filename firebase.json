@@ -62,6 +62,21 @@
     ],
     "rewrites": [
       {
+        "source": "/api/public-stats",
+        "function": {
+          "functionId": "getPublicHikerCircleStats",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/privacy",
+        "destination": "/privacy-policy.html"
+      },
+      {
+        "source": "/privacy-policy",
+        "destination": "/privacy-policy.html"
+      },
+      {
         "source": "/live-location",
         "destination": "/live-location.html"
       }

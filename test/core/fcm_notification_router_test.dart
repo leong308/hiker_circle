@@ -21,6 +21,18 @@ void main() {
     );
   });
 
+  test('routes team countdown and start updates into the live launch', () {
+    for (final type in const ['team_hike_countdown', 'team_hike_started']) {
+      expect(
+        FcmNotificationRouter.deepLinkFor({
+          'type': type,
+          'teamHikeSessionId': 'team-42',
+        }),
+        'hikercircle://team-hike/join?teamSessionId=team-42',
+      );
+    }
+  });
+
   test('routes configurable upcoming hike reminders to that hike', () {
     expect(
       FcmNotificationRouter.deepLinkFor({

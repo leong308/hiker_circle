@@ -4,85 +4,169 @@
       "id": "falls_injury",
       "title": "Falls and Injury",
       "category": "Falls and Injury",
+      "guidanceSource": "U.S. National Park Service Outdoor Emergency Plan",
+      "guidanceSourceUrl": "https://www.nps.gov/subjects/healthandsafety/upload/NPS-Outdoor-Emergency-Plan-508c.pdf",
       "steps": [
-        "Stop moving and check for pain, bleeding, or dizziness.",
-        "Keep the injured person still if a head, neck, or back injury is possible.",
-        "Clean small cuts with safe water if available.",
-        "Cover bleeding with clean cloth and apply steady pressure.",
-        "Request help if the person cannot walk safely."
-      ]
+        "Make sure the area is safe. Do not move the person if a head, neck, back, hip, or serious leg injury is possible unless there is immediate danger.",
+        "Check responsiveness and breathing. Use SOS or call emergency services immediately for unconsciousness, breathing trouble, severe pain, major bleeding, or an obvious deformity.",
+        "For a small wound, rinse away visible dirt with clean water and cover it. For significant bleeding, apply firm, continuous pressure with clean gauze or cloth.",
+        "Support a suspected fracture in the position found. Do not straighten it or push exposed bone back in.",
+        "Keep the person warm and still, monitor breathing and alertness, and wait for professional rescue if walking could worsen the injury."
+      ],
+      "video": {
+        "title": "Basic first-aid response in the field",
+        "storagePath": "first_aid/videos/falls_injury_v1.mp4",
+        "durationLabel": "00:59",
+        "attribution": "U.S. Army video by Spc. William Marlow / DVIDS",
+        "license": "Public domain (U.S. government work)",
+        "sourceUrl": "https://www.dvidshub.net/video/431657/first-aid-and-zero-range",
+        "version": 1,
+        "expectedBytes": 6447453
+      }
     },
     {
       "id": "bleeding",
       "title": "Bleeding",
       "category": "Bleeding",
+      "guidanceSource": "Uniformed Services University STOP THE BLEED",
+      "guidanceSourceUrl": "https://stopthebleed.usuhs.edu/",
       "steps": [
-        "Apply firm pressure using clean cloth or gauze.",
-        "Raise the injured area if it can be done without causing more pain.",
-        "Do not remove soaked cloth; add another layer over it.",
-        "Keep the person warm and still.",
-        "Use SOS or call emergency services for heavy bleeding."
-      ]
+        "Make sure the scene is safe, then use SOS or call emergency services for bleeding that is spurting, pooling, or will not stop.",
+        "Expose the wound and apply firm, continuous direct pressure with clean gauze or cloth. Keep pressing without repeatedly lifting it to check.",
+        "If the wound is deep and you are trained, pack it firmly with gauze and continue direct pressure.",
+        "For life-threatening bleeding from an arm or leg that direct pressure cannot control, apply a commercial tourniquet above the wound, not over a joint, and note the time. Do not loosen it.",
+        "Do not remove soaked dressings; add more on top. Keep the person warm and still, and monitor breathing until help arrives."
+      ],
+      "video": {
+        "title": "Hemorrhage control and tourniquet training",
+        "storagePath": "first_aid/videos/bleeding_v1.mp4",
+        "durationLabel": "02:30",
+        "attribution": "U.S. Marine Corps video by Cpl. Joshua Murray / DVIDS",
+        "license": "Public domain (U.S. government work)",
+        "sourceUrl": "https://www.dvidshub.net/video/341221/bridging-gap-between-navy-medicine-and-marine-corps-tactics",
+        "version": 1,
+        "expectedBytes": 12559590
+      }
     },
     {
       "id": "sprain",
       "title": "Sprain or Twisted Ankle",
       "category": "Sprain",
+      "guidanceSource": "MedlinePlus Medical Encyclopedia",
+      "guidanceSourceUrl": "https://medlineplus.gov/ency/article/000041.htm",
       "steps": [
-        "Stop walking and rest.",
-        "Avoid placing weight on the injured ankle.",
-        "Apply a cold compress if available.",
-        "Use support or bandage if trained to do so.",
-        "Request help if unable to continue safely."
-      ]
+        "Stop hiking and protect the joint from further movement. Do not force weight onto the injured ankle.",
+        "Wrap ice or a cold pack in cloth and apply it for up to 20 minutes at a time. Never place ice directly on skin.",
+        "Use a supportive elastic bandage if available, firm but not tight. Loosen it if toes become numb, cold, pale, or more painful.",
+        "Raise the ankle at or above heart level when practical and rest it for the next several days.",
+        "Seek urgent medical assessment for severe pain, deformity, numbness, a cold foot, a popping sound with loss of function, or inability to walk."
+      ],
+      "video": {
+        "title": "Getting an ankle injury professionally assessed",
+        "storagePath": "first_aid/videos/sprain_v1.mp4",
+        "durationLabel": "01:31",
+        "attribution": "U.S. Air Force video by Senior Airman Joshua Rosario / DVIDS",
+        "license": "Public domain (U.S. government work)",
+        "sourceUrl": "https://www.dvidshub.net/video/915217/wilford-halls-new-physical-and-occupational-therapy-direct-access-clinic",
+        "version": 1,
+        "expectedBytes": 6226268
+      }
     },
     {
       "id": "heat_exhaustion",
       "title": "Heat Exhaustion",
       "category": "Heat Exhaustion",
+      "guidanceSource": "U.S. Centers for Disease Control and Prevention",
+      "guidanceSourceUrl": "https://www.cdc.gov/extreme-heat/signs-symptoms/index.html",
       "steps": [
-        "Move to shade and stop hiking.",
-        "Loosen tight clothing and cool the skin.",
-        "Sip water slowly if the person is alert.",
-        "Watch for confusion, fainting, or vomiting.",
-        "Request emergency help if symptoms worsen."
-      ]
+        "Stop hiking and move the person to shade, air conditioning, or the coolest available place.",
+        "Loosen or remove unnecessary clothing. Cool the skin with wet cloths, water, fanning, and cold packs at the neck and armpits.",
+        "Give small, frequent sips of cool water or an electrolyte drink only if the person is fully alert and not vomiting.",
+        "Do not leave the person alone. Arrange medical help if symptoms worsen, vomiting occurs, or recovery is not prompt.",
+        "Confusion, fainting, seizures, or very hot skin may mean heat stroke: call emergency services immediately, cool rapidly, and do not give anything by mouth if alertness is impaired."
+      ],
+      "video": {
+        "title": "Recognising and preventing heat injury",
+        "storagePath": "first_aid/videos/heat_exhaustion_v1.mp4",
+        "durationLabel": "00:30",
+        "attribution": "U.S. Army Combat Readiness Center / DVIDS",
+        "license": "Public domain (U.S. government work)",
+        "sourceUrl": "https://www.dvidshub.net/video/335780/heat-injury",
+        "version": 1,
+        "expectedBytes": 2014122
+      }
     },
     {
       "id": "snake_bite",
       "title": "Snake Bite",
       "category": "Snake Bite",
+      "guidanceSource": "CDC/NIOSH Venomous Snakes",
+      "guidanceSourceUrl": "https://www.cdc.gov/niosh/outdoor-workers/about/venomous-snakes.html",
       "steps": [
-        "Move away from the snake without trying to catch it.",
-        "Keep the bitten person still and calm.",
-        "Remove tight items near the bite area.",
-        "Do not cut, suck, or apply ice to the bite.",
-        "Call emergency services and share your location."
-      ]
+        "Move away from the snake. Do not approach, catch, or kill it. Take a photo only from a safe distance if this causes no delay.",
+        "Treat every snake bite as an emergency: use SOS or call emergency services and arrange urgent transport. Do not drive yourself.",
+        "Keep the person calm and as still as possible, seated or lying down, with the bitten limb in a neutral, comfortable position.",
+        "Remove rings, watches, and tight clothing before swelling starts. Wash gently with soap and water if available and cover with a clean, dry dressing.",
+        "Mark the leading edge of swelling and write the time. Do not use ice, a tourniquet, electric shock, alcohol, cutting, suction, or folk remedies."
+      ],
+      "video": {
+        "title": "Venomous snake encounter safety",
+        "storagePath": "first_aid/videos/snake_bite_v1.mp4",
+        "durationLabel": "01:18",
+        "attribution": "U.S. Air Force video by Senior Airman Kristan Campbell / DVIDS",
+        "license": "Public domain (U.S. government work)",
+        "sourceUrl": "https://www.dvidshub.net/video/681179/habu-safety-101",
+        "version": 1,
+        "expectedBytes": 7631642
+      }
     },
     {
       "id": "lost_stranded",
       "title": "Lost or Stranded",
       "category": "Lost or Stranded",
+      "guidanceSource": "U.S. National Park Service Hike Smart",
+      "guidanceSourceUrl": "https://www.nps.gov/articles/hiking-safety.htm",
       "steps": [
-        "Stop moving and stay on or near the trail if possible.",
-        "Check battery and enable low-power mode.",
-        "Use the app to pin your current location.",
-        "Signal with whistle, light, or bright clothing.",
-        "Use SOS if injured, unsafe, or unable to return."
-      ]
+        "Stop. Think, observe, and make a calm plan. Stay near the trail or your last known position unless remaining there creates immediate danger.",
+        "Use SOS or contact emergency services and share the app's exact location pin, route, condition, clothing, supplies, and number of people.",
+        "Preserve phone power: enable low-power mode, dim the screen, close unnecessary apps, and avoid repeated calls. Keep communication available for rescuers.",
+        "Protect the group from rain, wind, cold, heat, and darkness. Use available shelter, clothing, food, and water carefully.",
+        "Signal in groups of three with a whistle, light, or visible material. Once rescuers know your position, remain there unless they instruct otherwise."
+      ],
+      "video": {
+        "title": "Hiking safety and emergency preparation",
+        "storagePath": "first_aid/videos/lost_stranded_v1.mp4",
+        "durationLabel": "01:00",
+        "attribution": "U.S. Air Force video by Airman First Class Maria Washler / DVIDS",
+        "license": "Public domain (U.S. government work)",
+        "sourceUrl": "https://www.dvidshub.net/video/966114/hiking-safety",
+        "version": 1,
+        "expectedBytes": 7160750
+      }
     },
     {
       "id": "severe_weather",
       "title": "Severe Weather",
       "category": "Severe Weather",
+      "guidanceSource": "U.S. National Weather Service Lightning Safety",
+      "guidanceSourceUrl": "https://www.weather.gov/safety/lightning-safety",
       "steps": [
-        "Move away from exposed ridges, tall isolated trees, and flood-prone areas.",
-        "Turn back if visibility or footing becomes unsafe.",
-        "Keep electronics dry and preserve battery.",
-        "Wait in a safer sheltered area if moving is dangerous.",
-        "Notify contacts if your return time will be delayed."
-      ]
+        "Turn back early when warnings, thunder, rapidly rising water, poor visibility, or unsafe footing develop.",
+        "For lightning, leave ridges, summits, open ground, water, isolated trees, wire fences, and metal structures. The safest shelter is a substantial building or hard-topped vehicle.",
+        "If flash flooding is possible, move to higher ground immediately. Never enter or cross moving floodwater.",
+        "Keep the group together while moving to shelter, protect phones and emergency equipment from water, and share your location and revised plan.",
+        "Wait at least 30 minutes after the last thunder before leaving lightning shelter. Use SOS for injury, entrapment, hypothermia, or inability to reach safety."
+      ],
+      "video": {
+        "title": "Lightning safety on the trail",
+        "storagePath": "first_aid/videos/severe_weather_v1.mp4",
+        "durationLabel": "00:41",
+        "attribution": "U.S. Navy video by Charity Robinson / DVIDS",
+        "license": "Public domain (U.S. government work)",
+        "sourceUrl": "https://www.dvidshub.net/video/926312/lightning-safety",
+        "version": 1,
+        "expectedBytes": 3551530
+      }
     }
   ]
 }
