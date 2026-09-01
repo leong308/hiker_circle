@@ -22,6 +22,10 @@ const entries = [
     target: ['site-assets', 'screens'],
   },
   {
+    source: ['web', 'site-assets', 'evolution'],
+    target: ['site-assets', 'evolution'],
+  },
+  {
     source: ['assets', 'icons', 'AppIcon-Default-1024.png'],
     target: ['privacy-assets', 'app-icon.png'],
   },
