@@ -1088,6 +1088,11 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private var sensitivity = 5.0
   private var fallDetectionEnabled = true
   private var shareLiveLocation = false
+  // FlutterFire configures Firestore settings after the native application
+  // delegate returns. A persisted monitor may resume before that happens, so
+  // native telemetry must stay dormant until Flutter has restored the active
+  // hike and explicitly calls startOrUpdate.
+  private var firebaseTelemetryReady = false
   private var lastMotionAt = Date()
   private var referenceLocation: CLLocation?
   private var latestLocation: CLLocation?
@@ -1156,6 +1161,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     sensitivity = min(10, max(1, Self.doubleValue(data["sensorSensitivity"], fallback: 5)))
     fallDetectionEnabled = incomingFallDetectionEnabled
     shareLiveLocation = incomingShareLiveLocation
+    firebaseTelemetryReady = true
 
     if previousSessionId != incomingSessionId {
       phase = .monitoring
@@ -1253,6 +1259,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     sessionId = ""
     fallDetectionEnabled = false
     shareLiveLocation = false
+    firebaseTelemetryReady = false
     monitoringReset()
   }
 
@@ -1481,7 +1488,9 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   }
 
   private func publishTelemetry(force: Bool = false) {
-    guard isActive, FirebaseApp.app() != nil else { return }
+    guard isActive, firebaseTelemetryReady, FirebaseApp.app() != nil else {
+      return
+    }
     let now = Date()
     if !force, let lastFirebasePublishAt,
        now.timeIntervalSince(lastFirebasePublishAt) < Self.firebasePublishInterval {

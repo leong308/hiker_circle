@@ -1243,7 +1243,14 @@ class _HikerHomePageState extends State<HikerHomePage>
     try {
       final restoredHike = await hikerCircleRepository.localDatabase
           .loadActiveHikeSession(phoneNumber: widget.session.phoneNumber);
-      if (!mounted || restoredHike == null) {
+      if (!mounted) {
+        return;
+      }
+      if (restoredHike == null) {
+        // Native iOS/Android monitoring persists independently so it can
+        // survive process termination. Reconcile it with the local source of
+        // truth before it can keep a completed hike's watchdog alive.
+        await _activeHikeLiveStatusService.stop();
         return;
       }
       setState(() {
@@ -4340,7 +4347,10 @@ class _HikerHomePageState extends State<HikerHomePage>
     } catch (_) {
       // Native safety outputs are best effort when ending a hike.
     }
-    _syncActiveHikeServices(null);
+    _syncActiveHikeServices(null, stopNativeLiveStatus: false);
+    // Completion must not return control to the summary/rating UI while the
+    // native persisted monitor can still relaunch or schedule watchdog alerts.
+    await _activeHikeLiveStatusService.stop();
     await _activeHikePersistenceQueue;
     isFallStillnessLocalAlarmActive = false;
     if (!mounted) {
@@ -5328,6 +5338,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   void _syncActiveHikeServices(
     ActiveHikeSession? hike, {
     bool forceLiveStatus = false,
+    bool stopNativeLiveStatus = true,
   }) {
     _persistActiveHikeSnapshot(hike);
     _syncFallStillnessMonitor(hike);
@@ -5337,7 +5348,9 @@ class _HikerHomePageState extends State<HikerHomePage>
       _stopActiveHikeMonitoringHeartbeat();
       _stopActiveHikeLocationRecording();
       _syncBleTeamLocation(null);
-      unawaited(_activeHikeLiveStatusService.stop());
+      if (stopNativeLiveStatus) {
+        unawaited(_activeHikeLiveStatusService.stop());
+      }
       return;
     }
 
