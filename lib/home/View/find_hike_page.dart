@@ -822,12 +822,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard>
                                 : null)
                           : _remindHost,
                       icon: _remindingHost
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: HikerCircleMinorLoadingIndicator(
-                                strokeWidth: 2,
-                              ),
-                            )
+                          ? const Icon(Icons.hourglass_top_rounded)
                           : const Icon(Icons.notification_important_rounded),
                       label: Text(
                         _departureReminderSentByMe ||
@@ -902,6 +897,26 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard>
                 ? 'Joining group hike…'
                 : 'Sending join request…',
             detail: 'Confirming the hike and updating the participant list.',
+            timeout: const Duration(seconds: 30),
+            onTimeout: () {
+              if (mounted) {
+                setState(() => _joining = false);
+                _showError('The join request timed out. Please try again.');
+              }
+            },
+          ),
+        if (_remindingHost)
+          HikerCircleLoadingToastOverlay(
+            compact: true,
+            message: 'Sending reminder…',
+            detail: 'Notifying the host about your arrival.',
+            timeout: const Duration(seconds: 30),
+            onTimeout: () {
+              if (mounted) {
+                setState(() => _remindingHost = false);
+                _showError('The reminder timed out. Please try again.');
+              }
+            },
           ),
       ],
     );

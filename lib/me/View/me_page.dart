@@ -2913,9 +2913,15 @@ class _AchievementsPageState extends State<_AchievementsPage> {
               ),
             ),
             if (_isRefreshingAchievements)
-              const HikerCircleLoadingToastOverlay(
+              HikerCircleLoadingToastOverlay(
                 message: 'Refreshing achievements…',
                 detail: 'Updating rank, badges, and leaderboard progress.',
+                timeout: const Duration(seconds: 30),
+                onTimeout: () {
+                  if (mounted) {
+                    setState(() => _isRefreshingAchievements = false);
+                  }
+                },
               ),
           ],
         ),

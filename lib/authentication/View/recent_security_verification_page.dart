@@ -101,117 +101,139 @@ class _RecentSecurityVerificationPageState
     return Scaffold(
       appBar: AppBar(title: const Text('Confirm it is you')),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+        child: Stack(
           children: [
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.security_rounded, color: scheme.primary, size: 30),
-                  const SizedBox(width: 14),
-                  Expanded(
+            ListView(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: scheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.security_rounded,
+                        color: scheme.primary,
+                        size: 30,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Security check required',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            const Text(
+                              'Before changing login security, verify WhatsApp and one existing security method.',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Text(
-                          'Security check required',
-                          style: theme.textTheme.titleMedium?.copyWith(
+                          waitingForCode
+                              ? 'Enter WhatsApp code'
+                              : 'Sending code',
+                          style: theme.textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(height: 5),
-                        const Text(
-                          'Before changing login security, verify WhatsApp and one existing security method.',
-                        ),
+                        const SizedBox(height: 6),
+                        Text('Verified account: $_maskedPhone'),
+                        if (!waitingForCode) ...[
+                          const HikerCircleLoadingView(
+                            message: 'Sending WhatsApp code…',
+                            detail:
+                                'This usually arrives within a few seconds.',
+                            compact: true,
+                            padding: EdgeInsets.only(top: 14),
+                          ),
+                        ] else ...[
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _codeController,
+                            enabled: !busy,
+                            autofocus: true,
+                            keyboardType: TextInputType.number,
+                            textInputAction: TextInputAction.done,
+                            maxLength: 6,
+                            decoration: const InputDecoration(
+                              labelText: '6-digit verification code',
+                              counterText: '',
+                              prefixIcon: Icon(Icons.message_outlined),
+                            ),
+                            onSubmitted: (_) => _verifyCode(),
+                          ),
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            onPressed: busy ? null : _verifyCode,
+                            icon: const Icon(Icons.verified_user_rounded),
+                            label: const Text('Verify and continue'),
+                          ),
+                          TextButton(
+                            onPressed: busy ? null : _sendCode,
+                            child: const Text('Resend WhatsApp code'),
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            Card(
-              margin: EdgeInsets.zero,
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      waitingForCode ? 'Enter WhatsApp code' : 'Sending code',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text('Verified account: $_maskedPhone'),
-                    if (!waitingForCode) ...[
-                      const HikerCircleLoadingView(
-                        message: 'Sending WhatsApp code…',
-                        detail: 'This usually arrives within a few seconds.',
-                        compact: true,
-                        padding: EdgeInsets.only(top: 14),
-                      ),
-                    ] else ...[
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: _codeController,
-                        enabled: !busy,
-                        autofocus: true,
-                        keyboardType: TextInputType.number,
-                        textInputAction: TextInputAction.done,
-                        maxLength: 6,
-                        decoration: const InputDecoration(
-                          labelText: '6-digit verification code',
-                          counterText: '',
-                          prefixIcon: Icon(Icons.message_outlined),
-                        ),
-                        onSubmitted: (_) => _verifyCode(),
-                      ),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: busy ? null : _verifyCode,
-                        icon: busy
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child: HikerCircleMinorLoadingIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.verified_user_rounded),
-                        label: const Text('Verify and continue'),
-                      ),
-                      TextButton(
-                        onPressed: busy ? null : _sendCode,
-                        child: const Text('Resend WhatsApp code'),
-                      ),
-                    ],
-                  ],
                 ),
-              ),
+                if (_viewModel.message != null) ...[
+                  const SizedBox(height: 14),
+                  InlineNotice(
+                    icon: Icons.info_outline_rounded,
+                    color: scheme.primary,
+                    text: _viewModel.message!,
+                  ),
+                ],
+                if (_viewModel.error != null || _error != null) ...[
+                  const SizedBox(height: 14),
+                  InlineNotice(
+                    icon: Icons.error_outline_rounded,
+                    color: scheme.error,
+                    text: _error ?? _viewModel.error!,
+                  ),
+                ],
+              ],
             ),
-            if (_viewModel.message != null) ...[
-              const SizedBox(height: 14),
-              InlineNotice(
-                icon: Icons.info_outline_rounded,
-                color: scheme.primary,
-                text: _viewModel.message!,
+            if (busy)
+              HikerCircleLoadingToastOverlay(
+                message: _completing
+                    ? 'Verifying WhatsApp code…'
+                    : 'Sending WhatsApp code…',
+                detail:
+                    'Confirming your account securely. This may take a moment.',
+                timeout: const Duration(seconds: 30),
+                onTimeout: () {
+                  _viewModel.cancelPendingOperation();
+                  if (mounted && _completing) {
+                    setState(() {
+                      _completing = false;
+                      _error = 'Verification timed out. Please try again.';
+                    });
+                  }
+                },
               ),
-            ],
-            if (_viewModel.error != null || _error != null) ...[
-              const SizedBox(height: 14),
-              InlineNotice(
-                icon: Icons.error_outline_rounded,
-                color: scheme.error,
-                text: _error ?? _viewModel.error!,
-              ),
-            ],
           ],
         ),
       ),

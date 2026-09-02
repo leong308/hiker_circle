@@ -1304,121 +1304,147 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
           const SizedBox(width: 6),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          if (!_isOnline)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.orange.withValues(alpha: 0.15),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.wifi_off_rounded,
-                    size: 14,
-                    color: Colors.orange.shade700,
+          Column(
+            children: [
+              if (!_isOnline)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'No connection — messages will send when online',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.orange.shade700,
-                      fontWeight: FontWeight.w500,
-                    ),
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        size: 14,
+                        color: Colors.orange.shade700,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'No connection — messages will send when online',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
+              if (_upcomingHike != null)
+                _HikeInfoCard(
+                  hike: _upcomingHike!,
+                  isDark: isDark,
+                  onTap: () => _showHikeDetails(_upcomingHike!),
+                ),
+              Expanded(
+                child: _messages.isEmpty
+                    ? _EmptyState(isDark: isDark)
+                    : ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          final msg = _messages[index];
+                          final isMe =
+                              msg.senderPhone == widget.session.phoneNumber;
+
+                          Widget item;
+                          if (msg.isSystemMessage) {
+                            item = _SystemMessagePill(
+                              message: msg,
+                              isDark: isDark,
+                            );
+                          } else {
+                            final isPending =
+                                msg.sendStatus == SendStatus.sending;
+                            final matchIndex = _matchedIndices.indexOf(index);
+                            final isHighlighted =
+                                matchIndex >= 0 &&
+                                matchIndex == _currentMatchIndex;
+
+                            final isGroupChat = !widget.chat.isDirect;
+                            final prevSender =
+                                index > 0 &&
+                                    !_messages[index - 1].isSystemMessage
+                                ? _messages[index - 1].senderPhone
+                                : null;
+                            final nextSender =
+                                index < _messages.length - 1 &&
+                                    !_messages[index + 1].isSystemMessage
+                                ? _messages[index + 1].senderPhone
+                                : null;
+                            final isFirstInBlock =
+                                prevSender == null ||
+                                prevSender != msg.senderPhone;
+                            final isLastInBlock =
+                                nextSender == null ||
+                                nextSender != msg.senderPhone;
+
+                            item = _MessageBubble(
+                              message: msg,
+                              isMe: isMe,
+                              isPending: isPending,
+                              totalParticipants:
+                                  widget.chat.participantPhones.length,
+                              searchQuery: _isSearching ? _searchQuery : null,
+                              isHighlighted: isHighlighted,
+                              isGroupChat: isGroupChat,
+                              isFirstInBlock: isFirstInBlock,
+                              isLastInBlock: isLastInBlock,
+                              currentUserPhotoBytes: widget.session.photoBytes,
+                              onTickTap: isMe && !isPending
+                                  ? () => _showReadReceipts(msg)
+                                  : null,
+                            );
+                          }
+
+                          return Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (index == _firstUnreadIndex)
+                                _buildUnreadDivider(),
+                              if (_isSearching &&
+                                  _searchQuery.isNotEmpty &&
+                                  _matchedIndices.contains(index))
+                                Container(
+                                  key: _messageKeys.putIfAbsent(
+                                    index,
+                                    () => GlobalKey(),
+                                  ),
+                                  child: item,
+                                )
+                              else
+                                item,
+                            ],
+                          );
+                        },
+                      ),
               ),
-            ),
-          if (_upcomingHike != null)
-            _HikeInfoCard(
-              hike: _upcomingHike!,
-              isDark: isDark,
-              onTap: () => _showHikeDetails(_upcomingHike!),
-            ),
-          Expanded(
-            child: _messages.isEmpty
-                ? _EmptyState(isDark: isDark)
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      final msg = _messages[index];
-                      final isMe =
-                          msg.senderPhone == widget.session.phoneNumber;
-
-                      Widget item;
-                      if (msg.isSystemMessage) {
-                        item = _SystemMessagePill(message: msg, isDark: isDark);
-                      } else {
-                        final isPending = msg.sendStatus == SendStatus.sending;
-                        final matchIndex = _matchedIndices.indexOf(index);
-                        final isHighlighted =
-                            matchIndex >= 0 && matchIndex == _currentMatchIndex;
-
-                        final isGroupChat = !widget.chat.isDirect;
-                        final prevSender =
-                            index > 0 && !_messages[index - 1].isSystemMessage
-                            ? _messages[index - 1].senderPhone
-                            : null;
-                        final nextSender =
-                            index < _messages.length - 1 &&
-                                !_messages[index + 1].isSystemMessage
-                            ? _messages[index + 1].senderPhone
-                            : null;
-                        final isFirstInBlock =
-                            prevSender == null || prevSender != msg.senderPhone;
-                        final isLastInBlock =
-                            nextSender == null || nextSender != msg.senderPhone;
-
-                        item = _MessageBubble(
-                          message: msg,
-                          isMe: isMe,
-                          isPending: isPending,
-                          totalParticipants:
-                              widget.chat.participantPhones.length,
-                          searchQuery: _isSearching ? _searchQuery : null,
-                          isHighlighted: isHighlighted,
-                          isGroupChat: isGroupChat,
-                          isFirstInBlock: isFirstInBlock,
-                          isLastInBlock: isLastInBlock,
-                          currentUserPhotoBytes: widget.session.photoBytes,
-                          onTickTap: isMe && !isPending
-                              ? () => _showReadReceipts(msg)
-                              : null,
-                        );
-                      }
-
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (index == _firstUnreadIndex) _buildUnreadDivider(),
-                          if (_isSearching &&
-                              _searchQuery.isNotEmpty &&
-                              _matchedIndices.contains(index))
-                            Container(
-                              key: _messageKeys.putIfAbsent(
-                                index,
-                                () => GlobalKey(),
-                              ),
-                              child: item,
-                            )
-                          else
-                            item,
-                        ],
-                      );
-                    },
-                  ),
+              _ChatInput(
+                controller: _messageController,
+                onSend: _sendMessage,
+                onAttach: _showAttachmentPicker,
+                isUploadingAttachment: _isUploadingAttachment,
+                isDark: isDark,
+                isSearching: _isSearching,
+              ),
+            ],
           ),
-          _ChatInput(
-            controller: _messageController,
-            onSend: _sendMessage,
-            onAttach: _showAttachmentPicker,
-            isUploadingAttachment: _isUploadingAttachment,
-            isDark: isDark,
-            isSearching: _isSearching,
-          ),
+          if (_isUploadingAttachment)
+            HikerCircleLoadingToastOverlay(
+              compact: true,
+              message: 'Uploading attachment…',
+              detail: 'Sending the selected file to your group chat.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (mounted) setState(() => _isUploadingAttachment = false);
+              },
+            ),
         ],
       ),
     );
@@ -2734,14 +2760,7 @@ class _ChatInput extends StatelessWidget {
                 child: IconButton(
                   tooltip: 'Add attachment',
                   onPressed: isUploadingAttachment ? null : onAttach,
-                  icon: isUploadingAttachment
-                      ? const SizedBox.square(
-                          dimension: 20,
-                          child: HikerCircleMinorLoadingIndicator(
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Icon(Icons.add_circle_outline_rounded),
+                  icon: const Icon(Icons.add_circle_outline_rounded),
                   color: _green,
                 ),
               ),

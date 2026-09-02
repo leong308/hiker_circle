@@ -688,120 +688,143 @@ class _AdminPageState extends State<AdminPage> {
 
     return ColoredBox(
       color: _AdminColors.backgroundFor(context),
-      child: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _debugMode
-              ? () async {
-                  if (_selectedDebugSection == _DebugSection.firestore) {
-                    await _loadFirestoreDebugData();
-                  } else if (_selectedDebugSection == _DebugSection.local) {
-                    await _loadLocalDbDebugData();
-                  } else if (_selectedDebugSection == _DebugSection.runtime) {
-                    _loadRuntimeDebugData();
-                  }
-                }
-              : _loadAdminData,
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 100),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (_debugMode)
-                      _AdminHeader(
-                        title: 'Debug Mode',
-                        subtitle: _selectedDebugSection == null
-                            ? 'Select a data source to inspect'
-                            : _selectedDebugSection == _DebugSection.firestore
-                            ? 'Firestore - ${_firestoreData.where((c) => c.documents.isNotEmpty).length}/${_firestoreData.length} collections populated'
-                            : _selectedDebugSection == _DebugSection.local
-                            ? 'Local SQLite - ${_localDbData.entries.where((e) => e.value.isNotEmpty).length}/${_localDbData.length} tables populated'
-                            : 'Runtime & temporary state - ${_runtimeData.length} groups',
-                        isLoading: _isDebugLoading,
-                        onRefresh: () {
-                          if (_selectedDebugSection ==
-                              _DebugSection.firestore) {
-                            unawaited(_loadFirestoreDebugData());
-                          } else if (_selectedDebugSection ==
-                              _DebugSection.local) {
-                            unawaited(_loadLocalDbDebugData());
-                          } else if (_selectedDebugSection ==
-                              _DebugSection.runtime) {
-                            _loadRuntimeDebugData();
-                          }
-                        },
-                        onBack: _selectedDebugSection == null
-                            ? _exitDebugMode
-                            : () {
-                                setState(() {
-                                  _selectedDebugSection = null;
-                                  _localDbData = const {};
-                                  _firestoreData = const [];
-                                  _runtimeData = const {};
-                                  _debugError = null;
-                                });
-                              },
-                      )
-                    else
-                      _AdminHeader(
-                        title: title,
-                        subtitle: subtitle,
-                        isLoading: _isLoading,
-                        onRefresh: () => unawaited(_loadAdminData()),
-                        onBack: _selectedSection == _AdminSection.overview
-                            ? null
-                            : () {
-                                setState(() {
-                                  _selectedSection = _AdminSection.overview;
-                                });
-                              },
-                        onTitleTap: _onDebugTitleTap,
-                      ),
-                    if (_debugError != null) ...[
-                      const SizedBox(height: 12),
-                      _AdminNotice(message: _debugError!),
-                    ] else if (_errorMessage != null && !_debugMode) ...[
-                      const SizedBox(height: 12),
-                      _AdminNotice(message: _errorMessage!),
-                    ],
-                    const SizedBox(height: 16),
-                    if (_debugMode)
-                      _DebugContent(
-                        selectedSection: _selectedDebugSection,
-                        firestoreData: _firestoreData,
-                        localDbData: _localDbData,
-                        runtimeData: _runtimeData,
-                        isLoading: _isDebugLoading,
-                        onSelectFirestore: () {
-                          setState(() {
-                            _selectedDebugSection = _DebugSection.firestore;
-                          });
-                          unawaited(_loadFirestoreDebugData());
-                        },
-                        onSelectLocal: () {
-                          setState(() {
-                            _selectedDebugSection = _DebugSection.local;
-                          });
-                          unawaited(_loadLocalDbDebugData());
-                        },
-                        onSelectRuntime: () {
-                          setState(() {
-                            _selectedDebugSection = _DebugSection.runtime;
-                          });
-                          _loadRuntimeDebugData();
-                        },
-                      )
-                    else
-                      content,
-                  ],
+      child: Stack(
+        children: [
+          SafeArea(
+            child: RefreshIndicator(
+              onRefresh: _debugMode
+                  ? () async {
+                      if (_selectedDebugSection == _DebugSection.firestore) {
+                        await _loadFirestoreDebugData();
+                      } else if (_selectedDebugSection == _DebugSection.local) {
+                        await _loadLocalDbDebugData();
+                      } else if (_selectedDebugSection ==
+                          _DebugSection.runtime) {
+                        _loadRuntimeDebugData();
+                      }
+                    }
+                  : _loadAdminData,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 100),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_debugMode)
+                          _AdminHeader(
+                            title: 'Debug Mode',
+                            subtitle: _selectedDebugSection == null
+                                ? 'Select a data source to inspect'
+                                : _selectedDebugSection ==
+                                      _DebugSection.firestore
+                                ? 'Firestore - ${_firestoreData.where((c) => c.documents.isNotEmpty).length}/${_firestoreData.length} collections populated'
+                                : _selectedDebugSection == _DebugSection.local
+                                ? 'Local SQLite - ${_localDbData.entries.where((e) => e.value.isNotEmpty).length}/${_localDbData.length} tables populated'
+                                : 'Runtime & temporary state - ${_runtimeData.length} groups',
+                            isLoading: _isDebugLoading,
+                            onRefresh: () {
+                              if (_selectedDebugSection ==
+                                  _DebugSection.firestore) {
+                                unawaited(_loadFirestoreDebugData());
+                              } else if (_selectedDebugSection ==
+                                  _DebugSection.local) {
+                                unawaited(_loadLocalDbDebugData());
+                              } else if (_selectedDebugSection ==
+                                  _DebugSection.runtime) {
+                                _loadRuntimeDebugData();
+                              }
+                            },
+                            onBack: _selectedDebugSection == null
+                                ? _exitDebugMode
+                                : () {
+                                    setState(() {
+                                      _selectedDebugSection = null;
+                                      _localDbData = const {};
+                                      _firestoreData = const [];
+                                      _runtimeData = const {};
+                                      _debugError = null;
+                                    });
+                                  },
+                          )
+                        else
+                          _AdminHeader(
+                            title: title,
+                            subtitle: subtitle,
+                            isLoading: _isLoading,
+                            onRefresh: () => unawaited(_loadAdminData()),
+                            onBack: _selectedSection == _AdminSection.overview
+                                ? null
+                                : () {
+                                    setState(() {
+                                      _selectedSection = _AdminSection.overview;
+                                    });
+                                  },
+                            onTitleTap: _onDebugTitleTap,
+                          ),
+                        if (_debugError != null) ...[
+                          const SizedBox(height: 12),
+                          _AdminNotice(message: _debugError!),
+                        ] else if (_errorMessage != null && !_debugMode) ...[
+                          const SizedBox(height: 12),
+                          _AdminNotice(message: _errorMessage!),
+                        ],
+                        const SizedBox(height: 16),
+                        if (_debugMode)
+                          _DebugContent(
+                            selectedSection: _selectedDebugSection,
+                            firestoreData: _firestoreData,
+                            localDbData: _localDbData,
+                            runtimeData: _runtimeData,
+                            isLoading: _isDebugLoading,
+                            onSelectFirestore: () {
+                              setState(() {
+                                _selectedDebugSection = _DebugSection.firestore;
+                              });
+                              unawaited(_loadFirestoreDebugData());
+                            },
+                            onSelectLocal: () {
+                              setState(() {
+                                _selectedDebugSection = _DebugSection.local;
+                              });
+                              unawaited(_loadLocalDbDebugData());
+                            },
+                            onSelectRuntime: () {
+                              setState(() {
+                                _selectedDebugSection = _DebugSection.runtime;
+                              });
+                              _loadRuntimeDebugData();
+                            },
+                          )
+                        else
+                          content,
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
+          if (_isLoading || _isDebugLoading)
+            HikerCircleLoadingToastOverlay(
+              message: _isDebugLoading
+                  ? 'Loading diagnostics…'
+                  : 'Loading admin data…',
+              detail: 'Fetching the latest information securely.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (mounted) {
+                  setState(() {
+                    _isLoading = false;
+                    _isDebugLoading = false;
+                    _errorMessage = 'The request timed out. Please try again.';
+                  });
+                }
+              },
+            ),
+        ],
       ),
     );
   }
@@ -898,12 +921,7 @@ class _AdminHeader extends StatelessWidget {
             message: 'Refresh admin data',
             child: IconButton(
               onPressed: isLoading ? null : onRefresh,
-              icon: isLoading
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded),
             ),
           ),
         ],

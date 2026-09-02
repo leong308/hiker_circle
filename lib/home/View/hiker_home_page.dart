@@ -4286,7 +4286,11 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (hikeToEnd == null || _isEndingActiveHike) {
       return;
     }
-    _isEndingActiveHike = true;
+    if (mounted) {
+      setState(() => _isEndingActiveHike = true);
+    } else {
+      _isEndingActiveHike = true;
+    }
 
     final endedAt = DateTime.now();
     final report = HikeSummaryReport.fromActiveHike(
@@ -4302,8 +4306,8 @@ class _HikerHomePageState extends State<HikerHomePage>
         summary: report,
       );
     } catch (error) {
-      _isEndingActiveHike = false;
       if (mounted) {
+        setState(() => _isEndingActiveHike = false);
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
@@ -4345,8 +4349,8 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     setState(() {
       activeHike = null;
+      _isEndingActiveHike = false;
     });
-    _isEndingActiveHike = false;
 
     if (endResult.status == 'abandoned') {
       ScaffoldMessenger.of(context)
@@ -6153,6 +6157,26 @@ class _HikerHomePageState extends State<HikerHomePage>
                   detail: 'Loading your route, checkpoints, and team status.',
                 ),
               ),
+            ),
+          if (_isEndingActiveHike)
+            HikerCircleLoadingToastOverlay(
+              message: 'Ending your hike…',
+              detail: 'Saving your route, check-ins, and safety summary.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (!mounted || !_isEndingActiveHike) return;
+                setState(() => _isEndingActiveHike = false);
+                ScaffoldMessenger.of(context)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Ending the hike timed out. Tracking remains active; try again.',
+                      ),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+              },
             ),
         ],
       ),

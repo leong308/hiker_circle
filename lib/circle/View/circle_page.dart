@@ -1937,171 +1937,178 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
     return Scaffold(
       backgroundColor: _CircleColors.backgroundFor(context),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    title: post.author,
-                    subtitle: '${post.timeLabel} - ${post.trail}',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  _CommunityPostCard(
-                    post: post,
-                    isOwnPost:
-                        post.authorPhoneNumber == widget.session.phoneNumber,
-                    onOpenPost: () {},
-                    onOpenProfile: widget.onOpenProfile,
-                    onShare: widget.onShare,
-                  ),
-                  const SizedBox(height: 22),
-                  _SectionTitle(label: 'Comments'),
-                  const SizedBox(height: 10),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: _CircleColors.surfaceFor(context),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: _CircleColors.separatorFor(
-                          context,
-                        ).withValues(alpha: 0.5),
+        child: Stack(
+          children: [
+            SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 640),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _DetailHeader(
+                        title: post.author,
+                        subtitle: '${post.timeLabel} - ${post.trail}',
+                        onBack: () => Navigator.of(context).pop(),
                       ),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Row(
-                        children: [
-                          _Avatar(
-                            label: 'Y',
-                            color: _CircleColors.green,
-                            size: 36,
-                            imageUrl: widget.currentUserPhotoURL,
-                            imageBytes: widget.currentUserPhotoBytes,
+                      const SizedBox(height: 16),
+                      _CommunityPostCard(
+                        post: post,
+                        isOwnPost:
+                            post.authorPhoneNumber ==
+                            widget.session.phoneNumber,
+                        onOpenPost: () {},
+                        onOpenProfile: widget.onOpenProfile,
+                        onShare: widget.onShare,
+                      ),
+                      const SizedBox(height: 22),
+                      _SectionTitle(label: 'Comments'),
+                      const SizedBox(height: 10),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: _CircleColors.surfaceFor(context),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: _CircleColors.separatorFor(
+                              context,
+                            ).withValues(alpha: 0.5),
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: TextField(
-                              controller: _commentController,
-                              minLines: 1,
-                              maxLines: 3,
-                              decoration: InputDecoration(
-                                hintText: 'Write a comment...',
-                                hintStyle: TextStyle(
-                                  color: _CircleColors.secondaryTextFor(
-                                    context,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              _Avatar(
+                                label: 'Y',
+                                color: _CircleColors.green,
+                                size: 36,
+                                imageUrl: widget.currentUserPhotoURL,
+                                imageBytes: widget.currentUserPhotoBytes,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: TextField(
+                                  controller: _commentController,
+                                  minLines: 1,
+                                  maxLines: 3,
+                                  decoration: InputDecoration(
+                                    hintText: 'Write a comment...',
+                                    hintStyle: TextStyle(
+                                      color: _CircleColors.secondaryTextFor(
+                                        context,
+                                      ),
+                                    ),
+                                    filled: true,
+                                    fillColor: _CircleColors.isDark(context)
+                                        ? const Color(0xFF1B261F)
+                                        : const Color(0xFFF5F7F5),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    isDense: true,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
                                   ),
                                 ),
-                                filled: true,
-                                fillColor: _CircleColors.isDark(context)
-                                    ? const Color(0xFF1B261F)
-                                    : const Color(0xFFF5F7F5),
-                                border: OutlineInputBorder(
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: _CircleColors.green,
                                   borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide.none,
                                 ),
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 10,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  onPressed: _isPostingComment
+                                      ? null
+                                      : () => unawaited(_postComment()),
+                                  icon: const Icon(
+                                    Icons.send_rounded,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
                                 ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (_isLoadingComments)
+                        const HikerCircleLoadingView(
+                          message: 'Loading comments…',
+                          detail: 'Getting the latest trail discussion.',
+                          compact: true,
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                        )
+                      else if (_comments.isEmpty)
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _CircleColors.surfaceFor(context),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: _CircleColors.separatorFor(
+                                context,
+                              ).withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Center(
+                              child: Text(
+                                'No comments yet.\nBe the first to share your thoughts!',
+                                textAlign: TextAlign.center,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: _CircleColors.green,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: IconButton(
-                              padding: EdgeInsets.zero,
-                              onPressed: _isPostingComment
-                                  ? null
-                                  : () => unawaited(_postComment()),
-                              icon: _isPostingComment
-                                  ? const SizedBox.square(
-                                      dimension: 16,
-                                      child: HikerCircleMinorLoadingIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Icon(
-                                      Icons.send_rounded,
-                                      color: Colors.white,
-                                      size: 18,
-                                    ),
+                        )
+                      else
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _CircleColors.surfaceFor(context),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: _CircleColors.separatorFor(
+                                context,
+                              ).withValues(alpha: 0.5),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                          child: Column(
+                            children: [
+                              for (
+                                var index = 0;
+                                index < _comments.length;
+                                index++
+                              ) ...[
+                                _CommentRow(comment: _comments[index]),
+                                if (index != _comments.length - 1)
+                                  const _HorizontalSeparator(),
+                              ],
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
-                  const SizedBox(height: 10),
-                  if (_isLoadingComments)
-                    const HikerCircleLoadingView(
-                      message: 'Loading comments…',
-                      detail: 'Getting the latest trail discussion.',
-                      compact: true,
-                      padding: EdgeInsets.symmetric(vertical: 12),
-                    )
-                  else if (_comments.isEmpty)
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _CircleColors.surfaceFor(context),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: _CircleColors.separatorFor(
-                            context,
-                          ).withValues(alpha: 0.5),
-                        ),
-                      ),
-                      child: const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(
-                          child: Text(
-                            'No comments yet.\nBe the first to share your thoughts!',
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                    )
-                  else
-                    Container(
-                      decoration: BoxDecoration(
-                        color: _CircleColors.surfaceFor(context),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: _CircleColors.separatorFor(
-                            context,
-                          ).withValues(alpha: 0.5),
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          for (
-                            var index = 0;
-                            index < _comments.length;
-                            index++
-                          ) ...[
-                            _CommentRow(comment: _comments[index]),
-                            if (index != _comments.length - 1)
-                              const _HorizontalSeparator(),
-                          ],
-                        ],
-                      ),
-                    ),
-                ],
+                ),
               ),
             ),
-          ),
+            if (_isPostingComment)
+              HikerCircleLoadingToastOverlay(
+                compact: true,
+                message: 'Posting comment…',
+                detail: 'Adding your comment to this community hike.',
+                timeout: const Duration(seconds: 30),
+                onTimeout: () {
+                  if (mounted) setState(() => _isPostingComment = false);
+                },
+              ),
+          ],
         ),
       ),
     );

@@ -4,15 +4,17 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/manual_sos_widget_background"
+    android:contentDescription="HikerCircle Instant SOS"
     android:gravity="center_vertical"
     android:orientation="vertical"
-    android:padding="8dp">
+    android:padding="7dp">
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:ellipsize="end"
         android:gravity="start"
+        android:includeFontPadding="false"
         android:maxLines="1"
         android:text="HikerCircle"
         android:textColor="#FFFFFFFF"
@@ -23,33 +25,37 @@
         android:id="@+id/manual_sos_widget_button"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="5dp"
         android:layout_weight="1"
         android:background="@drawable/manual_sos_widget_button_background"
         android:clickable="true"
+        android:contentDescription="Send Instant SOS"
         android:gravity="center"
-        android:orientation="vertical"
-        android:padding="7dp">
+        android:orientation="horizontal"
+        android:padding="3dp">
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:gravity="center"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:text="SOS"
             android:textColor="#FFFFFFFF"
-            android:textSize="24sp"
+            android:textSize="17sp"
             android:textStyle="bold" />
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="3dp"
             android:ellipsize="end"
             android:gravity="center"
+            android:includeFontPadding="false"
             android:maxLines="1"
             android:text="Instant"
             android:textColor="#FFFFE4E6"
-            android:textSize="10sp" />
+            android:textSize="8sp" />
     </LinearLayout>
 
 </LinearLayout>

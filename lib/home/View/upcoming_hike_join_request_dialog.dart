@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
@@ -32,9 +34,34 @@ class _UpcomingHikeJoinRequestDialogState
       _isResolving = true;
       _error = null;
     });
+    var loadingPopupOpen = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const HikerCircleLoadingToast(
+          compact: true,
+          message: 'Updating join request…',
+          detail: 'Saving the host decision securely.',
+        ),
+      ),
+    );
+    // Give the modal route a frame to mount before the request can complete;
+    // this keeps the cleanup below from touching the underlying review dialog.
+    await Future<void>.delayed(Duration.zero);
     try {
-      final result = await widget.onResolve(accept);
+      final result = await widget
+          .onResolve(accept)
+          .timeout(const Duration(seconds: 30));
+      if (loadingPopupOpen && mounted) {
+        loadingPopupOpen = false;
+        Navigator.of(context, rootNavigator: true).pop();
+      }
       if (mounted) Navigator.of(context).pop(result);
+    } on TimeoutException {
+      if (mounted) {
+        setState(() => _error = 'The request timed out. Please try again.');
+      }
     } on HikerCircleFirebaseRepositoryException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
@@ -42,6 +69,10 @@ class _UpcomingHikeJoinRequestDialogState
         setState(() => _error = 'Unable to respond right now. Try again.');
       }
     } finally {
+      if (loadingPopupOpen && mounted) {
+        loadingPopupOpen = false;
+        Navigator.of(context, rootNavigator: true).pop();
+      }
       if (mounted) setState(() => _isResolving = false);
     }
   }
@@ -451,15 +482,7 @@ class _UpcomingHikeJoinRequestDialogState
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        child: _isResolving
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child: HikerCircleMinorLoadingIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text('Accept'),
+                        child: const Text('Accept'),
                       ),
                     ),
                   ],

@@ -2423,10 +2423,21 @@ class _TeamSnapshotCardState extends State<_TeamSnapshotCard> {
     setState(() {
       _pingingPhoneNumber = participant.phoneNumber;
     });
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const HikerCircleLoadingToast(
+          compact: true,
+          message: 'Sending safety ping…',
+          detail: 'Waiting for the hiker’s acknowledgement.',
+        ),
+      ),
+    );
     try {
-      final updatedSession = await widget.onPingTeamMember(
-        participant.phoneNumber,
-      );
+      final updatedSession = await widget
+          .onPingTeamMember(participant.phoneNumber)
+          .timeout(const Duration(seconds: 30));
       if (!mounted) {
         return;
       }
@@ -2455,6 +2466,7 @@ class _TeamSnapshotCardState extends State<_TeamSnapshotCard> {
         );
     } finally {
       if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
         setState(() {
           _pingingPhoneNumber = '';
         });
@@ -2593,12 +2605,7 @@ class _TeamParticipantRow extends StatelessWidget {
                 onPressed: participant.canBePinged && !isPinging
                     ? onPing
                     : null,
-                child: isPinging
-                    ? const SizedBox.square(
-                        dimension: 16,
-                        child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Ping'),
+                child: const Text('Ping'),
               ),
             ),
         ],

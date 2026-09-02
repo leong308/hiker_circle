@@ -12,6 +12,7 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+output/
 
 # IntelliJ/IDE related
 .vscode/

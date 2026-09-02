@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
@@ -97,12 +98,22 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
         builder: (context, snapshot) {
           final isLoading = snapshot.connectionState != ConnectionState.done;
           if (isLoading && !snapshot.hasData) {
-            return const Stack(
+            return Stack(
               children: [
                 HikerCircleLoadingToastOverlay(
                   message: 'Loading your hike history…',
                   detail: 'Getting your completed hikes and route records.',
                   dimBackground: false,
+                  timeout: const Duration(seconds: 30),
+                  onTimeout: () {
+                    if (mounted) {
+                      setState(() {
+                        _historyFuture = Future<List<HikeHistorySummary>>.error(
+                          'Timed out loading hike history',
+                        );
+                      });
+                    }
+                  },
                 ),
               ],
             );
@@ -167,9 +178,19 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
             children: [
               content,
               if (isLoading)
-                const HikerCircleLoadingToastOverlay(
+                HikerCircleLoadingToastOverlay(
                   message: 'Refreshing your hike history…',
                   detail: 'Getting the latest completed hike records.',
+                  timeout: const Duration(seconds: 30),
+                  onTimeout: () {
+                    if (mounted) {
+                      setState(() {
+                        _historyFuture = Future<List<HikeHistorySummary>>.error(
+                          'Timed out refreshing hike history',
+                        );
+                      });
+                    }
+                  },
                 ),
             ],
           );
@@ -238,12 +259,22 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
         builder: (context, snapshot) {
           final isLoading = snapshot.connectionState != ConnectionState.done;
           if (isLoading && !snapshot.hasData) {
-            return const Stack(
+            return Stack(
               children: [
                 HikerCircleLoadingToastOverlay(
                   message: 'Loading hike details…',
                   detail: 'Preparing the route and safety records.',
                   dimBackground: false,
+                  timeout: const Duration(seconds: 30),
+                  onTimeout: () {
+                    if (mounted) {
+                      setState(() {
+                        _detailFuture = Future<HikeHistoryDetail>.error(
+                          'Timed out loading hike details',
+                        );
+                      });
+                    }
+                  },
                 ),
               ],
             );
@@ -268,9 +299,19 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
             children: [
               content,
               if (isLoading)
-                const HikerCircleLoadingToastOverlay(
+                HikerCircleLoadingToastOverlay(
                   message: 'Refreshing hike details…',
                   detail: 'Getting the latest route and safety records.',
+                  timeout: const Duration(seconds: 30),
+                  onTimeout: () {
+                    if (mounted) {
+                      setState(() {
+                        _detailFuture = Future<HikeHistoryDetail>.error(
+                          'Timed out refreshing hike details',
+                        );
+                      });
+                    }
+                  },
                 ),
             ],
           );

@@ -107,6 +107,9 @@ void main() {
       '03-active-safety-surfaces-iphone.png',
       '03-active-safety-response-iphone.mp4',
       '03-active-safety-response-poster-iphone.png',
+      '04-coordination-team-launch-iphone.jpeg',
+      '04-coordination-team-flow-poster-iphone.jpeg',
+      '04-coordination-team-flow-iphone.mp4',
     ]) {
       expect(
         File('web/site-assets/evolution/$asset').existsSync(),

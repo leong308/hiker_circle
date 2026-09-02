@@ -141,4 +141,26 @@ void main() {
     expect(indicator.value, 0.6);
     expect(find.byType(Lottie), findsNothing);
   });
+
+  testWidgets('auto-closes through the timeout callback', (tester) async {
+    var timedOut = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              HikerCircleLoadingToastOverlay(
+                message: 'Working…',
+                timeout: const Duration(seconds: 30),
+                onTimeout: () => timedOut = true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(seconds: 30));
+    expect(timedOut, isTrue);
+  });
 }

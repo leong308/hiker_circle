@@ -506,6 +506,22 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
               detail: _isScheduling
                   ? 'Saving the route, reminders, and join settings.'
                   : 'Completing safety checks and preparing live tracking.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (!mounted) return;
+                setState(() {
+                  _isScheduling = false;
+                  _isStarting = false;
+                });
+                ScaffoldMessenger.of(context)
+                  ..hideCurrentSnackBar()
+                  ..showSnackBar(
+                    const SnackBar(
+                      content: Text('The request timed out. Please try again.'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+              },
             ),
         ],
       ),

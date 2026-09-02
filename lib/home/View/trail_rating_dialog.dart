@@ -118,134 +118,160 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
             ),
           ],
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'How was your experience on this trail?',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 10),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    for (var star = 1; star <= 5; star++)
-                      Semantics(
-                        label: '$star star${star == 1 ? '' : 's'}',
-                        button: true,
-                        selected: star == _rating,
-                        child: IconButton(
-                          key: Key('trail-rating-star-$star'),
-                          onPressed: _isSubmitting
-                              ? null
-                              : () => setState(() => _rating = star),
-                          tooltip: '$star star${star == 1 ? '' : 's'}',
-                          iconSize: 38,
-                          color: const Color(0xFFF59E0B),
-                          icon: Icon(
-                            star <= _rating
-                                ? Icons.star_rounded
-                                : Icons.star_outline_rounded,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 160),
-                child: Text(
-                  _ratingLabel(_rating),
-                  key: ValueKey(_rating),
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: _rating == 0
-                        ? colorScheme.onSurfaceVariant
-                        : const Color(0xFF34A853),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'How difficult did this hike feel?',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
+        content: Stack(
+          children: [
+            SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final difficulty in const ['Easy', 'Moderate', 'Hard'])
-                    ChoiceChip(
-                      key: Key('trail-difficulty-${difficulty.toLowerCase()}'),
-                      label: Text(difficulty),
-                      selected: _difficulty == difficulty.toLowerCase(),
-                      onSelected: _isSubmitting
-                          ? null
-                          : (selected) => setState(() {
-                              _difficulty = selected
-                                  ? difficulty.toLowerCase()
-                                  : null;
-                            }),
+                  Text(
+                    'How was your experience on this trail?',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      letterSpacing: 0,
                     ),
+                  ),
+                  const SizedBox(height: 10),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        for (var star = 1; star <= 5; star++)
+                          Semantics(
+                            label: '$star star${star == 1 ? '' : 's'}',
+                            button: true,
+                            selected: star == _rating,
+                            child: IconButton(
+                              key: Key('trail-rating-star-$star'),
+                              onPressed: _isSubmitting
+                                  ? null
+                                  : () => setState(() => _rating = star),
+                              tooltip: '$star star${star == 1 ? '' : 's'}',
+                              iconSize: 38,
+                              color: const Color(0xFFF59E0B),
+                              icon: Icon(
+                                star <= _rating
+                                    ? Icons.star_rounded
+                                    : Icons.star_outline_rounded,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    child: Text(
+                      _ratingLabel(_rating),
+                      key: ValueKey(_rating),
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: _rating == 0
+                            ? colorScheme.onSurfaceVariant
+                            : const Color(0xFF34A853),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'How difficult did this hike feel?',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final difficulty in const [
+                        'Easy',
+                        'Moderate',
+                        'Hard',
+                      ])
+                        ChoiceChip(
+                          key: Key(
+                            'trail-difficulty-${difficulty.toLowerCase()}',
+                          ),
+                          label: Text(difficulty),
+                          selected: _difficulty == difficulty.toLowerCase(),
+                          onSelected: _isSubmitting
+                              ? null
+                              : (selected) => setState(() {
+                                  _difficulty = selected
+                                      ? difficulty.toLowerCase()
+                                      : null;
+                                }),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  TextField(
+                    key: const Key('trail-rating-comment'),
+                    controller: _commentController,
+                    enabled: !_isSubmitting,
+                    minLines: 2,
+                    maxLines: 4,
+                    maxLength: 500,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      labelText: 'Comment (optional)',
+                      hintText: 'Trail conditions, views, or helpful tips...',
+                      alignLabelWithHint: true,
+                      filled: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  if (_errorMessage != null) ...[
+                    Text(
+                      _errorMessage!,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Text(
+                    'Your rating and difficulty vote contribute to this route’s public community results.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      letterSpacing: 0,
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 18),
-              TextField(
-                key: const Key('trail-rating-comment'),
-                controller: _commentController,
-                enabled: !_isSubmitting,
-                minLines: 2,
-                maxLines: 4,
-                maxLength: 500,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  labelText: 'Comment (optional)',
-                  hintText: 'Trail conditions, views, or helpful tips...',
-                  alignLabelWithHint: true,
-                  filled: true,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
+            ),
+            if (_isSubmitting)
+              HikerCircleLoadingToastOverlay(
+                compact: true,
+                message: 'Saving your route rating…',
+                detail: 'Updating the trail community rating.',
+                timeout: const Duration(seconds: 30),
+                onTimeout: () {
+                  if (mounted) {
+                    setState(() {
+                      _isSubmitting = false;
+                      _errorMessage =
+                          'Saving the rating timed out. Please try again.';
+                    });
+                  }
+                },
               ),
-              const SizedBox(height: 2),
-              if (_errorMessage != null) ...[
-                Text(
-                  _errorMessage!,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colorScheme.error,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-              Text(
-                'Your rating and difficulty vote contribute to this route’s public community results.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
+          ],
         ),
         actions: [
           TextButton(
@@ -262,15 +288,7 @@ class _TrailRatingDialogState extends State<TrailRatingDialog> {
               backgroundColor: const Color(0xFF34A853),
               foregroundColor: Colors.white,
             ),
-            child: _isSubmitting
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: HikerCircleMinorLoadingIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Text('Submit rating'),
+            child: const Text('Submit rating'),
           ),
         ],
       ),

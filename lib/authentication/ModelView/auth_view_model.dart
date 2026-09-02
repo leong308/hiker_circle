@@ -361,6 +361,21 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Releases a UI that is waiting on a network authentication operation.
+  /// The underlying request may still finish in the background, but the user
+  /// can retry instead of being trapped behind a disabled form.
+  void cancelPendingOperation({
+    String message = 'The request timed out. Please try again.',
+  }) {
+    if (!isBusy) return;
+    _status = _greenApiChallengeId == null
+        ? AuthStatus.enteringPhone
+        : AuthStatus.enteringCode;
+    _message = null;
+    _error = message;
+    notifyListeners();
+  }
+
   String _friendlyFunctionsError(Object error) {
     if (error is FirebaseFunctionsException) {
       return error.message ?? _codeMessage(error.code);

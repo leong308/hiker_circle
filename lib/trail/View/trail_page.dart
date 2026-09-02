@@ -1729,11 +1729,28 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
               : () => Navigator.of(context).pop(),
         ),
       ),
-      body: switch (_step) {
-        _AddTrailStep.pickCheckpoints => _buildCheckpointPicker(),
-        _AddTrailStep.loading => _buildLoading(),
-        _AddTrailStep.form => _buildForm(),
-      },
+      body: Stack(
+        children: [
+          switch (_step) {
+            _AddTrailStep.pickCheckpoints => _buildCheckpointPicker(),
+            _AddTrailStep.loading => _buildLoading(),
+            _AddTrailStep.form => _buildForm(),
+          },
+          if (_isUploadingImages)
+            HikerCircleLoadingToastOverlay(
+              message: 'Saving trail…',
+              detail: 'Uploading images and updating trail data.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (mounted) {
+                  setState(() {
+                    _isUploadingImages = false;
+                  });
+                }
+              },
+            ),
+        ],
+      ),
     );
   }
 
@@ -2147,12 +2164,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
             ),
             FilledButton.icon(
               onPressed: _isUploadingImages ? null : _saveTrail,
-              icon: _isUploadingImages
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_upload_rounded),
+              icon: const Icon(Icons.cloud_upload_rounded),
               label: Text(
                 _isUploadingImages
                     ? 'Uploading trail images…'
@@ -4142,192 +4154,199 @@ class _EditTrailPageState extends State<_EditTrailPage> {
         actions: [
           TextButton.icon(
             onPressed: _isRefreshing ? null : () => unawaited(_save()),
-            icon: _isRefreshing
-                ? const SizedBox.square(
-                    dimension: 16,
-                    child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.save_rounded),
+            icon: const Icon(Icons.save_rounded),
             label: Text(_isRefreshing ? 'Refreshing route' : 'Save'),
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const _SectionTitle(label: 'Trail Identity'),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Trail name',
-                prefixIcon: Icon(Icons.terrain_rounded),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _areaController,
-                    decoration: const InputDecoration(labelText: 'Area'),
+                const _SectionTitle(label: 'Trail Identity'),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Trail name',
+                    prefixIcon: Icon(Icons.terrain_rounded),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _stateController,
-                    readOnly: true,
-                    onTap: _chooseWorldwideRegion,
-                    decoration: const InputDecoration(
-                      labelText: 'State',
-                      suffixIcon: Icon(Icons.expand_more_rounded),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _areaController,
+                        decoration: const InputDecoration(labelText: 'Area'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _stateController,
+                        readOnly: true,
+                        onTap: _chooseWorldwideRegion,
+                        decoration: const InputDecoration(
+                          labelText: 'State',
+                          suffixIcon: Icon(Icons.expand_more_rounded),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _countryController,
+                  readOnly: true,
+                  onTap: _chooseWorldwideRegion,
+                  decoration: const InputDecoration(
+                    labelText: 'Country',
+                    prefixIcon: Icon(Icons.public_rounded),
+                    suffixIcon: Icon(Icons.expand_more_rounded),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                _InsetGroup(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Route metrics',
+                                style: Theme.of(context).textTheme.labelLarge
+                                    ?.copyWith(
+                                      color: _TrailColors.secondaryTextFor(
+                                        context,
+                                      ),
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0,
+                                    ),
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: _isRefreshing ? null : _refreshMetrics,
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: Text(
+                                _isRefreshing ? 'Refreshing' : 'Refresh',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        _metricRow(
+                          context,
+                          Icons.straighten_rounded,
+                          'Distance',
+                          _refreshedRoute?.distanceLabel ??
+                              widget.trail.distanceLabel,
+                        ),
+                        const SizedBox(height: 6),
+                        _metricRow(
+                          context,
+                          Icons.access_time_rounded,
+                          'Duration',
+                          _refreshedRoute?.durationLabel ??
+                              widget.trail.durationLabel,
+                        ),
+                        const SizedBox(height: 6),
+                        _metricRow(
+                          context,
+                          Icons.trending_up_rounded,
+                          'Elevation gain',
+                          _refreshedRoute != null
+                              ? '${_refreshedRoute!.elevationGainMeters ?? 0} m'
+                              : '${widget.trail.elevationGainMeters} m',
+                        ),
+                        const SizedBox(height: 6),
+                        _metricRow(
+                          context,
+                          Icons.star_rounded,
+                          'Rating',
+                          widget.trail.ratingLabel,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Routes use 3-12 checkpoints. The first and last '
+                          'stay fixed while intermediate checkpoints are optimized.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: _TrailColors.secondaryTextFor(context),
+                              ),
+                        ),
+                        if (_routeRefreshError != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _routeRefreshError!,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: _TrailColors.redFor(context),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
+                ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: () => unawaited(_addCheckpointsOnMap()),
+                  icon: const Icon(Icons.add_location_alt_rounded),
+                  label: const Text('Add checkpoints on map'),
+                ),
+                const SizedBox(height: 14),
+                const _SectionTitle(label: 'Checkpoints'),
+                const SizedBox(height: 8),
+                ReorderableListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  buildDefaultDragHandles: false,
+                  itemCount: _checkpoints.length,
+                  onReorderItem: (int oldIndex, int newIndex) {
+                    setState(() {
+                      final draft = _checkpoints.removeAt(oldIndex);
+                      _checkpoints.insert(newIndex, draft);
+                      _refreshedRoute = null;
+                      _refreshedRouteCheckpointsHash = null;
+                      _routeRefreshError = null;
+                    });
+                  },
+                  itemBuilder: (context, index) {
+                    final draft = _checkpoints[index];
+                    return Padding(
+                      key: ValueKey(draft.id),
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _CheckpointDraftFields(
+                        draft: draft,
+                        index: index,
+                        canRemove: _checkpoints.length > 3,
+                        onRemove: () => _removeCheckpoint(index),
+                        onEdit: () => unawaited(_editCheckpointOnMap(index)),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _countryController,
-              readOnly: true,
-              onTap: _chooseWorldwideRegion,
-              decoration: const InputDecoration(
-                labelText: 'Country',
-                prefixIcon: Icon(Icons.public_rounded),
-                suffixIcon: Icon(Icons.expand_more_rounded),
-              ),
-            ),
-            const SizedBox(height: 20),
-            _InsetGroup(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Route metrics',
-                            style: Theme.of(context).textTheme.labelLarge
-                                ?.copyWith(
-                                  color: _TrailColors.secondaryTextFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                        ),
-                        TextButton.icon(
-                          onPressed: _isRefreshing ? null : _refreshMetrics,
-                          icon: _isRefreshing
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child: HikerCircleMinorLoadingIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.refresh_rounded, size: 18),
-                          label: Text(_isRefreshing ? 'Refreshing' : 'Refresh'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _metricRow(
-                      context,
-                      Icons.straighten_rounded,
-                      'Distance',
-                      _refreshedRoute?.distanceLabel ??
-                          widget.trail.distanceLabel,
-                    ),
-                    const SizedBox(height: 6),
-                    _metricRow(
-                      context,
-                      Icons.access_time_rounded,
-                      'Duration',
-                      _refreshedRoute?.durationLabel ??
-                          widget.trail.durationLabel,
-                    ),
-                    const SizedBox(height: 6),
-                    _metricRow(
-                      context,
-                      Icons.trending_up_rounded,
-                      'Elevation gain',
-                      _refreshedRoute != null
-                          ? '${_refreshedRoute!.elevationGainMeters ?? 0} m'
-                          : '${widget.trail.elevationGainMeters} m',
-                    ),
-                    const SizedBox(height: 6),
-                    _metricRow(
-                      context,
-                      Icons.star_rounded,
-                      'Rating',
-                      widget.trail.ratingLabel,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Routes use 3-12 checkpoints. The first and last '
-                      'stay fixed while intermediate checkpoints are optimized.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _TrailColors.secondaryTextFor(context),
-                      ),
-                    ),
-                    if (_routeRefreshError != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _routeRefreshError!,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _TrailColors.redFor(context),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: () => unawaited(_addCheckpointsOnMap()),
-              icon: const Icon(Icons.add_location_alt_rounded),
-              label: const Text('Add checkpoints on map'),
-            ),
-            const SizedBox(height: 14),
-            const _SectionTitle(label: 'Checkpoints'),
-            const SizedBox(height: 8),
-            ReorderableListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: false,
-              itemCount: _checkpoints.length,
-              onReorderItem: (int oldIndex, int newIndex) {
-                setState(() {
-                  final draft = _checkpoints.removeAt(oldIndex);
-                  _checkpoints.insert(newIndex, draft);
-                  _refreshedRoute = null;
-                  _refreshedRouteCheckpointsHash = null;
-                  _routeRefreshError = null;
-                });
-              },
-              itemBuilder: (context, index) {
-                final draft = _checkpoints[index];
-                return Padding(
-                  key: ValueKey(draft.id),
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _CheckpointDraftFields(
-                    draft: draft,
-                    index: index,
-                    canRemove: _checkpoints.length > 3,
-                    onRemove: () => _removeCheckpoint(index),
-                    onEdit: () => unawaited(_editCheckpointOnMap(index)),
-                  ),
-                );
+          ),
+          if (_isRefreshing)
+            HikerCircleLoadingToastOverlay(
+              message: 'Refreshing route…',
+              detail: 'Updating route metrics from the checkpoints.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (mounted) setState(() => _isRefreshing = false);
               },
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

@@ -28,6 +28,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
   final TextEditingController _codeController = TextEditingController();
   TotpEnrollment? _totpEnrollment;
   bool _busy = false;
+  String _busyMessage = 'Checking your security method…';
   String? _error;
 
   bool get _isEnrollment => widget.continuation.enrollmentRequired;
@@ -44,11 +45,22 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
     super.dispose();
   }
 
-  Future<void> _startTotp() async {
+  void _beginBusy(String message) {
     setState(() {
       _busy = true;
+      _busyMessage = message;
       _error = null;
     });
+  }
+
+  void _endBusy() {
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _startTotp() async {
+    _beginBusy(
+      _isEnrollment ? 'Setting up Authenticator…' : 'Opening Authenticator…',
+    );
     try {
       if (_isEnrollment) {
         final enrollment = await _service.beginTotpEnrollment(
@@ -69,7 +81,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
     } catch (error) {
       if (mounted) setState(() => _error = readableMfaError(error));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _endBusy();
     }
   }
 
@@ -79,10 +91,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
       setState(() => _error = 'Enter the current 6-digit code.');
       return;
     }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    _beginBusy('Verifying security code…');
     try {
       final AppSession session;
       if (_isEnrollment) {
@@ -103,15 +112,14 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
     } catch (error) {
       if (mounted) setState(() => _error = readableMfaError(error));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _endBusy();
     }
   }
 
   Future<void> _usePasskey() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    _beginBusy(
+      _isEnrollment ? 'Creating your passkey…' : 'Verifying your passkey…',
+    );
     try {
       final session = _isEnrollment
           ? await _service.enrollPasskey(
@@ -126,7 +134,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
     } catch (error) {
       if (mounted) setState(() => _error = readableMfaError(error));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _endBusy();
     }
   }
 
@@ -144,133 +152,149 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
         ),
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.security_rounded,
-                          color: scheme.primary,
-                          size: 30,
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _isEnrollment
-                                    ? 'One security method is required'
-                                    : 'WhatsApp verification completed',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                _isEnrollment
-                                    ? 'Bind Authenticator or a passkey before your account can be used. You can add the other method later in Settings.'
-                                    : 'Complete the second step using one of your bound methods.',
-                                style: theme.textTheme.bodyMedium,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  if (_totpEnrollment != null)
-                    _buildTotpPanel(theme, scheme)
-                  else ...[
-                    if (_isEnrollment ||
-                        widget.continuation.methods.contains('totp'))
-                      _MethodCard(
-                        icon: Icons.password_rounded,
-                        title: 'Authenticator app',
-                        subtitle: _isEnrollment
-                            ? 'Use Google Authenticator, Authy, 1Password, or another TOTP app.'
-                            : 'Enter the 6-digit code that refreshes every 30 seconds.',
-                        buttonLabel: _isEnrollment
-                            ? 'Set up Authenticator'
-                            : 'Use Authenticator',
-                        busy: _busy,
-                        onPressed: _startTotp,
-                      ),
-                    if (passkeyIsRelevant && passkeysEnabled) ...[
-                      const SizedBox(height: 12),
-                      _MethodCard(
-                        icon: Icons.fingerprint_rounded,
-                        title: 'Passkey',
-                        subtitle:
-                            'Use the secure screen lock, fingerprint, or face verification provided by this device.',
-                        buttonLabel: _isEnrollment
-                            ? 'Create passkey'
-                            : 'Use passkey',
-                        busy: _busy,
-                        onPressed: _usePasskey,
-                      ),
-                    ] else if (passkeyIsRelevant) ...[
-                      const SizedBox(height: 12),
+        child: Stack(
+          children: [
+            SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                       Container(
-                        padding: const EdgeInsets.all(14),
+                        padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
-                          color: scheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: scheme.outlineVariant),
+                          color: scheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(18),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Icon(
-                              Icons.info_outline_rounded,
+                              Icons.security_rounded,
                               color: scheme.primary,
+                              size: 30,
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 14),
                             Expanded(
-                              child: Text(
-                                _isEnrollment
-                                    ? personalSigningPasskeyMessage
-                                    : 'This account has a passkey, but personal-signed iOS builds cannot use native passkeys. Use Authenticator, or sign in on Android or the web and add Authenticator first.',
-                                style: theme.textTheme.bodyMedium,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _isEnrollment
+                                        ? 'One security method is required'
+                                        : 'WhatsApp verification completed',
+                                    style: theme.textTheme.titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    _isEnrollment
+                                        ? 'Bind Authenticator or a passkey before your account can be used. You can add the other method later in Settings.'
+                                        : 'Complete the second step using one of your bound methods.',
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                ],
                               ),
                             ),
                           ],
                         ),
                       ),
+                      const SizedBox(height: 18),
+                      if (_totpEnrollment != null)
+                        _buildTotpPanel(theme, scheme)
+                      else ...[
+                        if (_isEnrollment ||
+                            widget.continuation.methods.contains('totp'))
+                          _MethodCard(
+                            icon: Icons.password_rounded,
+                            title: 'Authenticator app',
+                            subtitle: _isEnrollment
+                                ? 'Use Google Authenticator, Authy, 1Password, or another TOTP app.'
+                                : 'Enter the 6-digit code that refreshes every 30 seconds.',
+                            buttonLabel: _isEnrollment
+                                ? 'Set up Authenticator'
+                                : 'Use Authenticator',
+                            busy: _busy,
+                            onPressed: _startTotp,
+                          ),
+                        if (passkeyIsRelevant && passkeysEnabled) ...[
+                          const SizedBox(height: 12),
+                          _MethodCard(
+                            icon: Icons.fingerprint_rounded,
+                            title: 'Passkey',
+                            subtitle:
+                                'Use the secure screen lock, fingerprint, or face verification provided by this device.',
+                            buttonLabel: _isEnrollment
+                                ? 'Create passkey'
+                                : 'Use passkey',
+                            busy: _busy,
+                            onPressed: _usePasskey,
+                          ),
+                        ] else if (passkeyIsRelevant) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: scheme.outlineVariant),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  color: scheme.primary,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _isEnrollment
+                                        ? personalSigningPasskeyMessage
+                                        : 'This account has a passkey, but personal-signed iOS builds cannot use native passkeys. Use Authenticator, or sign in on Android or the web and add Authenticator first.',
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                      if (_error != null) ...[
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: scheme.errorContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            _error!,
+                            style: TextStyle(color: scheme.onErrorContainer),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
-                  if (_error != null) ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: scheme.errorContainer,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: scheme.onErrorContainer),
-                      ),
-                    ),
-                  ],
-                ],
+                  ),
+                ),
               ),
             ),
-          ),
+            if (_busy)
+              HikerCircleLoadingToastOverlay(
+                message: _busyMessage,
+                detail: 'Keeping your account secure. This may take a moment.',
+                timeout: const Duration(seconds: 30),
+                onTimeout: () {
+                  if (!mounted || !_busy) return;
+                  setState(() {
+                    _busy = false;
+                    _error = 'The security check timed out. Please try again.';
+                  });
+                },
+              ),
+          ],
         ),
       ),
     );
@@ -359,12 +383,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _busy ? null : _submitTotp,
-              icon: _busy
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.verified_user_rounded),
+              icon: const Icon(Icons.verified_user_rounded),
               label: Text(
                 _isEnrollment ? 'Verify and bind' : 'Verify and sign in',
               ),

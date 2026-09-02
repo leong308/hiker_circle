@@ -117,103 +117,132 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
 
     return Scaffold(
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return SingleChildScrollView(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 520),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          AuthBrandPanel(color: scheme.primary),
-                          const SizedBox(height: 20),
-                          Container(
-                            padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              color: scheme.surface,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: const Color(0xFFCFE5D6),
+        child: Stack(
+          children: [
+            LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 520),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              AuthBrandPanel(color: scheme.primary),
+                              const SizedBox(height: 20),
+                              Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: scheme.surface,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: const Color(0xFFCFE5D6),
+                                  ),
+                                ),
+                                child: Form(
+                                  key: _formKey,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        isSignUp ? 'Sign Up' : 'Login',
+                                        style: theme.textTheme.titleLarge
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        isSignUp
+                                            ? 'Verify WhatsApp, then bind Authenticator or a passkey.'
+                                            : 'Verify WhatsApp, then use Authenticator or your passkey.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: scheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      _ModeToggle(
+                                        currentMode: _viewModel.authMode,
+                                        enabled:
+                                            !_viewModel.isBusy &&
+                                            !_isCompletingSignIn &&
+                                            !_viewModel.hasCodeBeenSent,
+                                        onChanged: _viewModel.setAuthMode,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      _buildWhatsAppForm(theme, scheme),
+                                      if (_viewModel.message != null) ...[
+                                        const SizedBox(height: 16),
+                                        InlineNotice(
+                                          icon: Icons.check_circle_outline,
+                                          color: scheme.primary,
+                                          text: _viewModel.message!,
+                                        ),
+                                      ],
+                                      if (_viewModel.error != null) ...[
+                                        const SizedBox(height: 16),
+                                        InlineNotice(
+                                          icon: Icons.error_outline,
+                                          color: scheme.error,
+                                          text: _viewModel.error!,
+                                        ),
+                                      ],
+                                      if (_signInError != null) ...[
+                                        const SizedBox(height: 16),
+                                        InlineNotice(
+                                          icon: Icons.error_outline,
+                                          color: scheme.error,
+                                          text: _signInError!,
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
                               ),
-                            ),
-                            child: Form(
-                              key: _formKey,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Text(
-                                    isSignUp ? 'Sign Up' : 'Login',
-                                    style: theme.textTheme.titleLarge?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    isSignUp
-                                        ? 'Verify WhatsApp, then bind Authenticator or a passkey.'
-                                        : 'Verify WhatsApp, then use Authenticator or your passkey.',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  _ModeToggle(
-                                    currentMode: _viewModel.authMode,
-                                    enabled:
-                                        !_viewModel.isBusy &&
-                                        !_isCompletingSignIn &&
-                                        !_viewModel.hasCodeBeenSent,
-                                    onChanged: _viewModel.setAuthMode,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  _buildWhatsAppForm(theme, scheme),
-                                  if (_viewModel.message != null) ...[
-                                    const SizedBox(height: 16),
-                                    InlineNotice(
-                                      icon: Icons.check_circle_outline,
-                                      color: scheme.primary,
-                                      text: _viewModel.message!,
-                                    ),
-                                  ],
-                                  if (_viewModel.error != null) ...[
-                                    const SizedBox(height: 16),
-                                    InlineNotice(
-                                      icon: Icons.error_outline,
-                                      color: scheme.error,
-                                      text: _viewModel.error!,
-                                    ),
-                                  ],
-                                  if (_signInError != null) ...[
-                                    const SizedBox(height: 16),
-                                    InlineNotice(
-                                      icon: Icons.error_outline,
-                                      color: scheme.error,
-                                      text: _signInError!,
-                                    ),
-                                  ],
-                                ],
+                              const SizedBox(height: 10),
+                              const Align(
+                                alignment: Alignment.center,
+                                child: PrivacyPolicyLink(),
                               ),
-                            ),
+                            ],
                           ),
-                          const SizedBox(height: 10),
-                          const Align(
-                            alignment: Alignment.center,
-                            child: PrivacyPolicyLink(),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
+                );
+              },
+            ),
+            if (_viewModel.isBusy || _isCompletingSignIn)
+              HikerCircleLoadingToastOverlay(
+                message: _isCompletingSignIn
+                    ? 'Finishing sign in…'
+                    : _viewModel.isVerifyingCode
+                    ? 'Verifying WhatsApp code…'
+                    : 'Sending WhatsApp code…',
+                detail:
+                    'Securing your HikerCircle account. This may take a moment.',
+                timeout: const Duration(seconds: 30),
+                onTimeout: () {
+                  _viewModel.cancelPendingOperation();
+                  if (mounted && _isCompletingSignIn) {
+                    setState(() {
+                      _isCompletingSignIn = false;
+                      _signInError = 'Sign in timed out. Please try again.';
+                    });
+                  }
+                },
               ),
-            );
-          },
+          ],
         ),
       ),
     );
@@ -243,16 +272,9 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
           onPressed: _viewModel.isSendingCode || _isCompletingSignIn
               ? null
               : _sendCode,
-          icon: _viewModel.isSendingCode
-              ? const SizedBox.square(
-                  dimension: 18,
-                  child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-                )
-              : Icon(
-                  _viewModel.hasCodeBeenSent
-                      ? Icons.refresh
-                      : Icons.message_outlined,
-                ),
+          icon: Icon(
+            _viewModel.hasCodeBeenSent ? Icons.refresh : Icons.message_outlined,
+          ),
           label: Text(_viewModel.hasCodeBeenSent ? 'Resend OTP' : 'Send OTP'),
         ),
         if (_viewModel.hasCodeBeenSent) ...[
@@ -275,12 +297,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
             onPressed: _viewModel.isVerifyingCode || _isCompletingSignIn
                 ? null
                 : _verifyOtp,
-            icon: _viewModel.isVerifyingCode || _isCompletingSignIn
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.verified_user),
+            icon: const Icon(Icons.verified_user),
             label: const Text('Verify and continue'),
           ),
           const SizedBox(height: 6),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:lottie/lottie.dart';
+import 'dart:async';
 
 const _minorLoadingAnimation = 'assets/animations/loading_spinner.json';
 
@@ -268,7 +269,7 @@ class HikerCircleLoadingView extends StatelessWidget {
   }
 }
 
-class HikerCircleLoadingToastOverlay extends StatelessWidget {
+class HikerCircleLoadingToastOverlay extends StatefulWidget {
   const HikerCircleLoadingToastOverlay({
     super.key,
     required this.message,
@@ -276,6 +277,8 @@ class HikerCircleLoadingToastOverlay extends StatelessWidget {
     this.progress,
     this.dimBackground = true,
     this.compact = false,
+    this.timeout = Duration.zero,
+    this.onTimeout,
   });
 
   final String message;
@@ -284,17 +287,62 @@ class HikerCircleLoadingToastOverlay extends StatelessWidget {
   final bool dimBackground;
   final bool compact;
 
+  /// Optional watchdog. A zero duration keeps the overlay until its owner
+  /// removes it, while a positive duration invokes [onTimeout].
+  final Duration timeout;
+  final VoidCallback? onTimeout;
+
+  @override
+  State<HikerCircleLoadingToastOverlay> createState() =>
+      _HikerCircleLoadingToastOverlayState();
+}
+
+class _HikerCircleLoadingToastOverlayState
+    extends State<HikerCircleLoadingToastOverlay> {
+  Timer? _timeoutTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleTimeout();
+  }
+
+  @override
+  void didUpdateWidget(HikerCircleLoadingToastOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.timeout != widget.timeout ||
+        oldWidget.onTimeout != widget.onTimeout) {
+      _scheduleTimeout();
+    }
+  }
+
+  void _scheduleTimeout() {
+    _timeoutTimer?.cancel();
+    if (widget.timeout <= Duration.zero || widget.onTimeout == null) return;
+    _timeoutTimer = Timer(widget.timeout, () {
+      if (mounted) widget.onTimeout!.call();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Positioned.fill(
       child: AbsorbPointer(
         child: ColoredBox(
-          color: dimBackground ? const Color(0x66000000) : Colors.transparent,
+          color: widget.dimBackground
+              ? const Color(0x66000000)
+              : Colors.transparent,
           child: HikerCircleLoadingView(
-            message: message,
-            detail: detail,
-            progress: progress,
-            compact: compact,
+            message: widget.message,
+            detail: widget.detail,
+            progress: widget.progress,
+            compact: widget.compact,
           ),
         ),
       ),

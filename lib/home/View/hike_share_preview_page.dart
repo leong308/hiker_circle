@@ -189,60 +189,88 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
         ),
         body: SafeArea(
           top: false,
-          child: Column(
+          child: Stack(
             children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 640),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _AudienceRow(communityAvailable: communityAvailable),
-                          const SizedBox(height: 12),
-                          _PostPreviewCard(
-                            session: widget.session,
-                            report: report,
-                            activeHike: widget.activeHike,
-                            initialMapStyleIndex: widget.initialMapStyleIndex,
-                            captionController: _captionController,
-                            enabled: !isBusy,
+              Column(
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 640),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _AudienceRow(
+                                communityAvailable: communityAvailable,
+                              ),
+                              const SizedBox(height: 12),
+                              _PostPreviewCard(
+                                session: widget.session,
+                                report: report,
+                                activeHike: widget.activeHike,
+                                initialMapStyleIndex:
+                                    widget.initialMapStyleIndex,
+                                captionController: _captionController,
+                                enabled: !isBusy,
+                              ),
+                              const SizedBox(height: 12),
+                              _HikePhotoPicker(
+                                images: _images,
+                                enabled: !isBusy,
+                                onAdd: _addImages,
+                                onRemove: (index) =>
+                                    setState(() => _images.removeAt(index)),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                communityAvailable
+                                    ? 'Your route and hike totals will be included with this post.'
+                                    : 'Community posting is unavailable for this hike, but you can still share it to another app.',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: _ShareColors.secondaryTextFor(
+                                        context,
+                                      ),
+                                      letterSpacing: 0,
+                                    ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 12),
-                          _HikePhotoPicker(
-                            images: _images,
-                            enabled: !isBusy,
-                            onAdd: _addImages,
-                            onRemove: (index) =>
-                                setState(() => _images.removeAt(index)),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            communityAvailable
-                                ? 'Your route and hike totals will be included with this post.'
-                                : 'Community posting is unavailable for this hike, but you can still share it to another app.',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: _ShareColors.secondaryTextFor(context),
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
+                  _ShareActionBar(
+                    communityAvailable: communityAvailable,
+                    isPosting: _isPosting,
+                    isSharingExternally: _isSharingExternally,
+                    onPost: _postToCommunity,
+                    onShareExternally: _shareExternally,
+                  ),
+                ],
+              ),
+              if (isBusy)
+                HikerCircleLoadingToastOverlay(
+                  message: _isPosting
+                      ? 'Sharing your hike…'
+                      : 'Preparing share…',
+                  detail: _isPosting
+                      ? 'Uploading your preview and route details.'
+                      : 'Opening the selected sharing app.',
+                  timeout: const Duration(seconds: 30),
+                  onTimeout: () {
+                    if (mounted) {
+                      setState(() {
+                        _isPosting = false;
+                        _isSharingExternally = false;
+                      });
+                      _showMessage('Sharing timed out. Please try again.');
+                    }
+                  },
                 ),
-              ),
-              _ShareActionBar(
-                communityAvailable: communityAvailable,
-                isPosting: _isPosting,
-                isSharingExternally: _isSharingExternally,
-                onPost: _postToCommunity,
-                onShareExternally: _shareExternally,
-              ),
             ],
           ),
         ),
@@ -755,12 +783,7 @@ class _ShareActionBar extends StatelessWidget {
     final externalAction = OutlinedButton.icon(
       key: const Key('share-hike-externally'),
       onPressed: isBusy ? null : onShareExternally,
-      icon: isSharingExternally
-          ? const SizedBox.square(
-              dimension: 18,
-              child: HikerCircleMinorLoadingIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.ios_share_rounded),
+      icon: const Icon(Icons.ios_share_rounded),
       label: const Text('Other apps'),
     );
     final communityAction = FilledButton.icon(
@@ -770,15 +793,7 @@ class _ShareActionBar extends StatelessWidget {
         backgroundColor: _ShareColors.green,
         foregroundColor: Colors.white,
       ),
-      icon: isPosting
-          ? const SizedBox.square(
-              dimension: 18,
-              child: HikerCircleMinorLoadingIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            )
-          : const Icon(Icons.send_rounded),
+      icon: const Icon(Icons.send_rounded),
       label: const Text('Post to Community'),
     );
     return DecoratedBox(
