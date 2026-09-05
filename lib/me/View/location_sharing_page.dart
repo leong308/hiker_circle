@@ -3,6 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
+import '../../core/config/google_api_config.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../core/widgets/loading_toast.dart';
@@ -313,7 +315,7 @@ class _MapPanel extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             if (location case final location?)
-              _OpenStreetMap(location: location)
+              _LiveLocationMap(location: location)
             else
               ColoredBox(color: _LocationColors.mapFallbackFor(context)),
             const Center(child: _MapPin()),
@@ -369,6 +371,99 @@ class _MapPanel extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _LiveLocationMap extends StatefulWidget {
+  const _LiveLocationMap({required this.location});
+  final SosTriggerLocation location;
+
+  @override
+  State<_LiveLocationMap> createState() => _LiveLocationMapState();
+}
+
+class _LiveLocationMapState extends State<_LiveLocationMap> {
+  mapbox.MapboxMap? _map;
+  bool _failed = false;
+  Timer? _loadTimeout;
+
+  mapbox.Point get _center => mapbox.Point(
+    coordinates: mapbox.Position(
+      widget.location.longitude,
+      widget.location.latitude,
+    ),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTimeout = Timer(const Duration(seconds: 15), _fallback);
+  }
+
+  void _fallback() {
+    _loadTimeout?.cancel();
+    if (mounted && !_failed) {
+      setState(() {
+        _failed = true;
+        _map = null;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_LiveLocationMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.location.latitude != widget.location.latitude ||
+        oldWidget.location.longitude != widget.location.longitude) {
+      unawaited(_recenter());
+    }
+  }
+
+  Future<void> _recenter() async {
+    try {
+      await _map?.setCamera(mapbox.CameraOptions(center: _center, zoom: 16));
+    } catch (_) {
+      _fallback();
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadTimeout?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failed || !GoogleApiConfig.hasMapboxAccessToken) {
+      return _OpenStreetMap(location: widget.location);
+    }
+    return mapbox.MapWidget(
+      styleUri: 'mapbox://styles/mapbox/outdoors-v12',
+      onMapCreated: (map) async {
+        if (!mounted || _failed) return;
+        _map = map;
+        try {
+          // The pin is centered over this preview; keep its camera centered too.
+          await map.gestures.updateSettings(
+            mapbox.GesturesSettings(
+              scrollEnabled: false,
+              pinchToZoomEnabled: false,
+              rotateEnabled: false,
+              pitchEnabled: false,
+              doubleTapToZoomInEnabled: false,
+              doubleTouchToZoomOutEnabled: false,
+              quickZoomEnabled: false,
+            ),
+          );
+          await _recenter();
+        } catch (_) {
+          _fallback();
+        }
+      },
+      onMapLoadedListener: (_) => _loadTimeout?.cancel(),
+      onMapLoadErrorListener: (_) => _fallback(),
     );
   }
 }

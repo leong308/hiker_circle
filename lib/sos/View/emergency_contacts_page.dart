@@ -40,10 +40,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
   late final EmergencyContactsViewModel viewModel;
-  List<EmergencyContactCandidate> _deviceContacts = const [];
-  bool _isLoadingDeviceContacts = false;
   bool _isCompletingOnboarding = false;
-  String? _deviceContactsMessage;
   String? _onboardingErrorMessage;
 
   @override
@@ -55,7 +52,6 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
       repository: widget.repository,
     );
     viewModel.addListener(_refresh);
-    unawaited(_loadDeviceContacts());
   }
 
   @override
@@ -138,8 +134,12 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     final updatedContact = await showModalBottomSheet<EmergencyContact>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _EditContactSheet(contact: contact),
+      builder: (context) => _EditContactSheet(
+        contact: contact,
+        pickContact: () => _pickDeviceContact(excluding: contact),
+      ),
     );
 
     if (updatedContact == null || !mounted) {
@@ -185,25 +185,44 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     }
   }
 
-  Future<void> _loadDeviceContacts() async {
-    setState(() {
-      _isLoadingDeviceContacts = true;
-      _deviceContactsMessage = null;
-    });
+  Future<EmergencyContactCandidate?> _pickDeviceContact({
+    EmergencyContact? excluding,
+  }) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final contacts = _deviceAlertService.loadDeviceContacts();
+    return showModalBottomSheet<EmergencyContactCandidate>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: _ContactsColors.surfaceFor(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) => SafeArea(
+        top: false,
+        child: FutureBuilder<List<EmergencyContactCandidate>>(
+          future: contacts,
+          builder: (context, snapshot) => _DeviceContactsPicker(
+            contacts: snapshot.data ?? const [],
+            savedContacts: viewModel.contacts
+                .where((contact) => contact != excluding)
+                .toList(),
+            isLoading: snapshot.connectionState != ConnectionState.done,
+            message: snapshot.hasError
+                ? 'Unable to load contacts. You can still enter a number manually.'
+                : 'No contacts available. Check Contacts permission in your phone settings, or enter a number manually.',
+            canSelect: true,
+            onSelectContact: (contact) => Navigator.of(context).pop(contact),
+          ),
+        ),
+      ),
+    );
+  }
 
-    final contacts = await _deviceAlertService.loadDeviceContacts();
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      _deviceContacts = contacts;
-      _isLoadingDeviceContacts = false;
-      if (contacts.isEmpty) {
-        _deviceContactsMessage =
-            'No phone contacts are available or permission was not granted.';
-      }
-    });
+  Future<void> _importDeviceContact() async {
+    final contact = await _pickDeviceContact();
+    if (contact != null && mounted) _selectDeviceContact(contact);
   }
 
   void _selectDeviceContact(EmergencyContactCandidate contact) {
@@ -270,15 +289,6 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
                       onDeleteContact: _deleteContact,
                     ),
                     const SizedBox(height: 18),
-                    _DeviceContactsPicker(
-                      contacts: _deviceContacts,
-                      savedContacts: viewModel.contacts,
-                      isLoading: _isLoadingDeviceContacts,
-                      message: _deviceContactsMessage,
-                      canSelect: viewModel.canAddContact && !isBusy,
-                      onSelectContact: _selectDeviceContact,
-                    ),
-                    const SizedBox(height: 18),
                     _AddContactForm(
                       formKey: _formKey,
                       nameController: _nameController,
@@ -287,6 +297,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
                       canAddContact: viewModel.canAddContact && !isBusy,
                       remainingSlots: viewModel.remainingSlots,
                       onAddContact: _addContact,
+                      onPickContact: _importDeviceContact,
                     ),
                   ],
                 ),
@@ -403,6 +414,7 @@ class _SummaryCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
@@ -492,6 +504,7 @@ class _DeviceContactsPicker extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
@@ -503,7 +516,7 @@ class _DeviceContactsPicker extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'From phone contacts',
+                        'Phone contacts',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
                               color: _ContactsColors.textFor(context),
@@ -538,7 +551,7 @@ class _DeviceContactsPicker extends StatelessWidget {
             ] else ...[
               const SizedBox(height: 12),
               SizedBox(
-                height: 178,
+                height: MediaQuery.sizeOf(context).height * 0.45,
                 child: ListView.separated(
                   itemCount: candidates.length,
                   separatorBuilder: (context, index) =>
@@ -573,7 +586,7 @@ class _DeviceContactsPicker extends StatelessWidget {
                               onPressed: canSelect
                                   ? () => onSelectContact(contact)
                                   : null,
-                              child: const Text('Add'),
+                              child: const Text('Select'),
                             ),
                     );
                   },
@@ -880,6 +893,7 @@ class _AddContactForm extends StatelessWidget {
     required this.canAddContact,
     required this.remainingSlots,
     required this.onAddContact,
+    required this.onPickContact,
   });
 
   final GlobalKey<FormState> formKey;
@@ -889,6 +903,7 @@ class _AddContactForm extends StatelessWidget {
   final bool canAddContact;
   final int remainingSlots;
   final Future<void> Function() onAddContact;
+  final VoidCallback onPickContact;
 
   @override
   Widget build(BuildContext context) {
@@ -936,9 +951,14 @@ class _AddContactForm extends StatelessWidget {
                 enabled: canAddContact,
                 keyboardType: TextInputType.phone,
                 textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Phone number',
-                  prefixIcon: Icon(Icons.phone_iphone_rounded),
+                  prefixIcon: const Icon(Icons.phone_iphone_rounded),
+                  suffixIcon: IconButton(
+                    tooltip: 'Choose from phone contacts',
+                    icon: const Icon(CupertinoIcons.person_crop_rectangle),
+                    onPressed: canAddContact ? onPickContact : null,
+                  ),
                 ),
                 validator: _phoneValidator,
               ),
@@ -987,9 +1007,10 @@ class _AddContactForm extends StatelessWidget {
 }
 
 class _EditContactSheet extends StatefulWidget {
-  const _EditContactSheet({required this.contact});
+  const _EditContactSheet({required this.contact, required this.pickContact});
 
   final EmergencyContact contact;
+  final Future<EmergencyContactCandidate?> Function() pickContact;
 
   @override
   State<_EditContactSheet> createState() => _EditContactSheetState();
@@ -1041,29 +1062,42 @@ class _EditContactSheetState extends State<_EditContactSheet> {
       padding: EdgeInsets.only(bottom: bottomInset),
       child: SafeArea(
         top: false,
-        child: Center(
+        child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 0),
+            padding: EdgeInsets.zero,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(28),
+              ),
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: _ContactsColors.surfaceFor(context),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
                   child: Form(
                     key: _formKey,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        Center(
+                          child: Container(
+                            width: 36,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: _ContactsColors.separatorFor(context),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
                         Row(
                           children: [
                             Expanded(
                               child: Text(
-                                'Edit Contact',
-                                style: Theme.of(context).textTheme.titleMedium
+                                'Edit contact',
+                                style: Theme.of(context).textTheme.titleLarge
                                     ?.copyWith(
                                       color: _ContactsColors.textFor(context),
                                       fontWeight: FontWeight.w700,
@@ -1073,19 +1107,28 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                             ),
                             CupertinoButton(
                               padding: EdgeInsets.zero,
-                              minimumSize: const Size.square(32),
+                              minimumSize: const Size.square(44),
                               onPressed: () => Navigator.of(context).pop(),
                               child: Icon(
-                                CupertinoIcons.xmark,
+                                CupertinoIcons.xmark_circle_fill,
                                 color: _ContactsColors.secondaryTextFor(
                                   context,
                                 ),
-                                size: 18,
+                                size: 28,
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
+                        Text(
+                          'Keep this person’s details up to date for SOS alerts.',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: _ContactsColors.secondaryTextFor(
+                                  context,
+                                ),
+                              ),
+                        ),
+                        const SizedBox(height: 24),
                         TextFormField(
                           controller: _nameController,
                           textInputAction: TextInputAction.next,
@@ -1100,9 +1143,24 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                           controller: _phoneController,
                           keyboardType: TextInputType.phone,
                           textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             labelText: 'Phone number',
-                            prefixIcon: Icon(Icons.phone_iphone_rounded),
+                            prefixIcon: const Icon(Icons.phone_iphone_rounded),
+                            suffixIcon: IconButton(
+                              tooltip: 'Choose from phone contacts',
+                              icon: const Icon(
+                                CupertinoIcons.person_crop_rectangle,
+                              ),
+                              onPressed: () async {
+                                final contact = await widget.pickContact();
+                                if (contact == null || !mounted) return;
+                                _nameController.text = contact.displayName;
+                                _phoneController.text =
+                                    PhoneNumberFormatter.normalize(
+                                      contact.primaryPhoneNumber,
+                                    );
+                              },
+                            ),
                           ),
                           validator: _AddContactForm._phoneValidator,
                         ),
@@ -1115,8 +1173,14 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                           ),
                           validator: _AddContactForm._requiredValidator,
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 24),
                         FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
                           onPressed: _save,
                           icon: const Icon(Icons.check_rounded),
                           label: const Text('Save changes'),

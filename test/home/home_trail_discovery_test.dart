@@ -68,7 +68,7 @@ void main() {
     expect(find.text('Upcoming Hike', skipOffstage: false), findsNothing);
     expect(find.text('Create Hike', skipOffstage: false), findsOneWidget);
     expect(find.text('Find a Hike', skipOffstage: false), findsOneWidget);
-    expect(find.text('BEST MATCHES', skipOffstage: false), findsOneWidget);
+    expect(find.text('HIKING TRAILS', skipOffstage: false), findsOneWidget);
     expect(find.text('KL Forest Trail', skipOffstage: false), findsOneWidget);
     expect(find.text('Suggested for today'), findsNothing);
     expect(find.text('Offline Ready Routes'), findsNothing);
@@ -260,18 +260,17 @@ void main() {
     expect(find.text('Newly Visible Hike'), findsOneWidget);
   });
 
-  testWidgets('filters Best Matches by worldwide state without leaving home', (
+  testWidgets('filters Hiking Trails by Malaysian state without leaving home', (
     tester,
   ) async {
     final malaysiaTrail = _testTrail();
-    final nepalTrail = malaysiaTrail.copyWith(
-      trailId: 'nepal-trail',
-      name: 'Everest Foothill',
-      area: 'Solukhumbu',
-      state: 'Kosi Zone',
-      country: 'Nepal',
-      latitude: 27.9881,
-      longitude: 86.925,
+    final selangorTrail = malaysiaTrail.copyWith(
+      trailId: 'selangor-trail',
+      name: 'Selangor Ridge',
+      area: 'Gombak',
+      state: 'Selangor',
+      latitude: 3.3258,
+      longitude: 101.7527,
     );
 
     await tester.pumpWidget(
@@ -279,7 +278,7 @@ void main() {
         home: HomeDashboardPage(
           phoneNumber: '+60123456789',
           plannedHike: null,
-          trails: [malaysiaTrail, nepalTrail],
+          trails: [malaysiaTrail, selangorTrail],
           isLoadingTrails: false,
           activeHike: null,
           isVisible: true,
@@ -310,44 +309,30 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(find.byType(CupertinoPicker), findsOneWidget);
-    final countryPicker = tester.widget<CupertinoPicker>(
-      find.byType(CupertinoPicker).first,
-    );
-    final countryChildren =
-        (countryPicker.childDelegate as ListWheelChildListDelegate).children;
-    final nepalIndex = countryChildren.indexWhere(
-      (child) => ((child as Center).child! as Text).data == 'Nepal',
-    );
-    expect(nepalIndex, greaterThanOrEqualTo(0));
-    countryPicker.onSelectedItemChanged?.call(nepalIndex);
-    await tester.pump();
-    for (
-      var i = 0;
-      i < 30 && find.byType(CupertinoPicker).evaluate().length < 2;
-      i++
-    ) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 20)),
-      );
-      await tester.pump(const Duration(milliseconds: 100));
-    }
-    expect(find.byType(CupertinoPicker), findsNWidgets(2));
+    expect(find.text('Country'), findsNothing);
+    expect(find.text('Choose a state in Malaysia.'), findsOneWidget);
     final statePicker = tester.widget<CupertinoPicker>(
-      find.byType(CupertinoPicker).last,
+      find.byType(CupertinoPicker),
     );
     final stateChildren =
         (statePicker.childDelegate as ListWheelChildListDelegate).children;
-    final koshiIndex = stateChildren.indexWhere(
-      (child) => ((child as Center).child! as Text).data == 'Kosi Zone',
+    final selangorIndex = stateChildren.indexWhere(
+      (child) => ((child as Center).child! as Text).data == 'Selangor',
     );
-    expect(koshiIndex, greaterThanOrEqualTo(0));
-    statePicker.onSelectedItemChanged?.call(koshiIndex);
+    expect(selangorIndex, greaterThanOrEqualTo(0));
+    final stateScrollController = statePicker.scrollController;
+    statePicker.onSelectedItemChanged?.call(selangorIndex);
+    await tester.pump();
+    final rebuiltStatePicker = tester.widget<CupertinoPicker>(
+      find.byType(CupertinoPicker),
+    );
+    expect(rebuiltStatePicker.scrollController, same(stateScrollController));
     await tester.tap(find.text('Use this state'));
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('Everest Foothill'), findsOneWidget);
+    expect(find.text('Selangor Ridge'), findsOneWidget);
     expect(find.text('Team Trail'), findsNothing);
-    expect(find.text('Nepal'), findsOneWidget);
+    expect(find.text('State · Selangor'), findsOneWidget);
   });
 }
 

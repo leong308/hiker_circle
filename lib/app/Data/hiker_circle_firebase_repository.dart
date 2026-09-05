@@ -102,6 +102,36 @@ class HikerCircleFirebaseRepositoryException implements Exception {
   String toString() => message;
 }
 
+String achievementProgressContentHash(List<Map<String, dynamic>> rows) {
+  String stringValue(Object? value) => value is String ? value : '';
+  int intValue(Object? value) =>
+      value is num && value.isFinite ? value.toInt() : 0;
+  final normalized =
+      rows.map((row) {
+        return <Object>[
+          stringValue(row['achievementId']),
+          stringValue(row['title']),
+          stringValue(row['condition']),
+          stringValue(row['category']),
+          stringValue(row['iconName']),
+          intValue(row['rewardPoints']),
+          intValue(row['pointsAwarded']),
+          stringValue(row['rewardType']),
+          stringValue(row['metricKey']),
+          intValue(row['targetCount']),
+          intValue(row['progressCount']),
+          intValue(row['sortOrder']),
+          intValue(row['accentColorValue']),
+          row['isActive'] != false,
+          row['isUnlocked'] == true,
+          stringValue(row['awardedAtLocal']),
+        ];
+      }).toList()..sort((left, right) {
+        return (left.first as String).compareTo(right.first as String);
+      });
+  return crypto.sha256.convert(utf8.encode(jsonEncode(normalized))).toString();
+}
+
 class NearbySosForwardResult {
   const NearbySosForwardResult({
     required this.incidentId,
@@ -678,6 +708,136 @@ class HikerCircleFirebaseRepository {
       'sortOrder': 10,
       'accentColorValue': 0xFF34A853,
     },
+    'trail_regular': {
+      'title': 'Trail Regular',
+      'condition': 'Complete 5 hike sessions',
+      'category': 'Hike milestone',
+      'iconName': 'hiking',
+      'rewardPoints': 160,
+      'rewardType': 'cumulative',
+      'metricKey': 'hike_completed',
+      'targetCount': 5,
+      'isActive': true,
+      'sortOrder': 70,
+      'accentColorValue': 0xFF27AE60,
+    },
+    'trail_enthusiast': {
+      'title': 'Trail Enthusiast',
+      'condition': 'Complete 10 hike sessions',
+      'category': 'Hike milestone',
+      'iconName': 'hiking',
+      'rewardPoints': 220,
+      'rewardType': 'cumulative',
+      'metricKey': 'hike_completed',
+      'targetCount': 10,
+      'isActive': true,
+      'sortOrder': 80,
+      'accentColorValue': 0xFF219653,
+    },
+    'seasoned_trekker': {
+      'title': 'Seasoned Trekker',
+      'condition': 'Complete 25 hike sessions',
+      'category': 'Hike milestone',
+      'iconName': 'terrain',
+      'rewardPoints': 350,
+      'rewardType': 'cumulative',
+      'metricKey': 'hike_completed',
+      'targetCount': 25,
+      'isActive': true,
+      'sortOrder': 90,
+      'accentColorValue': 0xFF168AAD,
+    },
+    'fifty_hike_legend': {
+      'title': 'Fifty-Hike Legend',
+      'condition': 'Complete 50 hike sessions',
+      'category': 'Hike milestone',
+      'iconName': 'military_tech',
+      'rewardPoints': 500,
+      'rewardType': 'cumulative',
+      'metricKey': 'hike_completed',
+      'targetCount': 50,
+      'isActive': true,
+      'sortOrder': 100,
+      'accentColorValue': 0xFFFFB000,
+    },
+    'trail_collector': {
+      'title': 'Trail Collector',
+      'condition': 'Complete 5 different trails',
+      'category': 'Trail exploration',
+      'iconName': 'route',
+      'rewardPoints': 180,
+      'rewardType': 'cumulative',
+      'metricKey': 'distinct_trail_completed',
+      'targetCount': 5,
+      'isActive': true,
+      'sortOrder': 110,
+      'accentColorValue': 0xFF2D9CDB,
+    },
+    'route_ranger': {
+      'title': 'Route Ranger',
+      'condition': 'Complete 10 different trails',
+      'category': 'Trail exploration',
+      'iconName': 'explore',
+      'rewardPoints': 260,
+      'rewardType': 'cumulative',
+      'metricKey': 'distinct_trail_completed',
+      'targetCount': 10,
+      'isActive': true,
+      'sortOrder': 120,
+      'accentColorValue': 0xFF2F80ED,
+    },
+    'trail_atlas': {
+      'title': 'Trail Atlas',
+      'condition': 'Complete 25 different trails',
+      'category': 'Trail exploration',
+      'iconName': 'map',
+      'rewardPoints': 450,
+      'rewardType': 'cumulative',
+      'metricKey': 'distinct_trail_completed',
+      'targetCount': 25,
+      'isActive': true,
+      'sortOrder': 130,
+      'accentColorValue': 0xFF6C5CE7,
+    },
+    'state_scout': {
+      'title': 'State Scout',
+      'condition': 'Complete hikes in 3 Malaysian states',
+      'category': 'Malaysia exploration',
+      'iconName': 'travel_explore',
+      'rewardPoints': 250,
+      'rewardType': 'cumulative',
+      'metricKey': 'malaysia_state_hiked',
+      'targetCount': 3,
+      'isActive': true,
+      'sortOrder': 140,
+      'accentColorValue': 0xFF00A99D,
+    },
+    'malaysia_explorer': {
+      'title': 'Malaysia Explorer',
+      'condition': 'Complete hikes in 7 Malaysian states',
+      'category': 'Malaysia exploration',
+      'iconName': 'travel_explore',
+      'rewardPoints': 450,
+      'rewardType': 'cumulative',
+      'metricKey': 'malaysia_state_hiked',
+      'targetCount': 7,
+      'isActive': true,
+      'sortOrder': 150,
+      'accentColorValue': 0xFF00897B,
+    },
+    'malaysia_trailblazer': {
+      'title': 'Malaysia Trailblazer',
+      'condition': 'Complete hikes in all 13 Malaysian states',
+      'category': 'Malaysia exploration',
+      'iconName': 'public',
+      'rewardPoints': 800,
+      'rewardType': 'cumulative',
+      'metricKey': 'malaysia_state_hiked',
+      'targetCount': 13,
+      'isActive': true,
+      'sortOrder': 160,
+      'accentColorValue': 0xFFFFC107,
+    },
     'prepared_adventurer': {
       'title': 'Prepared Adventurer',
       'condition': 'Download offline map before starting',
@@ -717,6 +877,45 @@ class HikerCircleFirebaseRepository {
       'sortOrder': 40,
       'accentColorValue': 0xFF9B51E0,
     },
+    'check_in_champion': {
+      'title': 'Check-In Champion',
+      'condition': 'Complete 25 safe check-ins during hikes',
+      'category': 'Safety habit',
+      'iconName': 'task_alt',
+      'rewardPoints': 240,
+      'rewardType': 'cumulative',
+      'metricKey': 'check_in_completed',
+      'targetCount': 25,
+      'isActive': true,
+      'sortOrder': 190,
+      'accentColorValue': 0xFF8E44AD,
+    },
+    'safety_beacon': {
+      'title': 'Safety Beacon',
+      'condition': 'Complete 100 safe check-ins during hikes',
+      'category': 'Safety habit',
+      'iconName': 'health_and_safety',
+      'rewardPoints': 500,
+      'rewardType': 'cumulative',
+      'metricKey': 'check_in_completed',
+      'targetCount': 100,
+      'isActive': true,
+      'sortOrder': 200,
+      'accentColorValue': 0xFF9B51E0,
+    },
+    'security_guardian': {
+      'title': 'Security Guardian',
+      'condition': 'Protect your account with both Authenticator and a passkey',
+      'category': 'Account security',
+      'iconName': 'verified_user',
+      'rewardPoints': 150,
+      'rewardType': 'cumulative',
+      'metricKey': 'security_factor_type_bound',
+      'targetCount': 2,
+      'isActive': true,
+      'sortOrder': 45,
+      'accentColorValue': 0xFF2F80ED,
+    },
     'community_helper': {
       'title': 'Community Helper',
       'condition': 'Submit a hazard report later confirmed by others',
@@ -730,6 +929,45 @@ class HikerCircleFirebaseRepository {
       'sortOrder': 50,
       'accentColorValue': 0xFFEB5757,
     },
+    'trail_storyteller': {
+      'title': 'Trail Storyteller',
+      'condition': 'Share your first public trail post',
+      'category': 'Community',
+      'iconName': 'forum',
+      'rewardPoints': 100,
+      'rewardType': 'one_time',
+      'metricKey': 'community_post_created',
+      'targetCount': 1,
+      'isActive': true,
+      'sortOrder': 210,
+      'accentColorValue': 0xFFF2994A,
+    },
+    'community_voice': {
+      'title': 'Community Voice',
+      'condition': 'Share 5 public trail posts',
+      'category': 'Community',
+      'iconName': 'forum',
+      'rewardPoints': 250,
+      'rewardType': 'cumulative',
+      'metricKey': 'community_post_created',
+      'targetCount': 5,
+      'isActive': true,
+      'sortOrder': 220,
+      'accentColorValue': 0xFFE67E22,
+    },
+    'hazard_sentinel': {
+      'title': 'Hazard Sentinel',
+      'condition': 'Submit 5 hazard reports confirmed by others',
+      'category': 'Community safety',
+      'iconName': 'warning',
+      'rewardPoints': 320,
+      'rewardType': 'cumulative',
+      'metricKey': 'hazard_report_approved',
+      'targetCount': 5,
+      'isActive': true,
+      'sortOrder': 230,
+      'accentColorValue': 0xFFD63031,
+    },
     'team_guardian': {
       'title': 'Team Guardian',
       'condition': 'Complete 3 team hikes without a separation emergency',
@@ -742,6 +980,32 @@ class HikerCircleFirebaseRepository {
       'isActive': true,
       'sortOrder': 60,
       'accentColorValue': 0xFF00A99D,
+    },
+    'first_team_hike': {
+      'title': 'Better Together',
+      'condition': 'Complete your first safe team hike',
+      'category': 'Team hike',
+      'iconName': 'groups',
+      'rewardPoints': 100,
+      'rewardType': 'one_time',
+      'metricKey': 'team_hike_completed',
+      'targetCount': 1,
+      'isActive': true,
+      'sortOrder': 170,
+      'accentColorValue': 0xFF00A99D,
+    },
+    'trail_crew': {
+      'title': 'Trail Crew',
+      'condition': 'Complete 10 team hikes without a separation emergency',
+      'category': 'Team hike',
+      'iconName': 'groups',
+      'rewardPoints': 350,
+      'rewardType': 'cumulative',
+      'metricKey': 'team_hike_completed',
+      'targetCount': 10,
+      'isActive': true,
+      'sortOrder': 180,
+      'accentColorValue': 0xFF00796B,
     },
   };
   static const Set<String> _legacySeedTrailIds = {
@@ -3694,6 +3958,43 @@ class HikerCircleFirebaseRepository {
     int increment = 1,
   }) async {}
 
+  Future<LocalAchievementProgressCache?> loadCachedAchievementProgress({
+    required AppSession session,
+  }) {
+    return _localDatabase.loadAchievementProgressCache(
+      ownerPhoneNumber: session.phoneNumber,
+    );
+  }
+
+  Future<void> saveCachedAchievementProgress({
+    required AppSession session,
+    required String contentHash,
+    required List<Map<String, dynamic>> rows,
+  }) {
+    return _localDatabase.saveAchievementProgressCache(
+      ownerPhoneNumber: session.phoneNumber,
+      contentHash: contentHash,
+      rows: rows,
+    );
+  }
+
+  Future<String> loadAchievementProgressHash({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return '';
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable('getMyAchievementProgressHash')
+          .call()
+          .timeout(_firebaseReadTimeout);
+      final data = response.data;
+      if (data is! Map) return '';
+      return _stringFrom(data['hash']);
+    } catch (_) {
+      return '';
+    }
+  }
+
   Future<List<Map<String, dynamic>>> loadUserAchievementProgress({
     required AppSession session,
   }) async {
@@ -3705,7 +4006,16 @@ class HikerCircleFirebaseRepository {
     }
 
     try {
-      unawaited(ensureAchievementSeeds());
+      await ensureAchievementSeeds();
+      try {
+        await _resolvedFunctions
+            .httpsCallable('syncMyAchievementProgress')
+            .call()
+            .timeout(_firebaseWriteTimeout);
+      } catch (_) {
+        // The catalog still loads if historical progress reconciliation is
+        // temporarily unavailable. Future hike events continue to count.
+      }
       final userId = _userIdFor(session);
       final results = await Future.wait([
         _achievements.orderBy('sortOrder').get().timeout(_firebaseReadTimeout),

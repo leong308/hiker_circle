@@ -295,6 +295,12 @@ void main() {
       expect(find.text('STOP'), findsOneWidget);
       expect(acknowledgement.isCompleted, isFalse);
 
+      expect(
+        find.textContaining('to your emergency contacts…'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('sent to'), findsNothing);
+
       final emergencyButton = find.byKey(const Key('sos-emergency-button'));
       await tester.ensureVisible(emergencyButton);
       await tester.tap(emergencyButton);
@@ -306,6 +312,12 @@ void main() {
 
       acknowledgement.complete(repository.resultFor(SosAlertMode.manual));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.textContaining('to your emergency contacts…'), findsNothing);
+      expect(
+        find.textContaining('no emergency contacts are saved'),
+        findsOneWidget,
+      );
       await disposePage(tester);
     } finally {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

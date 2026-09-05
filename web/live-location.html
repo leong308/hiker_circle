@@ -102,7 +102,8 @@
     <h1>HikerCircle Live Location</h1>
     <p id="status">Loading shared location...</p>
     <section id="content" class="panel" hidden>
-      <iframe id="map" class="map" title="Live location map"></iframe>
+      <img id="map" class="map" alt="Live location on Mapbox" style="object-fit:contain">
+      <iframe id="fallbackMap" class="map" title="Live location map — OpenStreetMap fallback" hidden></iframe>
       <div class="details">
         <p id="coordinate" class="coordinate"></p>
         <p id="updated" class="updated"></p>
@@ -133,11 +134,49 @@
     const content = document.getElementById("content");
     const empty = document.getElementById("empty");
     const map = document.getElementById("map");
+    const fallbackMap = document.getElementById("fallbackMap");
+    const mapConfig = fetch('/map-config.json').then(response => response.ok ? response.json() : {})
+      .catch(() => ({}));
+    let mapGeneration = 0;
+    let lastCoordinates = '';
+
+    async function updateMap(lat, lng) {
+      const coordinates = `${lat},${lng}`;
+      if (coordinates === lastCoordinates) return;
+      lastCoordinates = coordinates;
+      const generation = ++mapGeneration;
+      const config = await mapConfig;
+      if (generation !== mapGeneration) return;
+      function fallback() {
+        if (generation !== mapGeneration) return;
+        map.hidden = true;
+        fallbackMap.hidden = false;
+        const bbox = [lng - 0.008, lat - 0.005, lng + 0.008, lat + 0.005].join(',');
+        fallbackMap.src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lng}`;
+      }
+      if (!config.mapboxAccessToken?.startsWith('pk.')) { fallback(); return; }
+      const image = new Image();
+      const timeout = setTimeout(fallback, 15000);
+      image.onload = () => {
+        clearTimeout(timeout);
+        if (generation !== mapGeneration) return;
+        map.src = image.src;
+        map.hidden = false;
+        fallbackMap.hidden = true;
+        fallbackMap.removeAttribute('src');
+      };
+      image.onerror = () => { clearTimeout(timeout); fallback(); };
+      image.src = `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/pin-s+23964f(${lng},${lat})/${lng},${lat},16/640x400@2x?access_token=${encodeURIComponent(config.mapboxAccessToken)}`;
+    }
     const coordinate = document.getElementById("coordinate");
     const updated = document.getElementById("updated");
     const mapLink = document.getElementById("mapLink");
 
     function showEmpty(message) {
+      mapGeneration++;
+      lastCoordinates = '';
+      map.removeAttribute('src');
+      fallbackMap.removeAttribute('src');
       status.textContent = message;
       content.hidden = true;
       empty.hidden = false;
@@ -145,7 +184,7 @@
 
     function showLocation(data) {
       const location = data.latestLocation;
-      if (!data.isActive || !location || typeof location.latitude !== "number" || typeof location.longitude !== "number") {
+      if (!data.isActive || !location || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) || Math.abs(location.latitude) > 85.05112878 || Math.abs(location.longitude) > 180) {
         showEmpty("This live location link is inactive.");
         return;
       }
@@ -158,7 +197,7 @@
       status.textContent = "Live location active";
       coordinate.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
       updated.textContent = timestamp ? `Updated ${new Date(timestamp).toLocaleString()}` : "Updated recently";
-      map.src = `https://maps.google.com/maps?q=${lat},${lng}&z=16&output=embed`;
+      updateMap(lat, lng);
       mapLink.href = link;
       content.hidden = false;
       empty.hidden = true;

@@ -1,3 +1,4 @@
+import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -401,7 +402,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
       children: [
         const _HomeDashboardHeader(
           title: 'Plan Your Hike',
-          subtitle: 'Start a solo session or choose a trail from Best Matches.',
+          subtitle: 'Start a solo session or choose from Hiking Trails.',
         ),
         const SizedBox(height: 16),
         _StartHikeActions(onStartHike: onStartHike, onFindHike: onFindHike),
@@ -444,22 +445,16 @@ class _HomeDashboardHeader extends StatelessWidget {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: _HomeColors.textFor(context),
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-            ),
+            style: PageHeaderStyle.title(context, _HomeColors.textFor(context)),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
           Text(
             subtitle,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _HomeColors.secondaryTextFor(context),
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0,
+            style: PageHeaderStyle.subtitle(
+              context,
+              _HomeColors.secondaryTextFor(context),
             ),
           ),
         ],
@@ -549,8 +544,9 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
   Future<void> _chooseRegion() async {
     final selected = await WorldwideRegionPicker.show(
       context,
-      initialCountry: _region?.country ?? '',
+      initialCountry: _region?.country ?? 'Malaysia',
       initialState: _region?.state ?? '',
+      countryCodeFilter: 'MY',
     );
     if (!mounted || selected == null) return;
     setState(() {
@@ -741,7 +737,7 @@ class _BestMatchesHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Expanded(child: _SectionTitle(label: 'Best Matches')),
+        const Expanded(child: _SectionTitle(label: 'Hiking Trails')),
         if (hasActiveFilter)
           const Padding(
             padding: EdgeInsets.only(right: 8),
@@ -1649,21 +1645,18 @@ class _DetailHeader extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _HomeColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
+                style: PageHeaderStyle.title(
+                  context,
+                  _HomeColors.textFor(context),
                 ),
               ),
               Text(
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _HomeColors.secondaryTextFor(context),
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0,
+                style: PageHeaderStyle.subtitle(
+                  context,
+                  _HomeColors.secondaryTextFor(context),
                 ),
               ),
             ],
@@ -1794,11 +1787,9 @@ class _ActiveHeader extends StatelessWidget {
                 activeHike.trail.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _HomeColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
+                style: PageHeaderStyle.title(
+                  context,
+                  _HomeColors.textFor(context),
                 ),
               ),
             ],

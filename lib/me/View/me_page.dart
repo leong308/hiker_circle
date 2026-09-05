@@ -1,5 +1,7 @@
+import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show ImageFilter;
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
@@ -70,9 +72,7 @@ class _MePageState extends State<MePage> {
     onboardingRepository = OnboardingRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
-    achievementsFuture = firebaseRepository.loadUserAchievementProgress(
-      session: widget.session,
-    );
+    achievementsFuture = _loadProfileAchievements();
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
@@ -82,6 +82,42 @@ class _MePageState extends State<MePage> {
   }
 
   MeProfile get _displayProfile => firestoreProfile ?? viewModel.profile;
+
+  Future<List<Map<String, dynamic>>> _loadProfileAchievements() async {
+    final cached = await firebaseRepository.loadCachedAchievementProgress(
+      session: widget.session,
+    );
+    if (cached != null) {
+      unawaited(_refreshProfileAchievements(cached.contentHash));
+      return cached.rows;
+    }
+    return _fetchProfileAchievements();
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchProfileAchievements() async {
+    final rows = await firebaseRepository.loadUserAchievementProgress(
+      session: widget.session,
+    );
+    await firebaseRepository.saveCachedAchievementProgress(
+      session: widget.session,
+      contentHash: achievementProgressContentHash(rows),
+      rows: rows,
+    );
+    return rows;
+  }
+
+  Future<void> _refreshProfileAchievements(String hash) async {
+    try {
+      final remote = await firebaseRepository.loadAchievementProgressHash(
+        session: widget.session,
+      );
+      if (remote.isEmpty || remote == hash) return;
+      final rows = await _fetchProfileAchievements();
+      if (mounted) setState(() => achievementsFuture = Future.value(rows));
+    } catch (_) {
+      // Keep the saved summary available when the network is unavailable.
+    }
+  }
 
   Future<void> _loadFirestoreProfile() async {
     try {
@@ -444,7 +480,7 @@ class _MePageState extends State<MePage> {
   Future<void> _openAchievements() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => _AchievementsPage(
+        builder: (context) => AchievementsPage(
           session: widget.session,
           repository: firebaseRepository,
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
@@ -455,9 +491,7 @@ class _MePageState extends State<MePage> {
       return;
     }
     setState(() {
-      achievementsFuture = firebaseRepository.loadUserAchievementProgress(
-        session: widget.session,
-      );
+      achievementsFuture = _loadProfileAchievements();
     });
   }
 
@@ -583,22 +617,19 @@ class _Header extends StatelessWidget {
               children: [
                 Text(
                   'Profile',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _MeColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
+                  style: PageHeaderStyle.title(
+                    context,
+                    _MeColors.textFor(context),
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(
                   'Welcome back, ${profile.displayName}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _MeColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w400,
-                    letterSpacing: 0,
+                  style: PageHeaderStyle.subtitle(
+                    context,
+                    _MeColors.secondaryTextFor(context),
                   ),
                 ),
               ],
@@ -639,25 +670,13 @@ class _HeaderAction extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: CupertinoButton(
-        padding: EdgeInsets.zero,
-        minimumSize: const Size.square(36),
-        onPressed: onPressed,
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: _MeColors.surfaceFor(context),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: _MeColors.green, size: 19),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => PageHeaderAction(
+    tooltip: tooltip,
+    icon: icon,
+    onPressed: onPressed,
+    color: _MeColors.green,
+    surface: _MeColors.surfaceFor(context),
+  );
 }
 
 class _ProfileCell extends StatelessWidget {
@@ -955,20 +974,18 @@ class _DetailHeader extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _MeColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
+                style: PageHeaderStyle.title(
+                  context,
+                  _MeColors.textFor(context),
                 ),
               ),
               Text(
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _MeColors.secondaryTextFor(context),
-                  letterSpacing: 0,
+                style: PageHeaderStyle.subtitle(
+                  context,
+                  _MeColors.secondaryTextFor(context),
                 ),
               ),
             ],
@@ -1283,6 +1300,7 @@ class _AchievementProfileItem {
     required this.rewardPoints,
     required this.pointsAwarded,
     required this.rewardType,
+    required this.metricKey,
     required this.progressCount,
     required this.targetCount,
     required this.sortOrder,
@@ -1299,6 +1317,7 @@ class _AchievementProfileItem {
   final int rewardPoints;
   final int pointsAwarded;
   final String rewardType;
+  final String metricKey;
   final int progressCount;
   final int targetCount;
   final int sortOrder;
@@ -1336,6 +1355,7 @@ class _AchievementProfileItem {
       rewardType: _mapString(row['rewardType']) == 'cumulative'
           ? 'cumulative'
           : 'one_time',
+      metricKey: _mapString(row['metricKey']),
       progressCount: _mapInt(row['progressCount']),
       targetCount: _mapInt(row['targetCount']).clamp(1, 1000000000),
       sortOrder: _mapInt(row['sortOrder']),
@@ -1394,6 +1414,15 @@ IconData _achievementIconFor(String iconName) {
     'task_alt' => Icons.task_alt_rounded,
     'volunteer_activism' => Icons.volunteer_activism_rounded,
     'groups' => Icons.groups_2_rounded,
+    'hiking' => Icons.hiking_rounded,
+    'terrain' => Icons.terrain_rounded,
+    'military_tech' => Icons.military_tech_rounded,
+    'route' => Icons.route_rounded,
+    'explore' => Icons.explore_rounded,
+    'travel_explore' => Icons.travel_explore_rounded,
+    'public' => Icons.public_rounded,
+    'forum' => Icons.forum_rounded,
+    'warning' => Icons.warning_amber_rounded,
     _ => Icons.emoji_events_rounded,
   };
 }
@@ -2651,7 +2680,7 @@ class _AchievementsSummaryCard extends StatelessWidget {
         final level = HikerLevel.fromPoints(points);
         final locked = items.where((item) => !item.isUnlocked).toList();
         final subtitle = isLoading
-            ? 'Loading safety badges'
+            ? 'Your hiking milestones'
             : locked.isEmpty && total > 0
             ? 'All current badges unlocked'
             : locked.isEmpty
@@ -2665,7 +2694,15 @@ class _AchievementsSummaryCard extends StatelessWidget {
               padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
-                  _Glyph(icon: Icons.emoji_events_rounded),
+                  SizedBox.square(
+                    dimension: 64,
+                    child: FittedBox(
+                      child: _AchievementLevelMedallion(
+                        level: level.number,
+                        onTap: () => _showHikerLevelRoadmap(context, points),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -2684,20 +2721,6 @@ class _AchievementsSummaryCard extends StatelessWidget {
                                     ),
                               ),
                             ),
-                            if (isLoading)
-                              SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: HikerCircleMinorLoadingIndicator(
-                                  strokeWidth: 2,
-                                  color: _MeColors.green,
-                                  backgroundColor: _MeColors.greenSoftFor(
-                                    context,
-                                  ),
-                                ),
-                              )
-                            else
-                              _MiniPill(label: level.badgeLabel),
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -2744,8 +2767,11 @@ class _AchievementsSummaryCard extends StatelessWidget {
   }
 }
 
-class _AchievementsPage extends StatefulWidget {
-  const _AchievementsPage({
+enum _AchievementStatusTab { earned, locked }
+
+class AchievementsPage extends StatefulWidget {
+  const AchievementsPage({
+    super.key,
     required this.session,
     required this.repository,
     required this.firebaseBootstrapResult,
@@ -2756,40 +2782,59 @@ class _AchievementsPage extends StatefulWidget {
   final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
-  State<_AchievementsPage> createState() => _AchievementsPageState();
+  State<AchievementsPage> createState() => _AchievementsPageState();
 }
 
-class _AchievementsPageState extends State<_AchievementsPage> {
+class _AchievementsPageState extends State<AchievementsPage> {
   late Future<List<Map<String, dynamic>>> _achievementsFuture;
-  late Future<List<Map<String, dynamic>>> _leaderboardFuture;
-  String _leaderboardPeriod = 'month';
-  bool _isRefreshingAchievements = false;
+  _AchievementStatusTab _achievementTab = _AchievementStatusTab.locked;
 
   @override
   void initState() {
     super.initState();
-    _achievementsFuture = widget.repository.loadUserAchievementProgress(
-      session: widget.session,
-    );
-    _leaderboardFuture = widget.repository.loadAchievementLeaderboard();
+    _achievementsFuture = _loadAchievementsCacheFirst();
   }
 
-  Future<void> _refreshAchievements() async {
-    final future = widget.repository.loadUserAchievementProgress(
+  Future<List<Map<String, dynamic>>> _loadAchievementsCacheFirst() async {
+    final cached = await widget.repository.loadCachedAchievementProgress(
       session: widget.session,
     );
-    setState(() {
-      _isRefreshingAchievements = true;
-      _achievementsFuture = future;
-      _leaderboardFuture = widget.repository.loadAchievementLeaderboard(
-        period: _leaderboardPeriod,
-      );
-    });
-    try {
-      await future;
-    } finally {
-      if (mounted) setState(() => _isRefreshingAchievements = false);
+    if (cached != null) {
+      unawaited(_revalidateAchievementCache(cached.contentHash));
+      return cached.rows;
     }
+
+    final rows = await widget.repository.loadUserAchievementProgress(
+      session: widget.session,
+    );
+    if (rows.isNotEmpty) unawaited(_cacheFreshAchievementRows(rows));
+    return rows;
+  }
+
+  Future<void> _cacheFreshAchievementRows(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    await widget.repository.saveCachedAchievementProgress(
+      session: widget.session,
+      contentHash: achievementProgressContentHash(rows),
+      rows: rows,
+    );
+  }
+
+  Future<void> _revalidateAchievementCache(String cachedHash) async {
+    final remoteHash = await widget.repository.loadAchievementProgressHash(
+      session: widget.session,
+    );
+    if (remoteHash.isEmpty || remoteHash == cachedHash) return;
+    final rows = await widget.repository.loadUserAchievementProgress(
+      session: widget.session,
+    );
+    if (rows.isEmpty) return;
+    await _cacheFreshAchievementRows(rows);
+    if (!mounted) return;
+    setState(() {
+      _achievementsFuture = Future.value(rows);
+    });
   }
 
   @override
@@ -2799,132 +2844,110 @@ class _AchievementsPageState extends State<_AchievementsPage> {
       body: SafeArea(
         child: Stack(
           children: [
-            RefreshIndicator(
-              color: Colors.transparent,
-              backgroundColor: Colors.transparent,
-              strokeWidth: 0.01,
-              onRefresh: _refreshAchievements,
-              child: FutureBuilder<List<Map<String, dynamic>>>(
-                future: _achievementsFuture,
-                builder: (context, snapshot) {
-                  final isLoading =
-                      snapshot.connectionState == ConnectionState.waiting &&
-                      !snapshot.hasData;
-                  final achievements = _achievementItemsFromRows(
-                    snapshot.data ?? const [],
-                  );
-                  final earned = achievements
-                      .where((item) => item.isUnlocked)
-                      .toList();
-                  final locked = achievements
-                      .where((item) => !item.isUnlocked)
-                      .toList();
+            const Positioned.fill(child: _AchievementAmbientBackdrop()),
+            FutureBuilder<List<Map<String, dynamic>>>(
+              future: _achievementsFuture,
+              builder: (context, snapshot) {
+                final isLoading =
+                    snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData;
+                final achievements = _achievementItemsFromRows(
+                  snapshot.data ?? const [],
+                );
+                final earned = achievements
+                    .where((item) => item.isUnlocked)
+                    .toList();
+                final locked = achievements
+                    .where((item) => !item.isUnlocked)
+                    .toList();
+                final visibleAchievements =
+                    _achievementTab == _AchievementStatusTab.earned
+                    ? earned
+                    : locked;
 
-                  return ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-                    children: [
-                      Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 640),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _DetailHeader(
-                                title: 'Achievements',
-                                subtitle: 'Safety badges and hike milestones',
-                                onBack: () => Navigator.of(context).pop(),
+                return ListView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 640),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _AchievementPageHeader(
+                              onBack: () => Navigator.of(context).pop(),
+                              onLeaderboard: _openLeaderboard,
+                            ),
+                            const SizedBox(height: 16),
+                            if (!widget
+                                .firebaseBootstrapResult
+                                .isAvailable) ...[
+                              _AchievementNoticeCard(
+                                icon: Icons.cloud_off_rounded,
+                                title: 'Cloud achievements unavailable',
+                                message:
+                                    'Showing the local badge catalog until Firebase reconnects.',
                               ),
-                              const SizedBox(height: 16),
-                              if (!widget
-                                  .firebaseBootstrapResult
-                                  .isAvailable) ...[
-                                _AchievementNoticeCard(
-                                  icon: Icons.cloud_off_rounded,
-                                  title: 'Cloud achievements unavailable',
-                                  message:
-                                      'Showing the local badge catalog until Firebase reconnects.',
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                              if (isLoading)
-                                const _AchievementLoadingCard()
-                              else ...[
-                                _AchievementProgressPanel(items: achievements),
-                                const SizedBox(height: 12),
-                                FutureBuilder<List<Map<String, dynamic>>>(
-                                  future: _leaderboardFuture,
-                                  builder: (context, leaderboardSnapshot) {
-                                    return _AchievementLeaderboardCard(
-                                      period: _leaderboardPeriod,
-                                      entries:
-                                          leaderboardSnapshot.data ?? const [],
-                                      isLoading:
-                                          leaderboardSnapshot.connectionState ==
-                                          ConnectionState.waiting,
-                                      onPeriodChanged: (period) {
-                                        setState(() {
-                                          _leaderboardPeriod = period;
-                                          _leaderboardFuture = widget.repository
-                                              .loadAchievementLeaderboard(
-                                                period: period,
-                                              );
-                                        });
-                                      },
-                                    );
-                                  },
-                                ),
-                                const SizedBox(height: 18),
-                                const _SectionTitle(label: 'Earned'),
-                                const SizedBox(height: 8),
-                                if (earned.isEmpty)
-                                  const _AchievementNoticeCard(
-                                    icon: Icons.emoji_events_outlined,
-                                    title: 'No badges unlocked yet',
-                                    message:
-                                        'Complete safe hikes, check-ins, and community actions to earn your first badge.',
-                                  )
-                                else
-                                  for (final item in earned) ...[
-                                    _AchievementTile(
-                                      item: item,
-                                      onTap: () => _showAchievementDetail(item),
-                                    ),
-                                    const SizedBox(height: 10),
-                                  ],
-                                const SizedBox(height: 8),
-                                const _SectionTitle(label: 'Locked'),
-                                const SizedBox(height: 8),
-                                for (final item in locked) ...[
-                                  _AchievementTile(
-                                    item: item,
-                                    onTap: () => _showAchievementDetail(item),
-                                  ),
-                                  const SizedBox(height: 10),
-                                ],
-                              ],
+                              const SizedBox(height: 12),
                             ],
-                          ),
+                            if (isLoading)
+                              const _AchievementLoadingCard()
+                            else ...[
+                              _AchievementProgressPanel(items: achievements),
+                              const SizedBox(height: 18),
+                              _AchievementStatusTabs(
+                                selected: _achievementTab,
+                                earnedCount: earned.length,
+                                lockedCount: locked.length,
+                                onSelected: (value) {
+                                  setState(() => _achievementTab = value);
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              if (visibleAchievements.isEmpty)
+                                _AchievementNoticeCard(
+                                  icon:
+                                      _achievementTab ==
+                                          _AchievementStatusTab.earned
+                                      ? Icons.emoji_events_outlined
+                                      : Icons.lock_open_rounded,
+                                  title:
+                                      _achievementTab ==
+                                          _AchievementStatusTab.earned
+                                      ? 'No badges unlocked yet'
+                                      : 'Every badge is unlocked',
+                                  message:
+                                      _achievementTab ==
+                                          _AchievementStatusTab.earned
+                                      ? 'Open Locked to choose your next hiking goal.'
+                                      : 'Keep hiking to build your rank and help the community.',
+                                )
+                              else
+                                _AchievementCollectionGrid(
+                                  items: visibleAchievements,
+                                  onTap: _showAchievementDetail,
+                                ),
+                            ],
+                          ],
                         ),
                       ),
-                    ],
-                  );
-                },
-              ),
+                    ),
+                  ],
+                );
+              },
             ),
-            if (_isRefreshingAchievements)
-              HikerCircleLoadingToastOverlay(
-                message: 'Refreshing achievements…',
-                detail: 'Updating rank, badges, and leaderboard progress.',
-                timeout: const Duration(seconds: 30),
-                onTimeout: () {
-                  if (mounted) {
-                    setState(() => _isRefreshingAchievements = false);
-                  }
-                },
-              ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _openLeaderboard() {
+    Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (context) =>
+            _AchievementLeaderboardPage(repository: widget.repository),
       ),
     );
   }
@@ -2939,36 +2962,457 @@ class _AchievementsPageState extends State<_AchievementsPage> {
   }
 }
 
+class _AchievementPageHeader extends StatelessWidget {
+  const _AchievementPageHeader({
+    required this.onBack,
+    required this.onLeaderboard,
+  });
+
+  final VoidCallback onBack;
+  final VoidCallback onLeaderboard;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _AchievementHeaderButton(
+          tooltip: 'Back',
+          icon: CupertinoIcons.chevron_back,
+          onPressed: onBack,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Achievements',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: PageHeaderStyle.title(
+                  context,
+                  _MeColors.textFor(context),
+                ),
+              ),
+              Text(
+                'Collect milestones from every adventure',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: PageHeaderStyle.subtitle(
+                  context,
+                  _MeColors.secondaryTextFor(context),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        _AchievementHeaderButton(
+          key: const Key('achievement-leaderboard-button'),
+          tooltip: 'Open leaderboard',
+          icon: CupertinoIcons.chart_bar_alt_fill,
+          onPressed: onLeaderboard,
+        ),
+      ],
+    );
+  }
+}
+
+class _AchievementHeaderButton extends StatelessWidget {
+  const _AchievementHeaderButton({
+    super.key,
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => PageHeaderAction(
+    tooltip: tooltip,
+    icon: icon,
+    onPressed: onPressed,
+    color: _MeColors.green,
+    surface: _MeColors.surfaceFor(context),
+  );
+}
+
+class _AchievementLeaderboardPage extends StatefulWidget {
+  const _AchievementLeaderboardPage({required this.repository});
+
+  final HikerCircleFirebaseRepository repository;
+
+  @override
+  State<_AchievementLeaderboardPage> createState() =>
+      _AchievementLeaderboardPageState();
+}
+
+class _AchievementLeaderboardPageState
+    extends State<_AchievementLeaderboardPage> {
+  String _period = 'month';
+  List<Map<String, dynamic>>? _previewEntries;
+  DateTime? _lastTitleTap;
+  int _titleTaps = 0;
+  late Future<List<Map<String, dynamic>>> _entriesFuture;
+
+  void _tapTitle() {
+    final now = DateTime.now();
+    _titleTaps =
+        _lastTitleTap != null &&
+            now.difference(_lastTitleTap!).inMilliseconds < 600
+        ? _titleTaps + 1
+        : 1;
+    _lastTitleTap = now;
+    if (_titleTaps < 3) return;
+    _titleTaps = 0;
+    setState(() {
+      _previewEntries = List.generate(
+        50,
+        (index) => <String, dynamic>{
+          'rank': index + 1,
+          'displayName': index == 36
+              ? 'You'
+              : '${['Aiman', 'Mei', 'Arun', 'Sofia', 'Daniel', 'Nur', 'Kai', 'Priya', 'Amir', 'Lina'][index % 10]} ${index ~/ 10 + 1}',
+          'points': (50 - index) * 85 + 20,
+          'isCurrentUser': index == 36,
+        },
+      );
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _entriesFuture = widget.repository.loadAchievementLeaderboard();
+  }
+
+  void _selectPeriod(String period) {
+    if (period == _period) return;
+    setState(() {
+      _period = period;
+      if (_previewEntries != null) return;
+      _entriesFuture = widget.repository.loadAchievementLeaderboard(
+        period: period,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _MeColors.backgroundFor(context),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            const Positioned.fill(child: _AchievementAmbientBackdrop()),
+            ListView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+              children: [
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _DetailHeader(
+                          title: 'Leaderboard',
+                          subtitle: 'Hikers earning the most trail points',
+                          onBack: () => Navigator.of(context).pop(),
+                        ),
+                        const SizedBox(height: 18),
+                        FutureBuilder<List<Map<String, dynamic>>>(
+                          future: _entriesFuture,
+                          builder: (context, snapshot) {
+                            return _AchievementLeaderboardCard(
+                              period: _period,
+                              entries:
+                                  _previewEntries ?? snapshot.data ?? const [],
+                              onTitleTap: _tapTitle,
+                              isPreview: _previewEntries != null,
+                              onExitPreview: () => setState(() {
+                                _previewEntries = null;
+                                _entriesFuture = widget.repository
+                                    .loadAchievementLeaderboard(
+                                      period: _period,
+                                    );
+                              }),
+                              isLoading:
+                                  _previewEntries == null &&
+                                  snapshot.connectionState ==
+                                      ConnectionState.waiting,
+                              onPeriodChanged: _selectPeriod,
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementStatusTabs extends StatelessWidget {
+  const _AchievementStatusTabs({
+    required this.selected,
+    required this.earnedCount,
+    required this.lockedCount,
+    required this.onSelected,
+  });
+
+  final _AchievementStatusTab selected;
+  final int earnedCount;
+  final int lockedCount;
+  final ValueChanged<_AchievementStatusTab> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return _AchievementGlassSurface(
+      key: const Key('achievement-status-tabs'),
+      radius: 24,
+      blur: true,
+      padding: const EdgeInsets.all(5),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isLtr = Directionality.of(context) == TextDirection.ltr;
+          final earnedIsLeading = isLtr;
+          final selectedIsLeading = selected == _AchievementStatusTab.earned
+              ? earnedIsLeading
+              : !earnedIsLeading;
+
+          void selectFromDrag(DragUpdateDetails details) {
+            final isLeadingHalf = isLtr
+                ? details.localPosition.dx < constraints.maxWidth / 2
+                : details.localPosition.dx >= constraints.maxWidth / 2;
+            final next = isLeadingHalf
+                ? _AchievementStatusTab.earned
+                : _AchievementStatusTab.locked;
+            if (next != selected) onSelected(next);
+          }
+
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragUpdate: selectFromDrag,
+            child: Stack(
+              children: [
+                AnimatedAlign(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeOutCubic,
+                  alignment: selectedIsLeading
+                      ? Alignment.centerLeft
+                      : Alignment.centerRight,
+                  child: FractionallySizedBox(
+                    widthFactor: 0.5,
+                    child: Container(
+                      key: const Key('achievement-tab-thumb'),
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF58C97C), Color(0xFF22924B)],
+                        ),
+                        borderRadius: BorderRadius.circular(19),
+                        border: Border.all(color: Colors.white30),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _MeColors.green.withValues(alpha: 0.3),
+                            blurRadius: 14,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size.fromHeight(48),
+                        onPressed: () =>
+                            onSelected(_AchievementStatusTab.earned),
+                        child: _AchievementTabLabel(
+                          key: const Key('achievement-tab-earned'),
+                          icon: CupertinoIcons.rosette,
+                          label: 'Earned  $earnedCount',
+                          selected: selected == _AchievementStatusTab.earned,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size.fromHeight(48),
+                        onPressed: () =>
+                            onSelected(_AchievementStatusTab.locked),
+                        child: _AchievementTabLabel(
+                          key: const Key('achievement-tab-locked'),
+                          icon: CupertinoIcons.lock,
+                          label: 'Locked  $lockedCount',
+                          selected: selected == _AchievementStatusTab.locked,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AchievementTabLabel extends StatelessWidget {
+  const _AchievementTabLabel({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.selected,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      selected: selected,
+      child: SizedBox(
+        height: 48,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: selected
+                  ? Colors.white
+                  : _MeColors.secondaryTextFor(context),
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: selected ? Colors.white : _MeColors.textFor(context),
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementPeriodButton extends StatelessWidget {
+  const _AchievementPeriodButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: selected ? null : onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected
+                ? _MeColors.green.withValues(alpha: 0.18)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? _MeColors.green.withValues(alpha: 0.38)
+                  : Colors.transparent,
+            ),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: selected
+                  ? (_MeColors.isDark(context)
+                        ? const Color(0xFF8CE7A8)
+                        : const Color(0xFF16743A))
+                  : _MeColors.secondaryTextFor(context),
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AchievementLeaderboardCard extends StatelessWidget {
   const _AchievementLeaderboardCard({
     required this.period,
     required this.entries,
     required this.isLoading,
     required this.onPeriodChanged,
+    required this.onTitleTap,
+    required this.onExitPreview,
+    required this.isPreview,
   });
 
   final String period;
   final List<Map<String, dynamic>> entries;
   final bool isLoading;
   final ValueChanged<String> onPeriodChanged;
+  final VoidCallback onTitleTap;
+  final VoidCallback onExitPreview;
+  final bool isPreview;
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const _Glyph(icon: Icons.leaderboard_rounded),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
+    return _AchievementGlassSurface(
+      blur: true,
+      radius: 24,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const _AchievementSectionGlyph(icon: Icons.leaderboard_rounded),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      onTap: onTitleTap,
+                      child: Text(
                         'Hiker leaderboard',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
@@ -2976,92 +3420,263 @@ class _AchievementLeaderboardCard extends StatelessWidget {
                               fontWeight: FontWeight.w900,
                             ),
                       ),
-                      Text(
-                        'Points earned during the selected period',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _MeColors.secondaryTextFor(context),
-                        ),
+                    ),
+                    Text(
+                      'Points earned during the selected period',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _MeColors.secondaryTextFor(context),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (isPreview)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Preview · 50 sample hikers'),
+              subtitle: const Text('Temporary data for this visit only'),
+              trailing: TextButton(
+                onPressed: onExitPreview,
+                child: const Text('Exit'),
+              ),
+            ),
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: _MeColors.backgroundFor(context).withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(17),
+            ),
+            child: Row(
+              children: [
+                _AchievementPeriodButton(
+                  label: 'This month',
+                  selected: period == 'month',
+                  onTap: () => onPeriodChanged('month'),
+                ),
+                _AchievementPeriodButton(
+                  label: 'This year',
+                  selected: period == 'year',
+                  onTap: () => onPeriodChanged('year'),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            CupertinoSlidingSegmentedControl<String>(
-              groupValue: period,
-              children: const {
-                'month': Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 12),
-                  child: Text('This month'),
-                ),
-                'year': Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 12),
-                  child: Text('This year'),
-                ),
-              },
-              onValueChanged: (value) {
-                if (value != null && value != period) onPeriodChanged(value);
-              },
-            ),
-            const SizedBox(height: 12),
-            if (isLoading)
-              const Center(child: HikerCircleMinorLoadingIndicator(size: 72))
-            else if (entries.isEmpty)
+          ),
+          const SizedBox(height: 12),
+          if (isLoading)
+            const Center(child: HikerCircleMinorLoadingIndicator(size: 72))
+          else if (entries.isEmpty)
+            Text(
+              'No achievement points have been earned in this period yet.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _MeColors.secondaryTextFor(context)),
+            )
+          else ...[
+            _AchievementPodium(entries: entries.take(3).toList()),
+            const SizedBox(height: 20),
+            Text('Top 10', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 10),
+            for (final entry in entries.take(10)) ...[
+              _AchievementLeaderboardRow(
+                rank: entry['rank'],
+                displayName: entry['displayName']?.toString() ?? 'Hiker',
+                points: entry['points'],
+                isCurrentUser: entry['isCurrentUser'] == true,
+                margin: const EdgeInsets.only(bottom: 7),
+              ),
+            ],
+            for (final entry in entries.where(
+              (entry) =>
+                  entry['isCurrentUser'] == true &&
+                  (int.tryParse('${entry['rank']}') ?? 0) > 10,
+            )) ...[
+              const Divider(height: 28),
               Text(
-                'No achievement points have been earned in this period yet.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _MeColors.secondaryTextFor(context)),
-              )
-            else
-              for (final entry in entries.take(10)) ...[
-                Container(
-                  margin: const EdgeInsets.only(bottom: 7),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: entry['isCurrentUser'] == true
-                        ? _MeColors.greenSoftFor(context)
-                        : _MeColors.backgroundFor(context),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 28,
-                        child: Text(
-                          '#${entry['rank'] ?? '-'}',
-                          style: const TextStyle(fontWeight: FontWeight.w900),
+                'Your ranking',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 10),
+              _AchievementLeaderboardRow(
+                rank: entry['rank'],
+                displayName: entry['displayName']?.toString() ?? 'You',
+                points: entry['points'],
+                isCurrentUser: true,
+                margin: EdgeInsets.zero,
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementPodium extends StatelessWidget {
+  const _AchievementPodium({required this.entries});
+  final List<Map<String, dynamic>> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        for (final index in [1, 0, 2])
+          if (index < entries.length)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  children: [
+                    Icon(
+                      index == 0
+                          ? CupertinoIcons.rosette
+                          : CupertinoIcons.person_crop_circle_fill,
+                      size: index == 0 ? 44 : 34,
+                      color: [
+                        const Color(0xFFD6A72C),
+                        const Color(0xFF96A6B5),
+                        const Color(0xFFBD8053),
+                      ][index],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${entries[index]['displayName']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      '${entries[index]['points']} pts',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 10),
+                    Container(
+                      height: index == 0
+                          ? 110
+                          : index == 1
+                          ? 80
+                          : 60,
+                      width: double.infinity,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(18),
+                        ),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            _MeColors.green.withValues(
+                              alpha: index == 0 ? 0.7 : 0.35,
+                            ),
+                            _MeColors.green.withValues(alpha: 0.08),
+                          ],
                         ),
                       ),
-                      Expanded(
-                        child: Text(
-                          entry['displayName']?.toString() ?? 'Hiker',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _MeColors.textFor(context),
-                            fontWeight: entry['isCurrentUser'] == true
-                                ? FontWeight.w900
-                                : FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '${entry['points'] ?? 0} pts',
+                      child: Text(
+                        '${index + 1}',
                         style: const TextStyle(
-                          color: _MeColors.green,
+                          fontSize: 32,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-          ],
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+class _AchievementLeaderboardRow extends StatelessWidget {
+  const _AchievementLeaderboardRow({
+    required this.rank,
+    required this.displayName,
+    required this.points,
+    required this.isCurrentUser,
+    required this.margin,
+  });
+
+  final Object? rank;
+  final String displayName;
+  final Object? points;
+  final bool isCurrentUser;
+  final EdgeInsets margin;
+
+  @override
+  Widget build(BuildContext context) {
+    final rankNumber = int.tryParse('$rank');
+    final medalColor = switch (rankNumber) {
+      1 => const Color(0xFFFFC857),
+      2 => const Color(0xFFB9C2CE),
+      3 => const Color(0xFFC98955),
+      _ => _MeColors.secondaryTextFor(context),
+    };
+    return Container(
+      margin: margin,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: isCurrentUser
+            ? _MeColors.green.withValues(alpha: 0.14)
+            : Colors.white.withValues(
+                alpha: _MeColors.isDark(context) ? 0.035 : 0.48,
+              ),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(
+          color: isCurrentUser
+              ? _MeColors.green.withValues(alpha: 0.32)
+              : Colors.white.withValues(
+                  alpha: _MeColors.isDark(context) ? 0.07 : 0.7,
+                ),
         ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: medalColor.withValues(alpha: 0.16),
+            ),
+            child: Text(
+              '${rankNumber ?? '-'}',
+              style: TextStyle(
+                color: medalColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: _MeColors.textFor(context),
+                fontWeight: isCurrentUser ? FontWeight.w900 : FontWeight.w700,
+              ),
+            ),
+          ),
+          if (isCurrentUser) ...[
+            const _AchievementTag(label: 'You', compact: true),
+            const SizedBox(width: 8),
+          ],
+          Text(
+            '${points ?? 0} pts',
+            style: const TextStyle(
+              color: _MeColors.green,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3085,150 +3700,179 @@ class _AchievementProgressPanel extends StatelessWidget {
         ? 'Peak rank reached'
         : HikerLevel.tiers[level.number].name;
     final remaining = level.pointsToNextLevel(points);
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0F5132), Color(0xFF1F7A48), Color(0xFF34A853)],
-        ),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: Colors.white24),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF34A853).withValues(alpha: 0.24),
-            blurRadius: 28,
-            offset: const Offset(0, 14),
-          ),
-        ],
+    return _AchievementGlassSurface(
+      blur: true,
+      radius: 30,
+      padding: EdgeInsets.zero,
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xEE0B3323), Color(0xE61A6A40), Color(0xDC37A95C)],
+        stops: [0, 0.55, 1],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      borderColor: Colors.white24,
+      shadowColor: const Color(0xFF249A51).withValues(alpha: 0.3),
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 82,
-                height: 82,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFF07140D).withValues(alpha: 0.48),
-                  border: Border.all(color: const Color(0xFFFFD166), width: 3),
-                  boxShadow: const [
-                    BoxShadow(color: Color(0x55FFD166), blurRadius: 18),
+          const Positioned(
+            right: -35,
+            top: -45,
+            child: _AchievementHeroOrb(size: 170),
+          ),
+          Positioned(
+            left: -50,
+            bottom: -80,
+            child: _AchievementHeroOrb(
+              size: 190,
+              color: const Color(0xFFFFD166).withValues(alpha: 0.12),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'YOUR TRAIL JOURNEY',
+                  style: TextStyle(
+                    color: Color(0xFFC8F3D6),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.9,
+                  ),
+                ),
+                const SizedBox(height: 13),
+                Row(
+                  children: [
+                    _AchievementLevelMedallion(
+                      level: level.number,
+                      onTap: () => _showHikerLevelRoadmap(context, points),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            level.name,
+                            style: Theme.of(context).textTheme.headlineSmall
+                                ?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -0.5,
+                                ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            level.nextLevelPoints == null
+                                ? 'You have reached the highest trail rank'
+                                : '$remaining points until $nextLevelName',
+                            style: const TextStyle(
+                              color: Color(0xFFD9F4E2),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          const Row(
+                            children: [
+                              Text(
+                                'Tap badge to view all levels',
+                                style: TextStyle(
+                                  color: Color(0xFFB8EDC9),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              SizedBox(width: 3),
+                              Icon(
+                                CupertinoIcons.chevron_forward,
+                                color: Color(0xFFB8EDC9),
+                                size: 10,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                const SizedBox(height: 22),
+                Row(
                   children: [
-                    const Icon(
-                      Icons.military_tech_rounded,
-                      color: Color(0xFFFFD166),
-                      size: 30,
-                    ),
                     Text(
-                      'LV ${level.number}',
+                      level.nextLevelPoints == null
+                          ? 'Peak achieved'
+                          : 'Progress to $nextLevelName',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.6,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'TRAIL RANK',
-                      style: TextStyle(
-                        color: Color(0xFFC8F3D6),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.8,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      level.name,
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0,
-                          ),
-                    ),
-                    const SizedBox(height: 3),
+                    const Spacer(),
                     Text(
                       level.nextLevelPoints == null
-                          ? '$points points · $nextLevelName'
-                          : '$remaining points to $nextLevelName',
+                          ? '$points pts'
+                          : '$points / ${level.nextLevelPoints}',
                       style: const TextStyle(
-                        color: Color(0xFFE2F7E9),
-                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFFFE297),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: level.progressFor(points),
-              minHeight: 11,
-              backgroundColor: Colors.black26,
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                Color(0xFFFFD166),
-              ),
+                const SizedBox(height: 8),
+                Container(
+                  height: 10,
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF06170E).withValues(alpha: 0.38),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: level.progressFor(points),
+                      backgroundColor: Colors.transparent,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Color(0xFFFFD166),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _AchievementMetric(
+                        icon: Icons.workspace_premium_rounded,
+                        label: 'Earned',
+                        value: '${earned.length}',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _AchievementMetric(
+                        icon: Icons.lock_outline_rounded,
+                        label: 'Locked',
+                        value: '$locked',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _AchievementMetric(
+                        icon: Icons.auto_awesome_rounded,
+                        label: 'Points',
+                        value: '$points',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            level.nextLevelPoints == null
-                ? 'All level progress complete'
-                : '$points / ${level.nextLevelPoints} rank points',
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _AchievementMetric(
-                  label: 'Earned',
-                  value: '${earned.length}',
-                  onDark: true,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _AchievementMetric(
-                  label: 'Locked',
-                  value: '$locked',
-                  onDark: true,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _AchievementMetric(
-                  label: 'Points',
-                  value: '$points',
-                  onDark: true,
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -3236,36 +3880,520 @@ class _AchievementProgressPanel extends StatelessWidget {
   }
 }
 
+class _AchievementHeroOrb extends StatelessWidget {
+  const _AchievementHeroOrb({required this.size, this.color});
+
+  final double size;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final glow = color ?? Colors.white.withValues(alpha: 0.13);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(colors: [glow, glow.withValues(alpha: 0)]),
+      ),
+    );
+  }
+}
+
+class _AchievementLevelMedallion extends StatelessWidget {
+  const _AchievementLevelMedallion({required this.level, required this.onTap});
+
+  final int level;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Level $level badge. View all hiker levels',
+      child: CupertinoButton(
+        key: const Key('achievement-level-medallion'),
+        padding: EdgeInsets.zero,
+        minimumSize: const Size.square(86),
+        onPressed: onTap,
+        child: Container(
+          width: 86,
+          height: 86,
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const SweepGradient(
+              colors: [Color(0xFFFFD166), Colors.white, Color(0xFFFFD166)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFFFD166).withValues(alpha: 0.3),
+                blurRadius: 24,
+              ),
+            ],
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF173F2C), Color(0xFF071C11)],
+              ),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.landscape_rounded,
+                  color: Color(0xFFFFD166),
+                  size: 30,
+                ),
+                Text(
+                  'LV $level',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void _showHikerLevelRoadmap(BuildContext context, int points) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => _HikerLevelRoadmapSheet(points: points),
+  );
+}
+
+class _HikerLevelRoadmapSheet extends StatefulWidget {
+  const _HikerLevelRoadmapSheet({required this.points});
+  final int points;
+
+  @override
+  State<_HikerLevelRoadmapSheet> createState() =>
+      _HikerLevelRoadmapSheetState();
+}
+
+class _HikerLevelRoadmapSheetState extends State<_HikerLevelRoadmapSheet> {
+  late int _selected = HikerLevel.fromPoints(widget.points).number;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = HikerLevel.fromPoints(widget.points);
+    return SafeArea(
+      child: DraggableScrollableSheet(
+        initialChildSize: 0.86,
+        minChildSize: 0.55,
+        maxChildSize: 0.94,
+        expand: false,
+        builder: (context, controller) => Container(
+          margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: _MeColors.surfaceFor(context),
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _MeColors.separatorFor(context),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 12, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Hiker levels',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: _MeColors.textFor(context),
+                        ),
+                      ),
+                    ),
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Icon(
+                        CupertinoIcons.xmark_circle_fill,
+                        semanticLabel: 'Close hiker levels',
+                        color: _MeColors.secondaryTextFor(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: controller,
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: _MeColors.green.withValues(alpha: 0.09),
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'YOUR HIKER RANK',
+                              style: TextStyle(
+                                color: _MeColors.secondaryTextFor(context),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.landscape_rounded,
+                                  size: 40,
+                                  color: _MeColors.green,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    current.name,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall
+                                        ?.copyWith(fontWeight: FontWeight.w800),
+                                  ),
+                                ),
+                                Text(
+                                  'LV ${current.number}',
+                                  style: const TextStyle(
+                                    color: _MeColors.green,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              '${_formatRankPoints(widget.points)} achievement points',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: LinearProgressIndicator(
+                                value: current.progressFor(widget.points),
+                                minHeight: 6,
+                                color: _MeColors.green,
+                                backgroundColor: _MeColors.green.withValues(
+                                  alpha: 0.12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              current.nextLevelPoints == null
+                                  ? 'Highest rank reached. Every adventure still counts.'
+                                  : '${_formatRankPoints(current.pointsToNextLevel(widget.points))} points to ${HikerLevel.tiers[current.number].name}',
+                              style: TextStyle(
+                                color: _MeColors.secondaryTextFor(context),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Explore your next milestone',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        'Tap a level to explore its requirements.',
+                        style: TextStyle(
+                          color: _MeColors.secondaryTextFor(context),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      for (final level in HikerLevel.tiers)
+                        _HikerLevelRoadmapRow(
+                          level: level,
+                          currentLevel: current,
+                          points: widget.points,
+                          selected: _selected == level.number,
+                          onTap: () => setState(() => _selected = level.number),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HikerLevelRoadmapRow extends StatelessWidget {
+  const _HikerLevelRoadmapRow({
+    required this.level,
+    required this.currentLevel,
+    required this.points,
+    required this.selected,
+    required this.onTap,
+  });
+  final HikerLevel level;
+  final HikerLevel currentLevel;
+  final int points;
+  final bool selected;
+  final VoidCallback onTap;
+
+  static const _icons = [
+    CupertinoIcons.leaf_arrow_circlepath,
+    CupertinoIcons.compass,
+    Icons.hiking_rounded,
+    Icons.landscape_rounded,
+    CupertinoIcons.map,
+    CupertinoIcons.shield,
+    CupertinoIcons.rosette,
+  ];
+  static const _descriptions = [
+    'Every journey starts here. Discover the badges you can earn on your first hikes.',
+    'Build your hiking rhythm and turn your early adventures into lasting progress.',
+    'Keep exploring trails and completing achievement goals as your experience grows.',
+    'Celebrate the milestones collected along your journey toward new summits.',
+    'Bring together the points earned through exploration, consistency, and community.',
+    'Acknowledge a sustained commitment to hiking and the milestones along the way.',
+    'The highest hiker rank celebrates your accumulated achievement points.',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final reached = points >= level.minimumPoints;
+    final isCurrent = level.number == currentLevel.number;
+    final range = level.nextLevelPoints == null
+        ? '${_formatRankPoints(level.minimumPoints)}+ points'
+        : '${_formatRankPoints(level.minimumPoints)}–${_formatRankPoints(level.nextLevelPoints! - 1)} points';
+    final foreground = _MeColors.textFor(context);
+    final secondary = _MeColors.secondaryTextFor(context);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: selected
+            ? _MeColors.green.withValues(alpha: 0.07)
+            : _MeColors.backgroundFor(context),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: selected
+              ? _MeColors.green.withValues(alpha: 0.5)
+              : _MeColors.separatorFor(context),
+        ),
+      ),
+      child: Column(
+        children: [
+          Semantics(
+            selected: selected,
+            button: true,
+            child: InkWell(
+              key: ValueKey('trail-level-${level.number}'),
+              borderRadius: BorderRadius.circular(20),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: _MeColors.green.withValues(
+                          alpha: reached ? 0.14 : 0.06,
+                        ),
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Icon(
+                        _icons[level.number - 1],
+                        color: reached ? _MeColors.green : secondary,
+                        size: 25,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Level ${level.number} · ${level.name}',
+                            style: TextStyle(
+                              color: foreground,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            range,
+                            style: TextStyle(color: secondary, fontSize: 12),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            isCurrent
+                                ? 'Current level'
+                                : reached
+                                ? 'Completed'
+                                : 'Upcoming',
+                            style: TextStyle(
+                              color: reached ? _MeColors.green : secondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      selected
+                          ? CupertinoIcons.chevron_up
+                          : CupertinoIcons.chevron_down,
+                      size: 15,
+                      color: secondary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 240),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: selected
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Divider(
+                          color: _MeColors.separatorFor(context),
+                          height: 16,
+                        ),
+                        Text(
+                          _descriptions[level.number - 1],
+                          style: TextStyle(color: secondary, height: 1.5),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Unlocks at ${_formatRankPoints(level.minimumPoints)} points',
+                          style: TextStyle(
+                            color: foreground,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          reached
+                              ? 'You have reached this milestone.'
+                              : '${_formatRankPoints(level.minimumPoints - points)} more points to unlock',
+                          style: TextStyle(color: secondary),
+                        ),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LinearProgressIndicator(
+                            value: level.minimumPoints == 0
+                                ? 1
+                                : (points / level.minimumPoints).clamp(
+                                    0.0,
+                                    1.0,
+                                  ),
+                            minHeight: 5,
+                            color: _MeColors.green,
+                            backgroundColor: _MeColors.green.withValues(
+                              alpha: 0.12,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Earn points by completing the goals listed on achievement badges.',
+                          style: TextStyle(
+                            color: secondary,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatRankPoints(int points) {
+  final normalized = points < 0 ? 0 : points;
+  if (normalized < 1000) return '$normalized';
+  final thousands = normalized ~/ 1000;
+  final remainder = (normalized % 1000).toString().padLeft(3, '0');
+  return '$thousands,$remainder';
+}
+
 class _AchievementMetric extends StatelessWidget {
   const _AchievementMetric({
+    required this.icon,
     required this.label,
     required this.value,
-    this.onDark = false,
   });
 
+  final IconData icon;
   final String label;
   final String value;
-  final bool onDark;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 11),
       decoration: BoxDecoration(
-        color: onDark
-            ? Colors.black.withValues(alpha: 0.2)
-            : _MeColors.greenSoftFor(context),
-        borderRadius: BorderRadius.circular(12),
-        border: onDark ? Border.all(color: Colors.white12) : null,
+        color: Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
       ),
       child: Column(
         children: [
+          Icon(icon, color: const Color(0xFFB8EDC9), size: 17),
+          const SizedBox(height: 4),
           Text(
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: onDark ? Colors.white : _MeColors.textFor(context),
+              color: Colors.white,
               fontWeight: FontWeight.w900,
               letterSpacing: 0,
             ),
@@ -3276,9 +4404,7 @@ class _AchievementMetric extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: onDark
-                  ? const Color(0xFFC8F3D6)
-                  : _MeColors.secondaryTextFor(context),
+              color: const Color(0xFFC8F3D6),
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
             ),
@@ -3289,8 +4415,39 @@ class _AchievementMetric extends StatelessWidget {
   }
 }
 
-class _AchievementTile extends StatelessWidget {
-  const _AchievementTile({required this.item, required this.onTap});
+class _AchievementCollectionGrid extends StatelessWidget {
+  const _AchievementCollectionGrid({required this.items, required this.onTap});
+
+  final List<_AchievementProfileItem> items;
+  final ValueChanged<_AchievementProfileItem> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columnCount = constraints.maxWidth >= 540 ? 3 : 2;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: items.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columnCount,
+            crossAxisSpacing: 11,
+            mainAxisSpacing: 11,
+            mainAxisExtent: 236,
+          ),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return _AchievementBadgeCard(item: item, onTap: () => onTap(item));
+          },
+        );
+      },
+    );
+  }
+}
+
+class _AchievementBadgeCard extends StatelessWidget {
+  const _AchievementBadgeCard({required this.item, required this.onTap});
 
   final _AchievementProfileItem item;
   final VoidCallback onTap;
@@ -3298,127 +4455,127 @@ class _AchievementTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = item.accentColor;
-    final iconColor = item.isUnlocked
+    final displayAccent = item.isUnlocked
         ? accent
-        : _MeColors.secondaryTextFor(context);
-    final iconBackground = item.isUnlocked
-        ? accent.withValues(alpha: _MeColors.isDark(context) ? 0.22 : 0.14)
-        : _MeColors.greenSoftFor(context);
+        : Color.lerp(accent, _MeColors.secondaryTextFor(context), 0.48)!;
+    final remaining = (item.targetCount - item.progressCount).clamp(
+      0,
+      item.targetCount,
+    );
 
-    return _InsetGroup(
+    return _AchievementGlassSurface(
+      radius: 25,
+      padding: EdgeInsets.zero,
+      accent: displayAccent,
       child: _TapSurface(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 13),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: iconBackground,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  _achievementIconFor(item.iconName),
-                  color: iconColor,
-                  size: 24,
+              Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: _AchievementTag(
+                        label: item.category.toUpperCase(),
+                        accent: displayAccent,
+                        compact: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    item.isUnlocked
+                        ? CupertinoIcons.checkmark_seal_fill
+                        : CupertinoIcons.lock_fill,
+                    color: displayAccent,
+                    size: 17,
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Center(
+                child: _AchievementBadge(
+                  icon: _achievementIconFor(item.iconName),
+                  color: displayAccent,
+                  unlocked: item.isUnlocked,
+                  size: 76,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              const Spacer(),
+              Text(
+                item.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: _MeColors.textFor(context),
+                  fontWeight: FontWeight.w900,
+                  height: 1.13,
+                  letterSpacing: -0.1,
+                ),
+              ),
+              const SizedBox(height: 9),
+              if (item.isCumulative && !item.isUnlocked) ...[
+                Container(
+                  height: 7,
+                  padding: const EdgeInsets.all(1.2),
+                  decoration: BoxDecoration(
+                    color: displayAccent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: item.progress,
+                      backgroundColor: Colors.transparent,
+                      valueColor: AlwaysStoppedAnimation<Color>(displayAccent),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item.title,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(
-                                  color: _MeColors.textFor(context),
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 0,
-                                ),
-                          ),
+                    Expanded(
+                      child: Text(
+                        '$remaining left',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: _MeColors.secondaryTextFor(context),
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0,
                         ),
-                        _MiniPill(
-                          label: item.isUnlocked
-                              ? 'Earned'
-                              : '${item.rewardPoints} pts',
-                        ),
-                      ],
+                      ),
                     ),
-                    const SizedBox(height: 4),
                     Text(
-                      item.condition,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _MeColors.secondaryTextFor(context),
-                        letterSpacing: 0,
+                      '${item.progressCount}/${item.targetCount}',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: displayAccent,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const SizedBox(height: 9),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _AchievementTag(label: item.category),
-                        if (item.awardedAt != null)
-                          _AchievementTag(
-                            label:
-                                'Unlocked ${_formatAchievementDate(item.awardedAt!)}',
-                          ),
-                        if (!item.isUnlocked)
-                          const _AchievementTag(label: 'Locked'),
-                        _AchievementTag(
-                          label: item.isCumulative
-                              ? 'Accumulation'
-                              : 'One-time',
-                        ),
-                      ],
-                    ),
-                    if (item.isCumulative && !item.isUnlocked) ...[
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(999),
-                              child: LinearProgressIndicator(
-                                value: item.progress,
-                                minHeight: 6,
-                                backgroundColor: _MeColors.greenSoftFor(
-                                  context,
-                                ),
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  accent,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${item.progressCount}/${item.targetCount}',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: _MeColors.secondaryTextFor(context),
-                                  fontWeight: FontWeight.w800,
-                                ),
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                CupertinoIcons.chevron_forward,
-                color: _MeColors.chevronFor(context),
-                size: 16,
-              ),
+              ] else
+                Text(
+                  item.isUnlocked
+                      ? (item.awardedAt == null
+                            ? 'Earned · ${item.pointsAwarded} pts'
+                            : '${_formatAchievementDate(item.awardedAt!)} · ${item.pointsAwarded} pts')
+                      : 'One hike · ${item.rewardPoints} pts',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: displayAccent,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
             ],
           ),
         ),
@@ -3428,24 +4585,110 @@ class _AchievementTile extends StatelessWidget {
 }
 
 class _AchievementTag extends StatelessWidget {
-  const _AchievementTag({required this.label});
+  const _AchievementTag({
+    required this.label,
+    this.accent,
+    this.compact = false,
+  });
 
   final String label;
+  final Color? accent;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 7 : 8,
+        vertical: compact ? 4 : 5,
+      ),
       decoration: BoxDecoration(
-        color: _MeColors.greenSoftFor(context),
-        borderRadius: BorderRadius.circular(8),
+        color: (accent ?? _MeColors.green).withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: (accent ?? _MeColors.green).withValues(alpha: 0.18),
+        ),
       ),
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _MeColors.secondaryTextFor(context),
+          color: accent ?? _MeColors.secondaryTextFor(context),
+          fontSize: compact ? 9 : null,
           fontWeight: FontWeight.w800,
-          letterSpacing: 0,
+          letterSpacing: compact ? 0.7 : 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementBadge extends StatelessWidget {
+  const _AchievementBadge({
+    required this.icon,
+    required this.color,
+    required this.unlocked,
+    this.size = 62,
+    this.showShadow = true,
+  });
+
+  final IconData icon;
+  final Color color;
+  final bool unlocked;
+  final double size;
+  final bool showShadow;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: unlocked ? 0.95 : 0.5),
+            color.withValues(alpha: 0.15),
+          ],
+        ),
+        boxShadow: showShadow
+            ? [
+                BoxShadow(
+                  color: color.withValues(alpha: unlocked ? 0.28 : 0.1),
+                  blurRadius: 17,
+                  offset: const Offset(0, 7),
+                ),
+              ]
+            : const [],
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: _MeColors.surfaceFor(context).withValues(alpha: 0.88),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(icon, color: color, size: size * 0.43),
+            if (!unlocked)
+              Positioned(
+                right: 2,
+                bottom: 2,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: _MeColors.surfaceFor(context),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: color.withValues(alpha: 0.35)),
+                  ),
+                  child: Icon(Icons.lock_rounded, color: color, size: 11),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -3459,18 +4702,28 @@ class _AchievementDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final guidance = _AchievementGuidance.forItem(item);
+    final displayPoints = item.isUnlocked
+        ? item.pointsAwarded
+        : item.rewardPoints;
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-        child: _InsetGroup(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
+      child: DraggableScrollableSheet(
+        initialChildSize: 0.84,
+        minChildSize: 0.56,
+        maxChildSize: 0.94,
+        expand: false,
+        builder: (context, scrollController) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Container(
+              decoration: BoxDecoration(
+                color: _MeColors.surfaceFor(context),
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
                     width: 42,
                     height: 4,
                     decoration: BoxDecoration(
@@ -3478,83 +4731,315 @@ class _AchievementDetailSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
-                ),
-                const SizedBox(height: 18),
-                Container(
-                  width: 68,
-                  height: 68,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: item.accentColor.withValues(
-                      alpha: _MeColors.isDark(context) ? 0.22 : 0.14,
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Center(
+                            child: _AchievementBadge(
+                              icon: _achievementIconFor(item.iconName),
+                              color: item.accentColor,
+                              unlocked: item.isUnlocked,
+                              size: 94,
+                              showShadow: false,
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+                          Text(
+                            item.title,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.headlineSmall
+                                ?.copyWith(
+                                  color: _MeColors.textFor(context),
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -0.3,
+                                ),
+                          ),
+                          const SizedBox(height: 7),
+                          Center(
+                            child: _AchievementTag(
+                              label: item.isUnlocked
+                                  ? 'EARNED · $displayPoints POINTS'
+                                  : '${item.category.toUpperCase()} · $displayPoints POINTS',
+                              accent: item.accentColor,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          if (item.isCumulative)
+                            _AchievementDetailProgress(item: item),
+                          if (item.isCumulative) const SizedBox(height: 12),
+                          _AchievementDetailSection(
+                            icon: CupertinoIcons.heart_fill,
+                            title: 'Why this achievement exists',
+                            body: guidance.whyItMatters,
+                            accent: item.accentColor,
+                          ),
+                          const SizedBox(height: 10),
+                          _AchievementDetailSection(
+                            icon: CupertinoIcons.scope,
+                            title: 'Your goal',
+                            body: item.condition,
+                            accent: item.accentColor,
+                            footer: item.isUnlocked
+                                ? 'Goal completed${item.awardedAt == null ? '' : ' on ${_formatAchievementDate(item.awardedAt!)}'}.'
+                                : guidance.goalProgress(item),
+                          ),
+                          const SizedBox(height: 10),
+                          _AchievementDetailSection(
+                            icon: CupertinoIcons.checkmark_alt_circle_fill,
+                            title: 'What counts',
+                            body: guidance.whatCounts,
+                            accent: item.accentColor,
+                          ),
+                          const SizedBox(height: 10),
+                          _AchievementDetailSection(
+                            icon: CupertinoIcons.sparkles,
+                            title: 'Reward and recognition',
+                            body:
+                                'Earn $displayPoints trail-rank points when this badge unlocks. Each achievement awards its points once and contributes to your Trail Journey level.',
+                            accent: item.accentColor,
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
                     ),
-                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(
-                    _achievementIconFor(item.iconName),
-                    color: item.accentColor,
-                    size: 34,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  item.title,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: _MeColors.textFor(context),
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  item.isUnlocked
-                      ? 'Unlocked ${item.awardedAt == null ? 'recently' : _formatAchievementDate(item.awardedAt!)}'
-                      : 'Locked - complete the requirement to earn it',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _MeColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _InfoLine(label: 'Requirement', value: item.condition),
-                const _HorizontalSeparator(),
-                _InfoLine(label: 'Category', value: item.category),
-                const _HorizontalSeparator(),
-                _InfoLine(
-                  label: 'Reward',
-                  value: '${item.rewardPoints} points',
-                ),
-                const _HorizontalSeparator(),
-                _InfoLine(
-                  label: 'Reward type',
-                  value: item.isCumulative
-                      ? 'Accumulation (${item.progressCount}/${item.targetCount})'
-                      : 'One-time reward',
-                ),
-                const SizedBox(height: 12),
-                CupertinoButton(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size.fromHeight(46),
-                  color: _MeColors.green,
-                  borderRadius: BorderRadius.circular(8),
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text(
-                    'Done',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+                    child: CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size.fromHeight(48),
+                      color: _MeColors.green,
+                      borderRadius: BorderRadius.circular(17),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text(
+                        'Done',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0,
+                        ),
+                      ),
                     ),
                   ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AchievementDetailProgress extends StatelessWidget {
+  const _AchievementDetailProgress({required this.item});
+
+  final _AchievementProfileItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = (item.targetCount - item.progressCount).clamp(
+      0,
+      item.targetCount,
+    );
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            item.accentColor.withValues(alpha: 0.17),
+            item.accentColor.withValues(alpha: 0.06),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: item.accentColor.withValues(alpha: 0.22)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Text(
+                item.isUnlocked ? 'Completed' : 'Current progress',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: _MeColors.textFor(context),
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
                 ),
-              ],
+              ),
+              const Spacer(),
+              Text(
+                '${item.progressCount} / ${item.targetCount}',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: item.accentColor,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: item.progress,
+              minHeight: 9,
+              backgroundColor: item.accentColor.withValues(alpha: 0.1),
+              valueColor: AlwaysStoppedAnimation<Color>(item.accentColor),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              item.isUnlocked
+                  ? 'This milestone is complete.'
+                  : '$remaining remaining before this badge unlocks.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _MeColors.secondaryTextFor(context),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementDetailSection extends StatelessWidget {
+  const _AchievementDetailSection({
+    required this.icon,
+    required this.title,
+    required this.body,
+    required this.accent,
+    this.footer,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final Color accent;
+  final String? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      initiallyExpanded:
+          title == 'Your goal' || title == 'Why this achievement exists',
+      maintainState: true,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+      childrenPadding: const EdgeInsets.fromLTRB(4, 0, 4, 16),
+      shape: Border(bottom: BorderSide(color: _MeColors.separatorFor(context))),
+      collapsedShape: Border(
+        bottom: BorderSide(color: _MeColors.separatorFor(context)),
+      ),
+      leading: Icon(icon, color: accent, size: 22),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            body,
+            style: TextStyle(
+              color: _MeColors.secondaryTextFor(context),
+              height: 1.5,
             ),
           ),
         ),
-      ),
+        if (footer != null) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              footer!,
+              style: TextStyle(color: accent, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AchievementGuidance {
+  const _AchievementGuidance({
+    required this.whyItMatters,
+    required this.whatCounts,
+  });
+
+  final String whyItMatters;
+  final String whatCounts;
+
+  String goalProgress(_AchievementProfileItem item) {
+    if (!item.isCumulative) {
+      return 'Complete this action once to unlock the badge.';
+    }
+    final remaining = (item.targetCount - item.progressCount).clamp(
+      0,
+      item.targetCount,
+    );
+    return '$remaining of ${item.targetCount} qualifying activities remain.';
+  }
+
+  factory _AchievementGuidance.forItem(_AchievementProfileItem item) {
+    final category = item.category.toLowerCase();
+    final whyItMatters = switch (category) {
+      'hike milestone' =>
+        'Regular time on trail builds experience, confidence, and better judgement. This badge recognises the consistency behind becoming a capable hiker.',
+      'trail exploration' =>
+        'Trying different trails develops navigation skills and exposes you to new terrain instead of repeating only familiar routes.',
+      'malaysia exploration' =>
+        'Malaysia’s states offer distinct landscapes, climates, and trail communities. This achievement encourages responsible exploration across the country.',
+      'safety habit' =>
+        'Reliable check-ins keep your trusted contacts informed and make it easier to notice quickly when a hike is not going to plan.',
+      'account security' =>
+        'Strong account protection helps keep your identity, hike history, emergency contacts, and live-location permissions under your control.',
+      'community safety' =>
+        'Confirmed hazard reports give other hikers timely information that can help them prepare, reroute, or avoid preventable danger.',
+      'community' =>
+        'Useful trail stories and verified observations help other hikers plan with more confidence and strengthen the hiking community.',
+      'team hike' =>
+        'Safe group hiking depends on staying together, communicating clearly, and completing the route without a separation emergency.',
+      'preparation' =>
+        'Good preparation reduces avoidable risk before departure and makes safety tools more dependable when mobile coverage is weak.',
+      _ =>
+        'This achievement highlights a meaningful habit that supports safer, more confident, and more rewarding hiking.',
+    };
+
+    final whatCounts = switch (item.metricKey) {
+      'hike_completed' =>
+        'Start a hike in HikerCircle and complete it normally. Cancelled or unfinished sessions do not increase this achievement.',
+      'distinct_trail_completed' =>
+        'Each completed trail counts once. Repeating the same trail can still build other milestones, but it does not add another unique trail here.',
+      'malaysia_state_hiked' =>
+        'Complete a recorded trail in a new Malaysian state. Multiple trails in the same state count as one state for this badge.',
+      'check_in_completed' =>
+        'Respond successfully to scheduled safety check-ins during an active hike. Missed or expired check-ins are not counted.',
+      'security_factor_type_bound' =>
+        'Bind the required different security methods to your account. Only active, successfully configured methods count.',
+      'hazard_report_approved' =>
+        'Submit an accurate trail hazard report and wait for it to be confirmed by other hikers or moderation.',
+      'community_post_created' =>
+        'Publish a public trail post through HikerCircle. Drafts and private content are not included.',
+      'team_hike_completed' =>
+        'Complete a HikerCircle team hike without triggering a separation emergency. Every qualifying team session adds one.',
+      'offline_map_verified_at_hike_start' =>
+        'Download the trail’s offline map before starting and keep it available when the hike session begins.',
+      'full_checklist_verified_at_departure' =>
+        'Mark every required gear item complete before starting the hike session.',
+      _ => item.condition,
+    };
+
+    return _AchievementGuidance(
+      whyItMatters: whyItMatters,
+      whatCounts: whatCounts,
     );
   }
 }
@@ -3572,39 +5057,38 @@ class _AchievementNoticeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _Glyph(icon: icon),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.textFor(context),
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
+    return _AchievementGlassSurface(
+      radius: 20,
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _AchievementSectionGlyph(icon: icon),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: _MeColors.textFor(context),
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    message,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryTextFor(context),
-                      letterSpacing: 0,
-                    ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _MeColors.secondaryTextFor(context),
+                    letterSpacing: 0,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -3615,12 +5099,192 @@ class _AchievementLoadingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _InsetGroup(
+    return const _AchievementGlassSurface(
+      radius: 22,
+      padding: EdgeInsets.zero,
       child: HikerCircleLoadingView(
         message: 'Loading achievements…',
         detail: 'Checking your progress, levels and unlocked badges.',
         padding: EdgeInsets.all(18),
       ),
+    );
+  }
+}
+
+class _AchievementAmbientBackdrop extends StatelessWidget {
+  const _AchievementAmbientBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = _MeColors.isDark(context);
+    return IgnorePointer(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            right: -110,
+            top: -85,
+            child: _AchievementAura(
+              size: 300,
+              color: const Color(
+                0xFF34A853,
+              ).withValues(alpha: isDark ? 0.14 : 0.11),
+            ),
+          ),
+          Positioned(
+            left: -130,
+            top: 380,
+            child: _AchievementAura(
+              size: 280,
+              color: const Color(
+                0xFF57C7B6,
+              ).withValues(alpha: isDark ? 0.08 : 0.09),
+            ),
+          ),
+          Positioned(
+            right: -90,
+            bottom: 40,
+            child: _AchievementAura(
+              size: 230,
+              color: const Color(
+                0xFFFFD166,
+              ).withValues(alpha: isDark ? 0.045 : 0.07),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementAura extends StatelessWidget {
+  const _AchievementAura({required this.size, required this.color});
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [color, color.withValues(alpha: 0)],
+          stops: const [0, 1],
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementGlassSurface extends StatelessWidget {
+  const _AchievementGlassSurface({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+    this.radius = 22,
+    this.blur = false,
+    this.accent,
+    this.gradient,
+    this.borderColor,
+    this.shadowColor,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final double radius;
+  final bool blur;
+  final Color? accent;
+  final Gradient? gradient;
+  final Color? borderColor;
+  final Color? shadowColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = _MeColors.isDark(context);
+    final surface = _MeColors.surfaceFor(context);
+    final border =
+        borderColor ??
+        (accent?.withValues(alpha: isDark ? 0.22 : 0.16) ??
+            Colors.white.withValues(alpha: isDark ? 0.1 : 0.76));
+    final decoration = BoxDecoration(
+      color: gradient == null
+          ? surface.withValues(alpha: isDark ? 0.76 : 0.72)
+          : null,
+      gradient:
+          gradient ??
+          LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withValues(alpha: isDark ? 0.08 : 0.7),
+              surface.withValues(alpha: isDark ? 0.62 : 0.54),
+            ],
+          ),
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(color: border),
+      boxShadow: [
+        BoxShadow(
+          color:
+              shadowColor ??
+              Colors.black.withValues(alpha: isDark ? 0.2 : 0.075),
+          blurRadius: blur ? 25 : 15,
+          offset: Offset(0, blur ? 12 : 7),
+        ),
+        if (accent != null)
+          BoxShadow(
+            color: accent!.withValues(alpha: isDark ? 0.08 : 0.055),
+            blurRadius: 18,
+            spreadRadius: -3,
+          ),
+      ],
+    );
+    final content = DecoratedBox(
+      decoration: decoration,
+      child: Padding(padding: padding, child: child),
+    );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: blur
+          ? BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 17, sigmaY: 17),
+              child: content,
+            )
+          : content,
+    );
+  }
+}
+
+class _AchievementSectionGlyph extends StatelessWidget {
+  const _AchievementSectionGlyph({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF58C97C), Color(0xFF22924B)],
+        ),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: Colors.white30),
+        boxShadow: [
+          BoxShadow(
+            color: _MeColors.green.withValues(alpha: 0.22),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Icon(icon, color: Colors.white, size: 20),
     );
   }
 }

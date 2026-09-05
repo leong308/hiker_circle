@@ -1,3 +1,4 @@
+import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -1034,11 +1035,9 @@ class _Header extends StatelessWidget {
               children: [
                 Text(
                   'Circle',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _CircleColors.textFor(context),
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
+                  style: PageHeaderStyle.title(
+                    context,
+                    _CircleColors.textFor(context),
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -1046,10 +1045,9 @@ class _Header extends StatelessWidget {
                   'Community, buddies, teams',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _CircleColors.secondaryTextFor(context),
-                    letterSpacing: 0,
-                    fontSize: 13,
+                  style: PageHeaderStyle.subtitle(
+                    context,
+                    _CircleColors.secondaryTextFor(context),
                   ),
                 ),
               ],
@@ -1059,7 +1057,7 @@ class _Header extends StatelessWidget {
             message: 'Friend requests',
             child: CupertinoButton(
               padding: EdgeInsets.zero,
-              minimumSize: const Size.square(36),
+              minimumSize: const Size.square(44),
               onPressed: onOpenFriendRequests,
               child: Stack(
                 clipBehavior: Clip.none,
@@ -1080,7 +1078,7 @@ class _Header extends StatelessWidget {
             message: 'Circle settings',
             child: CupertinoButton(
               padding: EdgeInsets.zero,
-              minimumSize: const Size.square(36),
+              minimumSize: const Size.square(44),
               onPressed: onOpenSettings,
               child: const _CircleIcon(icon: CupertinoIcons.gear_alt_fill),
             ),
@@ -1091,7 +1089,7 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _CommunitySection extends StatelessWidget {
+class _CommunitySection extends StatefulWidget {
   const _CommunitySection({
     required this.activeHike,
     required this.people,
@@ -1135,125 +1133,279 @@ class _CommunitySection extends StatelessWidget {
   final ValueChanged<_CommunityPost> onOpenPost;
 
   @override
-  Widget build(BuildContext context) {
-    final buddies = people
-        .where((person) => buddyPhones.contains(person.phoneNumber))
-        .toList();
-    final suggestions = people
-        .where((person) => !buddyPhones.contains(person.phoneNumber))
-        .toList();
+  State<_CommunitySection> createState() => _CommunitySectionState();
+}
 
+class _CommunitySectionState extends State<_CommunitySection> {
+  String _filter = 'Everyone';
+  String _query = '';
+  bool _showPeople = false;
+  bool _onlyBuddies = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final people = widget.people
+        .where(
+          (person) =>
+              (!_onlyBuddies ||
+                  widget.buddyPhones.contains(person.phoneNumber)) &&
+              '${person.name} ${person.subtitle} ${person.trailAffinity}'
+                  .toLowerCase()
+                  .contains(_query),
+        )
+        .toList();
+    final posts = widget.posts
+        .where(
+          (post) =>
+              (_filter != 'Buddies' ||
+                  widget.buddyPhones.contains(post.authorPhoneNumber)) &&
+              (_filter != 'Hike stories' || post.hasRouteMap) &&
+              '${post.author} ${post.body} ${post.trail}'
+                  .toLowerCase()
+                  .contains(_query),
+        )
+        .toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ComposerCard(
-          activeHike: activeHike,
-          currentUserPhotoURL: currentUserPhotoURL,
-          currentUserPhotoBytes: currentUserPhotoBytes,
-          onCreatePost: onCreatePost,
-          onShareHike: onShareHike,
-        ),
-        const SizedBox(height: 18),
-        if (buddies.isNotEmpty) ...[
-          _SectionTitle(label: 'Buddies'),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 210,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: buddies.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 10),
-              itemBuilder: (context, index) {
-                final person = buddies[index];
-                return _BuddySuggestionCard(
-                  person: person,
-                  isBuddy: true,
-                  onAddBuddy: () {},
-                  onMessage: () => onMessageBuddy(person),
-                  onOpenProfile: () => onOpenPersonProfile(person),
-                );
-              },
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                _CircleColors.green.withValues(alpha: 0.16),
+                _CircleColors.surfaceFor(context),
+              ],
+            ),
+            border: Border.all(
+              color: _CircleColors.green.withValues(alpha: 0.14),
             ),
           ),
-          const SizedBox(height: 18),
-        ],
-        _SectionTitle(label: 'Add Buddies'),
-        const SizedBox(height: 8),
-        if (suggestions.isEmpty)
-          const _InsetGroup(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('No new buddy suggestions right now.'),
-            ),
-          )
-        else
-          SizedBox(
-            height: 210,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: suggestions.length,
-              separatorBuilder: (context, index) => const SizedBox(width: 10),
-              itemBuilder: (context, index) {
-                final person = suggestions[index];
-                return _BuddySuggestionCard(
-                  person: person,
-                  isBuddy: false,
-                  isRequested: outgoingBuddyRequestPhones.contains(
-                    _phoneKeyFor(person.phoneNumber),
-                  ),
-                  onAddBuddy: () => onAddBuddy(person),
-                  onMessage: () => onMessageBuddy(person),
-                  onOpenProfile: () => onOpenPersonProfile(person),
-                );
-              },
-            ),
-          ),
-        const SizedBox(height: 22),
-        _SectionTitle(label: 'Community Feed'),
-        const SizedBox(height: 8),
-        if (isLoadingPosts)
-          const HikerCircleLoadingView(
-            message: 'Loading community posts…',
-            detail: 'Getting the latest updates from hikers.',
-            compact: true,
-            padding: EdgeInsets.symmetric(vertical: 8),
-          ),
-        if (!isLoadingPosts && postsLoadError != null)
-          _InsetGroup(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Better together',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: _CircleColors.textFor(context),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Find your hiking people. Share the moments along the way.',
+                style: TextStyle(
+                  color: _CircleColors.secondaryTextFor(context),
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  const Icon(
-                    Icons.cloud_off_rounded,
-                    color: _CircleColors.orange,
+                  ChoiceChip(
+                    avatar: const Icon(CupertinoIcons.chat_bubble_2, size: 18),
+                    label: const Text('Stories'),
+                    selected: !_showPeople,
+                    onSelected: (_) => setState(() {
+                      _showPeople = false;
+                    }),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(postsLoadError!)),
-                  TextButton(
-                    onPressed: onRetryPosts,
-                    child: const Text('Retry'),
+                  ChoiceChip(
+                    avatar: const Icon(CupertinoIcons.person_2, size: 18),
+                    label: const Text('Find hikers'),
+                    selected: _showPeople,
+                    onSelected: (_) => setState(() {
+                      _showPeople = true;
+                    }),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          onChanged: (value) =>
+              setState(() => _query = value.trim().toLowerCase()),
+          decoration: InputDecoration(
+            hintText: _showPeople
+                ? 'Search hikers or interests'
+                : 'Search stories, hikers or trails',
+            prefixIcon: const Icon(CupertinoIcons.search, size: 20),
+            filled: true,
+            fillColor: _CircleColors.surfaceFor(context),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (_showPeople) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Find your next hiking buddy',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              FilterChip(
+                label: const Text('My buddies'),
+                selected: _onlyBuddies,
+                onSelected: (value) => setState(() => _onlyBuddies = value),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (people.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Text(
+                'No hikers match this view. Try another search.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          for (final person in people)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: _CircleColors.surfaceFor(context),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
+                onTap: () => widget.onOpenPersonProfile(person),
+                leading: _Avatar(
+                  label: _circleInitial(person.name),
+                  color: person.color,
+                  imageUrl: person.photoURL,
+                ),
+                title: Text(
+                  person.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  person.trailAffinity.isNotEmpty
+                      ? person.trailAffinity
+                      : person.subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: IconButton(
+                  tooltip: widget.buddyPhones.contains(person.phoneNumber)
+                      ? 'Message hiker'
+                      : widget.outgoingBuddyRequestPhones.contains(
+                          _phoneKeyFor(person.phoneNumber),
+                        )
+                      ? 'Request sent'
+                      : 'Add buddy',
+                  icon: Icon(
+                    widget.buddyPhones.contains(person.phoneNumber)
+                        ? CupertinoIcons.chat_bubble
+                        : widget.outgoingBuddyRequestPhones.contains(
+                            _phoneKeyFor(person.phoneNumber),
+                          )
+                        ? CupertinoIcons.checkmark
+                        : CupertinoIcons.person_add,
+                    color: _CircleColors.green,
+                  ),
+                  onPressed: widget.buddyPhones.contains(person.phoneNumber)
+                      ? () => widget.onMessageBuddy(person)
+                      : widget.outgoingBuddyRequestPhones.contains(
+                          _phoneKeyFor(person.phoneNumber),
+                        )
+                      ? null
+                      : () => widget.onAddBuddy(person),
+                ),
+              ),
+            ),
+        ] else ...[
+          _ComposerCard(
+            activeHike: widget.activeHike,
+            currentUserPhotoURL: widget.currentUserPhotoURL,
+            currentUserPhotoBytes: widget.currentUserPhotoBytes,
+            onCreatePost: widget.onCreatePost,
+            onShareHike: widget.onShareHike,
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final filter in ['Everyone', 'Buddies', 'Hike stories'])
+                ChoiceChip(
+                  label: Text(filter),
+                  selected: _filter == filter,
+                  onSelected: (_) => setState(() => _filter = filter),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (widget.isLoadingPosts)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: HikerCircleMinorLoadingIndicator(size: 56)),
+            )
+          else if (widget.postsLoadError != null)
+            ListTile(
+              leading: const Icon(CupertinoIcons.cloud),
+              title: Text(widget.postsLoadError!),
+              trailing: TextButton(
+                onPressed: widget.onRetryPosts,
+                child: const Text('Retry'),
+              ),
+            )
+          else if (posts.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 30),
+              child: Column(
+                children: [
+                  Icon(
+                    CupertinoIcons.chat_bubble_2,
+                    size: 36,
+                    color: _CircleColors.green,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    widget.posts.isEmpty
+                        ? 'Every circle starts with a story'
+                        : 'No stories match this view',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.posts.isEmpty
+                        ? 'Share a moment or ask the community a question.'
+                        : 'Try Everyone or a different search.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _CircleColors.secondaryTextFor(context),
+                    ),
                   ),
                 ],
               ),
             ),
-          )
-        else if (!isLoadingPosts && posts.isEmpty)
-          const _InsetGroup(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('No community posts yet. Be the first to share one.'),
+          for (final post in posts) ...[
+            _CommunityPostCard(
+              post: post,
+              isOwnPost: post.authorPhoneNumber == widget.currentUserPhone,
+              onOpenPost: () => widget.onOpenPost(post),
+              onOpenProfile: () => widget.onOpenProfile(post),
+              onShare: () => widget.onSharePost(post),
             ),
-          ),
-        for (final post in posts) ...[
-          _CommunityPostCard(
-            post: post,
-            isOwnPost: post.authorPhoneNumber == currentUserPhone,
-            onOpenPost: () => onOpenPost(post),
-            onOpenProfile: () => onOpenProfile(post),
-            onShare: () => onSharePost(post),
-          ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 16),
+          ],
         ],
       ],
     );
@@ -1281,15 +1433,8 @@ class _ComposerCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: _CircleColors.green.withValues(alpha: 0.15)),
-        boxShadow: [
-          BoxShadow(
-            color: _CircleColors.green.withValues(alpha: isDark ? 0.08 : 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1307,7 +1452,7 @@ class _ComposerCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(22),
                     onTap: () => unawaited(_openComposer(context)),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -1318,7 +1463,7 @@ class _ComposerCard extends StatelessWidget {
                         color: isDark
                             ? const Color(0xFF1B261F)
                             : const Color(0xFFF5F7F5),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(22),
                         border: Border.all(
                           color: _CircleColors.separatorFor(
                             context,
@@ -1327,7 +1472,7 @@ class _ComposerCard extends StatelessWidget {
                       ),
                       child: Text(
                         activeHike == null
-                            ? 'Share a trail note, photo, or question...'
+                            ? 'What did you discover today?'
                             : 'Share live progress from ${activeHike!.trail.name}...',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: _CircleColors.secondaryTextFor(context),
@@ -1351,13 +1496,13 @@ class _ComposerCard extends StatelessWidget {
                         color: _CircleColors.green.withValues(alpha: 0.3),
                       ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(22),
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                     onPressed: () => unawaited(_openComposer(context)),
                     icon: const Icon(Icons.edit_rounded, size: 18),
-                    label: const Text('Post'),
+                    label: const Text('Write a story'),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -1367,7 +1512,7 @@ class _ComposerCard extends StatelessWidget {
                       backgroundColor: _CircleColors.green,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(22),
                       ),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
@@ -1440,11 +1585,11 @@ class _ComposerCard extends StatelessWidget {
                       ? const Color(0xFF1B261F)
                       : const Color(0xFFF5F7F5),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(22),
                     borderSide: BorderSide.none,
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(22),
                     borderSide: BorderSide(
                       color: _CircleColors.green.withValues(alpha: 0.3),
                     ),
@@ -1461,7 +1606,7 @@ class _ComposerCard extends StatelessWidget {
                   backgroundColor: _CircleColors.green,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(22),
                   ),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
@@ -1481,174 +1626,6 @@ class _ComposerCard extends StatelessWidget {
       return;
     }
     await onCreatePost(caption.trim());
-  }
-}
-
-class _BuddySuggestionCard extends StatelessWidget {
-  const _BuddySuggestionCard({
-    required this.person,
-    required this.isBuddy,
-    this.isRequested = false,
-    required this.onAddBuddy,
-    required this.onMessage,
-    required this.onOpenProfile,
-  });
-
-  final _CommunityPerson person;
-  final bool isBuddy;
-  final bool isRequested;
-  final VoidCallback onAddBuddy;
-  final VoidCallback onMessage;
-  final VoidCallback onOpenProfile;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 220,
-      child: Container(
-        decoration: BoxDecoration(
-          color: _CircleColors.surfaceFor(context),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: _CircleColors.shadowFor(context),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: onOpenProfile,
-                    child: _Avatar(
-                      label: _circleInitial(person.name),
-                      color: person.color,
-                      imageUrl: person.photoURL,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          person.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyLarge
-                              ?.copyWith(
-                                color: _CircleColors.textFor(context),
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0,
-                              ),
-                        ),
-                        Text(
-                          person.handle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: _CircleColors.secondaryTextFor(context),
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: person.color.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  person.trailAffinity,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: person.color,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                    fontSize: 11,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                person.subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _CircleColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                  fontSize: 12,
-                  height: 1.35,
-                ),
-              ),
-              const Spacer(),
-              if (isBuddy)
-                Row(
-                  children: [
-                    const Expanded(
-                      child: _StatusPill(
-                        label: 'Buddy',
-                        color: _CircleColors.green,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton.filled(
-                      tooltip: 'Start conversation',
-                      onPressed: onMessage,
-                      icon: const Icon(Icons.chat_rounded, size: 18),
-                    ),
-                  ],
-                )
-              else if (isRequested)
-                const SizedBox(
-                  width: double.infinity,
-                  child: _StatusPill(
-                    label: 'Requested',
-                    color: _CircleColors.orange,
-                  ),
-                )
-              else
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _CircleColors.green,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                    onPressed: onAddBuddy,
-                    icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
-                    label: const Text(
-                      'Add Buddy',
-                      style: TextStyle(fontSize: 13),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -1672,22 +1649,15 @@ class _CommunityPostCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
           color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: _CircleColors.shadowFor(context),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(22),
           onTap: onOpenPost,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
@@ -1786,7 +1756,7 @@ class _CommunityPostCard extends StatelessWidget {
                       _PostAction(
                         icon: CupertinoIcons.heart,
                         label: '${post.likes}',
-                        onTap: null,
+                        onTap: onOpenPost,
                       ),
                       const SizedBox(width: 18),
                       _PostAction(
@@ -3919,21 +3889,18 @@ class _DetailHeader extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _CircleColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.3,
+                style: PageHeaderStyle.title(
+                  context,
+                  _CircleColors.textFor(context),
                 ),
               ),
               Text(
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _CircleColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                  fontSize: 13,
+                style: PageHeaderStyle.subtitle(
+                  context,
+                  _CircleColors.secondaryTextFor(context),
                 ),
               ),
             ],

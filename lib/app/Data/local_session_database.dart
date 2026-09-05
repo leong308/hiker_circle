@@ -12,6 +12,19 @@ import '../../sos/Model/nearby_sos_event.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/app_session.dart';
 
+@immutable
+class LocalAchievementProgressCache {
+  const LocalAchievementProgressCache({
+    required this.contentHash,
+    required this.rows,
+    required this.cachedAt,
+  });
+
+  final String contentHash;
+  final List<Map<String, dynamic>> rows;
+  final DateTime cachedAt;
+}
+
 class LocalSessionDatabase {
   LocalSessionDatabase({String? databasePath})
     : _databasePathOverride = databasePath;
@@ -60,6 +73,60 @@ class LocalSessionDatabase {
   Future<void> clearUserSessionOnly() async {
     final database = await _openDatabase();
     await database.delete('users');
+  }
+
+  Future<LocalAchievementProgressCache?> loadAchievementProgressCache({
+    required String ownerPhoneNumber,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty) return null;
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'achievement_progress_cache',
+      where: 'owner_phone_number = ?',
+      whereArgs: [owner],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(rows.first['payload_json'] as String);
+      if (decoded is! List) return null;
+      final achievements = decoded
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+      if (achievements.isEmpty) return null;
+      return LocalAchievementProgressCache(
+        contentHash: rows.first['content_hash'] as String? ?? '',
+        rows: achievements,
+        cachedAt:
+            DateTime.tryParse(rows.first['cached_at'] as String? ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      );
+    } catch (_) {
+      await database.delete(
+        'achievement_progress_cache',
+        where: 'owner_phone_number = ?',
+        whereArgs: [owner],
+      );
+      return null;
+    }
+  }
+
+  Future<void> saveAchievementProgressCache({
+    required String ownerPhoneNumber,
+    required String contentHash,
+    required List<Map<String, dynamic>> rows,
+  }) async {
+    final owner = ownerPhoneNumber.trim();
+    if (owner.isEmpty || rows.isEmpty) return;
+    final database = await _openDatabase();
+    await database.insert('achievement_progress_cache', {
+      'owner_phone_number': owner,
+      'content_hash': contentHash.trim(),
+      'payload_json': jsonEncode(rows),
+      'cached_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> saveActiveHikeSession({
@@ -1013,7 +1080,7 @@ class LocalSessionDatabase {
 
     final opening = openDatabase(
       databasePath,
-      version: 23,
+      version: 24,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -1040,6 +1107,7 @@ class LocalSessionDatabase {
         await _createNearbySosEventsTable(database);
         await _createPendingHikeEndsTable(database);
         await _createPlannedHikeStateTable(database);
+        await _createAchievementProgressCacheTable(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -1223,6 +1291,9 @@ class LocalSessionDatabase {
             columnName: 'is_starred',
             definition: 'INTEGER NOT NULL DEFAULT 0',
           );
+        }
+        if (oldVersion < 24) {
+          await _createAchievementProgressCacheTable(database);
         }
       },
     );
@@ -1777,6 +1848,17 @@ class LocalSessionDatabase {
     await database.execute('''
       CREATE INDEX IF NOT EXISTS idx_planned_hike_state_owner_updated
       ON planned_hike_state(owner_phone_number, updated_at DESC)
+    ''');
+  }
+
+  Future<void> _createAchievementProgressCacheTable(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS achievement_progress_cache (
+        owner_phone_number TEXT PRIMARY KEY,
+        content_hash TEXT NOT NULL DEFAULT '',
+        payload_json TEXT NOT NULL,
+        cached_at TEXT NOT NULL
+      )
     ''');
   }
 

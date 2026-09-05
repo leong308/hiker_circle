@@ -4,6 +4,7 @@ import 'package:lottie/lottie.dart';
 import 'dart:async';
 
 const _minorLoadingAnimation = 'assets/animations/loading_spinner.json';
+const _brandedAnimationScale = 2.0;
 
 /// Compact loading motion for buttons, tiles, map callouts, and other places
 /// where the full branded loading card cannot fit without obscuring content.
@@ -67,10 +68,13 @@ class HikerCircleMinorLoadingIndicator extends StatelessWidget {
       child: SizedBox.square(
         dimension: size,
         child: ExcludeSemantics(
-          child: Lottie.asset(
-            _minorLoadingAnimation,
-            fit: BoxFit.contain,
-            repeat: true,
+          child: Transform.scale(
+            scale: 2,
+            child: Lottie.asset(
+              _minorLoadingAnimation,
+              fit: BoxFit.contain,
+              repeat: true,
+            ),
           ),
         ),
       ),
@@ -160,13 +164,21 @@ class _HikerCircleLoadingToastState extends State<HikerCircleLoadingToast> {
                           'assets/animations/file_transfer.gif',
                           fit: BoxFit.contain,
                         )
-                      : Lottie.asset(
-                          'assets/animations/hiker_circle_loading.json',
-                          key: const Key(
-                            'hiker-circle-loading-branded-animation',
+                      : ClipRect(
+                          child: Transform.scale(
+                            key: const Key(
+                              'hiker-circle-loading-animation-scale',
+                            ),
+                            scale: _brandedAnimationScale,
+                            child: Lottie.asset(
+                              'assets/animations/hiker_circle_loading.json',
+                              key: const Key(
+                                'hiker-circle-loading-branded-animation',
+                              ),
+                              fit: BoxFit.contain,
+                              repeat: true,
+                            ),
                           ),
-                          fit: BoxFit.contain,
-                          repeat: true,
                         ),
                 ),
               ),

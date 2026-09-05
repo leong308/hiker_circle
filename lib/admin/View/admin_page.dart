@@ -1779,6 +1779,8 @@ class _AchievementEditorSheetState extends State<_AchievementEditorSheet> {
     'hazard_report_approved': 'Hazard report approved',
     'team_hike_completed': 'Team hike completed',
     'community_post_created': 'Community post created',
+    'distinct_trail_completed': 'Different trail completed',
+    'malaysia_state_hiked': 'Malaysian state visited by hike',
   };
 
   final _formKey = GlobalKey<FormState>();

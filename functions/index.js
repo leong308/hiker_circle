@@ -66,6 +66,12 @@ const {
 } = require('./nearby_sos_helpers');
 const { publicStatsPayload } = require('./public_stats_helpers');
 const {
+  achievementProgressHash,
+  achievementSlug,
+  completedHikeAchievementEvents,
+  malaysiaStateSlug,
+} = require('./achievement_helpers');
+const {
   SHARED_HIKE_PLAN_PRIVACY_VERSION,
   projectSharedHikePlan,
   sharedHikePlanNeedsRedaction,
@@ -284,6 +290,136 @@ const achievementSeedDefinitions = Object.freeze({
     sortOrder: 10,
     accentColorValue: 0xff34a853,
   },
+  trail_regular: {
+    title: 'Trail Regular',
+    condition: 'Complete 5 hike sessions',
+    category: 'Hike milestone',
+    iconName: 'hiking',
+    rewardPoints: 160,
+    rewardType: 'cumulative',
+    metricKey: 'hike_completed',
+    targetCount: 5,
+    isActive: true,
+    sortOrder: 70,
+    accentColorValue: 0xff27ae60,
+  },
+  trail_enthusiast: {
+    title: 'Trail Enthusiast',
+    condition: 'Complete 10 hike sessions',
+    category: 'Hike milestone',
+    iconName: 'hiking',
+    rewardPoints: 220,
+    rewardType: 'cumulative',
+    metricKey: 'hike_completed',
+    targetCount: 10,
+    isActive: true,
+    sortOrder: 80,
+    accentColorValue: 0xff219653,
+  },
+  seasoned_trekker: {
+    title: 'Seasoned Trekker',
+    condition: 'Complete 25 hike sessions',
+    category: 'Hike milestone',
+    iconName: 'terrain',
+    rewardPoints: 350,
+    rewardType: 'cumulative',
+    metricKey: 'hike_completed',
+    targetCount: 25,
+    isActive: true,
+    sortOrder: 90,
+    accentColorValue: 0xff168aad,
+  },
+  fifty_hike_legend: {
+    title: 'Fifty-Hike Legend',
+    condition: 'Complete 50 hike sessions',
+    category: 'Hike milestone',
+    iconName: 'military_tech',
+    rewardPoints: 500,
+    rewardType: 'cumulative',
+    metricKey: 'hike_completed',
+    targetCount: 50,
+    isActive: true,
+    sortOrder: 100,
+    accentColorValue: 0xffffb000,
+  },
+  trail_collector: {
+    title: 'Trail Collector',
+    condition: 'Complete 5 different trails',
+    category: 'Trail exploration',
+    iconName: 'route',
+    rewardPoints: 180,
+    rewardType: 'cumulative',
+    metricKey: 'distinct_trail_completed',
+    targetCount: 5,
+    isActive: true,
+    sortOrder: 110,
+    accentColorValue: 0xff2d9cdb,
+  },
+  route_ranger: {
+    title: 'Route Ranger',
+    condition: 'Complete 10 different trails',
+    category: 'Trail exploration',
+    iconName: 'explore',
+    rewardPoints: 260,
+    rewardType: 'cumulative',
+    metricKey: 'distinct_trail_completed',
+    targetCount: 10,
+    isActive: true,
+    sortOrder: 120,
+    accentColorValue: 0xff2f80ed,
+  },
+  trail_atlas: {
+    title: 'Trail Atlas',
+    condition: 'Complete 25 different trails',
+    category: 'Trail exploration',
+    iconName: 'map',
+    rewardPoints: 450,
+    rewardType: 'cumulative',
+    metricKey: 'distinct_trail_completed',
+    targetCount: 25,
+    isActive: true,
+    sortOrder: 130,
+    accentColorValue: 0xff6c5ce7,
+  },
+  state_scout: {
+    title: 'State Scout',
+    condition: 'Complete hikes in 3 Malaysian states',
+    category: 'Malaysia exploration',
+    iconName: 'travel_explore',
+    rewardPoints: 250,
+    rewardType: 'cumulative',
+    metricKey: 'malaysia_state_hiked',
+    targetCount: 3,
+    isActive: true,
+    sortOrder: 140,
+    accentColorValue: 0xff00a99d,
+  },
+  malaysia_explorer: {
+    title: 'Malaysia Explorer',
+    condition: 'Complete hikes in 7 Malaysian states',
+    category: 'Malaysia exploration',
+    iconName: 'travel_explore',
+    rewardPoints: 450,
+    rewardType: 'cumulative',
+    metricKey: 'malaysia_state_hiked',
+    targetCount: 7,
+    isActive: true,
+    sortOrder: 150,
+    accentColorValue: 0xff00897b,
+  },
+  malaysia_trailblazer: {
+    title: 'Malaysia Trailblazer',
+    condition: 'Complete hikes in all 13 Malaysian states',
+    category: 'Malaysia exploration',
+    iconName: 'public',
+    rewardPoints: 800,
+    rewardType: 'cumulative',
+    metricKey: 'malaysia_state_hiked',
+    targetCount: 13,
+    isActive: true,
+    sortOrder: 160,
+    accentColorValue: 0xffffc107,
+  },
   prepared_adventurer: {
     title: 'Prepared Adventurer',
     condition: 'Download offline map before starting',
@@ -329,6 +465,32 @@ const achievementSeedDefinitions = Object.freeze({
     sortOrder: 40,
     accentColorValue: 0xff9b51e0,
   },
+  check_in_champion: {
+    title: 'Check-In Champion',
+    condition: 'Complete 25 safe check-ins during hikes',
+    category: 'Safety habit',
+    iconName: 'task_alt',
+    rewardPoints: 240,
+    rewardType: 'cumulative',
+    metricKey: 'check_in_completed',
+    targetCount: 25,
+    isActive: true,
+    sortOrder: 190,
+    accentColorValue: 0xff8e44ad,
+  },
+  safety_beacon: {
+    title: 'Safety Beacon',
+    condition: 'Complete 100 safe check-ins during hikes',
+    category: 'Safety habit',
+    iconName: 'health_and_safety',
+    rewardPoints: 500,
+    rewardType: 'cumulative',
+    metricKey: 'check_in_completed',
+    targetCount: 100,
+    isActive: true,
+    sortOrder: 200,
+    accentColorValue: 0xff9b51e0,
+  },
   security_guardian: {
     title: 'Security Guardian',
     condition: 'Protect your account with both Authenticator and a passkey',
@@ -355,6 +517,45 @@ const achievementSeedDefinitions = Object.freeze({
     sortOrder: 50,
     accentColorValue: 0xffeb5757,
   },
+  trail_storyteller: {
+    title: 'Trail Storyteller',
+    condition: 'Share your first public trail post',
+    category: 'Community',
+    iconName: 'forum',
+    rewardPoints: 100,
+    rewardType: 'one_time',
+    metricKey: 'community_post_created',
+    targetCount: 1,
+    isActive: true,
+    sortOrder: 210,
+    accentColorValue: 0xfff2994a,
+  },
+  community_voice: {
+    title: 'Community Voice',
+    condition: 'Share 5 public trail posts',
+    category: 'Community',
+    iconName: 'forum',
+    rewardPoints: 250,
+    rewardType: 'cumulative',
+    metricKey: 'community_post_created',
+    targetCount: 5,
+    isActive: true,
+    sortOrder: 220,
+    accentColorValue: 0xffe67e22,
+  },
+  hazard_sentinel: {
+    title: 'Hazard Sentinel',
+    condition: 'Submit 5 hazard reports confirmed by others',
+    category: 'Community safety',
+    iconName: 'warning',
+    rewardPoints: 320,
+    rewardType: 'cumulative',
+    metricKey: 'hazard_report_approved',
+    targetCount: 5,
+    isActive: true,
+    sortOrder: 230,
+    accentColorValue: 0xffd63031,
+  },
   team_guardian: {
     title: 'Team Guardian',
     condition: 'Complete 3 team hikes without a separation emergency',
@@ -367,6 +568,32 @@ const achievementSeedDefinitions = Object.freeze({
     isActive: true,
     sortOrder: 60,
     accentColorValue: 0xff00a99d,
+  },
+  first_team_hike: {
+    title: 'Better Together',
+    condition: 'Complete your first safe team hike',
+    category: 'Team hike',
+    iconName: 'groups',
+    rewardPoints: 100,
+    rewardType: 'one_time',
+    metricKey: 'team_hike_completed',
+    targetCount: 1,
+    isActive: true,
+    sortOrder: 170,
+    accentColorValue: 0xff00a99d,
+  },
+  trail_crew: {
+    title: 'Trail Crew',
+    condition: 'Complete 10 team hikes without a separation emergency',
+    category: 'Team hike',
+    iconName: 'groups',
+    rewardPoints: 350,
+    rewardType: 'cumulative',
+    metricKey: 'team_hike_completed',
+    targetCount: 10,
+    isActive: true,
+    sortOrder: 180,
+    accentColorValue: 0xff00796b,
   },
 });
 
@@ -2914,9 +3141,11 @@ exports.loadAchievementLeaderboard = onCall({}, async (request) => {
     pointsByUser.set(userId, (pointsByUser.get(userId) || 0) + points);
   }
   const ranked = [...pointsByUser.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 50);
-  const userReferences = ranked.map(([userId]) =>
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const visibleRanked = ranked.slice(0, 50);
+  const currentUserIndex = ranked.findIndex(([userId]) => userId === uid);
+  if (currentUserIndex >= 50) visibleRanked.push(ranked[currentUserIndex]);
+  const userReferences = visibleRanked.map(([userId]) =>
     admin.firestore().collection('users').doc(userId)
   );
   const users = userReferences.length > 0
@@ -2927,13 +3156,13 @@ exports.loadAchievementLeaderboard = onCall({}, async (request) => {
     period,
     startsAtLocal: start.toISOString(),
     currentUserId: uid,
-    entries: ranked.map(([userId, points], index) => {
+    entries: visibleRanked.map(([userId, points], index) => {
       const profile = profiles.get(userId) || {};
       const username = String(
         profile.username || profile.displayName || profile.handle || 'Hiker'
       ).replace(/^@/, '').trim();
       return {
-        rank: index + 1,
+        rank: userId === uid ? currentUserIndex + 1 : index + 1,
         userId,
         displayName: username || 'Hiker',
         photoURL: String(profile.photoURL || '').trim(),
@@ -5391,10 +5620,10 @@ exports.completeActiveHikeSession = onCall(
       );
     }
     if (result.status === 'completed') {
-      await applyAchievementMetricServer({
+      await applyCompletedHikeAchievements({
         userId: uid,
-        metricKey: 'hike_completed',
-        eventKey: `hike-completed:${sessionId}`,
+        sessionId,
+        trailId,
       });
     }
     return result;
@@ -9550,6 +9779,233 @@ async function applyAchievementMetricServer({
   }
 }
 
+async function applyCompletedHikeAchievements({ userId, sessionId, trailId }) {
+  let trail = {};
+  if (validFirestoreDocumentId(trailId)) {
+    const trailSnapshot = await admin
+      .firestore()
+      .collection('trails')
+      .doc(trailId)
+      .get();
+    trail = trailSnapshot.data() || {};
+  }
+  const events = completedHikeAchievementEvents({
+    sessionId,
+    trailId,
+    state: trail.state,
+    country: trail.country,
+  });
+  for (const achievementEvent of events) {
+    await applyAchievementMetricServer({ userId, ...achievementEvent });
+  }
+}
+
+async function reconcileAchievementMetricServer({
+  userId,
+  metricKey,
+  progressCount,
+}) {
+  const normalizedProgress = Math.max(0, Math.floor(Number(progressCount || 0)));
+  if (!validFirestoreDocumentId(userId) || normalizedProgress === 0) return;
+
+  await ensureAchievementDefinitions();
+  const db = admin.firestore();
+  const definitions = await db
+    .collection('achievements')
+    .where('metricKey', '==', metricKey)
+    .get();
+  for (const definitionDocument of definitions.docs) {
+    const progressReference = db
+      .collection('userAchievements')
+      .doc(`${userId}_${definitionDocument.id}`);
+    const userReference = db.collection('users').doc(userId);
+    await db.runTransaction(async (transaction) => {
+      const [definitionSnapshot, progressSnapshot, userSnapshot] =
+        await Promise.all([
+          transaction.get(definitionDocument.ref),
+          transaction.get(progressReference),
+          transaction.get(userReference),
+        ]);
+      const definition = definitionSnapshot.data() || {};
+      if (
+        !definitionSnapshot.exists
+        || definition.isActive === false
+        || !userSnapshot.exists
+      ) {
+        return;
+      }
+      const existing = progressSnapshot.data() || {};
+      const rewardType = String(definition.rewardType || '') === 'cumulative'
+        ? 'cumulative'
+        : 'one_time';
+      const targetCount = rewardType === 'one_time'
+        ? 1
+        : Math.max(1, Math.min(1000000000, Number(definition.targetCount || 1)));
+      const wasUnlocked = existing.isUnlocked === true
+        || existing.awardedAt != null
+        || existing.awardedAtLocal != null;
+      const previousProgress = Math.max(
+        0,
+        Math.min(targetCount, Number(existing.progressCount || 0))
+      );
+      const nextProgress = Math.max(
+        previousProgress,
+        Math.min(targetCount, normalizedProgress)
+      );
+      const isUnlocked = wasUnlocked || nextProgress >= targetCount;
+      const newlyUnlocked = !wasUnlocked && isUnlocked;
+      const rewardPoints = Math.max(
+        0,
+        Math.min(1000000000, Number(definition.rewardPoints || 0))
+      );
+      const nowIso = new Date().toISOString();
+      transaction.set(
+        progressReference,
+        {
+          userAchievementId: progressReference.id,
+          userId,
+          achievementId: definitionDocument.id,
+          achievementTitle: String(definition.title || '').slice(0, 160),
+          rewardType,
+          metricKey,
+          targetCount,
+          progressCount: nextProgress,
+          isUnlocked,
+          ...(newlyUnlocked
+            ? {
+                pointsAwarded: rewardPoints,
+                awardedAt: admin.firestore.FieldValue.serverTimestamp(),
+                awardedAtLocal: nowIso,
+              }
+            : {}),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAtLocal: nowIso,
+        },
+        { merge: true }
+      );
+      if (newlyUnlocked) {
+        const currentPoints = Math.max(
+          0,
+          Number(userSnapshot.data()?.achievementPoints || 0)
+        );
+        const totalPoints = currentPoints + rewardPoints;
+        const level = hikerLevelForPoints(totalPoints);
+        transaction.set(
+          userReference,
+          {
+            achievementPoints: totalPoints,
+            hikerLevel: level.number,
+            hikerLevelName: level.name,
+            hikerLevelBadge: level.badgeLabel,
+            achievementSummaryUpdatedAt:
+              admin.firestore.FieldValue.serverTimestamp(),
+            achievementSummaryUpdatedAtLocal: nowIso,
+          },
+          { merge: true }
+        );
+      }
+    });
+  }
+}
+
+exports.getMyAchievementProgressHash = onCall({}, async (request) => {
+  const { uid } = authenticatedPhoneFor(
+    request,
+    'Sign in to check achievement progress.'
+  );
+  const db = admin.firestore();
+  const [definitionSnapshot, awardSnapshot] = await Promise.all([
+    db.collection('achievements').get(),
+    db.collection('userAchievements').where('userId', '==', uid).get(),
+  ]);
+  const definitions = definitionSnapshot.docs.map((document) => ({
+    achievementId: document.id,
+    ...document.data(),
+  }));
+  const awards = awardSnapshot.docs.map((document) => ({
+    userAchievementId: document.id,
+    ...document.data(),
+  }));
+  return {
+    hash: achievementProgressHash({ definitions, awards }),
+  };
+});
+
+exports.syncMyAchievementProgress = onCall({}, async (request) => {
+  const { uid } = authenticatedPhoneFor(
+    request,
+    'Sign in to synchronize achievement progress.'
+  );
+  const db = admin.firestore();
+  const userReference = db.collection('users').doc(uid);
+  const userSnapshot = await userReference.get();
+  if (!userSnapshot.exists) {
+    throw new HttpsError('failed-precondition', 'Your profile is unavailable.');
+  }
+  if (Number(userSnapshot.data()?.achievementCatalogSyncVersion || 0) >= 3) {
+    return { synchronized: true, alreadyCurrent: true };
+  }
+
+  const hikeSnapshot = await db
+    .collection('hikeSessions')
+    .where('userId', '==', uid)
+    .limit(500)
+    .get();
+  const completedHikes = hikeSnapshot.docs
+    .map((document) => ({ sessionId: document.id, ...document.data() }))
+    .filter((hike) => String(hike.status || '') === 'completed');
+  const trailIds = [
+    ...new Set(
+      completedHikes
+        .map((hike) => String(hike.trailId || '').trim())
+        .filter(validFirestoreDocumentId)
+    ),
+  ];
+  const trailSnapshots = trailIds.length === 0
+    ? []
+    : await db.getAll(
+        ...trailIds.map((trailId) => db.collection('trails').doc(trailId))
+      );
+  const malaysiaStates = new Set();
+  for (const trailSnapshot of trailSnapshots) {
+    const trail = trailSnapshot.data() || {};
+    if (achievementSlug(trail.country) === 'malaysia') {
+      const state = malaysiaStateSlug(trail.state);
+      if (state) malaysiaStates.add(state);
+    }
+  }
+
+  await reconcileAchievementMetricServer({
+    userId: uid,
+    metricKey: 'hike_completed',
+    progressCount: completedHikes.length,
+  });
+  await reconcileAchievementMetricServer({
+    userId: uid,
+    metricKey: 'distinct_trail_completed',
+    progressCount: trailIds.length,
+  });
+  await reconcileAchievementMetricServer({
+    userId: uid,
+    metricKey: 'malaysia_state_hiked',
+    progressCount: malaysiaStates.size,
+  });
+  await userReference.set(
+    {
+      achievementCatalogSyncVersion: 3,
+      achievementCatalogSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+      achievementCatalogSyncedAtLocal: new Date().toISOString(),
+    },
+    { merge: true }
+  );
+  return {
+    synchronized: true,
+    completedHikes: completedHikes.length,
+    distinctTrails: trailIds.length,
+    malaysiaStates: malaysiaStates.size,
+  };
+});
+
 exports.manageAchievementDefinition = onCall(
   {},
   async (request) => {
@@ -9688,10 +10144,10 @@ exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
     if (afterStatus !== 'completed') {
       return;
     }
-    await applyAchievementMetricServer({
+    await applyCompletedHikeAchievements({
       userId,
-      metricKey: 'hike_completed',
-      eventKey: `hike-completed:${event.params.sessionId}`,
+      sessionId: event.params.sessionId,
+      trailId: String(after.trailId || ''),
     });
   }
 );

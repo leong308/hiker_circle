@@ -1,3 +1,4 @@
+import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -1051,32 +1052,29 @@ class _Header extends StatelessWidget {
               children: [
                 Text(
                   'Discover Trails',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _TrailColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
+                  style: PageHeaderStyle.title(
+                    context,
+                    _TrailColors.textFor(context),
                   ),
                 ),
                 Text(
                   'Pick a route by conditions, safety, and team fit',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _TrailColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0,
+                  style: PageHeaderStyle.subtitle(
+                    context,
+                    _TrailColors.secondaryTextFor(context),
                   ),
                 ),
               ],
             ),
           ),
-          Tooltip(
-            message: isAdmin ? 'Add trail' : 'Trail filters',
-            child: IconButton(
-              onPressed: isAdmin ? onAddTrail : null,
-              icon: Icon(isAdmin ? Icons.add_rounded : Icons.tune_rounded),
+          if (isAdmin)
+            PageHeaderAction(
+              tooltip: 'Add trail',
+              icon: Icons.add_rounded,
+              onPressed: onAddTrail,
               color: _TrailColors.green,
+              surface: _TrailColors.surfaceFor(context),
             ),
-          ),
         ],
       ),
     );
@@ -3180,11 +3178,9 @@ class _DetailHeader extends StatelessWidget {
             child: subtitle == null
                 ? Text(
                     title,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: _TrailColors.textFor(context),
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
+                    style: PageHeaderStyle.title(
+                      context,
+                      _TrailColors.textFor(context),
                     ),
                   )
                 : Column(
@@ -3206,10 +3202,9 @@ class _DetailHeader extends StatelessWidget {
                         subtitle!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _TrailColors.secondaryTextFor(context),
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: 0,
+                        style: PageHeaderStyle.subtitle(
+                          context,
+                          _TrailColors.secondaryTextFor(context),
                         ),
                       ),
                     ],

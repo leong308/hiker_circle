@@ -61,12 +61,43 @@ void main() {
       find.byKey(const Key('hiker-circle-loading-branded-animation')),
       findsOneWidget,
     );
+    final animationScale = tester.widget<Transform>(
+      find.byKey(const Key('hiker-circle-loading-animation-scale')),
+    );
+    expect(animationScale.transform.getMaxScaleOnAxis(), 2);
     expect(find.text('Loading nearby trails…'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
 
     await tester.pump(const Duration(milliseconds: 400));
   });
+
+  testWidgets(
+    'enlarges the compact branded animation without growing its card',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: HikerCircleLoadingView(
+              message: 'Searching documents…',
+              compact: true,
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        tester
+            .getSize(find.byKey(const Key('hiker-circle-loading-animation')))
+            .height,
+        108,
+      );
+      final animationScale = tester.widget<Transform>(
+        find.byKey(const Key('hiker-circle-loading-animation-scale')),
+      );
+      expect(animationScale.transform.getMaxScaleOnAxis(), 2);
+    },
+  );
 
   testWidgets('uses determinate progress when an operation reports it', (
     tester,

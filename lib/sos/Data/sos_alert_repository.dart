@@ -38,8 +38,8 @@ class SosQueueFlushResult {
 
 /// A durable local SOS submission and its eventual Firebase/provider result.
 ///
-/// [submittedResult] is safe to show immediately after the local retry row is
-/// created. [acknowledgement] later replaces that optimistic state with the
+/// [submittedResult] records local queueing, never successful delivery.
+/// [acknowledgement] replaces that pending state with the
 /// authoritative sent, failed, or queued result.
 class SosAlertSubmission {
   const SosAlertSubmission({
@@ -254,28 +254,18 @@ class SosAlertRepository {
     final previouslyQueuedCount = durableQueueId == null
         ? queuedCount
         : (queuedCount - 1).clamp(0, queuedCount);
-    final optimisticDispatches = contacts
-        .map(
-          (contact) => SosContactDispatch(
-            contactName: contact.name,
-            phoneNumber: contact.phoneNumber,
-            wasSent: true,
-            retryable: false,
-          ),
-        )
-        .toList(growable: false);
     final submittedAlert = SosAlert(
       id: alertId,
       mode: mode,
       status: contacts.isEmpty
           ? SosAlertStatus.noContacts
-          : SosAlertStatus.sent,
+          : SosAlertStatus.queued,
       triggeredAt: triggeredAt,
       triggeredByPhoneNumber: session.phoneNumber,
       contactCount: contacts.length,
-      sentCount: contacts.length,
+      sentCount: 0,
       failedCount: 0,
-      dispatches: optimisticDispatches,
+      dispatches: const [],
       message: message,
       triggerLocation: triggerLocation,
       triggerSource: resolvedTriggerSource,

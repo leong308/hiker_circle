@@ -86,5 +86,16 @@
   },
   "trail_bukit_gasing_loop_1782225621903565": { "keepExisting": true },
   "trail_bukit_jambul_trail_1782232587060378": { "keepExisting": true },
-  "trail_near_teluk_kumbar_1781870736276385": { "routeCover": true }
+  "trail_near_teluk_kumbar_1781870736276385": { "routeCover": true },
+  "malaysia-mount-lambak": { "routeCover": true },
+  "malaysia-gunung-keriang": { "routeCover": true },
+  "malaysia-jelawang-waterfall": { "routeCover": true },
+  "malaysia-bukit-beruang": { "routeCover": true },
+  "malaysia-mount-datuk": { "routeCover": true },
+  "malaysia-maxwell-hill": { "routeCover": true },
+  "malaysia-pintu-wang-gunung": { "routeCover": true },
+  "malaysia-mount-santubong": { "routeCover": true },
+  "malaysia-maragang-hill": { "routeCover": true },
+  "malaysia-broga-hill-peak-3-via-mpkj-trail": { "routeCover": true },
+  "malaysia-bukit-keluang": { "routeCover": true }
 }

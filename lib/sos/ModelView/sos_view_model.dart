@@ -228,6 +228,7 @@ class SosViewModel extends ChangeNotifier {
     }
 
     _isSendingSosAlert = true;
+    _latestSosAcknowledgement = null;
     _sosAlertErrorMessage = null;
     _notifyListenersIfActive();
 
@@ -249,19 +250,12 @@ class SosViewModel extends ChangeNotifier {
         customMessageNote: customMessageNote,
         triggerSource: triggerSource,
       );
-      if (_isDisposed) {
-        return submission.submittedResult;
-      }
-      _applyAlertResult(submission.submittedResult);
-      _isSendingSosAlert = false;
-      _notifyListenersIfActive();
-      unawaited(
-        _observeAcknowledgement(
-          submission.acknowledgement,
-          submission.submittedResult.alert.id,
-        ),
+      if (!_isDisposed) _applyAlertResult(submission.submittedResult);
+      await _observeAcknowledgement(
+        submission.acknowledgement,
+        submission.submittedResult.alert.id,
       );
-      return submission.submittedResult;
+      return _isDisposed ? null : _latestSosAcknowledgement;
     } on SosAlertRepositoryException catch (error) {
       if (!_isDisposed) {
         _sosAlertErrorMessage = error.message;

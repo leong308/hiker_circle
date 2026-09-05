@@ -54,8 +54,9 @@ void main() {
           ],
         );
 
-        expect(submission.submittedResult.alert.status, SosAlertStatus.sent);
-        expect(submission.submittedResult.alert.sentCount, 1);
+        expect(submission.submittedResult.alert.status, SosAlertStatus.queued);
+        expect(submission.submittedResult.alert.sentCount, 0);
+        expect(submission.submittedResult.alert.dispatches, isEmpty);
         expect(submission.submittedResult.queuedAlertCount, 0);
         expect(
           await database.countQueuedAlerts(

@@ -3,7 +3,18 @@ const path = require('path');
 
 const projectRoot = path.resolve(__dirname, '..');
 const targetDirectory = path.join(projectRoot, 'build', 'web');
+// Publish only the public Mapbox token used by browser maps.
+const envPath = path.join(projectRoot, '.env');
+const envText = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+const envMatch = envText.match(/^MAPBOX_ACCESS_TOKEN\s*=\s*([^\r\n]*)/m);
+const mapboxToken = (process.env.MAPBOX_ACCESS_TOKEN || envMatch?.[1] || '')
+  .trim().replace(/^['"]|['"]$/g, '');
+if (mapboxToken && !mapboxToken.startsWith('pk.')) {
+  throw new Error('Browser maps require a public Mapbox token. Refusing to publish a secret token.');
+}
 fs.mkdirSync(targetDirectory, { recursive: true });
+fs.writeFileSync(path.join(targetDirectory, 'map-config.json'),
+  JSON.stringify({ mapboxAccessToken: mapboxToken }));
 const entries = [
   {
     source: ['assets', 'icons', 'HikerCircle-Loader-Transparent.png'],

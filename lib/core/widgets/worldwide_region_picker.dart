@@ -109,6 +109,7 @@ abstract final class WorldwideRegionPicker {
     BuildContext context, {
     String initialCountry = '',
     String initialState = '',
+    String? countryCodeFilter,
   }) {
     return showModalBottomSheet<WorldwideRegion>(
       context: context,
@@ -118,6 +119,7 @@ abstract final class WorldwideRegionPicker {
       builder: (_) => _WorldwideRegionSheet(
         initialCountry: initialCountry,
         initialState: initialState,
+        countryCodeFilter: countryCodeFilter,
       ),
     );
   }
@@ -127,10 +129,12 @@ class _WorldwideRegionSheet extends StatefulWidget {
   const _WorldwideRegionSheet({
     required this.initialCountry,
     required this.initialState,
+    required this.countryCodeFilter,
   });
 
   final String initialCountry;
   final String initialState;
+  final String? countryCodeFilter;
 
   @override
   State<_WorldwideRegionSheet> createState() => _WorldwideRegionSheetState();
@@ -153,6 +157,12 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
   Future<void> _loadCountries() async {
     try {
       final countries = await csc.getAllCountries();
+      final countryCodeFilter = widget.countryCodeFilter?.trim().toUpperCase();
+      if (countryCodeFilter != null && countryCodeFilter.isNotEmpty) {
+        countries.removeWhere(
+          (country) => country.isoCode.toUpperCase() != countryCodeFilter,
+        );
+      }
       countries.sort((a, b) => a.name.compareTo(b.name));
       final wanted = widget.initialCountry.trim().toLowerCase();
       final country = countries.cast<csc.Country?>().firstWhere(
@@ -236,7 +246,9 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Country and state names use one worldwide catalogue across trail discovery and trail editing.',
+              _countries.length == 1
+                  ? 'Choose a state in ${_countries.single.name}.'
+                  : 'Country and state names use one worldwide catalogue across trail discovery and trail editing.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             if (_error != null) ...[
@@ -262,6 +274,15 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
                           ),
                         ],
                       ),
+                    )
+                  : _countries.length == 1
+                  ? _RegionWheel<csc.State>(
+                      label: 'State',
+                      values: _states,
+                      selected: _state,
+                      textFor: (value) => value.name,
+                      onSelected: (value) => setState(() => _state = value),
+                      loading: _loading,
                     )
                   : Row(
                       children: [
@@ -317,7 +338,7 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
   }
 }
 
-class _RegionWheel<T> extends StatelessWidget {
+class _RegionWheel<T> extends StatefulWidget {
   const _RegionWheel({
     required this.label,
     required this.values,
@@ -335,29 +356,67 @@ class _RegionWheel<T> extends StatelessWidget {
   final bool loading;
 
   @override
+  State<_RegionWheel<T>> createState() => _RegionWheelState<T>();
+}
+
+class _RegionWheelState<T> extends State<_RegionWheel<T>> {
+  late final FixedExtentScrollController _scrollController;
+
+  int _selectedIndex() {
+    final selected = widget.selected;
+    if (selected == null) return 0;
+    final index = widget.values.indexOf(selected);
+    return index < 0 ? 0 : index;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = FixedExtentScrollController(
+      initialItem: _selectedIndex(),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _RegionWheel<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.values, widget.values)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients || widget.values.isEmpty) {
+        return;
+      }
+      _scrollController.jumpToItem(_selectedIndex());
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final initialIndex = selected == null ? 0 : values.indexOf(selected as T);
     return Column(
       children: [
-        Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+        Text(widget.label, style: const TextStyle(fontWeight: FontWeight.w800)),
         const SizedBox(height: 6),
         Expanded(
-          child: loading
+          child: widget.loading
               ? const Center(child: HikerCircleMinorLoadingIndicator())
-              : values.isEmpty
-              ? Center(child: Text('No $label available'))
+              : widget.values.isEmpty
+              ? Center(child: Text('No ${widget.label} available'))
               : CupertinoPicker(
-                  key: ValueKey('$label-${values.length}-${selected.hashCode}'),
+                  key: ValueKey(widget.label),
                   itemExtent: 46,
-                  scrollController: FixedExtentScrollController(
-                    initialItem: initialIndex < 0 ? 0 : initialIndex,
-                  ),
-                  onSelectedItemChanged: (index) => onSelected(values[index]),
+                  scrollController: _scrollController,
+                  onSelectedItemChanged: (index) =>
+                      widget.onSelected(widget.values[index]),
                   children: [
-                    for (final value in values)
+                    for (final value in widget.values)
                       Center(
                         child: Text(
-                          textFor(value),
+                          widget.textFor(value),
                           maxLines: 2,
                           textAlign: TextAlign.center,
                           overflow: TextOverflow.ellipsis,

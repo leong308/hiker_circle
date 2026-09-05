@@ -1,3 +1,4 @@
+import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:math' as math;
@@ -86,7 +87,6 @@ class _SosPageState extends State<SosPage> {
   late final SosViewModel viewModel;
   int _handledManualSosRequestId = 0;
   int _handledImmediateSosRequestId = 0;
-  String _handledSosAcknowledgementKey = '';
   bool _isManualSosPatternActive = false;
   Map<SosAlertMode, String> _customWhatsAppNotes = _defaultWhatsAppNotes();
   List<Map<String, dynamic>> _adminSosSystemLogs = const [];
@@ -177,35 +177,7 @@ class _SosPageState extends State<SosPage> {
 
   void _refresh() {
     if (!mounted) return;
-    final acknowledgement = viewModel.latestSosAcknowledgement;
-    final acknowledgementKey = acknowledgement == null
-        ? ''
-        : '${acknowledgement.alert.id}:${acknowledgement.alert.status.firestoreValue}:${acknowledgement.queuedForRetry}:${acknowledgement.alert.sentCount}:${acknowledgement.alert.failedCount}';
-    final shouldReportAcknowledgementFailure =
-        acknowledgement != null &&
-        acknowledgementKey != _handledSosAcknowledgementKey &&
-        (acknowledgement.queuedForRetry ||
-            acknowledgement.alert.status == SosAlertStatus.failed ||
-            acknowledgement.alert.status == SosAlertStatus.partial ||
-            acknowledgement.alert.status == SosAlertStatus.queued);
-    if (acknowledgementKey.isNotEmpty) {
-      _handledSosAcknowledgementKey = acknowledgementKey;
-    }
     setState(() {});
-    if (shouldReportAcknowledgementFailure) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(_messageForResult(acknowledgement)),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: _SosColors.destructiveFor(context),
-            ),
-          );
-      });
-    }
   }
 
   Future<void> _loadNearbySosEvents() async {
@@ -580,6 +552,15 @@ class _SosPageState extends State<SosPage> {
 
   Future<void> _triggerAlert(_QueuedSosRequest request) async {
     final mode = request.mode;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Sending ${mode.label} to your emergency contacts…'),
+          duration: const Duration(days: 1),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     if (mode.usesLoudEmergencyPattern) {
       unawaited(_startManualSosPattern(mode));
     }
@@ -606,7 +587,8 @@ class _SosPageState extends State<SosPage> {
         SnackBar(
           content: Text(message),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: result == null || result.alert.failedCount > 0
+          backgroundColor:
+              result == null || result.alert.status != SosAlertStatus.sent
               ? _SosColors.destructiveFor(context)
               : _SosColors.green,
         ),
@@ -691,7 +673,7 @@ class _SosPageState extends State<SosPage> {
       return '${alert.mode.label} sent to ${alert.sentCount} contacts; ${alert.failedCount} queued for retry.';
     }
     if (alert.status == SosAlertStatus.queued) {
-      return '${alert.mode.label} was saved offline and queued for retry.';
+      return '${alert.mode.label} sending could not be confirmed. Queued for retry.';
     }
     return '${alert.mode.label} could not be sent to your contacts.';
   }
@@ -861,22 +843,19 @@ class _Header extends StatelessWidget {
               children: [
                 Text(
                   'SOS',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _SosColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
+                  style: PageHeaderStyle.title(
+                    context,
+                    _SosColors.textFor(context),
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(
                   'Emergency controls and safety checks',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _SosColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w400,
-                    letterSpacing: 0,
+                  style: PageHeaderStyle.subtitle(
+                    context,
+                    _SosColors.secondaryTextFor(context),
                   ),
                 ),
               ],
@@ -937,25 +916,13 @@ class _HeaderAction extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: CupertinoButton(
-        padding: EdgeInsets.zero,
-        minimumSize: const Size.square(36),
-        onPressed: onPressed,
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: _SosColors.surfaceFor(context),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: _SosColors.green, size: 19),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => PageHeaderAction(
+    tooltip: tooltip,
+    icon: icon,
+    onPressed: onPressed,
+    color: _SosColors.green,
+    surface: _SosColors.surfaceFor(context),
+  );
 }
 
 class _ManualSosCountdownDialog extends StatefulWidget {
@@ -4166,20 +4133,18 @@ class _SosDetailHeader extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _SosColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
+                style: PageHeaderStyle.title(
+                  context,
+                  _SosColors.textFor(context),
                 ),
               ),
               Text(
                 subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _SosColors.secondaryTextFor(context),
-                  letterSpacing: 0,
+                style: PageHeaderStyle.subtitle(
+                  context,
+                  _SosColors.secondaryTextFor(context),
                 ),
               ),
             ],

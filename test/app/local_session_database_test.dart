@@ -454,6 +454,39 @@ void main() {
       expect(records.any((record) => record.id == keep.id), isFalse);
     },
   );
+
+  test('achievement cache is account scoped and survives a reopen', () async {
+    const owner = '+60111111111';
+    await database.saveAchievementProgressCache(
+      ownerPhoneNumber: owner,
+      contentHash: 'hash-v1',
+      rows: const [
+        {
+          'achievementId': 'state_scout',
+          'title': 'State Scout',
+          'progressCount': 1,
+          'targetCount': 3,
+        },
+      ],
+    );
+    await database.close();
+
+    database = LocalSessionDatabase(
+      databasePath: path.join(temporaryDirectory.path, 'session.db'),
+    );
+    final cached = await database.loadAchievementProgressCache(
+      ownerPhoneNumber: owner,
+    );
+
+    expect(cached?.contentHash, 'hash-v1');
+    expect(cached?.rows.single['achievementId'], 'state_scout');
+    expect(
+      await database.loadAchievementProgressCache(
+        ownerPhoneNumber: '+60222222222',
+      ),
+      isNull,
+    );
+  });
 }
 
 UpcomingHike _upcomingHike({

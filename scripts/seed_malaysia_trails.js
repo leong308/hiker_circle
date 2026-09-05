@@ -50,6 +50,30 @@ function slug(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+function validateManifest() {
+  const names = new Set();
+  const trailIds = new Set();
+  for (const definition of trails) {
+    const name = normalizedName(definition.name || '');
+    const trailId = slug(definition.name || '');
+    if (!name || names.has(name) || !trailId || trailIds.has(trailId)) {
+      throw new Error(`Duplicate or invalid trail definition: ${definition.name}`);
+    }
+    if (!validStates.has(definition.state)) {
+      throw new Error(`Invalid Malaysian state for ${definition.name}`);
+    }
+    if (!definition.allTrailsName ||
+        !definition.allTrailsUrl?.startsWith('https://www.alltrails.com/')) {
+      throw new Error(`Missing AllTrails reference for ${definition.name}`);
+    }
+    if ('difficulty' in definition) {
+      throw new Error(`Difficulty must come from hikers, not the manifest: ${definition.name}`);
+    }
+    names.add(name);
+    trailIds.add(trailId);
+  }
+}
+
 function sampleRoute(points, count) {
   if (points.length <= count) return points;
   const cumulative = [0];
@@ -97,8 +121,9 @@ function validateTrail(trail) {
   if (!(trail.distanceKm > 0) || !(trail.estimatedDurationMinutes > 0)) {
     throw new Error(`Invalid distance or duration for ${trail.name}`);
   }
-  if (!['easy', 'moderate', 'hard'].includes(trail.difficulty)) {
-    throw new Error(`Invalid difficulty for ${trail.name}`);
+  if ('difficulty' in trail || trail.difficultyRatingCount !== 0 ||
+      Object.values(trail.difficultyVoteCounts || {}).some((count) => count !== 0)) {
+    throw new Error(`Imported trails must start without an admin-set difficulty: ${trail.name}`);
   }
   if (trail.checkpoints.length < 3 || trail.checkpoints.length > 12) {
     throw new Error(`Invalid checkpoint count for ${trail.name}`);
@@ -219,6 +244,47 @@ async function fetchRelation(relationId) {
   throw lastError;
 }
 
+async function fetchWay(wayId) {
+  const url = `https://api.openstreetmap.org/api/0.6/way/${wayId}/full.json`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'HikerCircleTrailSeeder/2.0' },
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!response.ok) throw new Error(`OpenStreetMap way ${wayId}: ${response.status}`);
+  return response.json();
+}
+
+async function fetchOsmWaySequence(definition) {
+  const points = [];
+  for (const [index, wayId] of definition.wayIds.entries()) {
+    const data = await fetchWay(wayId);
+    const way = data.elements.find((element) => element.type === 'way' && element.id === wayId);
+    const nodes = new Map(
+      data.elements.filter((element) => element.type === 'node')
+        .map((node) => [node.id, { lat: node.lat, lon: node.lon }]),
+    );
+    if (!way || !['path', 'footway', 'track', 'steps', 'pedestrian'].includes(way.tags?.highway)) {
+      throw new Error(`OSM way ${wayId} is not a supported walking way.`);
+    }
+    let wayPoints = way.nodes.map((nodeId) => nodes.get(nodeId)).filter(Boolean);
+    if (wayPoints.length < 2) throw new Error(`OSM way ${wayId} has incomplete geometry.`);
+    if (index === 0) {
+      if (haversine(definition.routeStart, wayPoints.at(-1)) <
+          haversine(definition.routeStart, wayPoints[0])) {
+        wayPoints = wayPoints.reverse();
+      }
+    } else if (haversine(points.at(-1), wayPoints.at(-1)) <
+               haversine(points.at(-1), wayPoints[0])) {
+      wayPoints = wayPoints.reverse();
+    }
+    if (points.length > 0 && haversine(points.at(-1), wayPoints[0]) > 5) {
+      throw new Error(`OSM way sequence for ${definition.name} is disconnected.`);
+    }
+    points.push(...(points.length > 0 ? wayPoints.slice(1) : wayPoints));
+  }
+  return { points };
+}
+
 function dotenvValue(key) {
   if (process.env[key] && process.env[key].trim()) return process.env[key].trim();
   const dotenvPath = path.join(__dirname, '..', '.env');
@@ -233,7 +299,7 @@ function dotenvValue(key) {
 async function fetchGeoapifyHike(definition) {
   const apiKey = dotenvValue('GEOAPIFY_API_KEY');
   if (!apiKey) {
-    throw new Error('GEOAPIFY_API_KEY is required for the Bukit Besar hiking repair.');
+    throw new Error(`GEOAPIFY_API_KEY is required to route ${definition.name}.`);
   }
   const url = new URL('https://api.geoapify.com/v1/routing');
   url.searchParams.set(
@@ -253,7 +319,7 @@ async function fetchGeoapifyHike(definition) {
   }
   const data = await response.json();
   const feature = data.features && data.features[0];
-  if (!feature) throw new Error('Geoapify returned no hiking route for Bukit Besar.');
+  if (!feature) throw new Error(`Geoapify returned no hiking route for ${definition.name}.`);
   return {
     points: pointsFromGeoJsonGeometry(feature.geometry),
     providerDistanceMeters: feature.properties && feature.properties.distance,
@@ -266,9 +332,27 @@ async function buildRouteGeometry(definition) {
     return {
       ...result,
       dataSource: 'Geoapify hike routing over OpenStreetMap, verified against AllTrails',
-      dataSourceUrl:
-        'https://www.openstreetmap.org/?mlat=5.3070715&mlon=103.1349390#map=16/5.3070715/103.1349390',
+      dataSourceUrl: (() => {
+        const first = definition.routeWaypoints[0];
+        return `https://www.openstreetmap.org/?mlat=${first.lat}&mlon=${first.lon}` +
+          `#map=16/${first.lat}/${first.lon}`;
+      })(),
       routeProvider: 'geoapify-hike',
+      excludedRoles: [],
+    };
+  }
+
+  if (definition.routeMode === 'osm-way-sequence') {
+    const result = await fetchOsmWaySequence(definition);
+    const points = definition.routeShape === 'out-and-back'
+      ? mirrorOutAndBack(result.points)
+      : result.points;
+    return {
+      ...result,
+      points,
+      dataSource: 'OpenStreetMap walking ways, verified against AllTrails',
+      dataSourceUrl: `https://www.openstreetmap.org/way/${definition.wayIds[0]}`,
+      routeProvider: 'osm-way-sequence',
       excludedRoles: [],
     };
   }
@@ -301,6 +385,20 @@ async function buildTrail(definition) {
   const route = await buildRouteGeometry(definition);
   const points = route.points;
   const audit = validateGeometry(points, definition.routeShape);
+  if (definition.referenceDistanceKm) {
+    const routeDistanceKm = audit.distanceMeters / 1000;
+    const distanceDeltaRatio = Math.abs(
+      routeDistanceKm - definition.referenceDistanceKm,
+    ) / definition.referenceDistanceKm;
+    const allowedDelta = definition.maxDistanceDeltaRatio || 0.25;
+    if (distanceDeltaRatio > allowedDelta) {
+      throw new Error(
+        `${definition.name} route is ${routeDistanceKm.toFixed(1)} km, ` +
+        `outside the ${Math.round(allowedDelta * 100)}% tolerance of the ` +
+        `${definition.referenceDistanceKm.toFixed(1)} km reference.`,
+      );
+    }
+  }
   const checkpointPoints = sampleRoute(points, 7);
   const now = new Date().toISOString();
   const checkpoints = checkpointPoints.map((point, index) => ({
@@ -325,7 +423,8 @@ async function buildTrail(definition) {
     latitude: checkpoints[0].latitude,
     longitude: checkpoints[0].longitude,
     distanceKm: Math.round(audit.distanceMeters / 100) / 10,
-    difficulty: definition.difficulty,
+    difficultyVoteCounts: { easy: 0, moderate: 0, hard: 0 },
+    difficultyRatingCount: 0,
     estimatedDurationMinutes: definition.duration,
     elevationGainMeters: definition.elevation,
     ratingAverage: 0,
@@ -337,6 +436,7 @@ async function buildTrail(definition) {
     routeFilePath: 'offline/maps/admin_added_trail.mbtiles',
     coverColorValue: 4281645139,
     coverImageUrl: [],
+    coverImageCredits: [],
     checkpoints,
     weather: {
       summary: 'Weather unavailable',
@@ -356,7 +456,8 @@ async function buildTrail(definition) {
     routeReferenceUrl: definition.allTrailsUrl,
     ...(definition.referenceNote ? { routeReferenceNote: definition.referenceNote } : {}),
     routeVerifiedAtLocal: now,
-    seededAtLocal: now,
+    createdByAdminId: 'firebase-cli:malaysia-trail-import',
+    createdByAdminPhoneNumber: '',
     createdAtLocal: now,
     updatedAtLocal: now,
   };
@@ -372,6 +473,7 @@ async function buildTrail(definition) {
 }
 
 async function main() {
+  validateManifest();
   const token = await firebaseAccessToken();
   const existing = await existingTrails(token);
   const names = new Set(existing.map((document) =>
@@ -430,6 +532,10 @@ async function main() {
       name: `${firestoreDocumentRoot}/trails/${trail.trailId}`,
       fields: firestoreFields(trail),
     },
+    updateTransforms: [
+      { fieldPath: 'createdAt', setToServerValue: 'REQUEST_TIME' },
+      { fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' },
+    ],
     currentDocument: { exists: false },
   }))];
   await firestoreRequest(
@@ -462,4 +568,6 @@ module.exports = {
   normalizedName,
   projectId,
   slug,
+  validateTrail,
+  validateManifest,
 };
