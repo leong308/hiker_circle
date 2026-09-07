@@ -57,6 +57,7 @@ class SosPage extends StatefulWidget {
     this.sosAlertRepository,
     this.emergencyContactsRepository,
     this.nearbySosRevision = 0,
+    this.networkStatusOverride,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
   });
 
@@ -71,6 +72,8 @@ class SosPage extends StatefulWidget {
   final SosAlertRepository? sosAlertRepository;
   final EmergencyContactsRepository? emergencyContactsRepository;
   final int nearbySosRevision;
+  /// Optional presentation state for isolated previews; dispatch is unchanged.
+  final NetworkReachabilitySnapshot? networkStatusOverride;
   final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
@@ -726,13 +729,13 @@ class _SosPageState extends State<SosPage> {
                   _NetworkSosStatusCard(
                     isNetworkAvailable:
                         widget.firebaseBootstrapResult.isAvailable &&
-                        _networkSnapshot.isOnline,
+                        (widget.networkStatusOverride ?? _networkSnapshot).isOnline,
                     isCheckingNetwork:
-                        _networkSnapshot.state ==
+                        (widget.networkStatusOverride ?? _networkSnapshot).state ==
                         NetworkReachabilityState.checking,
                     errorMessage:
                         widget.firebaseBootstrapResult.errorMessage ??
-                        _networkSnapshot.message,
+                        (widget.networkStatusOverride ?? _networkSnapshot).message,
                   ),
                   const SizedBox(height: 14),
                   _MetricsGroup(

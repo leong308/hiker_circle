@@ -44,7 +44,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.leongziqi.hikercircle"
+        applicationId = if (System.getenv("HC_CAPTURE_ONLY") == "1") "com.leongziqi.hikercircle.showcase" else "com.leongziqi.hikercircle"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -123,6 +123,12 @@ dependencies {
 
 flutter {
     source = "../.."
+}
+
+if (System.getenv("HC_CAPTURE_ONLY") == "1") {
+    tasks.configureEach {
+        if (name.contains("GoogleServices")) enabled = false
+    }
 }
 
 kotlin {

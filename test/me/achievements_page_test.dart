@@ -215,15 +215,46 @@ void main() {
 
     expect(find.text('Hiker levels'), findsOneWidget);
     expect(find.text('Level 1 · Trailhead'), findsOneWidget);
-    expect(find.text('Level 2 · Pathfinder'), findsOneWidget);
-    expect(find.text('Level 7 · HikerCircle Elite'), findsOneWidget);
-    expect(find.text('250–599 points'), findsOneWidget);
-    expect(find.text('5,500+ points'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const ValueKey('trail-level-2')));
-    await tester.tap(find.byKey(const ValueKey('trail-level-2')));
+    final carousel = find.byKey(const Key('hiker-level-carousel'));
+    final pages = tester.widget<PageView>(carousel);
+    expect(pages.scrollDirection, Axis.horizontal);
+    expect(pages.controller!.initialPage, 0);
+    final cardSize = tester.getSize(
+      find.byKey(const ValueKey('hiker-level-card-1')),
+    );
+    final reachedOpacity = tester.widget<Opacity>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('trail-level-1')),
+            matching: find.byType(Opacity),
+          )
+          .first,
+    );
+    expect(reachedOpacity.opacity, 1);
+    pages.controller!.jumpToPage(1);
     await tester.pumpAndSettle();
     expect(find.text('Unlocks at 250 points'), findsOneWidget);
-    expect(find.text('Unlocks at 0 points'), findsNothing);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('hiker-level-card-2'))),
+      cardSize,
+    );
+    final lockedOpacity = tester.widget<Opacity>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('trail-level-2')),
+            matching: find.byType(Opacity),
+          )
+          .first,
+    );
+    expect(lockedOpacity.opacity, 0.5);
+    pages.controller!.jumpToPage(6);
+    await tester.pumpAndSettle();
+    expect(find.text('Level 7 · HikerCircle Elite'), findsOneWidget);
+    expect(find.text('5,500+ points'), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('hiker-level-card-7'))),
+      cardSize,
+    );
   });
 
   testWidgets('cached achievements render without a full cloud reload', (

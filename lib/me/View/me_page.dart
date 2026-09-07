@@ -3988,17 +3988,26 @@ class _HikerLevelRoadmapSheet extends StatefulWidget {
 
 class _HikerLevelRoadmapSheetState extends State<_HikerLevelRoadmapSheet> {
   late int _selected = HikerLevel.fromPoints(widget.points).number;
+  late final PageController _levelController = PageController(
+    initialPage: _selected - 1,
+    viewportFraction: 0.9,
+  );
+
+  @override
+  void dispose() {
+    _levelController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final current = HikerLevel.fromPoints(widget.points);
     return SafeArea(
-      child: DraggableScrollableSheet(
-        initialChildSize: 0.86,
-        minChildSize: 0.55,
-        maxChildSize: 0.94,
-        expand: false,
-        builder: (context, controller) => Container(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+        ),
+        child: Container(
           margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
@@ -4006,6 +4015,7 @@ class _HikerLevelRoadmapSheetState extends State<_HikerLevelRoadmapSheet> {
             borderRadius: BorderRadius.circular(28),
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 10),
               Container(
@@ -4041,10 +4051,9 @@ class _HikerLevelRoadmapSheetState extends State<_HikerLevelRoadmapSheet> {
                   ],
                 ),
               ),
-              Expanded(
+              Flexible(
                 child: SingleChildScrollView(
-                  controller: controller,
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -4132,20 +4141,53 @@ class _HikerLevelRoadmapSheetState extends State<_HikerLevelRoadmapSheet> {
                       ),
                       const SizedBox(height: 5),
                       Text(
-                        'Tap a level to explore its requirements.',
+                        'Swipe to explore levels and their requirements.',
                         style: TextStyle(
                           color: _MeColors.secondaryTextFor(context),
                         ),
                       ),
                       const SizedBox(height: 16),
-                      for (final level in HikerLevel.tiers)
-                        _HikerLevelRoadmapRow(
-                          level: level,
-                          currentLevel: current,
-                          points: widget.points,
-                          selected: _selected == level.number,
-                          onTap: () => setState(() => _selected = level.number),
+                      SizedBox(
+                        height: 320,
+                        child: PageView.builder(
+                          key: const Key('hiker-level-carousel'),
+                          controller: _levelController,
+                          itemCount: HikerLevel.tiers.length,
+                          onPageChanged: (index) =>
+                              setState(() => _selected = index + 1),
+                          itemBuilder: (context, index) {
+                            final level = HikerLevel.tiers[index];
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                              ),
+                              child: Opacity(
+                                opacity: level.number <= current.number
+                                    ? 1
+                                    : 0.5,
+                                child: _HikerLevelRoadmapRow(
+                                  level: level,
+                                  currentLevel: current,
+                                  points: widget.points,
+                                  selected: true,
+                                  onTap: () => _levelController.animateToPage(
+                                    index,
+                                    duration: const Duration(milliseconds: 250),
+                                    curve: Curves.easeOutCubic,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         ),
+                      ),
+                      Text(
+                        'Level $_selected of ${HikerLevel.tiers.length}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _MeColors.secondaryTextFor(context),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -4201,6 +4243,7 @@ class _HikerLevelRoadmapRow extends StatelessWidget {
     final foreground = _MeColors.textFor(context);
     final secondary = _MeColors.secondaryTextFor(context);
     return AnimatedContainer(
+      key: ValueKey('hiker-level-card-${level.number}'),
       duration: const Duration(milliseconds: 220),
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -4214,143 +4257,145 @@ class _HikerLevelRoadmapRow extends StatelessWidget {
               : _MeColors.separatorFor(context),
         ),
       ),
-      child: Column(
-        children: [
-          Semantics(
-            selected: selected,
-            button: true,
-            child: InkWell(
-              key: ValueKey('trail-level-${level.number}'),
-              borderRadius: BorderRadius.circular(20),
-              onTap: onTap,
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: _MeColors.green.withValues(
-                          alpha: reached ? 0.14 : 0.06,
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            Semantics(
+              selected: selected,
+              button: true,
+              child: InkWell(
+                key: ValueKey('trail-level-${level.number}'),
+                borderRadius: BorderRadius.circular(20),
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: _MeColors.green.withValues(
+                            alpha: reached ? 0.14 : 0.06,
+                          ),
+                          borderRadius: BorderRadius.circular(15),
                         ),
-                        borderRadius: BorderRadius.circular(15),
+                        child: Icon(
+                          _icons[level.number - 1],
+                          color: reached ? _MeColors.green : secondary,
+                          size: 25,
+                        ),
                       ),
-                      child: Icon(
-                        _icons[level.number - 1],
-                        color: reached ? _MeColors.green : secondary,
-                        size: 25,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Level ${level.number} · ${level.name}',
+                              style: TextStyle(
+                                color: foreground,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              range,
+                              style: TextStyle(color: secondary, fontSize: 12),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              isCurrent
+                                  ? 'Current level'
+                                  : reached
+                                  ? 'Completed'
+                                  : 'Locked',
+                              style: TextStyle(
+                                color: reached ? _MeColors.green : secondary,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
+                      Icon(
+                        reached
+                            ? Icons.check_circle_outline_rounded
+                            : Icons.lock_outline_rounded,
+                        size: 15,
+                        color: secondary,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: selected
+                  ? Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          Divider(
+                            color: _MeColors.separatorFor(context),
+                            height: 16,
+                          ),
                           Text(
-                            'Level ${level.number} · ${level.name}',
+                            _descriptions[level.number - 1],
+                            style: TextStyle(color: secondary, height: 1.5),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            'Unlocks at ${_formatRankPoints(level.minimumPoints)} points',
                             style: TextStyle(
                               color: foreground,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 8),
                           Text(
-                            range,
-                            style: TextStyle(color: secondary, fontSize: 12),
+                            reached
+                                ? 'You have reached this milestone.'
+                                : '${_formatRankPoints(level.minimumPoints - points)} more points to unlock',
+                            style: TextStyle(color: secondary),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 10),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: LinearProgressIndicator(
+                              value: level.minimumPoints == 0
+                                  ? 1
+                                  : (points / level.minimumPoints).clamp(
+                                      0.0,
+                                      1.0,
+                                    ),
+                              minHeight: 5,
+                              color: _MeColors.green,
+                              backgroundColor: _MeColors.green.withValues(
+                                alpha: 0.12,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
                           Text(
-                            isCurrent
-                                ? 'Current level'
-                                : reached
-                                ? 'Completed'
-                                : 'Upcoming',
+                            'Earn points by completing the goals listed on achievement badges.',
                             style: TextStyle(
-                              color: reached ? _MeColors.green : secondary,
-                              fontSize: 11,
+                              color: secondary,
+                              fontSize: 12,
+                              height: 1.4,
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    Icon(
-                      selected
-                          ? CupertinoIcons.chevron_up
-                          : CupertinoIcons.chevron_down,
-                      size: 15,
-                      color: secondary,
-                    ),
-                  ],
-                ),
-              ),
+                    )
+                  : const SizedBox.shrink(),
             ),
-          ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: selected
-                ? Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Divider(
-                          color: _MeColors.separatorFor(context),
-                          height: 16,
-                        ),
-                        Text(
-                          _descriptions[level.number - 1],
-                          style: TextStyle(color: secondary, height: 1.5),
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          'Unlocks at ${_formatRankPoints(level.minimumPoints)} points',
-                          style: TextStyle(
-                            color: foreground,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          reached
-                              ? 'You have reached this milestone.'
-                              : '${_formatRankPoints(level.minimumPoints - points)} more points to unlock',
-                          style: TextStyle(color: secondary),
-                        ),
-                        const SizedBox(height: 10),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: LinearProgressIndicator(
-                            value: level.minimumPoints == 0
-                                ? 1
-                                : (points / level.minimumPoints).clamp(
-                                    0.0,
-                                    1.0,
-                                  ),
-                            minHeight: 5,
-                            color: _MeColors.green,
-                            backgroundColor: _MeColors.green.withValues(
-                              alpha: 0.12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Earn points by completing the goals listed on achievement badges.',
-                          style: TextStyle(
-                            color: secondary,
-                            fontSize: 12,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
