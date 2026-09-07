@@ -8999,92 +8999,22 @@ function wmoSummary(code) {
 
 exports.fetchWeatherForAllTrails = onSchedule(
   { schedule: 'every 60 minutes', timeoutSeconds: 540 },
-  async (event) => {
+  async () => {
     const db = admin.firestore();
-    const trailsSnapshot = await db.collection('trails').get();
-
-    if (trailsSnapshot.empty) {
-      logger.log('No trails found.');
-      return;
-    }
-
-    let batch = db.batch();
-    let pendingBatchWrites = 0;
-    let updatedCount = 0;
-
-    for (const doc of trailsSnapshot.docs) {
-      const data = doc.data();
-      const latitude = data.latitude;
-      const longitude = data.longitude;
-
-      if (
-        !Number.isFinite(latitude)
-        || latitude < -90
-        || latitude > 90
-        || !Number.isFinite(longitude)
-        || longitude < -180
-        || longitude > 180
-      ) {
-        continue;
-      }
-
+    const trails = await db.collection('trails').get();
+    for (const doc of trails.docs) {
+      const { latitude, longitude } = doc.data();
+      if (!Number.isFinite(latitude) || Math.abs(latitude) > 90 ||
+          !Number.isFinite(longitude) || Math.abs(longitude) > 180) continue;
       try {
-        const url = new URL('https://api.open-meteo.com/v1/forecast');
-        url.searchParams.set('latitude', latitude.toFixed(4));
-        url.searchParams.set('longitude', longitude.toFixed(4));
-        url.searchParams.set(
-          'current',
-          'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,uv_index'
-        );
-        url.searchParams.set(
-          'daily',
-          'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code'
-        );
-        url.searchParams.set(
-          'hourly',
-          'temperature_2m,precipitation_probability,weather_code'
-        );
-        url.searchParams.set('timezone', 'auto');
-        url.searchParams.set('forecast_hours', '12');
-
-        const response = await fetch(url.toString(), {
-          signal: AbortSignal.timeout(12 * 1000),
-        });
-        if (!response.ok) {
-          logger.warn(
-            `OpenMeteo ${response.status} for trail ${doc.id}`
-          );
-          continue;
-        }
-
-        const body = await response.json().catch(() => null);
-        if (!body || typeof body !== 'object' || Array.isArray(body)) {
-          logger.warn(`OpenMeteo returned invalid data for trail ${doc.id}`);
-          continue;
-        }
-        const weather = buildWeatherFromApi(body);
-
-        batch.update(doc.ref, { weather });
-        pendingBatchWrites++;
-        updatedCount++;
-        if (pendingBatchWrites >= 400) {
-          await batch.commit();
-          batch = db.batch();
-          pendingBatchWrites = 0;
-        }
+        const weather = await require('./trail_weather').sharedTrailWeather(db, latitude, longitude);
+        await doc.ref.update({ weather });
       } catch (error) {
-        logger.error(`Failed to fetch weather for trail ${doc.id}:`, error);
+        logger.warn('Scheduled weather refresh unavailable', { trailId: doc.id, message: error.message });
       }
     }
-
-    if (pendingBatchWrites > 0) {
-      await batch.commit();
-    }
-
-    logger.log(`Updated weather for ${updatedCount} trails.`);
   }
 );
-
 function buildWeatherFromApi(body) {
   const current = body.current || {};
   const daily = body.daily || {};
@@ -9212,59 +9142,13 @@ exports.fetchWeatherForTrail = onCall(
       );
     }
 
-    const url = new URL('https://api.open-meteo.com/v1/forecast');
-    url.searchParams.set('latitude', latitude.toFixed(4));
-    url.searchParams.set('longitude', longitude.toFixed(4));
-    url.searchParams.set(
-      'current',
-      'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,uv_index'
-    );
-    url.searchParams.set(
-      'daily',
-      'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code'
-    );
-    url.searchParams.set(
-      'hourly',
-      'temperature_2m,precipitation_probability,weather_code'
-    );
-    url.searchParams.set('timezone', 'auto');
-    url.searchParams.set('forecast_hours', '12');
-
-    let response;
+    let weather;
     try {
-      response = await fetch(url.toString(), {
-        signal: AbortSignal.timeout(12 * 1000),
-      });
+      weather = await require('./trail_weather').sharedTrailWeather(db, latitude, longitude);
     } catch (error) {
-      logger.warn('OpenMeteo callable transport failed', {
-        trailId,
-        errorName: String(error?.name || ''),
-      });
-      throw new HttpsError(
-        'unavailable',
-        'Trail weather is temporarily unavailable.'
-      );
+      logger.warn('Shared weather refresh unavailable', { trailId, message: error.message });
+      throw new HttpsError('unavailable', 'Weather refresh unavailable. Please try again shortly.');
     }
-    if (!response.ok) {
-      logger.warn('OpenMeteo callable returned an error', {
-        trailId,
-        status: response.status,
-      });
-      throw new HttpsError(
-        'unavailable',
-        'Trail weather is temporarily unavailable.'
-      );
-    }
-
-    const body = await response.json().catch(() => null);
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new HttpsError(
-        'data-loss',
-        'The weather service returned invalid data.'
-      );
-    }
-    const weather = buildWeatherFromApi(body);
-
     await db.collection('trails').doc(trailId).update({ weather });
 
     logger.log(`Fetched and saved weather for trail ${trailId}`);

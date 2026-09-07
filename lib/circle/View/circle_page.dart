@@ -1,4 +1,5 @@
 import '../../core/widgets/page_header_style.dart';
+import '../../core/widgets/running_border.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -5175,7 +5176,7 @@ class _GroupChatTileState extends State<_GroupChatTile>
                   Positioned.fill(
                     child: IgnorePointer(
                       child: CustomPaint(
-                        painter: _BorderTravelPainter(
+                        painter: BorderTravelPainter(
                           progress: _borderAnim.value,
                           color: _CircleColors.green,
                         ),
@@ -5219,90 +5220,6 @@ class _GroupChatTileState extends State<_GroupChatTile>
       child: tile,
     );
   }
-}
-
-class _BorderTravelPainter extends CustomPainter {
-  _BorderTravelPainter({required this.progress, required this.color});
-
-  final double progress;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    const radius = 14.0;
-    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(radius));
-
-    final dimPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..color = color.withValues(alpha: 0.15);
-    canvas.drawRRect(rrect, dimPaint);
-
-    final path = Path()..addRRect(rrect);
-    final metrics = path.computeMetrics().toList();
-    if (metrics.isEmpty) return;
-    final totalLength = metrics.fold<double>(0.0, (s, m) => s + m.length);
-    if (totalLength <= 0) return;
-
-    const segmentFraction = 0.1;
-    final segmentLength = totalLength * segmentFraction;
-
-    final anticlockwisePos = 1.0 - progress;
-    final start = anticlockwisePos * totalLength;
-    final end = start + segmentLength;
-
-    final highlightPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..color = color;
-
-    double processed = 0;
-    for (final metric in metrics) {
-      final metricStart = processed;
-      final metricEnd = processed + metric.length;
-
-      if (end <= totalLength) {
-        final overlapStart = start.clamp(metricStart, metricEnd);
-        final overlapEnd = end.clamp(metricStart, metricEnd);
-        if (overlapEnd > overlapStart) {
-          final segment = metric.extractPath(
-            overlapStart - metricStart,
-            overlapEnd - metricStart,
-          );
-          canvas.drawPath(segment, highlightPaint);
-        }
-      } else {
-        final wrapStart = 0.0;
-        final wrapEnd = end - totalLength;
-        if (wrapEnd > 0) {
-          final overlapStart = wrapStart.clamp(metricStart, metricEnd);
-          final overlapEnd = wrapEnd.clamp(metricStart, metricEnd);
-          if (overlapEnd > overlapStart) {
-            final segment = metric.extractPath(
-              overlapStart - metricStart,
-              overlapEnd - metricStart,
-            );
-            canvas.drawPath(segment, highlightPaint);
-          }
-        }
-        final normalStart = start.clamp(metricStart, metricEnd);
-        final normalEnd = totalLength.clamp(metricStart, metricEnd);
-        if (normalEnd > normalStart) {
-          final segment = metric.extractPath(
-            normalStart - metricStart,
-            normalEnd - metricStart,
-          );
-          canvas.drawPath(segment, highlightPaint);
-        }
-      }
-      processed = metricEnd;
-    }
-  }
-
-  @override
-  bool shouldRepaint(_BorderTravelPainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.color != color;
 }
 
 class _ChatActionSheet extends StatelessWidget {

@@ -99,6 +99,7 @@ class TrailWeather {
     this.uvIndex,
     this.feelsLike,
     this.hourlyForecast = const [],
+    this.forecastData = const {},
   });
 
   final String summary;
@@ -110,6 +111,7 @@ class TrailWeather {
   final double? uvIndex;
   final double? feelsLike;
   final List<HourlyForecast> hourlyForecast;
+  final Map<String, dynamic> forecastData;
 
   factory TrailWeather.fromPersistence(Map<String, dynamic> data) {
     return TrailWeather(
@@ -123,6 +125,9 @@ class TrailWeather {
       windSpeed: _trailNullableDoubleFrom(data['windSpeed']),
       uvIndex: _trailNullableDoubleFrom(data['uvIndex']),
       feelsLike: _trailNullableDoubleFrom(data['feelsLike']),
+      forecastData: data['forecastData'] is Map
+          ? Map<String, dynamic>.from(data['forecastData'] as Map)
+          : const {},
       hourlyForecast: _trailListOfMaps(
         data['hourlyForecast'],
       ).map(HourlyForecast.fromPersistence).toList(),
@@ -132,6 +137,7 @@ class TrailWeather {
   Map<String, dynamic> toFirestore() {
     return {
       'summary': summary,
+      if (forecastData.isNotEmpty) 'forecastData': forecastData,
       'temperatureRange': temperatureRange,
       'rainProbability': rainProbability,
       'cachedAtLocal': cachedAt.toUtc().toIso8601String(),

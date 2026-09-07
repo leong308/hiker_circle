@@ -24,6 +24,8 @@ import '../../core/widgets/worldwide_region_picker.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/trail_models.dart';
+import 'trail_weather_panel.dart';
+import 'checkpoint_flow.dart';
 
 Future<Trail?> showAddTrailSheet(
   BuildContext context, {
@@ -540,7 +542,9 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
           });
         }, onError: (_) {});
     final weather = _trail.weather;
-    if (weather.summary.isEmpty ||
+    if (weather.forecastData.isEmpty ||
+        weather.isStale ||
+        weather.summary.isEmpty ||
         weather.summary == 'Weather unavailable' ||
         weather.temperatureRange == 'Not provided') {
       unawaited(_refreshWeather());
@@ -675,8 +679,8 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                   if (trail.checkpoints.isEmpty)
                     const _EmptyState(message: 'No checkpoints available.')
                   else
-                    _CheckpointTimeline(
-                      trail: trail,
+                    CheckpointFlow(
+                      checkpoints: trail.checkpoints,
                       highlightedIndex: _highlightedCheckpointIndex,
                       onShowOnMap: _showCheckpointOnMap,
                     ),
@@ -687,15 +691,17 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     _DifficultyBreakdownCard(trail: trail),
                     const SizedBox(height: 22),
                   ],
-                  _SectionTitle(
-                    label: 'Conditions and Safety',
-                    trailing: _WeatherInsightsButton(
-                      trail: trail,
-                      repository: widget.hikerCircleRepository,
-                    ),
-                  ),
+                  const _SectionTitle(label: 'Conditions and Safety'),
                   const SizedBox(height: 8),
-                  _WeatherCard(trail: trail),
+                  if (trail.weather.forecastData.isEmpty)
+                    _WeatherCard(trail: trail),
+                  if (trail.weather.forecastData.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    TrailWeatherPanel(
+                      weather: trail.weather,
+                      elevationGainMeters: trail.elevationGainMeters,
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   _SafetyInfoCard(trail: trail),
                   if (trail.hazards.isNotEmpty) ...[
@@ -4375,152 +4381,6 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   }
 }
 
-class _CheckpointTimeline extends StatelessWidget {
-  const _CheckpointTimeline({
-    required this.trail,
-    required this.highlightedIndex,
-    required this.onShowOnMap,
-  });
-
-  final Trail trail;
-  final int? highlightedIndex;
-  final void Function(int index) onShowOnMap;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
-        child: Column(
-          children: [
-            for (var index = 0; index < trail.checkpoints.length; index++)
-              _CheckpointRow(
-                checkpoint: trail.checkpoints[index],
-                isLast: index == trail.checkpoints.length - 1,
-                index: index,
-                isHighlighted: highlightedIndex == index,
-                onShowOnMap: () => onShowOnMap(index),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CheckpointRow extends StatelessWidget {
-  const _CheckpointRow({
-    required this.checkpoint,
-    required this.isLast,
-    required this.index,
-    required this.isHighlighted,
-    required this.onShowOnMap,
-  });
-
-  final TrailCheckpoint checkpoint;
-  final bool isLast;
-  final int index;
-  final bool isHighlighted;
-  final VoidCallback onShowOnMap;
-
-  @override
-  Widget build(BuildContext context) {
-    return IntrinsicHeight(
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeInOut,
-        decoration: BoxDecoration(
-          color: isHighlighted
-              ? _TrailColors.greenSoftFor(context)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Column(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  alignment: Alignment.center,
-                  margin: const EdgeInsets.only(top: 10),
-                  decoration: BoxDecoration(
-                    color: isHighlighted
-                        ? _TrailColors.green
-                        : _TrailColors.greenSoftFor(context),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    '${checkpoint.order}',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: isHighlighted ? Colors.white : _TrailColors.green,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ),
-                if (!isLast)
-                  Expanded(
-                    child: VerticalDivider(
-                      width: 1,
-                      thickness: 1,
-                      color: _TrailColors.separatorFor(context),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 10, bottom: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      checkpoint.name,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: _TrailColors.textFor(context),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${checkpoint.latitude.toStringAsFixed(5)}, ${checkpoint.longitude.toStringAsFixed(5)}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _TrailColors.secondaryTextFor(context),
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: IconButton(
-                onPressed: onShowOnMap,
-                icon: Icon(
-                  Icons.near_me_rounded,
-                  size: 20,
-                  color: isHighlighted
-                      ? _TrailColors.green
-                      : _TrailColors.secondaryTextFor(context),
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                tooltip: 'Show on map',
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _HeroPill extends StatelessWidget {
   const _HeroPill({required this.label});
 
@@ -4946,32 +4806,6 @@ class _RoutePreviewState extends State<_RoutePreview> {
   }
 }
 
-class _WeatherInsightsButton extends StatelessWidget {
-  const _WeatherInsightsButton({required this.trail, required this.repository});
-
-  final Trail trail;
-  final HikerCircleFirebaseRepository repository;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 32,
-      height: 32,
-      child: IconButton(
-        onPressed: () => showWeatherInsightsSheet(
-          context,
-          trail: trail,
-          repository: repository,
-        ),
-        icon: const Icon(Icons.analytics_rounded, size: 18),
-        padding: EdgeInsets.zero,
-        color: _TrailColors.secondaryTextFor(context),
-        tooltip: 'Weather insights',
-      ),
-    );
-  }
-}
-
 void showWeatherInsightsSheet(
   BuildContext context, {
   required Trail trail,
@@ -5015,6 +4849,15 @@ class _WeatherInsightsSheetState extends State<_WeatherInsightsSheet> {
   Widget build(BuildContext context) {
     final weather = _trail.weather;
     final hourlyForecasts = weather.hourlyForecast;
+    if (weather.forecastData.isNotEmpty) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        child: TrailWeatherPanel(
+          weather: weather,
+          elevationGainMeters: _trail.elevationGainMeters,
+        ),
+      );
+    }
     final hasExtraDetails =
         weather.feelsLike != null ||
         weather.windSpeed != null ||

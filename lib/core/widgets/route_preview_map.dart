@@ -10,6 +10,7 @@ import 'loading_toast.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
 import 'route_endpoint_marker.dart';
+import 'route_animation_geometry.dart';
 
 bool _isValidMapPoint(mapbox.Point point) {
   return mapPointCoordinatesOrNull(point) != null;
@@ -24,7 +25,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.customCheckpoints,
     this.showLayerToggle = false,
     this.animateRoute = true,
-    this.animationDuration = const Duration(seconds: 5),
+    this.animationDuration = const Duration(seconds: 15),
     this.pinnedPoints = const [],
     this.checkInPoints = const [],
     this.captureAllGestures = false,
@@ -76,6 +77,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   late final Animation<double> _routeAnimProgress;
   int _lastAnimatedIndex = 0;
   mapbox.PolylineAnnotation? _animatedPolyline;
+  final List<mapbox.PolylineAnnotation> _cometLayers = [];
+  List<double> _routeDistances = [];
+  double get _cometLength => _routeDistances.isEmpty
+      ? 125
+      : (_routeDistances.last * .15).clamp(2.5, 625.0);
   List<int> _checkpointIndices = [];
   Map<int, List<int>> _checkpointIndicesByRouteIndex = {};
   List<mapbox.CircleAnnotation?> _checkpointCircleAnnotations = [];
@@ -143,6 +149,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     );
     try {
       await manager.update(annotation);
+      for (final layer in _cometLayers) {
+        layer.geometry = annotation.geometry;
+        await manager.update(layer);
+      }
     } catch (_) {
       // A style replacement will rebuild the route with a new manager.
     }
@@ -182,7 +192,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _lastAnimatedIndex = targetIndex;
 
     final partialCoordinates = <mapbox.Position>[
-      for (final pt in _routePoints.take(targetIndex))
+      for (final pt in _routePoints.sublist(
+        cometTailStart(_routeDistances, targetIndex - 1, _cometLength / 3),
+        targetIndex,
+      ))
         mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
     ];
     _animatedPolyline!.geometry = mapbox.LineString(
@@ -192,6 +205,20 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     final annotation = _animatedPolyline;
     if (manager != null && annotation != null) {
       unawaited(manager.update(annotation).catchError((_) {}));
+      for (var layer = 0; layer < _cometLayers.length; layer++) {
+        final start = cometTailStart(
+          _routeDistances,
+          targetIndex - 1,
+          _cometLength * (1 - layer / 3),
+        );
+        _cometLayers[layer].geometry = mapbox.LineString(
+          coordinates: [
+            for (final pt in _routePoints.sublist(start, targetIndex))
+              mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
+          ],
+        );
+        unawaited(manager.update(_cometLayers[layer]).catchError((_) {}));
+      }
     }
 
     if (reachedCheckpointRouteIndex != null) {
@@ -330,31 +357,25 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   static final _zeroPoint = mapbox.Point(coordinates: mapbox.Position(0, 0));
 
   void _computeCheckpointIndices() {
+    _routeDistances = [0];
+    for (var i = 1; i < _routePoints.length; i++) {
+      _routeDistances.add(
+        _routeDistances.last +
+            distanceMeters(_routePoints[i - 1], _routePoints[i]),
+      );
+    }
     _checkpointIndices.clear();
     _checkpointIndicesByRouteIndex = {};
     if (_routePoints.isEmpty || _checkpointPoints.isEmpty) return;
 
-    // For each checkpoint (except start/end which are at route start/end),
-    // find the closest route point index
-    for (
-      var checkpointIndex = 0;
-      checkpointIndex < _checkpointPoints.length;
-      checkpointIndex++
-    ) {
-      final checkpoint = _checkpointPoints[checkpointIndex];
-      double minDist = double.infinity;
-      int closestIdx = 0;
-      for (int i = 0; i < _routePoints.length; i++) {
-        final dist = distanceMeters(checkpoint, _routePoints[i]);
-        if (dist < minDist) {
-          minDist = dist;
-          closestIdx = i;
-        }
-      }
-      if (closestIdx > 0 && closestIdx < _routePoints.length - 1) {
-        _checkpointIndicesByRouteIndex
-            .putIfAbsent(closestIdx, () => <int>[])
-            .add(checkpointIndex);
+    final matches = orderedCheckpointMatches([
+      for (final checkpoint in _checkpointPoints)
+        [for (final point in _routePoints) distanceMeters(checkpoint, point)],
+    ]);
+    for (var c = 1; c < matches.length - 1; c++) {
+      final index = matches[c];
+      if (index > 0 && index < _routePoints.length - 1) {
+        _checkpointIndicesByRouteIndex.putIfAbsent(index, () => []).add(c);
       }
     }
     _checkpointIndices = _checkpointIndicesByRouteIndex.keys.toList()..sort();
@@ -594,11 +615,26 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             mapbox.PolylineAnnotationOptions(
               geometry: mapbox.LineString(coordinates: coordinates),
               lineColor: const Color(0xFF4ADE80).toARGB32(),
-              lineOpacity: 0.3,
+              lineOpacity: 0.12,
               lineWidth: _routeLineWidth + 3,
               lineJoin: mapbox.LineJoin.ROUND,
             ),
           );
+          _cometLayers.clear();
+          for (var layer = 0; layer < 2; layer++) {
+            final tail = await _polylineManager!.create(
+              mapbox.PolylineAnnotationOptions(
+                geometry: mapbox.LineString(
+                  coordinates: coordinates.take(2).toList(),
+                ),
+                lineColor: const Color(0xFF2F8E50).toARGB32(),
+                lineOpacity: .18 + layer * .22,
+                lineWidth: _routeLineWidth,
+                lineJoin: mapbox.LineJoin.ROUND,
+              ),
+            );
+            _cometLayers.add(tail);
+          }
           _animatedPolyline = await _polylineManager!.create(
             mapbox.PolylineAnnotationOptions(
               geometry: mapbox.LineString(

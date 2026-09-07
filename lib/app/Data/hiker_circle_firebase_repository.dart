@@ -1137,6 +1137,9 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<Trail> refreshTrailWeather(Trail trail) async {
+    if (_firebaseBootstrapResult.isAvailable) {
+      return refreshTrailWeatherViaCloud(trail);
+    }
     try {
       final weather = await _openMeteoService.fetchWeather(
         latitude: trail.latitude,
@@ -4969,6 +4972,9 @@ class HikerCircleFirebaseRepository {
     final data = value is Map ? Map<String, dynamic>.from(value) : {};
     final hourlyData = data['hourlyForecast'];
     return TrailWeather(
+      forecastData: data['forecastData'] is Map
+          ? Map<String, dynamic>.from(data['forecastData'] as Map)
+          : const {},
       summary: _stringFrom(data['summary']),
       temperatureRange: _stringFrom(data['temperatureRange']),
       rainProbability: _intFrom(data['rainProbability']),
