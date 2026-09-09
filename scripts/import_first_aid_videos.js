@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
 'use strict';
 
+throw new Error('Retired US media importer. Use import_kkm_first_aid_videos.cjs; do not republish withdrawn tutorials.');
+
 // Downloads the explicitly public-domain source videos, converts them to a
 // mobile-friendly MP4, and uploads versioned immutable objects to Firebase
 // Storage. Attribution remains visible in the app's guide JSON.

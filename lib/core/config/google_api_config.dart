@@ -1,6 +1,14 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 abstract final class GoogleApiConfig {
+  // Required by the separately restricted key used for direct Android betas.
+  static const bool publicAndroidBeta = bool.fromEnvironment('HC_PUBLIC_BETA');
+  static Map<String, String> get androidBetaHeaders => publicAndroidBeta
+      ? const {
+          'X-Android-Package': 'com.leongziqi.hikercircle',
+          'X-Android-Cert': '4E84B7B37406768A071559598FFE800C61987B3A',
+        }
+      : const {};
   static String _dotenvValue(String key) {
     try {
       return dotenv.env[key]?.trim() ?? '';

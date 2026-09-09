@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -32,7 +33,7 @@ class FirstAidVideoCacheService {
     required FirstAidVideo video,
   }) async {
     final file = await _cachedFile(topicId: topicId, video: video);
-    return _isValid(file, video.expectedBytes);
+    return isFirstAidVideoCacheValid(file, video);
   }
 
   Future<File> _cache({
@@ -44,7 +45,7 @@ class FirstAidVideoCacheService {
     }
 
     final target = await _cachedFile(topicId: topicId, video: video);
-    if (await _isValid(target, video.expectedBytes)) return target;
+    if (await isFirstAidVideoCacheValid(target, video)) return target;
 
     await target.parent.create(recursive: true);
     final partial = File('${target.path}.part');
@@ -55,7 +56,7 @@ class FirstAidVideoCacheService {
           .ref(video.storagePath)
           .writeToFile(partial)
           .timeout(const Duration(minutes: 4));
-      if (!await _isValid(partial, video.expectedBytes)) {
+      if (!await isFirstAidVideoCacheValid(partial, video)) {
         throw const FileSystemException(
           'The downloaded tutorial is incomplete.',
         );
@@ -79,15 +80,6 @@ class FirstAidVideoCacheService {
     return File(
       '${support.path}${Platform.pathSeparator}first_aid${Platform.pathSeparator}videos${Platform.pathSeparator}${video.cacheFileName(topicId)}',
     );
-  }
-
-  Future<bool> _isValid(File file, int? expectedBytes) async {
-    if (!await file.exists()) return false;
-    final length = await file.length();
-    if (length <= 0) return false;
-    return expectedBytes == null ||
-        expectedBytes <= 0 ||
-        length == expectedBytes;
   }
 
   Future<void> _removeOlderVersions({
@@ -118,4 +110,16 @@ class FirstAidVideoCacheService {
       }
     }
   }
+}
+
+/// Verify both completeness and the approved source's exact bytes.
+Future<bool> isFirstAidVideoCacheValid(File file, FirstAidVideo video) async {
+  if (!await file.exists()) return false;
+  final length = await file.length();
+  if (length <= 0) return false;
+  final expected = video.expectedBytes;
+  if (expected != null && expected > 0 && length != expected) return false;
+  if (video.sha256.isEmpty) return true;
+  final digest = await crypto.sha256.bind(file.openRead()).first;
+  return digest.toString() == video.sha256.toLowerCase();
 }

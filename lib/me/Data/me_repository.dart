@@ -72,6 +72,11 @@ class MeRepository {
         title: 'Settings',
         items: [
           MeActionItem(
+            icon: Icons.feedback_outlined,
+            title: 'Send feedback',
+            subtitle: 'Report a problem or suggest an improvement',
+          ),
+          MeActionItem(
             icon: Icons.notifications_rounded,
             title: 'Notifications',
             subtitle: 'Circle activity and safety alerts',

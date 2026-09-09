@@ -9,6 +9,7 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../feedback/feedback_page.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../../trail/Model/trail_models.dart';
@@ -763,6 +764,17 @@ class _AdminPageState extends State<AdminPage> {
                                     });
                                   },
                             onTitleTap: _onDebugTitleTap,
+                          ),
+                        if (!_debugMode)
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.feedback_outlined),
+                            label: const Text('Hiker feedback inbox'),
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) =>
+                                    const FeedbackInboxPage(admin: true),
+                              ),
+                            ),
                           ),
                         if (_debugError != null) ...[
                           const SizedBox(height: 12),

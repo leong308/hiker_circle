@@ -8,6 +8,10 @@ class FirstAidVideo {
     required this.sourceUrl,
     required this.version,
     this.expectedBytes,
+    this.licenseUrl = '',
+    this.scopeNote = '',
+    this.language = '',
+    this.sha256 = '',
   });
 
   factory FirstAidVideo.fromJson(Map<String, dynamic> json) {
@@ -20,6 +24,10 @@ class FirstAidVideo {
       sourceUrl: _stringFrom(json['sourceUrl']),
       version: _intFrom(json['version'], fallback: 1),
       expectedBytes: _nullableIntFrom(json['expectedBytes']),
+      licenseUrl: _stringFrom(json['licenseUrl']),
+      scopeNote: _stringFrom(json['scopeNote']),
+      language: _stringFrom(json['language']),
+      sha256: _stringFrom(json['sha256']),
     );
   }
 
@@ -31,6 +39,10 @@ class FirstAidVideo {
   final String sourceUrl;
   final int version;
   final int? expectedBytes;
+  final String licenseUrl;
+  final String scopeNote;
+  final String language;
+  final String sha256;
 
   String cacheFileName(String topicId) =>
       '${_safeSegment(topicId)}_v$version.mp4';

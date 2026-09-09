@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:feedback/feedback.dart';
 
 import '../../authentication/View/phone_sign_in_page.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../feedback/feedback_capture_form.dart';
 import '../../home/View/hiker_home_page.dart';
 import '../../onboarding/View/first_time_onboarding_flow.dart';
 import '../Data/app_settings_controller.dart';
@@ -221,132 +223,163 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'HikerCircle',
-      debugShowCheckedModeBanner: false,
+    return BetterFeedback(
+      feedbackBuilder: (context, onSubmit, scrollController) =>
+          HikerFeedbackCaptureForm(
+            onSubmit: onSubmit,
+            scrollController: scrollController,
+          ),
       themeMode: _settingsController.themeMode,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        fontFamily: _appFontFamily,
-        cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
-          primaryColor: _appGreen,
-          primaryContrastingColor: Colors.white,
-          scaffoldBackgroundColor: Colors.white,
-          textTheme: CupertinoTextThemeData(
-            primaryColor: _appGreen,
-            textStyle: _cupertinoBodyTextStyle,
-            actionTextStyle: _cupertinoActionTextStyle,
-            actionSmallTextStyle: _cupertinoSmallActionTextStyle,
-            tabLabelTextStyle: _cupertinoTabTextStyle,
-            navTitleTextStyle: _cupertinoTitleTextStyle,
-            navLargeTitleTextStyle: _cupertinoLargeTitleTextStyle,
-            navActionTextStyle: _cupertinoActionTextStyle,
-            pickerTextStyle: _cupertinoPickerTextStyle,
-            dateTimePickerTextStyle: _cupertinoPickerTextStyle,
-          ),
-        ),
-        scaffoldBackgroundColor: Colors.white,
+      theme: FeedbackThemeData(
+        background: const Color(0xFFEAF7EE),
+        feedbackSheetColor: Colors.white,
+        activeFeedbackModeColor: _appGreen,
+        colorScheme: ColorScheme.fromSeed(seedColor: _appGreen),
+      ),
+      darkTheme: FeedbackThemeData(
+        background: const Color(0xFF0C120F),
+        feedbackSheetColor: const Color(0xFF183625),
+        activeFeedbackModeColor: const Color(0xFF7AD69C),
+        bottomSheetDescriptionStyle: const TextStyle(color: Colors.white),
+        bottomSheetTextInputStyle: const TextStyle(color: Colors.white),
         colorScheme: ColorScheme.fromSeed(
           seedColor: _appGreen,
+          brightness: Brightness.dark,
+        ),
+      ),
+      child: MaterialApp(
+        title: 'HikerCircle',
+        debugShowCheckedModeBanner: false,
+        themeMode: _settingsController.themeMode,
+        theme: ThemeData(
+          useMaterial3: true,
           brightness: Brightness.light,
-          primary: _appGreen,
-          secondary: _appLightGreen,
-          primaryContainer: _appLightGreen,
-          surface: Colors.white,
+          fontFamily: _appFontFamily,
+          cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
+            primaryColor: _appGreen,
+            primaryContrastingColor: Colors.white,
+            scaffoldBackgroundColor: Colors.white,
+            textTheme: CupertinoTextThemeData(
+              primaryColor: _appGreen,
+              textStyle: _cupertinoBodyTextStyle,
+              actionTextStyle: _cupertinoActionTextStyle,
+              actionSmallTextStyle: _cupertinoSmallActionTextStyle,
+              tabLabelTextStyle: _cupertinoTabTextStyle,
+              navTitleTextStyle: _cupertinoTitleTextStyle,
+              navLargeTitleTextStyle: _cupertinoLargeTitleTextStyle,
+              navActionTextStyle: _cupertinoActionTextStyle,
+              pickerTextStyle: _cupertinoPickerTextStyle,
+              dateTimePickerTextStyle: _cupertinoPickerTextStyle,
+            ),
+          ),
+          scaffoldBackgroundColor: Colors.white,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: _appGreen,
+            brightness: Brightness.light,
+            primary: _appGreen,
+            secondary: _appLightGreen,
+            primaryContainer: _appLightGreen,
+            surface: Colors.white,
+          ),
+          cardColor: Colors.white,
+          snackBarTheme: _buildSnackBarTheme(Brightness.light),
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: _appGreenLine),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: _appGreenLine),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: _appGreen, width: 1.5),
+            ),
+          ),
         ),
-        cardColor: Colors.white,
-        snackBarTheme: _buildSnackBarTheme(Brightness.light),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: _appGreenLine),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: _appGreenLine),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: _appGreen, width: 1.5),
-          ),
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        fontFamily: _appFontFamily,
-        cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
+        darkTheme: ThemeData(
+          useMaterial3: true,
           brightness: Brightness.dark,
-          primaryColor: Color(0xFF7AD69C),
-          primaryContrastingColor: Color(0xFF07100A),
-          scaffoldBackgroundColor: Color(0xFF0C120F),
-        ),
-        scaffoldBackgroundColor: const Color(0xFF0C120F),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: _appGreen,
-          brightness: Brightness.dark,
-          primary: const Color(0xFF7AD69C),
-          secondary: const Color(0xFF9FDDB2),
-          primaryContainer: const Color(0xFF183625),
-          secondaryContainer: const Color(0xFF1B2E23),
-          surface: const Color(0xFF141C17),
-          surfaceContainerHighest: const Color(0xFF1B261F),
-          outline: const Color(0xFF2B3A31),
-        ),
-        cardColor: const Color(0xFF141C17),
-        dividerColor: const Color(0xFF2B3A31),
-        snackBarTheme: _buildSnackBarTheme(Brightness.dark),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFF111915),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF294535)),
+          fontFamily: _appFontFamily,
+          cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
+            brightness: Brightness.dark,
+            primaryColor: Color(0xFF7AD69C),
+            primaryContrastingColor: Color(0xFF07100A),
+            scaffoldBackgroundColor: Color(0xFF0C120F),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF294535)),
+          scaffoldBackgroundColor: const Color(0xFF0C120F),
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: _appGreen,
+            brightness: Brightness.dark,
+            primary: const Color(0xFF7AD69C),
+            secondary: const Color(0xFF9FDDB2),
+            primaryContainer: const Color(0xFF183625),
+            secondaryContainer: const Color(0xFF1B2E23),
+            surface: const Color(0xFF141C17),
+            surfaceContainerHighest: const Color(0xFF1B261F),
+            outline: const Color(0xFF2B3A31),
           ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF7AD69C), width: 1.5),
+          cardColor: const Color(0xFF141C17),
+          dividerColor: const Color(0xFF2B3A31),
+          snackBarTheme: _buildSnackBarTheme(Brightness.dark),
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: const Color(0xFF111915),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFF294535)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFF294535)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(
+                color: Color(0xFF7AD69C),
+                width: 1.5,
+              ),
+            ),
           ),
         ),
-      ),
-      onGenerateInitialRoutes: (initialRouteName) {
-        final initialDeepLink = _deepLinkFromPlatformRoute(initialRouteName);
-        _pendingPlatformDeepLink = initialDeepLink;
-        return [
-          _rootRoute(
+        onGenerateInitialRoutes: (initialRouteName) {
+          final initialDeepLink = _deepLinkFromPlatformRoute(initialRouteName);
+          _pendingPlatformDeepLink = initialDeepLink;
+          return [
+            _rootRoute(
+              initialDeepLink: initialDeepLink,
+              settings: const RouteSettings(name: Navigator.defaultRouteName),
+            ),
+          ];
+        },
+        onGenerateRoute: (settings) {
+          final initialDeepLink = _deepLinkFromPlatformRoute(settings.name);
+          if (initialDeepLink == null) {
+            return null;
+          }
+          return _rootRoute(
             initialDeepLink: initialDeepLink,
+            settings: settings,
+          );
+        },
+        onUnknownRoute: (settings) {
+          final routeName = settings.name;
+          final uri = routeName == null ? null : Uri.tryParse(routeName);
+          final routeLabel = uri == null
+              ? routeName
+              : '${uri.scheme.isEmpty ? '' : '${uri.scheme}://'}'
+                    '${uri.host}${uri.path}';
+          debugPrint(
+            'HikerCircle ignored unsupported navigation route: $routeLabel',
+          );
+          return _rootRoute(
             settings: const RouteSettings(name: Navigator.defaultRouteName),
-          ),
-        ];
-      },
-      onGenerateRoute: (settings) {
-        final initialDeepLink = _deepLinkFromPlatformRoute(settings.name);
-        if (initialDeepLink == null) {
-          return null;
-        }
-        return _rootRoute(initialDeepLink: initialDeepLink, settings: settings);
-      },
-      onUnknownRoute: (settings) {
-        final routeName = settings.name;
-        final uri = routeName == null ? null : Uri.tryParse(routeName);
-        final routeLabel = uri == null
-            ? routeName
-            : '${uri.scheme.isEmpty ? '' : '${uri.scheme}://'}'
-                  '${uri.host}${uri.path}';
-        debugPrint(
-          'HikerCircle ignored unsupported navigation route: $routeLabel',
-        );
-        return _rootRoute(
-          settings: const RouteSettings(name: Navigator.defaultRouteName),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

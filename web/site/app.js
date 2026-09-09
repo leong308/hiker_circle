@@ -182,6 +182,24 @@
       ],
       shot: ["The hike continues", "Show a restored active hike beside its conversation or shared media."],
       motion: ["Pause, return, reconnect", "Leave an active session, return to it, then open the team conversation and a saved achievement."],
+      media: {
+        heading: "Every adventure leaves something behind.",
+        description: "Revisit past hikes and see how each outing adds to your progress.",
+        screenshot: {
+          src: "/site-assets/evolution/05-achievements-device-20260908.png",
+          alt: "HikerCircle achievements screen showing earned badges and progress toward the next hiking level",
+          badge: "Your hiking journey",
+          title: "Small steps become milestones.",
+          caption: "Earned badges and progress toward your next level give every adventure something to build on.",
+        },
+        motion: {
+          src: "/site-assets/evolution/05-history-device-20260908.mp4",
+          poster: "/site-assets/evolution/05-history-device-20260908.jpg",
+          badge: "Recorded in the app",
+          title: "Look back. Keep going.",
+          caption: "Browse saved solo and group hikes, then open Achievements to see your hiking progress.",
+        },
+      },
     },
     {
       id: "physical-lifeline",
@@ -196,6 +214,24 @@
       ],
       shot: ["Phone and SOS button together", "Place the paired-device screen beside a clear product photo of the physical button."],
       motion: ["Pair once, keep it ready", "Demonstrate pairing, the ready state, and a safely cancelled test activation."],
+      media: {
+        heading: "Safety within physical reach.",
+        description: "A dedicated SOS button brings an emergency control closer when your phone is packed away.",
+        screenshot: {
+          src: "/site-assets/evolution/06-button-setup-device-20260908.png",
+          alt: "HikerCircle physical SOS button setup screen with readiness checks and a lost-button warning setting",
+          badge: "Physical SOS button",
+          title: "Get connected. Stay prepared.",
+          caption: "Guided setup, readiness checks, and a lost-button warning help you prepare your SOS button before heading out.",
+        },
+        motion: {
+          src: "/site-assets/evolution/06-button-pairing-device-20260908.mp4",
+          poster: "/site-assets/evolution/06-button-paired-device-20260908.png",
+          badge: "Recorded in the app",
+          title: "Add your SOS button, step by step.",
+          caption: "Follow a real setup: discover the nearby button, confirm its name, connect securely, and confirm ownership with a physical press.",
+        },
+      },
     },
     {
       id: "reliability",
@@ -210,6 +246,24 @@
       ],
       shot: ["Confidence in uncertain coverage", "Show a queued alert state alongside the complete pre-hike readiness summary."],
       motion: ["From offline to delivered", "Begin with weak coverage, show an alert waiting, then show it completing when connection returns."],
+      media: {
+        heading: "Prepare for the unexpected.",
+        description: "Set up your safety checks before heading onto the trail.",
+        screenshot: {
+          src: "/site-assets/evolution/07-safety-settings-device-20260908.png",
+          alt: "HikerCircle pre-hike safety settings in dark mode, including fall and stillness detection, sensor sensitivity and a warning response window",
+          badge: "Before you set off",
+          title: "Make safety part of your preparation.",
+          caption: "Review location sharing, fall and stillness detection, and route-deviation alerts before starting your hike.",
+        },
+        motion: {
+          src: "/site-assets/evolution/07-safety-device-20260908.mp4",
+          poster: "/site-assets/evolution/07-safety-settings-device-20260908.png",
+          badge: "Recorded in the app",
+          title: "A closer look at your safety controls.",
+          caption: "Adjust sensor sensitivity and review the warning window and rest settings in the pre-hike safety flow.",
+        },
+      },
     },
     {
       id: "reflection",
@@ -224,6 +278,24 @@
       ],
       shot: ["A complete hike story", "Combine the finished route, pace summary, and trail rating into one editorial sequence."],
       motion: ["Replay the trail", "Scrub through a team replay, pause at a checkpoint, then open the hike summary."],
+      media: {
+        heading: "Look back. Take more forward.",
+        description: "Revisit the details of a completed hike and the plan that shaped your day.",
+        screenshot: {
+          src: "/site-assets/evolution/08-hike-summary-device-20260908.png",
+          alt: "Bukit Bendera completed hike summary in HikerCircle dark mode",
+          badge: "Your hike, remembered",
+          title: "More than a finish time.",
+          caption: "Distance, duration and average pace give your completed hike a useful record.",
+        },
+        motion: {
+          src: "/site-assets/evolution/08-hike-summary-device-20260908.mp4",
+          poster: "/site-assets/evolution/08-hike-summary-device-20260908.png",
+          badge: "Recorded in the app",
+          title: "Revisit the details of your day.",
+          caption: "Explore a saved hike summary, then review its original plan and checkpoint timeline.",
+        },
+      },
     },
     {
       id: "community",
@@ -238,6 +310,24 @@
       ],
       shot: ["Meet the hiking community", "Feature a join request, a public hiker profile, and a community photo."],
       motion: ["Discover and join a circle", "Browse a public group, review its hikers, then request to join the outing."],
+      media: {
+        heading: "Find your hiking people.",
+        description: "Discover fellow hikers and learn a little about them before connecting.",
+        screenshot: {
+          src: "/site-assets/evolution/09-discover-device-20260908.png",
+          alt: "HikerCircle community discovery screen with the Find hikers view",
+          badge: "Better together",
+          title: "A new adventure starts with people.",
+          caption: "Browse hikers in the community and explore potential hiking buddies.",
+        },
+        motion: {
+          src: "/site-assets/evolution/09-community-device-20260908.mp4",
+          poster: "/site-assets/evolution/09-discover-device-20260908.png",
+          badge: "Recorded in the app",
+          title: "Meet the person behind the profile.",
+          caption: "Open a public hiker profile, review their area and hiking level, then return to community stories.",
+        },
+      },
     },
     {
       id: "trust",
@@ -252,11 +342,22 @@
       ],
       shot: ["Security choices made clear", "Show the protection overview with WhatsApp, Authenticator, and passkey options."],
       motion: ["A secure sign-in", "Complete sign-in with a second step, then review the available protection methods."],
+      media: {
+        heading: "Confidence starts with your account.",
+        description: "Review your sign-in protection in one clear place.",
+        screenshot: {
+          src: "/site-assets/evolution/10-security-device-20260908.png",
+          alt: "HikerCircle login security overview showing a bound mobile passkey and Authenticator app in dark mode",
+          badge: "Account protection",
+          title: "Your security choices, together.",
+          caption: "The login security overview brings your passkey and Authenticator methods together without exposing verification codes or device credentials.",
+        },
+      },
     },
     {
       id: "today",
       date: "1 September 2026",
-      era: "Today",
+      era: "Opening outward",
       title: "HikerCircle opens outward",
       lead: "The product became easier to understand from the outside while the app gained richer trail knowledge, portable first-aid learning, and more intentional safety sharing.",
       features: [
@@ -266,6 +367,58 @@
       ],
       shot: ["HikerCircle today", "Use the current trail detail, first-aid guide, and live-location sharing screens as the hero set."],
       motion: ["Plan, prepare, share", "Choose a verified trail, save first-aid guidance, then activate an optional live-location link."],
+      media: {
+        heading: "Know more before you go.",
+        description: "Explore a verified trail with the context to plan your next adventure.",
+        screenshot: {
+          src: "/site-assets/evolution/11-trail-device-20260908.png",
+          alt: "Bukit Jambul verified trail in HikerCircle with photography, distance, elevation and a route preview",
+          badge: "Explore HikerCircle today",
+          title: "A clearer picture of the trail.",
+          caption: "Trail photography, distance, elevation and typical time help you understand what lies ahead.",
+        },
+        motion: {
+          src: "/site-assets/evolution/11-trail-device-20260908.mp4",
+          poster: "/site-assets/evolution/11-trail-device-20260908.png",
+          badge: "Recorded in the app",
+          title: "Explore before you set off.",
+          caption: "Browse Bukit Jambul's route map and checkpoints, then review weather conditions and reported hazards—all within the trail page.",
+        },
+      },
+    },
+    {
+      id: "trail-confidence",
+      date: "7 September 2026",
+      era: "A richer trail companion",
+      title: "Every adventure comes into focus",
+      lead: "Planning grows more informed, progress feels more rewarding, and the circle becomes easier to explore—with clearer safety feedback when it matters.",
+      features: [
+        ["Find your weather window", "Explore seven-day forecasts, hourly charts, sunrise and daylight details, and weather guidance to choose a better time to head out."],
+        ["See the route unfold", "Animated route previews and highlighted checkpoints make the order of a trail easier to follow, including loops and return journeys."],
+        ["More reasons to keep exploring", "Expanded achievements recognise new trails, Malaysian states, team hikes, safe check-ins and community contributions. A swipeable level roadmap shows what comes next."],
+        ["Discover places and people", "Broader Malaysian trail coverage, community-led difficulty feedback, and clearer Stories and Find Hikers views help you explore beyond the familiar."],
+        ["Clearer feedback when it matters", "SOS requests remain queued until delivery is confirmed, while improved contact controls and live-location maps make safety information easier to manage."],
+      ],
+      shot: ["Your next adventure, in focus", "Show the expanded trail forecast and the achievement level roadmap in dark mode."],
+      motion: ["Choose a day. Follow the trail.", "Browse forecast days and hourly charts, then explore the animated route and highlight a checkpoint on the map."],
+      media: {
+        heading: "Choose a day. Follow the trail.",
+        description: "A closer look at the weather and route tools that make planning more informed.",
+        screenshot: {
+          src: "/site-assets/evolution/12-weather-device-20260908.png",
+          alt: "HikerCircle expanded trail forecast with selectable days, temperature chart, rain chance, UV, sunrise and sunset in dark mode",
+          badge: "Your weather window",
+          title: "See more of the day ahead.",
+          caption: "Compare forecast days and review hourly conditions, daylight and weather guidance before setting off.",
+        },
+        motion: {
+          src: "/site-assets/evolution/12-weather-route-device-20260908.mp4",
+          poster: "/site-assets/evolution/12-weather-device-20260908.png",
+          badge: "Recorded in the app",
+          title: "From forecast to checkpoint.",
+          caption: "Switch forecast days and chart views, then select a checkpoint to highlight its position on the animated route map.",
+        },
+      },
     },
     {
       id: "future",
@@ -286,10 +439,25 @@
 
   const loadCommunityStats = async () => {
     if (!statsRegion) return;
+    const trailRegion = document.querySelector('[data-trail-stats]');
+    const trailStatus = document.querySelector('[data-trail-stats-status]');
+    const trailKeys = ['totalTrails', 'trailDistanceKm', 'regionsCovered', 'easyTrails', 'moderateTrails', 'hardTrails'];
     try {
       const response = await fetch("/api/public-stats", { headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(`Stats request failed with ${response.status}`);
       const stats = await response.json();
+      if (trailRegion && trailKeys.every(key => Number.isFinite(stats.trails?.[key]) && stats.trails[key] >= 0)) {
+        trailKeys.forEach(key => {
+          const formatter = key === 'trailDistanceKm' ? distanceFormatter : integerFormatter;
+          trailRegion.querySelector(`[data-trail-stat="${key}"]`).textContent = formatter.format(stats.trails[key]);
+        });
+        trailRegion.classList.add('is-loaded');
+        if (trailStatus) {
+          const unclassified = stats.trails.totalTrails - stats.trails.easyTrails - stats.trails.moderateTrails - stats.trails.hardTrails;
+          trailStatus.textContent = 'Each listed trail is counted once. Distance adds route lengths, not hiker activity. Coverage is across Malaysia.' +
+            (unclassified > 0 ? ` ${integerFormatter.format(unclassified)} ${unclassified === 1 ? 'trail has' : 'trails have'} no difficulty label yet.` : ' Difficulty reflects the current trail labels.');
+        }
+      }
       if (!statKeys.every((key) => Number.isFinite(stats[key]) && stats[key] >= 0)) {
         throw new Error("Stats response was invalid");
       }
@@ -308,6 +476,31 @@
       if (statsStatus) statsStatus.textContent = "Community totals are temporarily unavailable. Please check again shortly.";
     } finally {
       statsRegion.removeAttribute("aria-busy");
+      trailRegion?.removeAttribute('aria-busy');
+      if (trailStatus && !trailRegion?.classList.contains('is-loaded')) {
+        trailStatus.textContent = 'Trail totals are temporarily unavailable. Please check again shortly.';
+      }
+    }
+  };
+
+  const loadBetaDownload = async () => {
+    const link = document.querySelector('[data-beta-download]');
+    if (!link) return;
+    try {
+      const response = await fetch('/site/beta-release.json', { cache: 'no-cache' });
+      if (!response.ok) throw new Error('Release unavailable');
+      const release = await response.json();
+      const url = new URL(release.url);
+      if (url.protocol !== 'https:' || url.hostname !== 'firebasestorage.googleapis.com' ||
+          !url.pathname.startsWith('/v0/b/hiker-circle.firebasestorage.app/o/releases%2Fandroid%2Fbeta%2F') ||
+          !/^[a-f0-9]{64}$/.test(release.sha256) || !Number.isFinite(release.sizeBytes) || release.sizeBytes <= 0) throw new Error('Invalid release');
+      link.href = url.href;
+      link.removeAttribute('aria-disabled');
+      link.textContent = 'Download Android beta ↓';
+      document.querySelector('[data-beta-size]').textContent = `${(release.sizeBytes / 1048576).toFixed(1)} MB · Direct APK download`;
+      document.querySelector('[data-beta-checksum]').textContent = `Download verification · SHA-256: ${release.sha256}`;
+    } catch (_) {
+      link.textContent = 'Download temporarily unavailable';
     }
   };
 
@@ -466,9 +659,13 @@
     const motionPlaceholder = milestoneDialog.querySelector("[data-milestone-motion-placeholder]");
     const motionMedia = milestoneDialog.querySelector("[data-milestone-motion-media]");
     const mediaDescription = milestoneDialog.querySelector("[data-milestone-media-description]");
-    setMilestoneText("[data-milestone-media-heading]", media?.heading || "Prepared for the real product story.");
+    setMilestoneText("[data-milestone-media-heading]", story.concept ? "Beyond the phone. Still within the circle." : media?.heading || "Prepared for the real product story.");
+    const futureLab = milestoneDialog.querySelector("[data-future-lab]");
+    if (futureLab) futureLab.hidden = !story.concept;
+    if (mediaGrid) mediaGrid.hidden = Boolean(story.concept);
+    if (story.concept) resetFutureConcept();
     if (mediaDescription) {
-      const description = media ? media.description : "These media slots can be replaced with final screenshots or clips later without changing the layout.";
+      const description = story.concept ? "Tap each link to explore one possible future safety network—not a preview of an existing product." : media ? media.description : "These media slots can be replaced with final screenshots or clips later without changing the layout.";
       mediaDescription.textContent = description || "";
       mediaDescription.hidden = !description;
     }
@@ -547,6 +744,34 @@
     }
     milestonePanel?.scrollTo({ top: 0, behavior: "auto" });
   };
+
+  const futureSteps = [
+    ["THE WATCH", "A check-in within reach.", "A possible smartwatch companion could offer a quick check-in and a clear acknowledgement, without reaching into your pack. Compatible phone or radio hardware may still be needed."],
+    ["THE MESH", "A little help from hikers nearby.", "Compatible devices could relay a small safety message from one nearby hiker to another. This would depend on willing participants, radio range and enough devices along the route—not just people being on the same trail."],
+    ["THE GATEWAY", "A bridge beyond the trail.", "A proposed LoRa gateway could receive small radio messages and pass them onward when it has an internet connection. Placement, terrain, power and local requirements would all shape where this could work."],
+    ["YOUR CIRCLE", "Confirmation, not guesswork.", "The goal would be to let chosen contacts receive a check-in and return a clear delivery acknowledgement. Reaching a relay is not the same as reaching a person, and neither guarantees emergency assistance."],
+  ];
+  let futureStep = 0;
+  const futureButtons = [...document.querySelectorAll("[data-future-step]")];
+  const futureOffline = document.querySelector("[data-future-offline]");
+  const renderFutureConcept = (step) => {
+    futureStep = step;
+    const disconnected = Boolean(futureOffline?.checked);
+    const [kicker, title, copy] = futureSteps[step];
+    futureButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(index === step)));
+    setMilestoneText("[data-future-kicker]", `${String(step + 1).padStart(2, "0")} / ${kicker}`);
+    setMilestoneText("[data-future-title]", disconnected && step >= 2 ? "No connection. No delivery claim." : title);
+    setMilestoneText("[data-future-copy]", disconnected && step >= 2 ? "Without a reachable gateway or a connection out, the message might remain waiting—or never arrive. A future design would need honest status, expiry and retry rules. Hikers would still need independent emergency plans." : copy);
+    const next = document.querySelector("[data-future-next]");
+    if (next) next.textContent = step === 3 ? "Explore again ↺" : "Follow the message →";
+  };
+  const resetFutureConcept = () => {
+    if (futureOffline) futureOffline.checked = false;
+    renderFutureConcept(0);
+  };
+  futureButtons.forEach((button, index) => button.addEventListener("click", () => renderFutureConcept(index)));
+  document.querySelector("[data-future-next]")?.addEventListener("click", () => renderFutureConcept((futureStep + 1) % futureSteps.length));
+  futureOffline?.addEventListener("change", () => renderFutureConcept(futureOffline.checked ? 2 : futureStep));
 
   const openMilestone = (id, trigger) => {
     if (!milestoneDialog) return;
@@ -760,6 +985,7 @@
   updateCarouselProgress();
   updateEvolution();
   loadCommunityStats();
+  loadBetaDownload();
   startRotation();
   window.addEventListener("scroll", updateHeader, { passive: true });
 

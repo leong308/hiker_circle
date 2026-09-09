@@ -229,6 +229,7 @@ class FirstAidTopic {
     this.guidanceSource = '',
     this.guidanceSourceUrl = '',
     this.video,
+    this.videoUnavailableReason = '',
   });
 
   factory FirstAidTopic.fromJson(Map<String, dynamic> json) {
@@ -242,6 +243,7 @@ class FirstAidTopic {
           : const [],
       guidanceSource: _stringFrom(json['guidanceSource']),
       guidanceSourceUrl: _stringFrom(json['guidanceSourceUrl']),
+      videoUnavailableReason: _stringFrom(json['videoUnavailableReason']),
       video: json['video'] is Map<String, dynamic>
           ? FirstAidVideo.fromJson(json['video'] as Map<String, dynamic>)
           : null,
@@ -255,6 +257,7 @@ class FirstAidTopic {
   final String guidanceSource;
   final String guidanceSourceUrl;
   final FirstAidVideo? video;
+  final String videoUnavailableReason;
 
   static const List<FirstAidTopic> defaults = [
     FirstAidTopic(
@@ -441,7 +444,7 @@ class _FirstAidCategoryPage extends StatelessWidget {
                   const SizedBox(height: 16),
                   _CategoryHero(category: category),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Offline video tutorial'),
+                  _SectionTitle(label: 'KKM video reference'),
                   const SizedBox(height: 8),
                   _TutorialMediaStrip(category: category),
                   const SizedBox(height: 22),
@@ -637,14 +640,33 @@ class _TutorialMediaStrip extends StatelessWidget {
     final topic = category.topics.first;
     final video = topic.video;
     if (video == null) {
-      return const _EmptyState(
-        message: 'No offline tutorial is available for this category yet.',
+      return _EmptyState(
+        message: topic.videoUnavailableReason.isNotEmpty
+            ? topic.videoUnavailableReason
+            : 'No verified KKM video is available for this category. Use the written guidance below.',
       );
     }
-    return FirstAidTutorialVideoCard(
-      topicId: topic.id,
-      video: video,
-      color: category.color,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (video.scopeNote.isNotEmpty) ...[
+          Text(video.scopeNote, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 12),
+        ],
+        FirstAidTutorialVideoCard(
+          topicId: topic.id,
+          video: video,
+          color: category.color,
+        ),
+        if (video.licenseUrl.isNotEmpty)
+          TextButton(
+            onPressed: () => launchUrl(
+              Uri.parse(video.licenseUrl),
+              mode: LaunchMode.externalApplication,
+            ),
+            child: Text('${video.language} · KKM reuse permission'),
+          ),
+      ],
     );
   }
 }

@@ -17,8 +17,8 @@
   <title>HikerCircle — Better connected on every trail</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
   <link rel="apple-touch-icon" href="/privacy-assets/app-icon.png">
-    <link rel="stylesheet" href="/site/styles.css?v=20260907-device-capture">
-    <script src="/site/app.js?v=20260907-device-capture" defer></script>
+    <link rel="stylesheet" href="/site/styles.css?v=20260909-trails">
+    <script src="/site/app.js?v=20260909-trails-v2" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -36,6 +36,7 @@
       <a href="#features">Features</a>
       <a href="#safety">Safety</a>
       <a class="nav-pill" href="/privacy-policy">Privacy</a>
+      <a class="nav-pill" href="#get-app">Get the app</a>
     </nav>
   </header>
 
@@ -47,7 +48,7 @@
           <h1 id="hero-title">Better connected on every trail.</h1>
           <p>HikerCircle brings trail discovery, hike planning, live progress, check-ins, and practical safety tools into one circle—before, during, and after the hike.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#showcase">See the app <span aria-hidden="true">↓</span></a>
+            <a class="button button-primary" href="#get-app">Get the app <span aria-hidden="true">↓</span></a>
             <a class="button button-secondary" href="#journey">How it works</a>
           </div>
         </div>
@@ -107,6 +108,27 @@
             </article>
           </div>
           <p class="community-note" data-stats-status>Loading verified community totals…</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="community-section trail-section" id="trail-totals" aria-labelledby="trail-totals-title">
+      <div class="community-layout">
+        <header class="community-intro reveal">
+          <p class="eyebrow"><span></span> More paths to explore</p>
+          <h2 id="trail-totals-title">Find your next<br>favourite trail.</h2>
+          <p>From an easy morning walk to a harder climb, explore the growing collection of trails in HikerCircle.</p>
+        </header>
+        <div class="community-stats-wrap reveal">
+          <div class="community-stats" data-trail-stats aria-busy="true" aria-live="polite">
+            <article class="community-stat community-stat-distance"><strong data-trail-stat="totalTrails">—</strong><span>Trails to explore</span></article>
+            <article class="community-stat"><strong><span data-trail-stat="trailDistanceKm">—</span><small> km</small></strong><span>Combined trail distance</span></article>
+            <article class="community-stat"><strong data-trail-stat="regionsCovered">—</strong><span>States &amp; territories</span></article>
+            <article class="community-stat"><strong data-trail-stat="easyTrails">—</strong><span>Easy trails</span></article>
+            <article class="community-stat"><strong data-trail-stat="moderateTrails">—</strong><span>Moderate trails</span></article>
+            <article class="community-stat"><strong data-trail-stat="hardTrails">—</strong><span>Hard trails</span></article>
+          </div>
+          <p class="community-note" data-trail-stats-status>Loading trail totals…</p>
         </div>
       </div>
     </section>
@@ -216,7 +238,7 @@
         <div class="evolution-toolbar">
           <div>
             <span class="evolution-kicker">Explore the milestones</span>
-            <strong><span data-evolution-current>01</span> / <span data-evolution-total>12</span></strong>
+            <strong><span data-evolution-current>01</span> / <span data-evolution-total>13</span></strong>
           </div>
           <div class="evolution-controls" aria-label="Evolution timeline controls">
             <button type="button" data-evolution-previous aria-label="Show previous milestone">←</button>
@@ -316,17 +338,26 @@
               <button class="evolution-card-trigger" type="button" data-milestone-open="trust" aria-label="Explore milestone: Sign-in reaches modern security"><span>Explore milestone</span><span aria-hidden="true">↗</span></button>
             </article>
 
-            <article class="evolution-card evolution-card-now" data-evolution-card data-milestone="today" role="listitem">
+            <article class="evolution-card" data-evolution-card data-milestone="today" role="listitem">
               <div class="evolution-card-top"><time datetime="2026-09-01">1 September 2026</time><span>11</span></div>
-              <p class="evolution-era">Today</p>
+              <p class="evolution-era">Opening outward</p>
               <h3>HikerCircle opens outward</h3>
               <p>HikerCircle gained a public home and clearer privacy information, while the app added more verified trails, useful images and difficulty feedback, first-aid videos for offline use, and optional live-location links for emergency contacts.</p>
               <ul><li>Public website and privacy centre</li><li>More useful trail information</li><li>Optional safety sharing</li></ul>
               <button class="evolution-card-trigger" type="button" data-milestone-open="today" aria-label="Explore milestone: HikerCircle opens outward"><span>Explore milestone</span><span aria-hidden="true">↗</span></button>
             </article>
 
+            <article class="evolution-card evolution-card-now" data-evolution-card data-milestone="trail-confidence" role="listitem">
+              <div class="evolution-card-top"><time datetime="2026-09-07">7 September 2026</time><span>12</span></div>
+              <p class="evolution-era">A richer trail companion</p>
+              <h3>Every adventure comes into focus</h3>
+              <p>Seven-day weather forecasts, animated route previews and clearer checkpoints make planning more informed. Expanded achievements, a swipeable level roadmap and richer community discovery reward exploration, while clearer SOS delivery feedback strengthens the safety experience.</p>
+              <ul><li>Weather windows and clearer route previews</li><li>More achievements, places and people</li><li>Confirmed SOS delivery feedback</li></ul>
+              <button class="evolution-card-trigger" type="button" data-milestone-open="trail-confidence" aria-label="Explore milestone: Every adventure comes into focus"><span>Explore milestone</span><span aria-hidden="true">↗</span></button>
+            </article>
+
             <article class="evolution-card evolution-card-future" data-evolution-card data-milestone="future" role="listitem">
-              <div class="evolution-card-top"><span class="evolution-date">Coming soon</span><span>12</span></div>
+              <div class="evolution-card-top"><span class="evolution-date">Coming soon</span><span>13</span></div>
               <p class="evolution-era">The next horizon</p>
               <h3>The circle reaches farther</h3>
               <p>HikerCircle is exploring a safety network that travels naturally with every hiker: quick alerts from smartwatches, long-range LoRa gateways for remote trails, and mesh connections that can pass safety messages between nearby hikers when mobile coverage fades.</p>
@@ -349,7 +380,7 @@
       <section class="milestone-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="milestone-dialog-title" aria-describedby="milestone-dialog-lead">
         <header class="milestone-dialog-header">
           <div>
-            <span data-milestone-count>Milestone 01 of 12</span>
+            <span data-milestone-count>Milestone 01 of 13</span>
             <strong data-milestone-date>28 May 2026</strong>
           </div>
           <button class="milestone-dialog-close" type="button" data-milestone-close aria-label="Close milestone showcase">×</button>
@@ -376,6 +407,24 @@
               <p class="eyebrow"><span></span> Feature showcase</p>
               <h3 id="milestone-media-title" data-milestone-media-heading>Prepared for the real product story.</h3>
               <p data-milestone-media-description>These media slots can be replaced with final screenshots or clips later without changing the layout.</p>
+            </div>
+            <div class="future-lab" data-future-lab hidden>
+              <div class="future-lab-top"><span>CONCEPT EXPLORATION</span><span>No real messages are sent</span></div>
+              <h4>A small message.<br>A wider circle.</h4>
+              <p class="future-lab-lead">Imagine a check-in travelling from your wrist, through nearby hikers, to a gateway with a connection out.</p>
+              <div class="future-path" role="group" aria-label="Explore the proposed message journey">
+                <button type="button" data-future-step="0" aria-pressed="true"><span class="future-node">01</span><strong>Your wrist</strong><small>Start a check-in</small></button>
+                <button type="button" data-future-step="1" aria-pressed="false"><span class="future-node">02</span><strong>Nearby hikers</strong><small>Pass it onward</small></button>
+                <button type="button" data-future-step="2" aria-pressed="false"><span class="future-node">03</span><strong>Trail gateway</strong><small>A connection out</small></button>
+                <button type="button" data-future-step="3" aria-pressed="false"><span class="future-node">04</span><strong>Your circle</strong><small>Close the loop</small></button>
+              </div>
+              <div class="future-detail" aria-live="polite" aria-atomic="true">
+                <span data-future-kicker>01 / THE WATCH</span>
+                <h5 data-future-title>A check-in within reach.</h5>
+                <p data-future-copy>A possible smartwatch companion could offer a quick check-in and a clear acknowledgement, without reaching into your pack. Compatible phone or radio hardware may still be needed.</p>
+              </div>
+              <div class="future-controls"><button type="button" data-future-next>Follow the message →</button><label><input type="checkbox" data-future-offline> Imagine no gateway connection</label></div>
+              <p class="future-boundary" data-future-boundary>Illustrative path only. Range, battery life, compatible hardware, privacy and delivery reliability would need real-world testing. No release date or full-coverage guarantee.</p>
             </div>
             <div class="milestone-media-grid" data-milestone-media-grid>
               <article class="milestone-media-slot milestone-media-slot-portrait" data-milestone-shot-slot>
@@ -423,7 +472,7 @@
 
         <footer class="milestone-dialog-footer">
           <button type="button" data-milestone-previous>← <span>Previous story</span></button>
-          <p><span data-milestone-footer-number>01</span> / 12</p>
+          <p><span data-milestone-footer-number>01</span> / 13</p>
           <button type="button" data-milestone-next><span>Next story</span> →</button>
         </footer>
       </section>
@@ -469,9 +518,55 @@
       </div>
     </section>
 
+    <section class="section get-app" id="get-app" aria-labelledby="get-app-title">
+      <header class="section-heading reveal">
+        <p class="eyebrow"><span></span> Join the next chapter</p>
+        <h2 id="get-app-title">Your next hike starts here.</h2>
+        <p>Try HikerCircle on Android today. Our store releases are still ahead.</p>
+      </header>
+      <div class="download-grid">
+        <article class="download-card download-beta">
+          <span class="download-status">AVAILABLE · ANDROID BETA</span>
+          <h3>Be part of the adventure.</h3>
+          <p>Explore the app and help shape what comes next with a direct beta download.</p>
+          <p class="beta-version">1.1.0-beta.1 · Android 7.0+ · APK</p>
+          <a class="button button-primary" data-beta-download aria-disabled="true">Preparing beta download</a>
+          <p class="download-note" data-beta-size>Direct download, outside Google Play.</p>
+          <a class="beta-feedback" href="mailto:leongziqi@gmail.com?subject=HikerCircle%20Android%20beta%20feedback">Share beta feedback ↗</a>
+        </article>
+        <article class="download-card download-store" aria-label="Google Play release coming soon">
+          <span class="download-status">ANDROID · GOOGLE PLAY</span>
+          <div class="store-lock-overlay" aria-hidden="true"><span class="store-chain store-chain-left"></span><span class="store-chain store-chain-right"></span><strong class="store-lock"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/></svg>COMING SOON</strong></div>
+          <h3>Google Play</h3><p>The store QR code will appear here when the release is available.</p>
+          <span class="store-unavailable">Not available yet</span>
+        </article>
+        <article class="download-card download-store" aria-label="Apple App Store release coming soon">
+          <span class="download-status">iOS · APP STORE</span>
+          <div class="store-lock-overlay" aria-hidden="true"><span class="store-chain store-chain-left"></span><span class="store-chain store-chain-right"></span><strong class="store-lock"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/></svg>COMING SOON</strong></div>
+          <h3>App Store</h3><p>The iPhone store QR code will appear here when the release is available.</p>
+          <span class="store-unavailable">Not available yet</span>
+        </article>
+      </div>
+      <div class="beta-includes">
+        <div><p class="eyebrow"><span></span> Inside this beta</p><h3>Explore. Connect. Prepare.</h3><p>The current Android app—not a screenshot demo. Some features require an account, permissions, a connection or compatible hardware.</p></div>
+        <ul>
+          <li><strong>Plan your trail</strong>Malaysian trail discovery, saved routes, checkpoints and seven-day weather forecasts.</li>
+          <li><strong>Hike as a circle</strong>Solo and group plans, reminders, community stories and hiker discovery.</li>
+          <li><strong>See your progress</strong>Hike records, achievements and a level roadmap to explore.</li>
+          <li><strong>Prepare for the unexpected</strong>SOS controls, emergency contacts, check-ins, optional location sharing and supported physical-button pairing.</li>
+        </ul>
+      </div>
+      <details class="beta-help"><summary>Before installing the Android beta</summary>
+        <ol><li>Download the APK on your Android phone and open the downloaded file.</li><li>If Android asks, allow installation from this browser or file manager for this installation. Keep Play Protect enabled; do not bypass a harmful-app warning.</li><li>Open HikerCircle and sign in or register. Grant only the permissions needed for the features you choose.</li><li>You can turn off that browser or file manager’s installation permission afterwards.</li></ol>
+        <p>This is pre-release software. SOS actions can contact real people: do not send test emergencies. Delivery depends on connectivity and service availability; HikerCircle is not an emergency service or a guarantee of rescue.</p>
+        <p>Private-key route-provider fallbacks are excluded from this beta; saved trail routes, public-token Mapbox features and the beta-restricted Google services remain configured. Future store builds may require a separate installation if their signing identity differs. Do not uninstall an existing version without protecting any local-only data.</p>
+        <p><a href="/privacy-policy">Read the privacy policy</a> before joining the beta.</p>
+        <p class="beta-checksum" data-beta-checksum></p>
+      </details>
+    </section>
     <section class="closing section reveal" aria-labelledby="closing-title">
       <h2 id="closing-title">A better hike starts with a better-connected circle.</h2>
-      <a class="button button-primary" href="#main">Back to the top <span aria-hidden="true">↑</span></a>
+      <a class="button button-primary" href="#get-app">Get the Android beta <span aria-hidden="true">↑</span></a>
     </section>
   </main>
 

@@ -18,6 +18,7 @@ import '../../authentication/View/security_methods_page.dart';
 import '../../core/models/hiker_level.dart';
 import '../../core/services/privacy_policy_launcher.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../feedback/feedback_page.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
@@ -343,6 +344,12 @@ class _MePageState extends State<MePage> {
 
   void _openActionItem(MeActionItem item) {
     switch (item.title) {
+      case 'Send feedback':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => FeedbackPage(isAdmin: widget.session.isAdmin),
+          ),
+        );
       case 'Hike history':
         Navigator.of(context).push(
           MaterialPageRoute<void>(

@@ -65,6 +65,7 @@ const {
   normalizeNearbySosReport,
 } = require('./nearby_sos_helpers');
 const { publicStatsPayload } = require('./public_stats_helpers');
+const { publicTrailStats } = require('./public_trail_stats_helpers');
 const {
   achievementProgressHash,
   achievementSlug,
@@ -193,6 +194,15 @@ exports.getPublicHikerCircleStats = onRequest(
         }
       }
       const payload = publicStatsPayload(rawStats);
+      try {
+        const trails = await db.collection('trails').select(
+          'isVerifiedTrail', 'ratingAverage', 'checkpoints', 'distanceKm', 'state', 'difficulty'
+        ).get();
+        payload.trails = publicTrailStats(trails.docs.map(document => document.data()));
+      } catch (error) {
+        logger.warn('Public trail totals unavailable.', { code: error?.code });
+        payload.trails = null;
+      }
 
       response.set('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
       response.set('Content-Type', 'application/json; charset=utf-8');

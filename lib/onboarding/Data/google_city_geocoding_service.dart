@@ -61,6 +61,7 @@ class GoogleCityGeocodingService {
           'key': _apiKey,
           'language': 'en',
         }),
+        headers: GoogleApiConfig.androidBetaHeaders,
       );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw CityGeocodingException(

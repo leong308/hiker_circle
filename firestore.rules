@@ -783,6 +783,31 @@ service cloud.firestore {
       }
     }
 
+    match /appFeedback/{reportId} {
+      allow get: if signedIn() && (
+        !exists(/databases/$(database)/documents/appFeedback/$(reportId))
+        || resource.data.uid == request.auth.uid || admin()
+      );
+      allow list: if signedIn() && (resource.data.uid == request.auth.uid || admin());
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['uid', 'category', 'message', 'screenshotPath', 'platform', 'status', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['uid', 'category', 'message', 'screenshotPath', 'platform', 'status', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.category in ['Problem', 'Suggestion', 'Other']
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 10
+        && request.resource.data.message.size() <= 4000
+        && request.resource.data.platform in ['web', 'android', 'iOS', 'macOS', 'windows', 'linux', 'fuchsia']
+        && request.resource.data.status == 'New'
+        && request.resource.data.createdAt == request.time
+        && (request.resource.data.screenshotPath == ''
+          || request.resource.data.screenshotPath == 'app_feedback/' + request.auth.uid + '/' + reportId + '/screenshot.png');
+      allow update: if admin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status in ['New', 'In review', 'Resolved'];
+      allow delete: if admin();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

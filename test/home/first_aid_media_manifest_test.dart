@@ -1,48 +1,77 @@
 import 'dart:convert';
 import 'dart:io';
-
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hiker_circle/home/Data/first_aid_video_cache_service.dart';
+import 'package:hiker_circle/home/Model/first_aid_video.dart';
 
 void main() {
   test(
-    'every first-aid category has a complete offline video manifest',
+    'only verified KKM media is offered; unmatched topics stay explicit',
     () async {
       final raw = await File(
         'assets/guides/first_aid_guide.json',
       ).readAsString();
       final document = jsonDecode(raw) as Map<String, dynamic>;
       final topics = (document['topics'] as List).cast<Map<String, dynamic>>();
-
+      expect(document['region'], 'MY');
       expect(topics, hasLength(7));
-      final paths = <String>{};
+      expect(raw, isNot(contains('dvidshub')));
+      final approved = <String>{};
       for (final topic in topics) {
-        final steps = (topic['steps'] as List).cast<String>();
-        final video = topic['video'] as Map<String, dynamic>;
-        final storagePath = video['storagePath'] as String;
-
+        expect((topic['steps'] as List).length, greaterThanOrEqualTo(5));
+        if (topic['video'] == null) {
+          expect(topic['videoUnavailableReason'], contains('No matching KKM'));
+          continue;
+        }
+        approved.add(topic['id'] as String);
+        final data = topic['video'] as Map<String, dynamic>;
+        final video = FirstAidVideo.fromJson(data);
+        expect(Uri.parse(video.sourceUrl).host, 'infosihat.moh.gov.my');
         expect(
-          steps.length,
-          greaterThanOrEqualTo(5),
-          reason: '${topic['id']} needs a complete response guide',
+          Uri.parse(data['downloadUrl'] as String).host,
+          'infosihat.moh.gov.my',
         );
-        expect(topic['guidanceSourceUrl'], startsWith('https://'));
+        expect(video.licenseUrl, 'https://infosihat.moh.gov.my/faq.html');
+        expect(video.version, 2);
         expect(
-          storagePath,
-          matches(RegExp(r'^first_aid/videos/[a-z0-9_-]+_v\d+\.mp4$')),
+          video.storagePath,
+          matches(r'^first_aid/videos/kkm_[a-z_]+_v2\.mp4$'),
         );
-        expect(
-          paths.add(storagePath),
-          isTrue,
-          reason: 'Each category must have its own tutorial object',
-        );
-        expect(
-          video['sourceUrl'],
-          startsWith('https://www.dvidshub.net/video/'),
-        );
-        expect(video['license'], contains('Public domain'));
-        expect(video['expectedBytes'], greaterThan(0));
-        expect(video['version'], greaterThan(0));
+        expect(video.sha256, matches(r'^[a-f0-9]{64}$'));
+        expect(video.expectedBytes, greaterThan(0));
+        expect(video.scopeNote, isNotEmpty);
+        expect(video.language, 'Bahasa Melayu');
+        expect(video.cacheFileName(topic['id'] as String), endsWith('_v2.mp4'));
       }
+      expect(approved, {'heat_exhaustion', 'severe_weather'});
     },
   );
+
+  test('cache rejects altered bytes even when length matches', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'first_aid_integrity_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/video.mp4');
+    final bytes = utf8.encode('approved original');
+    final video = FirstAidVideo(
+      title: '',
+      storagePath: '',
+      durationLabel: '',
+      attribution: '',
+      license: '',
+      sourceUrl: '',
+      version: 2,
+      expectedBytes: bytes.length,
+      sha256: crypto.sha256.convert(bytes).toString(),
+    );
+    expect(await isFirstAidVideoCacheValid(file, video), isFalse);
+    await file.writeAsBytes(bytes);
+    expect(await isFirstAidVideoCacheValid(file, video), isTrue);
+    await file.writeAsBytes(List.filled(bytes.length, 0));
+    expect(await isFirstAidVideoCacheValid(file, video), isFalse);
+    await file.writeAsBytes([1]);
+    expect(await isFirstAidVideoCacheValid(file, video), isFalse);
+  });
 }

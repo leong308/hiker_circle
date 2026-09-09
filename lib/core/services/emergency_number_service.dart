@@ -173,7 +173,9 @@ class EmergencyNumberService implements EmergencyNumberResolver {
         'result_type': 'country',
         'key': key,
       });
-      final response = await client.get(uri).timeout(_requestTimeout);
+      final response = await client
+          .get(uri, headers: GoogleApiConfig.androidBetaHeaders)
+          .timeout(_requestTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) return null;

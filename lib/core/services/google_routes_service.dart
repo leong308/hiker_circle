@@ -104,6 +104,7 @@ class GoogleRoutesService {
       final response = await client.post(
         Uri.https('routes.googleapis.com', '/directions/v2:computeRoutes'),
         headers: {
+          ...GoogleApiConfig.androidBetaHeaders,
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': _apiKey,
           'X-Goog-FieldMask':

@@ -13,16 +13,8 @@
         "Support a suspected fracture in the position found. Do not straighten it or push exposed bone back in.",
         "Keep the person warm and still, monitor breathing and alertness, and wait for professional rescue if walking could worsen the injury."
       ],
-      "video": {
-        "title": "Basic first-aid response in the field",
-        "storagePath": "first_aid/videos/falls_injury_v1.mp4",
-        "durationLabel": "00:59",
-        "attribution": "U.S. Army video by Spc. William Marlow / DVIDS",
-        "license": "Public domain (U.S. government work)",
-        "sourceUrl": "https://www.dvidshub.net/video/431657/first-aid-and-zero-range",
-        "version": 1,
-        "expectedBytes": 6447453
-      }
+      "video": null,
+      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
     },
     {
       "id": "bleeding",
@@ -37,16 +29,8 @@
         "For life-threatening bleeding from an arm or leg that direct pressure cannot control, apply a commercial tourniquet above the wound, not over a joint, and note the time. Do not loosen it.",
         "Do not remove soaked dressings; add more on top. Keep the person warm and still, and monitor breathing until help arrives."
       ],
-      "video": {
-        "title": "Hemorrhage control and tourniquet training",
-        "storagePath": "first_aid/videos/bleeding_v1.mp4",
-        "durationLabel": "02:30",
-        "attribution": "U.S. Marine Corps video by Cpl. Joshua Murray / DVIDS",
-        "license": "Public domain (U.S. government work)",
-        "sourceUrl": "https://www.dvidshub.net/video/341221/bridging-gap-between-navy-medicine-and-marine-corps-tactics",
-        "version": 1,
-        "expectedBytes": 12559590
-      }
+      "video": null,
+      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
     },
     {
       "id": "sprain",
@@ -61,23 +45,15 @@
         "Raise the ankle at or above heart level when practical and rest it for the next several days.",
         "Seek urgent medical assessment for severe pain, deformity, numbness, a cold foot, a popping sound with loss of function, or inability to walk."
       ],
-      "video": {
-        "title": "Getting an ankle injury professionally assessed",
-        "storagePath": "first_aid/videos/sprain_v1.mp4",
-        "durationLabel": "01:31",
-        "attribution": "U.S. Air Force video by Senior Airman Joshua Rosario / DVIDS",
-        "license": "Public domain (U.S. government work)",
-        "sourceUrl": "https://www.dvidshub.net/video/915217/wilford-halls-new-physical-and-occupational-therapy-direct-access-clinic",
-        "version": 1,
-        "expectedBytes": 6226268
-      }
+      "video": null,
+      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
     },
     {
       "id": "heat_exhaustion",
       "title": "Heat Exhaustion",
       "category": "Heat Exhaustion",
-      "guidanceSource": "U.S. Centers for Disease Control and Prevention",
-      "guidanceSourceUrl": "https://www.cdc.gov/extreme-heat/signs-symptoms/index.html",
+      "guidanceSource": "KKM InfoSihat: Cuaca Panas",
+      "guidanceSourceUrl": "https://infosihat.moh.gov.my/cuaca-panas.html",
       "steps": [
         "Stop hiking and move the person to shade, air conditioning, or the coolest available place.",
         "Loosen or remove unnecessary clothing. Cool the skin with wet cloths, water, fanning, and cold packs at the neck and armpits.",
@@ -86,14 +62,20 @@
         "Confusion, fainting, seizures, or very hot skin may mean heat stroke: call emergency services immediately, cool rapidly, and do not give anything by mouth if alertness is impaired."
       ],
       "video": {
-        "title": "Recognising and preventing heat injury",
-        "storagePath": "first_aid/videos/heat_exhaustion_v1.mp4",
-        "durationLabel": "00:30",
-        "attribution": "U.S. Army Combat Readiness Center / DVIDS",
-        "license": "Public domain (U.S. government work)",
-        "sourceUrl": "https://www.dvidshub.net/video/335780/heat-injury",
-        "version": 1,
-        "expectedBytes": 2014122
+        "title": "Strok haba: tanda awal dan rawatan segera",
+        "storagePath": "first_aid/videos/kkm_heat_awareness_v2.mp4",
+        "durationLabel": "00:38",
+        "attribution": "Bahagian Pendidikan Kesihatan, Kementerian Kesihatan Malaysia (2023)",
+        "license": "KKM InfoSihat: unmodified republication permitted",
+        "licenseUrl": "https://infosihat.moh.gov.my/faq.html",
+        "sourceUrl": "https://infosihat.moh.gov.my/cuaca-panas.html",
+        "downloadUrl": "https://infosihat.moh.gov.my/images/media_sihat/video/mp4/TANDA2%20STROK%20HABA%202.0.mp4",
+        "version": 2,
+        "expectedBytes": 4348400,
+        "sha256": "b9ecb95a753160c80878fc3c937fa1fea3507e712e599d82ba3e84daf324903d",
+        "region": "MY",
+        "language": "Bahasa Melayu",
+        "scopeNote": "KKM awareness video: heat-stroke warning signs and seeking treatment. It is not a step-by-step cooling demonstration. Full original video, including credits."
       }
     },
     {
@@ -109,16 +91,8 @@
         "Remove rings, watches, and tight clothing before swelling starts. Wash gently with soap and water if available and cover with a clean, dry dressing.",
         "Mark the leading edge of swelling and write the time. Do not use ice, a tourniquet, electric shock, alcohol, cutting, suction, or folk remedies."
       ],
-      "video": {
-        "title": "Venomous snake encounter safety",
-        "storagePath": "first_aid/videos/snake_bite_v1.mp4",
-        "durationLabel": "01:18",
-        "attribution": "U.S. Air Force video by Senior Airman Kristan Campbell / DVIDS",
-        "license": "Public domain (U.S. government work)",
-        "sourceUrl": "https://www.dvidshub.net/video/681179/habu-safety-101",
-        "version": 1,
-        "expectedBytes": 7631642
-      }
+      "video": null,
+      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
     },
     {
       "id": "lost_stranded",
@@ -133,16 +107,8 @@
         "Protect the group from rain, wind, cold, heat, and darkness. Use available shelter, clothing, food, and water carefully.",
         "Signal in groups of three with a whistle, light, or visible material. Once rescuers know your position, remain there unless they instruct otherwise."
       ],
-      "video": {
-        "title": "Hiking safety and emergency preparation",
-        "storagePath": "first_aid/videos/lost_stranded_v1.mp4",
-        "durationLabel": "01:00",
-        "attribution": "U.S. Air Force video by Airman First Class Maria Washler / DVIDS",
-        "license": "Public domain (U.S. government work)",
-        "sourceUrl": "https://www.dvidshub.net/video/966114/hiking-safety",
-        "version": 1,
-        "expectedBytes": 7160750
-      }
+      "video": null,
+      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
     },
     {
       "id": "severe_weather",
@@ -158,15 +124,22 @@
         "Wait at least 30 minutes after the last thunder before leaving lightning shelter. Use SOS for injury, entrapment, hypothermia, or inability to reach safety."
       ],
       "video": {
-        "title": "Lightning safety on the trail",
-        "storagePath": "first_aid/videos/severe_weather_v1.mp4",
-        "durationLabel": "00:41",
-        "attribution": "U.S. Navy video by Charity Robinson / DVIDS",
-        "license": "Public domain (U.S. government work)",
-        "sourceUrl": "https://www.dvidshub.net/video/926312/lightning-safety",
-        "version": 1,
-        "expectedBytes": 3551530
+        "title": "Panduan Semasa Banjir",
+        "storagePath": "first_aid/videos/kkm_flood_health_v2.mp4",
+        "durationLabel": "00:25",
+        "attribution": "Kementerian Kesihatan Malaysia (2023), via InfoSihat",
+        "license": "KKM InfoSihat: unmodified republication permitted",
+        "licenseUrl": "https://infosihat.moh.gov.my/faq.html",
+        "sourceUrl": "https://infosihat.moh.gov.my/penerbitan-multimedia/video/item/panduan-semasa-banjir.html",
+        "downloadUrl": "https://infosihat.moh.gov.my/penerbitan-multimedia/video.raw?task=callelement&item_id=8208&element=94b7b825-f583-4f52-a725-5b59f293b228&method=download&args[0]=0",
+        "version": 2,
+        "expectedBytes": 12921264,
+        "sha256": "472b6f90c83954e4ba4b1947bc03758b1c46efe63461f8efcfa90be7dcafa5c2",
+        "region": "MY",
+        "language": "Bahasa Melayu",
+        "scopeNote": "KKM flood-health advice: safe food and drinking water, hygiene, and when to seek treatment. This is not a lightning or flood-rescue tutorial. Full original video, including credits."
       }
     }
-  ]
+  ],
+  "region": "MY"
 }
