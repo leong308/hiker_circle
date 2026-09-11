@@ -443,7 +443,7 @@
     const trailStatus = document.querySelector('[data-trail-stats-status]');
     const trailKeys = ['totalTrails', 'trailDistanceKm', 'regionsCovered', 'easyTrails', 'moderateTrails', 'hardTrails'];
     try {
-      const response = await fetch("/api/public-stats", { headers: { Accept: "application/json" } });
+      const response = await fetch("/api/public-stats?v=trail-votes", { headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(`Stats request failed with ${response.status}`);
       const stats = await response.json();
       if (trailRegion && trailKeys.every(key => Number.isFinite(stats.trails?.[key]) && stats.trails[key] >= 0)) {
@@ -455,7 +455,8 @@
         if (trailStatus) {
           const unclassified = stats.trails.totalTrails - stats.trails.easyTrails - stats.trails.moderateTrails - stats.trails.hardTrails;
           trailStatus.textContent = 'Each listed trail is counted once. Distance adds route lengths, not hiker activity. Coverage is across Malaysia.' +
-            (unclassified > 0 ? ` ${integerFormatter.format(unclassified)} ${unclassified === 1 ? 'trail has' : 'trails have'} no difficulty label yet.` : ' Difficulty reflects the current trail labels.');
+            ' Difficulty is based on hikers’ post-hike votes.' +
+            (unclassified > 0 ? ` ${integerFormatter.format(unclassified)} ${unclassified === 1 ? 'trail is' : 'trails are'} awaiting difficulty votes.` : '');
         }
       }
       if (!statKeys.every((key) => Number.isFinite(stats[key]) && stats[key] >= 0)) {

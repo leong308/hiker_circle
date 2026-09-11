@@ -110,7 +110,8 @@ void main() {
       await tester.tap(find.text('Tue 8/9'));
       await tester.pumpAndSettle();
       expect(find.text('Thunderstorm'), findsOneWidget);
-      expect(find.textContaining('Reconsider exposed ridges'), findsOneWidget);
+      expect(find.text('Thunderstorms forecast — consider postponing'), findsOneWidget);
+      expect(find.textContaining('Water crossings, steep sections'), findsOneWidget);
       expect(find.text('25.0 °C'), findsOneWidget);
       await tester.ensureVisible(find.text('Rain'));
       await tester.tap(find.text('Rain'));

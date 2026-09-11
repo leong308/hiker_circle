@@ -2,6 +2,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/core/services/fcm_notification_router.dart';
 
 void main() {
+  test('precaution notification opens the corresponding upcoming hike', () {
+    expect(
+      FcmNotificationRouter.deepLinkFor({
+        'type': 'upcoming_hike_precaution',
+        'upcomingHikeId': 'hike-precaution',
+      }),
+      'hikercircle://upcoming-hike/view?upcomingHikeId=hike-precaution',
+    );
+  });
   test('uses a valid explicit HikerCircle deep link', () {
     expect(
       FcmNotificationRouter.deepLinkFor({

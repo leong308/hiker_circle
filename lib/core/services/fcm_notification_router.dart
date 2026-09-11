@@ -39,6 +39,7 @@ abstract final class FcmNotificationRouter {
         );
       case 'nearby_upcoming_hike':
       case 'upcoming_hike_reminder':
+      case 'upcoming_hike_precaution':
       case 'upcoming_hike_30_minute_reminder':
         return _link(
           host: 'upcoming-hike',

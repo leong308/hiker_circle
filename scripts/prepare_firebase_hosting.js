@@ -21,6 +21,7 @@ const entries = [
     target: ['favicon.png'],
   },
   { source: ['web', 'index.html'], target: ['index.html'] },
+  { source: ['web', 'get-app.html'], target: ['get-app.html'] },
   { source: ['web', 'site'], target: ['site'] },
   { source: ['web', 'live-location.html'], target: ['live-location.html'] },
   { source: ['web', 'privacy-policy.html'], target: ['privacy-policy.html'] },

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../Model/trail_models.dart';
+import '../Model/trail_precautions.dart';
 import '../../core/widgets/running_border.dart';
 
 /// Forecast dates use the trail timezone, never the viewing phone's timezone.
@@ -10,9 +12,11 @@ class TrailWeatherPanel extends StatefulWidget {
     super.key,
     required this.weather,
     this.elevationGainMeters = 0,
+    this.durationMinutes = 0,
   });
   final TrailWeather weather;
   final int elevationGainMeters;
+  final int durationMinutes;
   @override
   State<TrailWeatherPanel> createState() => _TrailWeatherPanelState();
 }
@@ -20,6 +24,24 @@ class TrailWeatherPanel extends StatefulWidget {
 class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
   int selected = 0;
   int chartMetric = 0;
+  TimeOfDay? departure;
+  bool showAllPrecautions = false;
+  Timer? _freshnessTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _freshnessTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _freshnessTimer?.cancel();
+    super.dispose();
+  }
+
   @override
   void didUpdateWidget(covariant TrailWeatherPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -72,22 +94,57 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
 
   @override
   Widget build(BuildContext context) {
-    if (days.isEmpty) return const SizedBox.shrink();
+    if (days.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Before you set off',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              for (final caution in trailPrecautions(
+                weather: widget.weather,
+                day: 0,
+                now: DateTime.now(),
+                elevationGain: widget.elevationGainMeters,
+                durationMinutes: widget.durationMinutes,
+              ))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text('${caution.title}\n${caution.message}'),
+                ),
+              const Text(
+                'Forecast guidance, not a safety clearance. Check official warnings and trail closures.',
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final i = selected.clamp(0, days.length - 1);
     final theme = Theme.of(context);
     final d = daily;
     final code = value(d, 'weather_code', i);
     final daylight = value(d, 'daylight_duration', i);
-    final cautions = <String>[
-      if (code != null && code >= 95)
-        'Thunderstorms forecast. Reconsider exposed ridges and summits.',
-      if ((value(d, 'precipitation_sum', i) ?? 0) > 0)
-        'Rain is forecast. Expect slippery ground; reassess river crossings on site.',
-      if ((value(d, 'wind_gusts_10m_max', i) ?? 0) >= 40)
-        'Strong gusts forecast. Exposed terrain may be difficult.',
-      if ((value(d, 'uv_index_max', i) ?? 0) >= 3)
-        'Plan shade breaks and sun protection.',
-    ];
+    final cautions = trailPrecautions(
+      weather: widget.weather,
+      day: i,
+      now: DateTime.now(),
+      elevationGain: widget.elevationGainMeters,
+      durationMinutes: widget.durationMinutes,
+      departureMinute: departure == null
+          ? null
+          : departure!.hour * 60 + departure!.minute,
+    );
+    final visibleCautions = showAllPrecautions
+        ? cautions
+        : cautions
+              .where((c) => c.priority >= 3 || cautions.indexOf(c) < 3)
+              .toList();
     final times = hourly['time'] is List ? hourly['time'] as List : const [];
     final indices = <int>[];
     for (var h = 0; h < times.length; h++) {
@@ -222,9 +279,50 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
               'Before you set off',
               cautions.isEmpty
                   ? 'Check local conditions before departure'
-                  : '${cautions.length} weather considerations',
+                  : '${cautions.length} relevant precautions',
               [
-                for (final caution in cautions)
+                Text(
+                  departure == null
+                      ? 'Daily outlook · select a departure time for hike-specific advice'
+                      : 'Hiking window · ${departure!.format(context)} departure · includes a 60-minute delay buffer',
+                ),
+                Wrap(
+                  children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.schedule),
+                      label: Text(
+                        departure == null
+                            ? 'Set departure time'
+                            : 'Change departure time',
+                      ),
+                      onPressed: widget.durationMinutes <= 0
+                          ? null
+                          : () async {
+                              final picked = await showTimePicker(
+                                context: context,
+                                initialTime:
+                                    departure ??
+                                    const TimeOfDay(hour: 8, minute: 0),
+                              );
+                              if (mounted && picked != null) {
+                                setState(() {
+                                  departure = picked;
+                                });
+                              }
+                            },
+                    ),
+                    if (departure != null)
+                      TextButton(
+                        onPressed: () => setState(() => departure = null),
+                        child: const Text('Daily outlook'),
+                      ),
+                  ],
+                ),
+                if (cautions.isEmpty)
+                  const Text(
+                    'No specific advisories identified from the available data. Conditions can change.',
+                  ),
+                for (final caution in visibleCautions)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: Row(
@@ -233,22 +331,46 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
                         Icon(
                           Icons.info_outline_rounded,
                           size: 19,
-                          color: theme.colorScheme.primary,
+                          color: caution.priority >= 3
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.primary,
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            caution,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              height: 1.5,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                caution.title,
+                                style: theme.textTheme.titleSmall,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                caution.message,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  height: 1.5,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
+                if (cautions.length > visibleCautions.length ||
+                    showAllPrecautions)
+                  TextButton(
+                    onPressed: () => setState(
+                      () => showAllPrecautions = !showAllPrecautions,
+                    ),
+                    child: Text(
+                      showAllPrecautions
+                          ? 'Show fewer'
+                          : 'View all ${cautions.length} precautions',
+                    ),
+                  ),
                 Text(
-                  'Forecast guidance, not a safety clearance. Check official warnings and local trail closures.',
+                  'Forecast guidance, not a safety clearance. Water crossings, steep sections, route altitude, air quality and official alerts are not assessed here. Check official warnings and local trail closures.',
                   style: theme.textTheme.bodySmall?.copyWith(height: 1.5),
                 ),
               ],

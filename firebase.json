@@ -62,6 +62,10 @@
     ],
     "rewrites": [
       {
+        "source": "/get-app",
+        "destination": "/get-app.html"
+      },
+      {
         "source": "/api/public-stats",
         "function": {
           "functionId": "getPublicHikerCircleStats",

@@ -36,7 +36,7 @@ function parseWeather(body) {
 }
 
 // A Firestore lease coordinates ALL function instances, including the scheduler.
-async function sharedTrailWeather(db, latitude, longitude, { fetcher = fetch } = {}) {
+async function sharedTrailWeather(db, latitude, longitude, { fetcher = fetch, maxAgeMs = TTL } = {}) {
   const lat = latitude.toFixed(4);
   const lon = longitude.toFixed(4);
   const ref = db.collection('trailWeatherCache').doc(`${lat}_${lon}`);
@@ -45,7 +45,7 @@ async function sharedTrailWeather(db, latitude, longitude, { fetcher = fetch } =
   while (Date.now() < deadline) {
     const claim = await db.runTransaction(async (tx) => {
       const data = (await tx.get(ref)).data() || {};
-      if (data.weather?.schemaVersion === 2 && Date.now() - data.updatedAtMs < TTL) {
+      if (data.weather?.schemaVersion === 2 && Date.now() - data.updatedAtMs < maxAgeMs) {
         return { weather: data.weather };
       }
       if (data.retryAfterMs > Date.now()) {

@@ -196,7 +196,7 @@ exports.getPublicHikerCircleStats = onRequest(
       const payload = publicStatsPayload(rawStats);
       try {
         const trails = await db.collection('trails').select(
-          'isVerifiedTrail', 'ratingAverage', 'checkpoints', 'distanceKm', 'state', 'difficulty'
+          'isVerifiedTrail', 'ratingAverage', 'checkpoints', 'distanceKm', 'state', 'difficultyVoteCounts'
         ).get();
         payload.trails = publicTrailStats(trails.docs.map(document => document.data()));
       } catch (error) {
@@ -11226,6 +11226,15 @@ exports.processUpcomingHikeLifecycle = onSchedule(
       `Upcoming hike lifecycle: hidden ${hiddenCount}, reminded ${reminderHikeCount} hikes, ${reminderSuccessCount} sent, ${reminderFailureCount} failed.`
     );
   }
+);
+
+exports.sendUpcomingHikePrecautions = onSchedule(
+  {schedule: 'every 5 minutes', timeoutSeconds: 540},
+  async () => require('./hike_precaution_reminders').sendPrecautionReminders({
+    db: admin.firestore(), messaging: admin.messaging(),
+    getWeather: require('./trail_weather').sharedTrailWeather,
+    userId: userDocumentIdForPhone, tokensFor: latestFcmTokensForUser,
+  })
 );
 
 exports.cleanExpiredUpcomingHikes = onSchedule('every 60 minutes', async () => {

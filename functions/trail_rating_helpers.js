@@ -19,6 +19,17 @@ function normalizedDifficultyVote(value) {
   return difficulty;
 }
 
+function communityDifficultyFromVotes(rawCounts) {
+  const counts = difficultyValues.map(key => {
+    const value = Number(rawCounts?.[key]);
+    return Number.isInteger(value) && value > 0 ? value : 0;
+  });
+  const total = counts.reduce((sum, value) => sum + value, 0);
+  if (!total) return null;
+  const average = (counts[0] + counts[1] * 2 + counts[2] * 3) / total;
+  return average < 1.5 ? 'easy' : average < 2.5 ? 'moderate' : 'hard';
+}
+
 function trailDifficultyAggregate(trail, previousDifficulty, nextDifficulty) {
   const next = normalizedDifficultyVote(nextDifficulty);
   const previous = validDifficultyVote(previousDifficulty)
@@ -44,11 +55,7 @@ function trailDifficultyAggregate(trail, previousDifficulty, nextDifficulty) {
   );
   const scoreSum = counts.easy + counts.moderate * 2 + counts.hard * 3;
   const average = scoreSum / difficultyRatingCount;
-  const difficulty = average < 1.5
-    ? 'easy'
-    : average < 2.5
-      ? 'moderate'
-      : 'hard';
+  const difficulty = communityDifficultyFromVotes(counts);
 
   return {
     difficulty,
@@ -88,6 +95,7 @@ function trailRatingAggregate(trail, previousRating, nextRating) {
 }
 
 module.exports = {
+  communityDifficultyFromVotes,
   trailDifficultyAggregate,
   trailRatingAggregate,
   validDifficultyVote,

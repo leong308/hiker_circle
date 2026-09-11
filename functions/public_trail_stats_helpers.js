@@ -1,6 +1,7 @@
 'use strict';
 
 const { malaysiaStateSlug } = require('./achievement_helpers');
+const { communityDifficultyFromVotes } = require('./trail_rating_helpers');
 
 // Mirror the catalogue's required ordering fields and named-checkpoint filter.
 // Return only aggregate numbers, never trail documents or contributor details.
@@ -20,7 +21,7 @@ function publicTrailStats(trails) {
     const territory = state.replace(/^wilayah persekutuan\s+/, '').replace(/^w\.?p\.?\s+/, '');
     const region = malaysiaStateSlug(state) || (['kuala lumpur', 'putrajaya', 'labuan'].includes(territory) ? territory : '');
     if (region) regions.add(region);
-    const difficulty = String(trail.difficulty || '').trim().toLowerCase();
+    const difficulty = communityDifficultyFromVotes(trail.difficultyVoteCounts);
     if (['easy', 'moderate', 'hard'].includes(difficulty)) totals[`${difficulty}Trails`]++;
   }
   totals.trailDistanceKm = Math.round(totals.trailDistanceKm * 10) / 10;

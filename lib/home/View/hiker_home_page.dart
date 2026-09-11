@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../../trail/Model/precaution_check_service.dart';
+import '../../trail/View/precaution_confirmation.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -138,6 +140,73 @@ class _HikerHomePageState extends State<HikerHomePage>
   bool isFallStillnessLocalAlarmActive = false;
   bool fallStillnessCountdownWasBackgrounded = false;
   Timer? activeHikeRecordingTimer;
+  Timer? _precautionTimer;
+  bool _checkingPrecautions = false;
+  String? _precautionSession;
+  DateTime? _precautionCheckedAt;
+  final Map<String, int> _spokenPrecautions = {};
+
+  Future<void> _checkActivePrecautions() async {
+    final hike = activeHike;
+    if (hike == null || _checkingPrecautions || !mounted) return;
+    if (_precautionSession != hike.sessionId) {
+      _precautionSession = hike.sessionId;
+      _precautionCheckedAt = null;
+      _spokenPrecautions.clear();
+    }
+    if (_precautionCheckedAt != null &&
+        DateTime.now().difference(_precautionCheckedAt!).inMinutes < 5) {
+      return;
+    }
+    if (fallStillnessMonitor.isAwaitingResponse ||
+        isFallStillnessLocalAlarmActive ||
+        isSendingFallStillnessSos) {
+      return;
+    }
+    _checkingPrecautions = true;
+    try {
+      final remaining =
+          (hike.trail.estimatedDurationMinutes - hike.elapsedDuration.inMinutes)
+              .clamp(1, 1440);
+      final location = hike.latestLocation;
+      final cautions = await PrecautionCheckService.check(
+        hike.trail,
+        durationMinutes: remaining,
+        latitude: location?.hasValidPosition == true
+            ? location!.latitude
+            : null,
+        longitude: location?.hasValidPosition == true
+            ? location!.longitude
+            : null,
+      );
+      if (!mounted || activeHike?.sessionId != hike.sessionId) return;
+      _precautionCheckedAt = DateTime.now();
+      if (fallStillnessMonitor.isAwaitingResponse ||
+          isFallStillnessLocalAlarmActive ||
+          isSendingFallStillnessSos) {
+        return;
+      }
+      final fresh = cautions
+          .where((c) => (_spokenPrecautions[c.id] ?? 0) < c.priority)
+          .toList();
+      if (fresh.isEmpty) return;
+      final message = fresh.map((c) => '${c.title}. ${c.message}').join(' ');
+      HikerCircleToast.show(context, message, title: 'Hike precautions');
+      try {
+        await _sosDeviceAlertService.speakFallStillnessPrompt(
+          message: 'Hike precaution. $message',
+        );
+      } on PlatformException catch (_) {
+        // Visible caution remains available when platform speech is unavailable.
+      } on MissingPluginException catch (_) {}
+      for (final caution in fresh) {
+        _spokenPrecautions[caution.id] = caution.priority;
+      }
+    } finally {
+      _checkingPrecautions = false;
+    }
+  }
+
   Timer? batteryLevelTimer;
   Timer? activeHikeMonitoringHeartbeatTimer;
   StreamSubscription<String>? fcmTokenSubscription;
@@ -247,6 +316,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     unawaited(_refreshBatteryLevel());
     batteryLevelTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       unawaited(_refreshBatteryLevel());
+    });
+    _precautionTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      unawaited(_checkActivePrecautions());
     });
     unawaited(loadLiveData());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -5160,6 +5232,9 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<bool> _ensureBackgroundSafetyReady(HikeSessionDraft draft) async {
+    if (!await confirmHikePrecautions(context, draft.trail) || !mounted) {
+      return false;
+    }
     if (!draft.fallDetectionEnabled && !draft.shareLiveLocation) return true;
     var status = await _activeHikeLiveStatusService.nativeSafetyStatus();
     if (!mounted || !status.supported) return true;
@@ -6096,6 +6171,7 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   @override
   void dispose() {
+    _precautionTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     fallStillnessMonitor.removeListener(_handleFallStillnessMonitorChanged);
     fallStillnessMonitor.dispose();
@@ -7201,6 +7277,11 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
     }
     setState(() => _isMarkingReady = true);
     try {
+      final trail = teamSession.sharedDraft?.trail;
+      if (trail != null &&
+          (!await confirmHikePrecautions(context, trail) || !mounted)) {
+        return;
+      }
       final profile = await widget.repository.loadCommunityProfile(
         phoneNumber: widget.session.phoneNumber,
       );

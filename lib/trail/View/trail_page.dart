@@ -695,11 +695,12 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                   const SizedBox(height: 8),
                   if (trail.weather.forecastData.isEmpty)
                     _WeatherCard(trail: trail),
-                  if (trail.weather.forecastData.isNotEmpty) ...[
+                  ...[
                     const SizedBox(height: 12),
                     TrailWeatherPanel(
                       weather: trail.weather,
                       elevationGainMeters: trail.elevationGainMeters,
+                      durationMinutes: trail.estimatedDurationMinutes,
                     ),
                   ],
                   const SizedBox(height: 10),
@@ -4855,6 +4856,7 @@ class _WeatherInsightsSheetState extends State<_WeatherInsightsSheet> {
         child: TrailWeatherPanel(
           weather: weather,
           elevationGainMeters: _trail.elevationGainMeters,
+          durationMinutes: _trail.estimatedDurationMinutes,
         ),
       );
     }

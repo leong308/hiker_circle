@@ -17,8 +17,8 @@
   <title>HikerCircle — Better connected on every trail</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
   <link rel="apple-touch-icon" href="/privacy-assets/app-icon.png">
-    <link rel="stylesheet" href="/site/styles.css?v=20260909-trails">
-    <script src="/site/app.js?v=20260909-trails-v2" defer></script>
+    <link rel="stylesheet" href="/site/styles.css?v=20260909-download-page">
+    <script src="/site/app.js?v=20260909-trail-votes" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -36,7 +36,6 @@
       <a href="#features">Features</a>
       <a href="#safety">Safety</a>
       <a class="nav-pill" href="/privacy-policy">Privacy</a>
-      <a class="nav-pill" href="#get-app">Get the app</a>
     </nav>
   </header>
 
@@ -48,7 +47,7 @@
           <h1 id="hero-title">Better connected on every trail.</h1>
           <p>HikerCircle brings trail discovery, hike planning, live progress, check-ins, and practical safety tools into one circle—before, during, and after the hike.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#get-app">Get the app <span aria-hidden="true">↓</span></a>
+            <a class="button button-primary" href="#showcase">See the app <span aria-hidden="true">↓</span></a>
             <a class="button button-secondary" href="#journey">How it works</a>
           </div>
         </div>
@@ -220,6 +219,7 @@
             </div>
           </div>
           <div class="gallery-progress" aria-hidden="true"><span data-carousel-progress></span></div>
+          <div class="showcase-download"><a class="button button-primary" href="/get-app">Get the app <span aria-hidden="true">↗</span></a></div>
         </div>
       </div>
     </section>
@@ -518,55 +518,9 @@
       </div>
     </section>
 
-    <section class="section get-app" id="get-app" aria-labelledby="get-app-title">
-      <header class="section-heading reveal">
-        <p class="eyebrow"><span></span> Join the next chapter</p>
-        <h2 id="get-app-title">Your next hike starts here.</h2>
-        <p>Try HikerCircle on Android today. Our store releases are still ahead.</p>
-      </header>
-      <div class="download-grid">
-        <article class="download-card download-beta">
-          <span class="download-status">AVAILABLE · ANDROID BETA</span>
-          <h3>Be part of the adventure.</h3>
-          <p>Explore the app and help shape what comes next with a direct beta download.</p>
-          <p class="beta-version">1.1.0-beta.1 · Android 7.0+ · APK</p>
-          <a class="button button-primary" data-beta-download aria-disabled="true">Preparing beta download</a>
-          <p class="download-note" data-beta-size>Direct download, outside Google Play.</p>
-          <a class="beta-feedback" href="mailto:leongziqi@gmail.com?subject=HikerCircle%20Android%20beta%20feedback">Share beta feedback ↗</a>
-        </article>
-        <article class="download-card download-store" aria-label="Google Play release coming soon">
-          <span class="download-status">ANDROID · GOOGLE PLAY</span>
-          <div class="store-lock-overlay" aria-hidden="true"><span class="store-chain store-chain-left"></span><span class="store-chain store-chain-right"></span><strong class="store-lock"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/></svg>COMING SOON</strong></div>
-          <h3>Google Play</h3><p>The store QR code will appear here when the release is available.</p>
-          <span class="store-unavailable">Not available yet</span>
-        </article>
-        <article class="download-card download-store" aria-label="Apple App Store release coming soon">
-          <span class="download-status">iOS · APP STORE</span>
-          <div class="store-lock-overlay" aria-hidden="true"><span class="store-chain store-chain-left"></span><span class="store-chain store-chain-right"></span><strong class="store-lock"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4M12 14v3"/></svg>COMING SOON</strong></div>
-          <h3>App Store</h3><p>The iPhone store QR code will appear here when the release is available.</p>
-          <span class="store-unavailable">Not available yet</span>
-        </article>
-      </div>
-      <div class="beta-includes">
-        <div><p class="eyebrow"><span></span> Inside this beta</p><h3>Explore. Connect. Prepare.</h3><p>The current Android app—not a screenshot demo. Some features require an account, permissions, a connection or compatible hardware.</p></div>
-        <ul>
-          <li><strong>Plan your trail</strong>Malaysian trail discovery, saved routes, checkpoints and seven-day weather forecasts.</li>
-          <li><strong>Hike as a circle</strong>Solo and group plans, reminders, community stories and hiker discovery.</li>
-          <li><strong>See your progress</strong>Hike records, achievements and a level roadmap to explore.</li>
-          <li><strong>Prepare for the unexpected</strong>SOS controls, emergency contacts, check-ins, optional location sharing and supported physical-button pairing.</li>
-        </ul>
-      </div>
-      <details class="beta-help"><summary>Before installing the Android beta</summary>
-        <ol><li>Download the APK on your Android phone and open the downloaded file.</li><li>If Android asks, allow installation from this browser or file manager for this installation. Keep Play Protect enabled; do not bypass a harmful-app warning.</li><li>Open HikerCircle and sign in or register. Grant only the permissions needed for the features you choose.</li><li>You can turn off that browser or file manager’s installation permission afterwards.</li></ol>
-        <p>This is pre-release software. SOS actions can contact real people: do not send test emergencies. Delivery depends on connectivity and service availability; HikerCircle is not an emergency service or a guarantee of rescue.</p>
-        <p>Private-key route-provider fallbacks are excluded from this beta; saved trail routes, public-token Mapbox features and the beta-restricted Google services remain configured. Future store builds may require a separate installation if their signing identity differs. Do not uninstall an existing version without protecting any local-only data.</p>
-        <p><a href="/privacy-policy">Read the privacy policy</a> before joining the beta.</p>
-        <p class="beta-checksum" data-beta-checksum></p>
-      </details>
-    </section>
     <section class="closing section reveal" aria-labelledby="closing-title">
       <h2 id="closing-title">A better hike starts with a better-connected circle.</h2>
-      <a class="button button-primary" href="#get-app">Get the Android beta <span aria-hidden="true">↑</span></a>
+      <a class="button button-primary" href="/get-app">Get the Android beta <span aria-hidden="true">↗</span></a>
     </section>
   </main>
 
