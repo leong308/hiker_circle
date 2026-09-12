@@ -628,14 +628,14 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
                       sideTitles: SideTitles(
                         showTitles: true,
                         reservedSize:
-                            68 *
+                            44 *
                             MediaQuery.textScalerOf(
                               context,
-                            ).scale(1).clamp(1.0, 1.5),
+                            ).scale(1).clamp(1.0, 1.25),
                         minIncluded: false,
                         maxIncluded: false,
                         getTitlesWidget: (v, meta) => Padding(
-                          padding: const EdgeInsets.only(right: 12),
+                          padding: const EdgeInsets.only(right: 6),
                           child: Text(
                             v.toStringAsFixed(v == v.roundToDouble() ? 0 : 1),
                             maxLines: 1,

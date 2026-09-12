@@ -90,28 +90,47 @@ class SosAlertRepository {
   Future<Map<SosAlertMode, String>> loadCustomWhatsAppNotes({
     required AppSession session,
   }) async {
+    final local = <SosAlertMode, String>{};
+    for (final mode in const [
+      SosAlertMode.manual,
+      SosAlertMode.duress,
+      SosAlertMode.medical,
+    ]) {
+      final value = await _localDatabase.loadLocalPreference(
+        ownerPhoneNumber: session.phoneNumber,
+        key: 'sos_whatsapp_note_${mode.firestoreValue}',
+      );
+      if (value is String) local[mode] = value;
+    }
     if (!_firebaseBootstrapResult.isAvailable) {
-      return const {};
+      return local;
     }
-
-    final snapshot = await _userDocumentFor(session).get();
-    final data = snapshot.data();
-    final notes = data?['sosWhatsappNotes'];
-    if (notes is! Map) {
-      return const {};
-    }
-
-    return {
-      for (final mode in [
+    try {
+      final snapshot = await _userDocumentFor(
+        session,
+      ).get().timeout(_cloudWriteTimeout);
+      final data = snapshot.data();
+      final notes = data?['sosWhatsappNotes'];
+      if (notes is! Map) return local;
+      for (final mode in const [
         SosAlertMode.manual,
         SosAlertMode.duress,
         SosAlertMode.medical,
-      ])
-        if (notes[mode.firestoreValue] is String)
-          mode: _boundedCustomWhatsAppNote(
-            notes[mode.firestoreValue] as String,
-          ),
-    };
+      ]) {
+        final value = notes[mode.firestoreValue];
+        if (value is! String) continue;
+        final bounded = _boundedCustomWhatsAppNote(value);
+        local[mode] = bounded;
+        await _localDatabase.saveLocalPreference(
+          ownerPhoneNumber: session.phoneNumber,
+          key: 'sos_whatsapp_note_${mode.firestoreValue}',
+          value: bounded,
+        );
+      }
+    } catch (_) {
+      return local;
+    }
+    return local;
   }
 
   Future<void> saveCustomWhatsAppNote({
@@ -119,7 +138,6 @@ class SosAlertRepository {
     required SosAlertMode mode,
     required String note,
   }) async {
-    _throwIfFirebaseUnavailable();
     if (!const {
       SosAlertMode.manual,
       SosAlertMode.duress,
@@ -136,14 +154,34 @@ class SosAlertRepository {
       );
     }
 
-    await _userDocumentFor(session).set({
-      'sosWhatsappNotes': {mode.firestoreValue: normalizedNote},
-      'sosWhatsappNotesUpdatedAt': FieldValue.serverTimestamp(),
-      'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
-          .toUtc()
-          .toIso8601String(),
-      'phoneNumber': session.phoneNumber,
-    }, SetOptions(merge: true));
+    final preferenceKey = 'sos_whatsapp_note_${mode.firestoreValue}';
+    await _localDatabase.saveLocalPreference(
+      ownerPhoneNumber: session.phoneNumber,
+      key: preferenceKey,
+      value: normalizedNote,
+      isDirty: true,
+    );
+    if (!_firebaseBootstrapResult.isAvailable) return;
+
+    try {
+      await _userDocumentFor(session)
+          .set({
+            'sosWhatsappNotes': {mode.firestoreValue: normalizedNote},
+            'sosWhatsappNotesUpdatedAt': FieldValue.serverTimestamp(),
+            'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
+                .toUtc()
+                .toIso8601String(),
+            'phoneNumber': session.phoneNumber,
+          }, SetOptions(merge: true))
+          .timeout(_cloudWriteTimeout);
+      await _localDatabase.saveLocalPreference(
+        ownerPhoneNumber: session.phoneNumber,
+        key: preferenceKey,
+        value: normalizedNote,
+      );
+    } catch (_) {
+      // The locally saved safety note remains usable and dirty for a later sync.
+    }
   }
 
   Future<List<SosAlert>> loadAlertLogs({

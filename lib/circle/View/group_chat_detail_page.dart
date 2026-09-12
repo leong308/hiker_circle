@@ -445,6 +445,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     try {
       msgs = await widget.repository.loadAllLocalMessagesForChat(
         widget.chat.id,
+        ownerPhoneNumber: widget.session.phoneNumber,
       );
     } catch (_) {
       return;
@@ -452,7 +453,6 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     if (!mounted || msgs.isEmpty) return;
     final toAdd = <ChatMessage>[];
     for (final m in msgs) {
-      if (m.sendStatus == SendStatus.sent) continue;
       final exists = _messages.any(
         (e) =>
             e.id == m.id ||
@@ -496,7 +496,13 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       (results) {
         final online = results.any((r) => r != ConnectivityResult.none);
         if (online && !_isOnline) {
-          unawaited(_bestEffort(widget.repository.flushPendingMessages()));
+          unawaited(
+            _bestEffort(
+              widget.repository.flushPendingMessages(
+                ownerPhoneNumber: widget.session.phoneNumber,
+              ),
+            ),
+          );
           unawaited(
             _bestEffort(
               widget.repository.syncPendingReadReceipts(
@@ -551,6 +557,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       _messages = firestoreMessages;
       _computeUnreadPosition();
     });
+    await _loadPending();
     _markUnseenMessages(firestoreMessages);
     await _markChatAsRead();
 
@@ -568,6 +575,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
           widget.repository.cacheChatMessages(
             firestoreMessages,
             widget.chat.id,
+            ownerPhoneNumber: widget.session.phoneNumber,
           ),
         ),
       );
@@ -761,7 +769,13 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       try {
         final connectivityResult = await Connectivity().checkConnectivity();
         if (connectivityResult.any((r) => r != ConnectivityResult.none)) {
-          unawaited(_bestEffort(widget.repository.flushPendingMessages()));
+          unawaited(
+            _bestEffort(
+              widget.repository.flushPendingMessages(
+                ownerPhoneNumber: widget.session.phoneNumber,
+              ),
+            ),
+          );
         }
       } catch (_) {
         // The message is already saved locally; connectivity can retry later.

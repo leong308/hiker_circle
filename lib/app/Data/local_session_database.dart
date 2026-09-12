@@ -25,9 +25,270 @@ class LocalAchievementProgressCache {
   final DateTime cachedAt;
 }
 
+@immutable
+class LocalCachedEntity {
+  const LocalCachedEntity({
+    required this.ownerPhoneNumber,
+    required this.entityType,
+    required this.entityId,
+    required this.parentId,
+    required this.payload,
+    required this.cachedAt,
+    this.sourceUpdatedAt,
+    this.expiresAt,
+  });
+
+  factory LocalCachedEntity.fromRow(Map<String, Object?> row) {
+    final decoded = jsonDecode(row['payload_json'] as String? ?? '{}');
+    if (decoded is! Map) {
+      throw const FormatException('Cached entity payload is not an object.');
+    }
+    return LocalCachedEntity(
+      ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
+      entityType: row['entity_type'] as String? ?? '',
+      entityId: row['entity_id'] as String? ?? '',
+      parentId: row['parent_id'] as String? ?? '',
+      payload: Map<String, dynamic>.from(decoded),
+      cachedAt:
+          DateTime.tryParse(row['cached_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      sourceUpdatedAt: DateTime.tryParse(
+        row['source_updated_at'] as String? ?? '',
+      ),
+      expiresAt: DateTime.tryParse(row['expires_at'] as String? ?? ''),
+    );
+  }
+
+  final String ownerPhoneNumber;
+  final String entityType;
+  final String entityId;
+  final String parentId;
+  final Map<String, dynamic> payload;
+  final DateTime cachedAt;
+  final DateTime? sourceUpdatedAt;
+  final DateTime? expiresAt;
+}
+
+@immutable
+class LocalSyncOperation {
+  const LocalSyncOperation({
+    required this.operationId,
+    required this.ownerPhoneNumber,
+    required this.operationType,
+    required this.entityType,
+    required this.entityId,
+    required this.idempotencyKey,
+    required this.payload,
+    required this.status,
+    required this.attemptCount,
+    required this.createdAt,
+    required this.updatedAt,
+    this.localFilePath = '',
+    this.nextAttemptAt,
+    this.lastError = '',
+  });
+
+  factory LocalSyncOperation.fromRow(Map<String, Object?> row) {
+    final decoded = jsonDecode(row['payload_json'] as String? ?? '{}');
+    return LocalSyncOperation(
+      operationId: row['operation_id'] as String? ?? '',
+      ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
+      operationType: row['operation_type'] as String? ?? '',
+      entityType: row['entity_type'] as String? ?? '',
+      entityId: row['entity_id'] as String? ?? '',
+      idempotencyKey: row['idempotency_key'] as String? ?? '',
+      payload: decoded is Map ? Map<String, dynamic>.from(decoded) : const {},
+      localFilePath: row['local_file_path'] as String? ?? '',
+      status: row['status'] as String? ?? 'pending',
+      attemptCount: row['attempt_count'] as int? ?? 0,
+      nextAttemptAt: DateTime.tryParse(row['next_attempt_at'] as String? ?? ''),
+      lastError: row['last_error'] as String? ?? '',
+      createdAt:
+          DateTime.tryParse(row['created_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      updatedAt:
+          DateTime.tryParse(row['updated_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+    );
+  }
+
+  final String operationId;
+  final String ownerPhoneNumber;
+  final String operationType;
+  final String entityType;
+  final String entityId;
+  final String idempotencyKey;
+  final Map<String, dynamic> payload;
+  final String localFilePath;
+  final String status;
+  final int attemptCount;
+  final DateTime? nextAttemptAt;
+  final String lastError;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+}
+
+@immutable
+class LocalOfflineMapRegion {
+  const LocalOfflineMapRegion({
+    required this.trailId,
+    required this.regionId,
+    required this.styleUri,
+    required this.bounds,
+    required this.minZoom,
+    required this.maxZoom,
+    required this.status,
+    required this.completedResourceCount,
+    required this.requiredResourceCount,
+    required this.completedBytes,
+    required this.updatedAt,
+    this.downloadedAt,
+    this.lastError = '',
+  });
+
+  factory LocalOfflineMapRegion.fromRow(Map<String, Object?> row) {
+    final bounds = jsonDecode(row['bounds_json'] as String? ?? '{}');
+    return LocalOfflineMapRegion(
+      trailId: row['trail_id'] as String? ?? '',
+      regionId: row['region_id'] as String? ?? '',
+      styleUri: row['style_uri'] as String? ?? '',
+      bounds: bounds is Map ? Map<String, dynamic>.from(bounds) : const {},
+      minZoom: (row['min_zoom'] as num?)?.toInt() ?? 0,
+      maxZoom: (row['max_zoom'] as num?)?.toInt() ?? 0,
+      status: row['status'] as String? ?? 'pending',
+      completedResourceCount:
+          (row['completed_resource_count'] as num?)?.toInt() ?? 0,
+      requiredResourceCount:
+          (row['required_resource_count'] as num?)?.toInt() ?? 0,
+      completedBytes: (row['completed_bytes'] as num?)?.toInt() ?? 0,
+      downloadedAt: DateTime.tryParse(row['downloaded_at'] as String? ?? ''),
+      updatedAt:
+          DateTime.tryParse(row['updated_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      lastError: row['last_error'] as String? ?? '',
+    );
+  }
+
+  final String trailId;
+  final String regionId;
+  final String styleUri;
+  final Map<String, dynamic> bounds;
+  final int minZoom;
+  final int maxZoom;
+  final String status;
+  final int completedResourceCount;
+  final int requiredResourceCount;
+  final int completedBytes;
+  final DateTime? downloadedAt;
+  final DateTime updatedAt;
+  final String lastError;
+
+  bool get isComplete =>
+      status == 'complete' &&
+      requiredResourceCount > 0 &&
+      completedResourceCount >= requiredResourceCount;
+}
+
+@immutable
+class LocalStaticHazard {
+  const LocalStaticHazard({
+    required this.hazardId,
+    required this.hazardType,
+    required this.title,
+    required this.description,
+    required this.latitude,
+    required this.longitude,
+    required this.severity,
+    required this.confidence,
+    required this.sourceName,
+    required this.sourceUrl,
+    required this.sourceFeatureId,
+    required this.safetyGuidance,
+    required this.downloadedAt,
+    this.sourceUpdatedAt,
+    this.expiresAt,
+  });
+
+  factory LocalStaticHazard.fromRow(Map<String, Object?> row) {
+    return LocalStaticHazard(
+      hazardId: row['hazard_id'] as String? ?? '',
+      hazardType: row['hazard_type'] as String? ?? '',
+      title: row['title'] as String? ?? '',
+      description: row['description'] as String? ?? '',
+      latitude: (row['latitude'] as num?)?.toDouble() ?? 0,
+      longitude: (row['longitude'] as num?)?.toDouble() ?? 0,
+      severity: row['severity'] as String? ?? 'info',
+      confidence: row['confidence'] as String? ?? 'mapped',
+      sourceName: row['source_name'] as String? ?? '',
+      sourceUrl: row['source_url'] as String? ?? '',
+      sourceFeatureId: row['source_feature_id'] as String? ?? '',
+      safetyGuidance: row['safety_guidance'] as String? ?? '',
+      sourceUpdatedAt: DateTime.tryParse(
+        row['source_updated_at'] as String? ?? '',
+      ),
+      downloadedAt:
+          DateTime.tryParse(row['downloaded_at'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      expiresAt: DateTime.tryParse(row['expires_at'] as String? ?? ''),
+    );
+  }
+
+  final String hazardId;
+  final String hazardType;
+  final String title;
+  final String description;
+  final double latitude;
+  final double longitude;
+  final String severity;
+  final String confidence;
+  final String sourceName;
+  final String sourceUrl;
+  final String sourceFeatureId;
+  final String safetyGuidance;
+  final DateTime? sourceUpdatedAt;
+  final DateTime downloadedAt;
+  final DateTime? expiresAt;
+}
+
+@immutable
+class LocalTrailHazardMatch {
+  const LocalTrailHazardMatch({
+    required this.trailId,
+    required this.hazard,
+    required this.relationship,
+    required this.distanceMeters,
+    required this.routeProgress,
+    required this.computedAt,
+  });
+
+  final String trailId;
+  final LocalStaticHazard hazard;
+  final String relationship;
+  final double distanceMeters;
+  final double routeProgress;
+  final DateTime computedAt;
+}
+
+@immutable
+class LocalHazardDatasetSummary {
+  const LocalHazardDatasetSummary({
+    required this.hazardCount,
+    required this.trailCount,
+    this.downloadedAt,
+  });
+
+  final int hazardCount;
+  final int trailCount;
+  final DateTime? downloadedAt;
+
+  bool get isDownloaded => downloadedAt != null;
+}
+
 class LocalSessionDatabase {
   LocalSessionDatabase({String? databasePath})
     : _databasePathOverride = databasePath;
+
+  static const _staticHazardScanPreferencePrefix = 'static_hazard_scan:';
 
   Database? _database;
   Future<Database>? _openingDatabase;
@@ -716,7 +977,14 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final downloadedMapCount =
         Sqflite.firstIntValue(
-          await database.rawQuery('SELECT COUNT(*) FROM downloaded_maps'),
+          await database.rawQuery('''
+            SELECT COUNT(*) FROM downloaded_maps AS maps
+            WHERE NOT EXISTS (
+              SELECT 1 FROM offline_map_regions AS regions
+              WHERE regions.trail_id = maps.trail_id
+                AND regions.status = 'complete'
+            )
+          '''),
         ) ??
         0;
     final downloadedMapBytes =
@@ -731,11 +999,36 @@ class LocalSessionDatabase {
           await database.rawQuery('SELECT COUNT(*) FROM network_observations'),
         ) ??
         0;
+    final cachedEntityCount =
+        Sqflite.firstIntValue(
+          await database.rawQuery('SELECT COUNT(*) FROM cached_entities'),
+        ) ??
+        0;
+    final staticHazardCount =
+        Sqflite.firstIntValue(
+          await database.rawQuery('SELECT COUNT(*) FROM hazard_features'),
+        ) ??
+        0;
+    final offlineRegionBytes =
+        Sqflite.firstIntValue(
+          await database.rawQuery(
+            'SELECT COALESCE(SUM(completed_bytes), 0) FROM offline_map_regions',
+          ),
+        ) ??
+        0;
+    final offlineRegionCount =
+        Sqflite.firstIntValue(
+          await database.rawQuery(
+            "SELECT COUNT(*) FROM offline_map_regions WHERE status = 'complete'",
+          ),
+        ) ??
+        0;
 
     return CacheUsageSummary(
-      downloadedMapCount: downloadedMapCount,
-      downloadedMapBytes: downloadedMapBytes,
+      downloadedMapCount: downloadedMapCount + offlineRegionCount,
+      downloadedMapBytes: downloadedMapBytes + offlineRegionBytes,
       networkObservationCount: networkObservationCount,
+      cachedEntityCount: cachedEntityCount + staticHazardCount,
     );
   }
 
@@ -744,6 +1037,624 @@ class LocalSessionDatabase {
     await database.transaction((transaction) async {
       await transaction.delete('downloaded_maps');
       await transaction.delete('network_observations');
+      await transaction.delete('cached_entities');
+      await transaction.delete('offline_map_regions');
+      await transaction.delete('trail_hazard_matches');
+      await transaction.delete('hazard_feature_rtree');
+      await transaction.delete('hazard_features');
+      await transaction.delete(
+        'local_preferences',
+        where:
+            'owner_phone_number = ? AND (preference_key = ? OR preference_key LIKE ?)',
+        whereArgs: [
+          '',
+          'static_hazard_dataset_metadata',
+          '$_staticHazardScanPreferencePrefix%',
+        ],
+      );
+    });
+  }
+
+  Future<void> saveCachedEntity(LocalCachedEntity entity) async {
+    final database = await _openDatabase();
+    await database.insert('cached_entities', {
+      'owner_phone_number': entity.ownerPhoneNumber.trim(),
+      'entity_type': entity.entityType.trim(),
+      'entity_id': entity.entityId.trim(),
+      'parent_id': entity.parentId.trim(),
+      'payload_json': jsonEncode(entity.payload),
+      'source_updated_at': entity.sourceUpdatedAt?.toUtc().toIso8601String(),
+      'cached_at': entity.cachedAt.toUtc().toIso8601String(),
+      'expires_at': entity.expiresAt?.toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> saveCachedEntities(List<LocalCachedEntity> entities) async {
+    if (entities.isEmpty) return;
+    final database = await _openDatabase();
+    final batch = database.batch();
+    for (final entity in entities) {
+      batch.insert('cached_entities', {
+        'owner_phone_number': entity.ownerPhoneNumber.trim(),
+        'entity_type': entity.entityType.trim(),
+        'entity_id': entity.entityId.trim(),
+        'parent_id': entity.parentId.trim(),
+        'payload_json': jsonEncode(entity.payload),
+        'source_updated_at': entity.sourceUpdatedAt?.toUtc().toIso8601String(),
+        'cached_at': entity.cachedAt.toUtc().toIso8601String(),
+        'expires_at': entity.expiresAt?.toUtc().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<List<LocalCachedEntity>> loadCachedEntities({
+    required String ownerPhoneNumber,
+    required String entityType,
+    String? parentId,
+    bool includeExpired = false,
+  }) async {
+    final database = await _openDatabase();
+    final clauses = <String>['owner_phone_number = ?', 'entity_type = ?'];
+    final arguments = <Object?>[ownerPhoneNumber.trim(), entityType.trim()];
+    if (parentId != null) {
+      clauses.add('parent_id = ?');
+      arguments.add(parentId.trim());
+    }
+    if (!includeExpired) {
+      clauses.add('(expires_at IS NULL OR expires_at > ?)');
+      arguments.add(DateTime.now().toUtc().toIso8601String());
+    }
+    final rows = await database.query(
+      'cached_entities',
+      where: clauses.join(' AND '),
+      whereArgs: arguments,
+      orderBy: 'source_updated_at DESC, cached_at DESC',
+    );
+    return rows.map(LocalCachedEntity.fromRow).toList();
+  }
+
+  Future<LocalCachedEntity?> loadCachedEntity({
+    required String ownerPhoneNumber,
+    required String entityType,
+    required String entityId,
+    bool includeExpired = false,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'cached_entities',
+      where:
+          'owner_phone_number = ? AND entity_type = ? AND entity_id = ?${includeExpired ? '' : ' AND (expires_at IS NULL OR expires_at > ?)'}',
+      whereArgs: [
+        ownerPhoneNumber.trim(),
+        entityType.trim(),
+        entityId.trim(),
+        if (!includeExpired) DateTime.now().toUtc().toIso8601String(),
+      ],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : LocalCachedEntity.fromRow(rows.first);
+  }
+
+  Future<void> replaceCachedEntitySet({
+    required String ownerPhoneNumber,
+    required String entityType,
+    String parentId = '',
+    required List<LocalCachedEntity> entities,
+  }) async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'cached_entities',
+        where: 'owner_phone_number = ? AND entity_type = ? AND parent_id = ?',
+        whereArgs: [
+          ownerPhoneNumber.trim(),
+          entityType.trim(),
+          parentId.trim(),
+        ],
+      );
+      for (final entity in entities) {
+        await transaction.insert('cached_entities', {
+          'owner_phone_number': entity.ownerPhoneNumber.trim(),
+          'entity_type': entity.entityType.trim(),
+          'entity_id': entity.entityId.trim(),
+          'parent_id': entity.parentId.trim(),
+          'payload_json': jsonEncode(entity.payload),
+          'source_updated_at': entity.sourceUpdatedAt
+              ?.toUtc()
+              .toIso8601String(),
+          'cached_at': entity.cachedAt.toUtc().toIso8601String(),
+          'expires_at': entity.expiresAt?.toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<void> enqueueSyncOperation(LocalSyncOperation operation) async {
+    final database = await _openDatabase();
+    await database.insert('sync_outbox', {
+      'operation_id': operation.operationId,
+      'owner_phone_number': operation.ownerPhoneNumber.trim(),
+      'operation_type': operation.operationType,
+      'entity_type': operation.entityType,
+      'entity_id': operation.entityId,
+      'idempotency_key': operation.idempotencyKey,
+      'payload_json': jsonEncode(operation.payload),
+      'local_file_path': operation.localFilePath,
+      'status': operation.status,
+      'attempt_count': operation.attemptCount,
+      'next_attempt_at': operation.nextAttemptAt?.toUtc().toIso8601String(),
+      'last_error': operation.lastError,
+      'created_at': operation.createdAt.toUtc().toIso8601String(),
+      'updated_at': operation.updatedAt.toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<LocalSyncOperation>> loadDueSyncOperations({
+    required String ownerPhoneNumber,
+    int limit = 50,
+  }) async {
+    final database = await _openDatabase();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final rows = await database.query(
+      'sync_outbox',
+      where:
+          "owner_phone_number = ? AND status IN ('pending', 'retry') AND (next_attempt_at IS NULL OR next_attempt_at <= ?)",
+      whereArgs: [ownerPhoneNumber.trim(), now],
+      orderBy: 'created_at ASC',
+      limit: limit,
+    );
+    return rows.map(LocalSyncOperation.fromRow).toList();
+  }
+
+  Future<void> markSyncOperationRetry(
+    String operationId, {
+    required String lastError,
+    DateTime? nextAttemptAt,
+  }) async {
+    final database = await _openDatabase();
+    await database.rawUpdate(
+      '''
+      UPDATE sync_outbox
+      SET status = 'retry', attempt_count = attempt_count + 1,
+          next_attempt_at = ?, last_error = ?, updated_at = ?
+      WHERE operation_id = ?
+    ''',
+      [
+        nextAttemptAt?.toUtc().toIso8601String(),
+        lastError,
+        DateTime.now().toUtc().toIso8601String(),
+        operationId,
+      ],
+    );
+  }
+
+  Future<void> deleteSyncOperation(String operationId) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'sync_outbox',
+      where: 'operation_id = ?',
+      whereArgs: [operationId],
+    );
+  }
+
+  Future<void> saveLocalPreference({
+    required String ownerPhoneNumber,
+    required String key,
+    required Object? value,
+    bool isDirty = false,
+  }) async {
+    final database = await _openDatabase();
+    await database.insert('local_preferences', {
+      'owner_phone_number': ownerPhoneNumber.trim(),
+      'preference_key': key.trim(),
+      'value_json': jsonEncode(value),
+      'is_dirty': isDirty ? 1 : 0,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<Object?> loadLocalPreference({
+    required String ownerPhoneNumber,
+    required String key,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'local_preferences',
+      columns: ['value_json'],
+      where: 'owner_phone_number = ? AND preference_key = ?',
+      whereArgs: [ownerPhoneNumber.trim(), key.trim()],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return jsonDecode(rows.first['value_json'] as String? ?? 'null');
+  }
+
+  Future<void> upsertOfflineMapRegion(LocalOfflineMapRegion region) async {
+    final database = await _openDatabase();
+    await database.insert('offline_map_regions', {
+      'trail_id': region.trailId,
+      'region_id': region.regionId,
+      'style_uri': region.styleUri,
+      'bounds_json': jsonEncode(region.bounds),
+      'min_zoom': region.minZoom,
+      'max_zoom': region.maxZoom,
+      'status': region.status,
+      'completed_resource_count': region.completedResourceCount,
+      'required_resource_count': region.requiredResourceCount,
+      'completed_bytes': region.completedBytes,
+      'downloaded_at': region.downloadedAt?.toUtc().toIso8601String(),
+      'updated_at': region.updatedAt.toUtc().toIso8601String(),
+      'last_error': region.lastError,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<LocalOfflineMapRegion>> loadOfflineMapRegions() async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'offline_map_regions',
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(LocalOfflineMapRegion.fromRow).toList();
+  }
+
+  Future<LocalOfflineMapRegion?> loadOfflineMapRegion(String trailId) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'offline_map_regions',
+      where: 'trail_id = ?',
+      whereArgs: [trailId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : LocalOfflineMapRegion.fromRow(rows.first);
+  }
+
+  Future<void> deleteOfflineMapRegion(String trailId) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'offline_map_regions',
+      where: 'trail_id = ?',
+      whereArgs: [trailId],
+    );
+  }
+
+  Future<void> replaceStaticHazardDataset({
+    required List<LocalStaticHazard> hazards,
+    required List<LocalTrailHazardMatch> matches,
+    required int scannedTrailCount,
+    Iterable<String> scannedTrailIds = const [],
+  }) async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.delete('trail_hazard_matches');
+      await transaction.delete('hazard_feature_rtree');
+      await transaction.delete('hazard_features');
+      await transaction.delete(
+        'local_preferences',
+        where: 'owner_phone_number = ? AND preference_key LIKE ?',
+        whereArgs: ['', '$_staticHazardScanPreferencePrefix%'],
+      );
+
+      final localIds = <String, int>{};
+      for (final hazard in hazards) {
+        final localId = await transaction.insert('hazard_features', {
+          'hazard_id': hazard.hazardId,
+          'hazard_type': hazard.hazardType,
+          'title': hazard.title,
+          'description': hazard.description,
+          'latitude': hazard.latitude,
+          'longitude': hazard.longitude,
+          'severity': hazard.severity,
+          'confidence': hazard.confidence,
+          'source_name': hazard.sourceName,
+          'source_url': hazard.sourceUrl,
+          'source_feature_id': hazard.sourceFeatureId,
+          'safety_guidance': hazard.safetyGuidance,
+          'source_updated_at': hazard.sourceUpdatedAt
+              ?.toUtc()
+              .toIso8601String(),
+          'downloaded_at': hazard.downloadedAt.toUtc().toIso8601String(),
+          'expires_at': hazard.expiresAt?.toUtc().toIso8601String(),
+        });
+        localIds[hazard.hazardId] = localId;
+        await transaction.insert('hazard_feature_rtree', {
+          'local_id': localId,
+          'min_longitude': hazard.longitude,
+          'max_longitude': hazard.longitude,
+          'min_latitude': hazard.latitude,
+          'max_latitude': hazard.latitude,
+        });
+      }
+
+      for (final match in matches) {
+        if (!localIds.containsKey(match.hazard.hazardId)) continue;
+        await transaction.insert('trail_hazard_matches', {
+          'trail_id': match.trailId,
+          'hazard_id': match.hazard.hazardId,
+          'relationship': match.relationship,
+          'distance_meters': match.distanceMeters,
+          'route_progress': match.routeProgress,
+          'computed_at': match.computedAt.toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      final downloadedAt = hazards.isEmpty
+          ? DateTime.now().toUtc()
+          : hazards
+                .map((hazard) => hazard.downloadedAt.toUtc())
+                .reduce((a, b) => a.isAfter(b) ? a : b);
+      await transaction.insert('local_preferences', {
+        'owner_phone_number': '',
+        'preference_key': 'static_hazard_dataset_metadata',
+        'value_json': jsonEncode({
+          'hazardCount': hazards.length,
+          'trailCount': scannedTrailCount,
+          'downloadedAt': downloadedAt.toIso8601String(),
+        }),
+        'is_dirty': 0,
+        'updated_at': downloadedAt.toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      final hazardCountByTrail = <String, int>{};
+      for (final match in matches) {
+        hazardCountByTrail.update(
+          match.trailId,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+      }
+      for (final trailId in scannedTrailIds.map((id) => id.trim())) {
+        if (trailId.isEmpty) continue;
+        await transaction.insert('local_preferences', {
+          'owner_phone_number': '',
+          'preference_key': '$_staticHazardScanPreferencePrefix$trailId',
+          'value_json': jsonEncode({
+            'trailId': trailId,
+            'hazardCount': hazardCountByTrail[trailId] ?? 0,
+            'scannedAt': downloadedAt.toIso8601String(),
+          }),
+          'is_dirty': 0,
+          'updated_at': downloadedAt.toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  Future<DateTime?> loadStaticHazardScanTime(String trailId) async {
+    final normalizedTrailId = trailId.trim();
+    if (normalizedTrailId.isEmpty) return null;
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'local_preferences',
+      columns: ['value_json', 'updated_at'],
+      where: 'owner_phone_number = ? AND preference_key = ?',
+      whereArgs: ['', '$_staticHazardScanPreferencePrefix$normalizedTrailId'],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(rows.single['value_json'] as String? ?? '{}');
+      if (decoded is Map) {
+        final scannedAt = DateTime.tryParse(
+          decoded['scannedAt']?.toString() ?? '',
+        );
+        if (scannedAt != null) return scannedAt;
+      }
+    } catch (_) {}
+    return DateTime.tryParse(rows.single['updated_at'] as String? ?? '');
+  }
+
+  /// Replaces only one trail's mapped hazards while preserving every other
+  /// trail's offline dataset. A scan preference is written even for zero
+  /// results so opening an empty trail does not repeatedly hit Mapbox.
+  Future<void> replaceStaticHazardsForTrail({
+    required String trailId,
+    required List<LocalStaticHazard> hazards,
+    required List<LocalTrailHazardMatch> matches,
+    required DateTime scannedAt,
+  }) async {
+    final normalizedTrailId = trailId.trim();
+    if (normalizedTrailId.isEmpty) {
+      throw ArgumentError.value(trailId, 'trailId', 'must not be empty');
+    }
+    final database = await _openDatabase();
+    final scannedAtUtc = scannedAt.toUtc();
+    await database.transaction((transaction) async {
+      final previousHazards = await transaction.rawQuery(
+        '''
+        SELECT hazards.hazard_id, hazards.local_id
+        FROM trail_hazard_matches AS matches
+        JOIN hazard_features AS hazards
+          ON hazards.hazard_id = matches.hazard_id
+        WHERE matches.trail_id = ?
+        ''',
+        [normalizedTrailId],
+      );
+      await transaction.delete(
+        'trail_hazard_matches',
+        where: 'trail_id = ?',
+        whereArgs: [normalizedTrailId],
+      );
+      for (final row in previousHazards) {
+        final hazardId = row['hazard_id'] as String? ?? '';
+        final referenceCount = Sqflite.firstIntValue(
+          await transaction.rawQuery(
+            'SELECT COUNT(*) FROM trail_hazard_matches WHERE hazard_id = ?',
+            [hazardId],
+          ),
+        );
+        if ((referenceCount ?? 0) != 0) continue;
+        await transaction.delete(
+          'hazard_feature_rtree',
+          where: 'local_id = ?',
+          whereArgs: [row['local_id']],
+        );
+        await transaction.delete(
+          'hazard_features',
+          where: 'hazard_id = ?',
+          whereArgs: [hazardId],
+        );
+      }
+
+      final localIds = <String, int>{};
+      for (final hazard in hazards) {
+        final localId = await transaction.insert('hazard_features', {
+          'hazard_id': hazard.hazardId,
+          'hazard_type': hazard.hazardType,
+          'title': hazard.title,
+          'description': hazard.description,
+          'latitude': hazard.latitude,
+          'longitude': hazard.longitude,
+          'severity': hazard.severity,
+          'confidence': hazard.confidence,
+          'source_name': hazard.sourceName,
+          'source_url': hazard.sourceUrl,
+          'source_feature_id': hazard.sourceFeatureId,
+          'safety_guidance': hazard.safetyGuidance,
+          'source_updated_at': hazard.sourceUpdatedAt
+              ?.toUtc()
+              .toIso8601String(),
+          'downloaded_at': hazard.downloadedAt.toUtc().toIso8601String(),
+          'expires_at': hazard.expiresAt?.toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        localIds[hazard.hazardId] = localId;
+        await transaction.insert('hazard_feature_rtree', {
+          'local_id': localId,
+          'min_longitude': hazard.longitude,
+          'max_longitude': hazard.longitude,
+          'min_latitude': hazard.latitude,
+          'max_latitude': hazard.latitude,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      for (final match in matches) {
+        if (match.trailId.trim() != normalizedTrailId ||
+            !localIds.containsKey(match.hazard.hazardId)) {
+          continue;
+        }
+        await transaction.insert('trail_hazard_matches', {
+          'trail_id': normalizedTrailId,
+          'hazard_id': match.hazard.hazardId,
+          'relationship': match.relationship,
+          'distance_meters': match.distanceMeters,
+          'route_progress': match.routeProgress,
+          'computed_at': match.computedAt.toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await transaction.insert('local_preferences', {
+        'owner_phone_number': '',
+        'preference_key':
+            '$_staticHazardScanPreferencePrefix$normalizedTrailId',
+        'value_json': jsonEncode({
+          'trailId': normalizedTrailId,
+          'hazardCount': matches.length,
+          'scannedAt': scannedAtUtc.toIso8601String(),
+        }),
+        'is_dirty': 0,
+        'updated_at': scannedAtUtc.toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  Future<List<LocalTrailHazardMatch>> loadStaticHazardsForTrail(
+    String trailId,
+  ) async {
+    final database = await _openDatabase();
+    final rows = await database.rawQuery(
+      '''
+      SELECT hazards.*, matches.trail_id, matches.relationship,
+             matches.distance_meters, matches.route_progress,
+             matches.computed_at
+      FROM trail_hazard_matches AS matches
+      JOIN hazard_features AS hazards
+        ON hazards.hazard_id = matches.hazard_id
+      WHERE matches.trail_id = ?
+      ORDER BY matches.route_progress, matches.distance_meters
+      ''',
+      [trailId.trim()],
+    );
+    return rows
+        .map(
+          (row) => LocalTrailHazardMatch(
+            trailId: row['trail_id'] as String? ?? '',
+            hazard: LocalStaticHazard.fromRow(row),
+            relationship: row['relationship'] as String? ?? 'nearby',
+            distanceMeters: (row['distance_meters'] as num?)?.toDouble() ?? 0,
+            routeProgress: (row['route_progress'] as num?)?.toDouble() ?? 0,
+            computedAt:
+                DateTime.tryParse(row['computed_at'] as String? ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<LocalHazardDatasetSummary> loadStaticHazardDatasetSummary() async {
+    final database = await _openDatabase();
+    final rows = await database.rawQuery('''
+      SELECT COUNT(*) AS hazard_count,
+             COUNT(DISTINCT matches.trail_id) AS trail_count,
+             MAX(hazards.downloaded_at) AS downloaded_at
+      FROM hazard_features AS hazards
+      LEFT JOIN trail_hazard_matches AS matches
+        ON matches.hazard_id = hazards.hazard_id
+    ''');
+    final row = rows.single;
+    final scanRows = await database.rawQuery(
+      '''
+      SELECT COUNT(*) AS trail_count, MAX(updated_at) AS scanned_at
+      FROM local_preferences
+      WHERE owner_phone_number = ? AND preference_key LIKE ?
+      ''',
+      ['', '$_staticHazardScanPreferencePrefix%'],
+    );
+    final scanRow = scanRows.single;
+    final metadataRows = await database.query(
+      'local_preferences',
+      columns: ['value_json'],
+      where: 'owner_phone_number = ? AND preference_key = ?',
+      whereArgs: ['', 'static_hazard_dataset_metadata'],
+      limit: 1,
+    );
+    Map<String, dynamic> metadata = const {};
+    if (metadataRows.isNotEmpty) {
+      final decoded = jsonDecode(
+        metadataRows.single['value_json'] as String? ?? '{}',
+      );
+      if (decoded is Map) metadata = Map<String, dynamic>.from(decoded);
+    }
+    final storedHazardCount = (row['hazard_count'] as num?)?.toInt() ?? 0;
+    final storedTrailCount = (row['trail_count'] as num?)?.toInt() ?? 0;
+    final scannedTrailCount = (scanRow['trail_count'] as num?)?.toInt() ?? 0;
+    return LocalHazardDatasetSummary(
+      hazardCount: math.max(
+        storedHazardCount,
+        (metadata['hazardCount'] as num?)?.toInt() ?? 0,
+      ),
+      trailCount: math.max(
+        math.max(storedTrailCount, scannedTrailCount),
+        (metadata['trailCount'] as num?)?.toInt() ?? 0,
+      ),
+      downloadedAt:
+          DateTime.tryParse(row['downloaded_at'] as String? ?? '') ??
+          DateTime.tryParse(scanRow['scanned_at'] as String? ?? '') ??
+          DateTime.tryParse(metadata['downloadedAt']?.toString() ?? ''),
+    );
+  }
+
+  Future<void> clearStaticHazardDataset() async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      await transaction.delete('trail_hazard_matches');
+      await transaction.delete('hazard_feature_rtree');
+      await transaction.delete('hazard_features');
+      await transaction.delete(
+        'local_preferences',
+        where:
+            'owner_phone_number = ? AND (preference_key = ? OR preference_key LIKE ?)',
+        whereArgs: [
+          '',
+          'static_hazard_dataset_metadata',
+          '$_staticHazardScanPreferencePrefix%',
+        ],
+      );
     });
   }
 
@@ -1080,7 +1991,7 @@ class LocalSessionDatabase {
 
     final opening = openDatabase(
       databasePath,
-      version: 24,
+      version: 26,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -1108,6 +2019,8 @@ class LocalSessionDatabase {
         await _createPendingHikeEndsTable(database);
         await _createPlannedHikeStateTable(database);
         await _createAchievementProgressCacheTable(database);
+        await _createOfflineFirstTables(database);
+        await _createStaticHazardTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -1294,6 +2207,67 @@ class LocalSessionDatabase {
         }
         if (oldVersion < 24) {
           await _createAchievementProgressCacheTable(database);
+        }
+        if (oldVersion < 25) {
+          // Some recovery/fixture databases contain only the tables relevant
+          // to their original version. Recreate optional tables before the
+          // column and primary-key migration so partial databases still open.
+          await _createPendingMessagesTable(database);
+          await _addColumnIfMissing(
+            database,
+            tableName: 'pending_messages',
+            columnName: 'owner_phone_number',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'pending_messages',
+            columnName: 'updated_at',
+            definition: 'TEXT',
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'pending_messages',
+            columnName: 'last_error',
+            definition: "TEXT NOT NULL DEFAULT ''",
+          );
+          await database.rawUpdate('''
+            UPDATE pending_messages
+            SET owner_phone_number = sender_phone
+            WHERE TRIM(owner_phone_number) = ''
+          ''');
+          final readReceiptTable = await database.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chat_read_receipts'",
+          );
+          final usersTable = await database.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+          );
+          if (readReceiptTable.isEmpty) {
+            await _createChatReadReceiptsTable(database);
+          } else {
+            await database.execute(
+              'ALTER TABLE chat_read_receipts RENAME TO chat_read_receipts_v24',
+            );
+            await _createChatReadReceiptsTable(database);
+            final receiptOwnerExpression = usersTable.isEmpty
+                ? "''"
+                : "COALESCE((SELECT phone_number FROM users ORDER BY signed_in_at DESC LIMIT 1), '')";
+            await database.execute('''
+              INSERT OR REPLACE INTO chat_read_receipts (
+                owner_phone_number, chat_id, last_read_at, is_synced
+              )
+              SELECT $receiptOwnerExpression,
+                     chat_id,
+                     last_read_at,
+                     is_synced
+              FROM chat_read_receipts_v24
+            ''');
+            await database.execute('DROP TABLE chat_read_receipts_v24');
+          }
+          await _createOfflineFirstTables(database);
+        }
+        if (oldVersion < 26) {
+          await _createStaticHazardTables(database);
         }
       },
     );
@@ -1796,7 +2770,10 @@ class LocalSessionDatabase {
         send_status TEXT NOT NULL DEFAULT 'pending',
         retry_count INTEGER NOT NULL DEFAULT 0,
         firestore_doc_id TEXT DEFAULT '',
-        attachment_json TEXT DEFAULT ''
+        attachment_json TEXT DEFAULT '',
+        owner_phone_number TEXT NOT NULL DEFAULT '',
+        updated_at TEXT,
+        last_error TEXT NOT NULL DEFAULT ''
       )
     ''');
   }
@@ -1862,13 +2839,153 @@ class LocalSessionDatabase {
     ''');
   }
 
+  Future<void> _createOfflineFirstTables(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS cached_entities (
+        owner_phone_number TEXT NOT NULL DEFAULT '',
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        parent_id TEXT NOT NULL DEFAULT '',
+        payload_json TEXT NOT NULL,
+        source_updated_at TEXT,
+        cached_at TEXT NOT NULL,
+        expires_at TEXT,
+        PRIMARY KEY (owner_phone_number, entity_type, entity_id)
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_cached_entities_owner_type_parent
+      ON cached_entities(owner_phone_number, entity_type, parent_id, source_updated_at DESC)
+    ''');
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS sync_outbox (
+        operation_id TEXT PRIMARY KEY,
+        owner_phone_number TEXT NOT NULL,
+        operation_type TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        payload_json TEXT NOT NULL,
+        local_file_path TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_sync_outbox_owner_status_next
+      ON sync_outbox(owner_phone_number, status, next_attempt_at, created_at)
+    ''');
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS local_preferences (
+        owner_phone_number TEXT NOT NULL,
+        preference_key TEXT NOT NULL,
+        value_json TEXT NOT NULL,
+        is_dirty INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (owner_phone_number, preference_key)
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_local_preferences_owner_dirty
+      ON local_preferences(owner_phone_number, is_dirty, updated_at)
+    ''');
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS offline_map_regions (
+        trail_id TEXT PRIMARY KEY,
+        region_id TEXT NOT NULL UNIQUE,
+        style_uri TEXT NOT NULL,
+        bounds_json TEXT NOT NULL,
+        min_zoom INTEGER NOT NULL,
+        max_zoom INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        completed_resource_count INTEGER NOT NULL DEFAULT 0,
+        required_resource_count INTEGER NOT NULL DEFAULT 0,
+        completed_bytes INTEGER NOT NULL DEFAULT 0,
+        downloaded_at TEXT,
+        updated_at TEXT NOT NULL,
+        last_error TEXT NOT NULL DEFAULT ''
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_offline_map_regions_status_updated
+      ON offline_map_regions(status, updated_at DESC)
+    ''');
+    await _createPendingMessagesTable(database);
+    await _createChatReadReceiptsTable(database);
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_pending_messages_owner_status_created
+      ON pending_messages(owner_phone_number, send_status, created_at)
+    ''');
+  }
+
+  Future<void> _createStaticHazardTables(Database database) async {
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS hazard_features (
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hazard_id TEXT NOT NULL UNIQUE,
+        hazard_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        severity TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        source_url TEXT NOT NULL DEFAULT '',
+        source_feature_id TEXT NOT NULL DEFAULT '',
+        safety_guidance TEXT NOT NULL,
+        source_updated_at TEXT,
+        downloaded_at TEXT NOT NULL,
+        expires_at TEXT
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_hazard_features_type_downloaded
+      ON hazard_features(hazard_type, downloaded_at DESC)
+    ''');
+    await database.execute('''
+      CREATE TABLE IF NOT EXISTS trail_hazard_matches (
+        trail_id TEXT NOT NULL,
+        hazard_id TEXT NOT NULL,
+        relationship TEXT NOT NULL,
+        distance_meters REAL NOT NULL,
+        route_progress REAL NOT NULL,
+        computed_at TEXT NOT NULL,
+        PRIMARY KEY (trail_id, hazard_id),
+        FOREIGN KEY (hazard_id) REFERENCES hazard_features(hazard_id)
+          ON DELETE CASCADE
+      )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_trail_hazard_matches_route
+      ON trail_hazard_matches(trail_id, route_progress, distance_meters)
+    ''');
+    await database.execute('''
+      CREATE VIRTUAL TABLE IF NOT EXISTS hazard_feature_rtree USING rtree(
+        local_id,
+        min_longitude, max_longitude,
+        min_latitude, max_latitude
+      )
+    ''');
+  }
+
   Future<void> _createChatReadReceiptsTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS chat_read_receipts (
-        chat_id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        owner_phone_number TEXT NOT NULL DEFAULT '',
         last_read_at TEXT NOT NULL,
-        is_synced INTEGER NOT NULL DEFAULT 0
+        is_synced INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (owner_phone_number, chat_id)
       )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_chat_read_receipts_owner_sync
+      ON chat_read_receipts(owner_phone_number, is_synced, last_read_at)
     ''');
   }
 
@@ -1925,31 +3042,42 @@ class LocalSessionDatabase {
   Future<void> saveChatReadReceipt(
     String chatId,
     DateTime lastReadAt, {
+    String ownerPhoneNumber = '',
     bool synced = false,
   }) async {
     final database = await _openDatabase();
     await database.insert('chat_read_receipts', {
       'chat_id': chatId,
+      'owner_phone_number': ownerPhoneNumber.trim(),
       'last_read_at': lastReadAt.toUtc().toIso8601String(),
       'is_synced': synced ? 1 : 0,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  Future<DateTime?> loadChatReadReceipt(String chatId) async {
+  Future<DateTime?> loadChatReadReceipt(
+    String chatId, {
+    String ownerPhoneNumber = '',
+  }) async {
     final database = await _openDatabase();
     final rows = await database.query(
       'chat_read_receipts',
       columns: ['last_read_at', 'is_synced'],
-      where: 'chat_id = ?',
-      whereArgs: [chatId],
+      where: 'owner_phone_number = ? AND chat_id = ?',
+      whereArgs: [ownerPhoneNumber.trim(), chatId],
     );
     if (rows.isEmpty) return null;
     return DateTime.tryParse(rows.first['last_read_at'] as String? ?? '');
   }
 
-  Future<Map<String, DateTime>> loadAllChatReadReceipts() async {
+  Future<Map<String, DateTime>> loadAllChatReadReceipts({
+    String ownerPhoneNumber = '',
+  }) async {
     final database = await _openDatabase();
-    final rows = await database.query('chat_read_receipts');
+    final rows = await database.query(
+      'chat_read_receipts',
+      where: 'owner_phone_number = ?',
+      whereArgs: [ownerPhoneNumber.trim()],
+    );
     final result = <String, DateTime>{};
     for (final row in rows) {
       final ts = DateTime.tryParse(row['last_read_at'] as String? ?? '');
@@ -1960,23 +3088,29 @@ class LocalSessionDatabase {
     return result;
   }
 
-  Future<List<String>> loadUnsyncedReadReceiptChatIds() async {
+  Future<List<String>> loadUnsyncedReadReceiptChatIds({
+    String ownerPhoneNumber = '',
+  }) async {
     final database = await _openDatabase();
     final rows = await database.query(
       'chat_read_receipts',
       columns: ['chat_id'],
-      where: 'is_synced = 0',
+      where: 'owner_phone_number = ? AND is_synced = 0',
+      whereArgs: [ownerPhoneNumber.trim()],
     );
     return rows.map((r) => r['chat_id'] as String).toList();
   }
 
-  Future<void> markChatReadReceiptSynced(String chatId) async {
+  Future<void> markChatReadReceiptSynced(
+    String chatId, {
+    String ownerPhoneNumber = '',
+  }) async {
     final database = await _openDatabase();
     await database.update(
       'chat_read_receipts',
       {'is_synced': 1},
-      where: 'chat_id = ?',
-      whereArgs: [chatId],
+      where: 'owner_phone_number = ? AND chat_id = ?',
+      whereArgs: [ownerPhoneNumber.trim(), chatId],
     );
   }
 
@@ -1988,6 +3122,7 @@ class LocalSessionDatabase {
     required String text,
     String firestoreDocId = '',
     String sendStatus = 'pending',
+    String? ownerPhoneNumber,
   }) async {
     final database = await _openDatabase();
     await database.insert('pending_messages', {
@@ -2000,6 +3135,9 @@ class LocalSessionDatabase {
       'send_status': sendStatus,
       'retry_count': 0,
       'firestore_doc_id': firestoreDocId,
+      'owner_phone_number': (ownerPhoneNumber ?? senderPhone).trim(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'last_error': '',
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -2029,24 +3167,35 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<List<Map<String, dynamic>>> loadPendingMessages() async {
+  Future<List<Map<String, dynamic>>> loadPendingMessages({
+    String? ownerPhoneNumber,
+  }) async {
     final database = await _openDatabase();
+    final owner = ownerPhoneNumber?.trim();
     return database.query(
       'pending_messages',
-      where: 'send_status IN (?, ?)',
-      whereArgs: ['pending', 'unsent'],
+      where: owner == null || owner.isEmpty
+          ? 'send_status IN (?, ?, ?)'
+          : 'owner_phone_number = ? AND send_status IN (?, ?, ?)',
+      whereArgs: owner == null || owner.isEmpty
+          ? ['pending', 'unsent', 'failed']
+          : [owner, 'pending', 'unsent', 'failed'],
       orderBy: 'created_at ASC',
     );
   }
 
   Future<List<Map<String, dynamic>>> loadAllLocalMessagesForChat(
-    String chatId,
-  ) async {
+    String chatId, {
+    String? ownerPhoneNumber,
+  }) async {
     final database = await _openDatabase();
+    final owner = ownerPhoneNumber?.trim();
     return database.query(
       'pending_messages',
-      where: 'chat_id = ?',
-      whereArgs: [chatId],
+      where: owner == null || owner.isEmpty
+          ? 'chat_id = ?'
+          : 'owner_phone_number = ? AND chat_id = ?',
+      whereArgs: owner == null || owner.isEmpty ? [chatId] : [owner, chatId],
       orderBy: 'created_at ASC',
     );
   }
@@ -2055,9 +3204,14 @@ class LocalSessionDatabase {
     String localId,
     String status, {
     String? firestoreDocId,
+    String lastError = '',
   }) async {
     final database = await _openDatabase();
-    final values = <String, dynamic>{'send_status': status};
+    final values = <String, dynamic>{
+      'send_status': status,
+      'last_error': lastError,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
     if (firestoreDocId != null) {
       values['firestore_doc_id'] = firestoreDocId;
     }
@@ -2070,13 +3224,19 @@ class LocalSessionDatabase {
   }
 
   Future<List<Map<String, dynamic>>> loadPendingMessagesForChat(
-    String chatId,
-  ) async {
+    String chatId, {
+    String? ownerPhoneNumber,
+  }) async {
     final database = await _openDatabase();
+    final owner = ownerPhoneNumber?.trim();
     return database.query(
       'pending_messages',
-      where: 'chat_id = ? AND send_status = ?',
-      whereArgs: [chatId, 'pending'],
+      where: owner == null || owner.isEmpty
+          ? 'chat_id = ? AND send_status IN (?, ?, ?)'
+          : 'owner_phone_number = ? AND chat_id = ? AND send_status IN (?, ?, ?)',
+      whereArgs: owner == null || owner.isEmpty
+          ? [chatId, 'pending', 'unsent', 'failed']
+          : [owner, chatId, 'pending', 'unsent', 'failed'],
       orderBy: 'created_at ASC',
     );
   }
@@ -2094,8 +3254,11 @@ class LocalSessionDatabase {
   Future<void> incrementPendingMessageRetry(String localId) async {
     final database = await _openDatabase();
     await database.rawUpdate(
-      'UPDATE pending_messages SET retry_count = retry_count + 1 WHERE local_id = ?',
-      [localId],
+      '''UPDATE pending_messages
+         SET retry_count = retry_count + 1, send_status = 'failed',
+             updated_at = ?
+         WHERE local_id = ?''',
+      [DateTime.now().toUtc().toIso8601String(), localId],
     );
   }
 
@@ -2431,17 +3594,20 @@ class CacheUsageSummary {
     required this.downloadedMapCount,
     required this.downloadedMapBytes,
     required this.networkObservationCount,
+    this.cachedEntityCount = 0,
   });
 
   final int downloadedMapCount;
   final int downloadedMapBytes;
   final int networkObservationCount;
+  final int cachedEntityCount;
 
   String get label {
     final sizeLabel = downloadedMapBytes <= 0
         ? '0 MB'
         : '${(downloadedMapBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    return '$sizeLabel offline maps, $downloadedMapCount route packs, $networkObservationCount connection records';
+    return '$sizeLabel offline maps, $downloadedMapCount route packs, '
+        '$cachedEntityCount cached items, $networkObservationCount connection records';
   }
 }
 

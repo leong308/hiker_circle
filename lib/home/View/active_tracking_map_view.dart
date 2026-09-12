@@ -4,9 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
+import '../../app/Data/local_session_database.dart';
+import '../../core/services/static_hazard_dataset_service.dart';
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_endpoint_marker.dart';
+import '../../core/widgets/static_hazard_marker.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Data/active_hike_weather_service.dart';
 import '../Model/hike_session_models.dart';
@@ -91,7 +94,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PointAnnotationManager? _pointManager;
+  mapbox.Cancelable? _pointTapEvents;
   Future<bool>? _annotationManagersFuture;
+  late final LocalSessionDatabase _localDatabase;
+  List<LocalTrailHazardMatch> _staticHazards = const [];
+  final Map<String, LocalTrailHazardMatch> _hazardsByAnnotationId = {};
+  int _hazardLoadGeneration = 0;
   List<Offset?> _weatherScreenPositions = const [];
   Map<String, Offset?> _teamScreenPositions = const {};
   var _weatherProjectionScheduled = false;
@@ -120,6 +128,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _localDatabase = LocalSessionDatabase();
     _buildPoints();
     _showsMap = _visiblePoints.isNotEmpty;
     _initialCamera = _computeInitialCamera();
@@ -128,11 +137,41 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     _scaleLatitude = initialCenter == null
         ? 0
         : mapPointCoordinatesOrNull(initialCenter)?.latitude ?? 0;
+    unawaited(_loadStaticHazards());
+  }
+
+  Future<void> _loadStaticHazards() async {
+    final generation = ++_hazardLoadGeneration;
+    try {
+      final cached = await _localDatabase.loadStaticHazardsForTrail(
+        widget.activeHike.trail.trailId,
+      );
+      if (!mounted || generation != _hazardLoadGeneration) return;
+      _applyStaticHazards(cached);
+      final hazards = await StaticHazardDatasetService(
+        database: _localDatabase,
+      ).ensureForTrail(widget.activeHike.trail);
+      if (!mounted || generation != _hazardLoadGeneration) return;
+      _applyStaticHazards(hazards);
+    } catch (_) {
+      // The active hike remains fully usable with cached tiles when offline.
+    }
+  }
+
+  void _applyStaticHazards(List<LocalTrailHazardMatch> hazards) {
+    if (!mounted) return;
+    setState(() {
+      _staticHazards = hazards;
+      _routeRendered = false;
+    });
+    unawaited(_renderRouteIfReady());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _hazardLoadGeneration++;
+    _pointTapEvents?.cancel();
     _navigationRefocusTimer?.cancel();
     _mapGeneration++;
     _renderGeneration++;
@@ -140,6 +179,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     _polylineManager = null;
     _circleManager = null;
     _pointManager = null;
+    _hazardsByAnnotationId.clear();
     _annotationManagersFuture = null;
     super.dispose();
   }
@@ -480,6 +520,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   void didUpdateWidget(covariant ActiveTrackingMapView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.activeHike != widget.activeHike) {
+      if (oldWidget.activeHike.trail.trailId !=
+          widget.activeHike.trail.trailId) {
+        unawaited(_loadStaticHazards());
+      }
       _teamProjectionGeneration++;
       final previouslyShowedMap = _showsMap;
       _buildPoints();
@@ -492,6 +536,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         _polylineManager = null;
         _circleManager = null;
         _pointManager = null;
+        _pointTapEvents?.cancel();
+        _pointTapEvents = null;
+        _hazardsByAnnotationId.clear();
         _annotationManagersFuture = null;
         _weatherScreenPositions = const [];
         _teamScreenPositions = const {};
@@ -518,6 +565,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     }
   }
 
+  void _onPointAnnotationTapped(mapbox.PointAnnotation annotation) {
+    final match = _hazardsByAnnotationId[annotation.id];
+    if (match == null || !mounted) return;
+    unawaited(showStaticHazardDetails(context, match));
+  }
+
   bool _isCurrentMap(mapbox.MapboxMap map, int generation) {
     return mounted &&
         generation == _mapGeneration &&
@@ -535,6 +588,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _pointTapEvents?.cancel();
+      _pointTapEvents = null;
+      _hazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -579,6 +635,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _pointTapEvents?.cancel();
+      _pointTapEvents = null;
+      _hazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -630,6 +689,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       await pointManager.setIconAllowOverlap(true);
       await pointManager.setTextAllowOverlap(true);
       if (!_isCurrentMap(map, generation)) return false;
+      if (!identical(pointManager, _pointManager)) {
+        _pointTapEvents?.cancel();
+        _pointTapEvents = pointManager.tapEvents(
+          onTap: _onPointAnnotationTapped,
+        );
+      }
       _polylineManager = polylineManager;
       _circleManager = circleManager;
       _pointManager = pointManager;
@@ -706,6 +771,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     await polylineManager.deleteAll();
     await circleManager.deleteAll();
     await pointManager.deleteAll();
+    _hazardsByAnnotationId.clear();
     if (!_isCurrentMap(map, mapGeneration) ||
         renderGeneration != _renderGeneration) {
       return;
@@ -835,6 +901,25 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
           separateLabel: separateEndpointLabels,
         ),
       ]);
+      created = true;
+    }
+
+    if (_staticHazards.isNotEmpty) {
+      final hazardMarker = await staticHazardMarkerImage();
+      if (!_isCurrentMap(map, mapGeneration) ||
+          renderGeneration != _renderGeneration) {
+        return;
+      }
+      final annotations = await pointManager.createMulti([
+        for (final match in _staticHazards)
+          staticHazardAnnotation(match, hazardMarker),
+      ]);
+      for (var index = 0; index < annotations.length; index++) {
+        final annotation = annotations[index];
+        if (annotation != null && index < _staticHazards.length) {
+          _hazardsByAnnotationId[annotation.id] = _staticHazards[index];
+        }
+      }
       created = true;
     }
 
@@ -1078,6 +1163,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _pointTapEvents?.cancel();
+      _pointTapEvents = null;
+      _hazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _weatherScreenPositions = const [];
       _teamScreenPositions = const {};

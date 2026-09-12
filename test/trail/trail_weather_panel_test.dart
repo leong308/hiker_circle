@@ -110,8 +110,14 @@ void main() {
       await tester.tap(find.text('Tue 8/9'));
       await tester.pumpAndSettle();
       expect(find.text('Thunderstorm'), findsOneWidget);
-      expect(find.text('Thunderstorms forecast — consider postponing'), findsOneWidget);
-      expect(find.textContaining('Water crossings, steep sections'), findsOneWidget);
+      expect(
+        find.text('Thunderstorms forecast — consider postponing'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Water crossings, steep sections'),
+        findsOneWidget,
+      );
       expect(find.text('25.0 °C'), findsOneWidget);
       await tester.ensureVisible(find.text('Rain'));
       await tester.tap(find.text('Rain'));
@@ -120,7 +126,7 @@ void main() {
       expect(chart.data.maxY, 100);
       expect(
         chart.data.titlesData.leftTitles.sideTitles.reservedSize,
-        greaterThanOrEqualTo(68),
+        inInclusiveRange(44, 55),
       );
       expect(chart.data.lineBarsData.single.spots.first.y, 80);
       expect(

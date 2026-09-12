@@ -171,7 +171,9 @@ class _CirclePageState extends State<CirclePage> {
     unawaited(_syncReadReceipts(phone));
     var local = Map<String, DateTime>.from(_localLastReadAt);
     try {
-      local = await widget.hikerCircleRepository.loadAllLocalLastReadAt();
+      local = await widget.hikerCircleRepository.loadAllLocalLastReadAt(
+        ownerPhoneNumber: widget.session.phoneNumber,
+      );
     } catch (_) {
       // The remote chat list is still useful without local read timestamps.
     }

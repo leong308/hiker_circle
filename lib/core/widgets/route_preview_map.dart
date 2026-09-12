@@ -4,13 +4,16 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
+import '../../app/Data/local_session_database.dart';
 import '../../core/services/hiking_route_service.dart';
+import '../../core/services/static_hazard_dataset_service.dart';
 import '../../trail/Model/trail_models.dart';
 import 'loading_toast.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
 import 'route_endpoint_marker.dart';
 import 'route_animation_geometry.dart';
+import 'static_hazard_marker.dart';
 
 bool _isValidMapPoint(mapbox.Point point) {
   return mapPointCoordinatesOrNull(point) != null;
@@ -32,6 +35,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.isRouteLoading = false,
     this.loadingMessage = 'Loading route…',
     this.initialStyleIndex = 0,
+    this.localDatabase,
   });
 
   final Trail trail;
@@ -47,6 +51,7 @@ class RoutePreviewMap extends StatefulWidget {
   final bool isRouteLoading;
   final String loadingMessage;
   final int initialStyleIndex;
+  final LocalSessionDatabase? localDatabase;
 
   List<TrailCheckpoint> get effectiveCheckpoints =>
       customCheckpoints ?? trail.checkpoints;
@@ -69,7 +74,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PointAnnotationManager? _pointManager;
+  mapbox.Cancelable? _pointTapEvents;
   Future<bool>? _annotationManagersFuture;
+  late final LocalSessionDatabase _fallbackLocalDatabase;
+  List<LocalTrailHazardMatch> _staticHazards = const [];
+  final Map<String, LocalTrailHazardMatch> _hazardsByAnnotationId = {};
+  int _hazardLoadGeneration = 0;
   var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
@@ -105,6 +115,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   void initState() {
     super.initState();
     _styleIndex = widget.initialStyleIndex.clamp(0, mapStyleUrls.length - 1);
+    _fallbackLocalDatabase = LocalSessionDatabase();
     _routeAnimController = AnimationController(
       vsync: this,
       duration: widget.animationDuration,
@@ -115,6 +126,39 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _routeAnimController.addListener(_onRouteAnimationTick);
     _routeAnimController.addStatusListener(_onAnimationStatusChange);
     _buildPoints();
+    unawaited(_loadStaticHazards());
+  }
+
+  LocalSessionDatabase get _localDatabase =>
+      widget.localDatabase ?? _fallbackLocalDatabase;
+
+  Future<void> _loadStaticHazards() async {
+    final generation = ++_hazardLoadGeneration;
+    try {
+      final cached = await _localDatabase.loadStaticHazardsForTrail(
+        widget.trail.trailId,
+      );
+      if (!mounted || generation != _hazardLoadGeneration) return;
+      _applyStaticHazards(cached);
+
+      final hazards = await StaticHazardDatasetService(
+        database: _localDatabase,
+      ).ensureForTrail(widget.trail, route: widget.route);
+      if (!mounted || generation != _hazardLoadGeneration) return;
+      _applyStaticHazards(hazards);
+    } catch (_) {
+      // The route remains usable when the optional local hazard dataset is
+      // absent, migrating, unavailable, or the phone is offline.
+    }
+  }
+
+  void _applyStaticHazards(List<LocalTrailHazardMatch> hazards) {
+    if (!mounted) return;
+    setState(() {
+      _staticHazards = hazards;
+      _routeRendered = false;
+    });
+    unawaited(_renderRouteIfReady());
   }
 
   void _onAnimationStatusChange(AnimationStatus status) {
@@ -297,6 +341,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   @override
   void dispose() {
+    _hazardLoadGeneration++;
+    _pointTapEvents?.cancel();
     _pauseTimer?.cancel();
     _loopPauseTimer?.cancel();
     _cancelCheckpointGlows();
@@ -384,6 +430,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   @override
   void didUpdateWidget(covariant RoutePreviewMap oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.trail.trailId != widget.trail.trailId ||
+        oldWidget.localDatabase != widget.localDatabase ||
+        oldWidget.route?.encodedPolyline != widget.route?.encodedPolyline) {
+      unawaited(_loadStaticHazards());
+    }
     final geometryChanged =
         oldWidget.effectiveCheckpoints != widget.effectiveCheckpoints ||
         oldWidget.route != widget.route;
@@ -400,6 +451,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         _polylineManager = null;
         _circleManager = null;
         _pointManager = null;
+        _pointTapEvents?.cancel();
+        _pointTapEvents = null;
+        _hazardsByAnnotationId.clear();
         _annotationManagersFuture = null;
       }
     }
@@ -434,6 +488,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     } catch (_) {}
   }
 
+  void _onPointAnnotationTapped(mapbox.PointAnnotation annotation) {
+    final match = _hazardsByAnnotationId[annotation.id];
+    if (match == null || !mounted) return;
+    unawaited(showStaticHazardDetails(context, match));
+  }
+
   bool _isCurrentMap(mapbox.MapboxMap map, int generation) {
     return mounted &&
         generation == _mapGeneration &&
@@ -452,6 +512,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _pointTapEvents?.cancel();
+      _pointTapEvents = null;
+      _hazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -491,6 +554,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _pointTapEvents?.cancel();
+      _pointTapEvents = null;
+      _hazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -548,6 +614,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       await pointManager.setIconAllowOverlap(true);
       await pointManager.setTextAllowOverlap(true);
       if (!_isCurrentMap(map, generation)) return false;
+      if (!identical(pointManager, _pointManager)) {
+        _pointTapEvents?.cancel();
+        _pointTapEvents = pointManager.tapEvents(
+          onTap: _onPointAnnotationTapped,
+        );
+      }
       _polylineManager = polylineManager;
       _circleManager = circleManager;
       _pointManager = pointManager;
@@ -589,6 +661,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _isPaused = false;
       _animatedPolyline = null;
       _checkpointCircleAnnotations = [];
+      _hazardsByAnnotationId.clear();
       _lastAnimatedIndex = 0;
       await _polylineManager!.deleteAll();
       await _circleManager!.deleteAll();
@@ -711,6 +784,22 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           separateLabel: separateEndpointLabels,
         ),
       ]);
+
+      final hazardMarker = await staticHazardMarkerImage();
+      if (!_isCurrentMap(map, mapGeneration) ||
+          generation != _renderGeneration) {
+        return;
+      }
+      final hazardAnnotations = await _pointManager!.createMulti([
+        for (final match in _staticHazards)
+          staticHazardAnnotation(match, hazardMarker),
+      ]);
+      for (var index = 0; index < hazardAnnotations.length; index++) {
+        final annotation = hazardAnnotations[index];
+        if (annotation != null && index < _staticHazards.length) {
+          _hazardsByAnnotationId[annotation.id] = _staticHazards[index];
+        }
+      }
 
       final validPinnedPoints = widget.pinnedPoints
           .where(_isValidMapPoint)

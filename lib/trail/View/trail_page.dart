@@ -456,7 +456,7 @@ class _TrailPageState extends State<TrailPage> {
                   const SizedBox(height: 8),
                   const _EmptyState(
                     message:
-                        'Offline map downloads are not available in this mobile build yet. Keep a network connection for map tiles.',
+                        'Download the Malaysia offline map from App Settings before heading out.',
                   ),
                 ],
               ),
@@ -717,95 +717,6 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     onPressed: _reportHazard,
                     icon: const Icon(Icons.report_rounded),
                     label: const Text('Report Hazard'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class OfflineMapDownloadPage extends StatefulWidget {
-  const OfflineMapDownloadPage({super.key, required this.trail});
-
-  final Trail trail;
-
-  @override
-  State<OfflineMapDownloadPage> createState() => _OfflineMapDownloadPageState();
-}
-
-class _OfflineMapDownloadPageState extends State<OfflineMapDownloadPage> {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _TrailColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    onBack: () => Navigator.of(context).pop(false),
-                    title: 'Offline Map',
-                    subtitle: widget.trail.name,
-                  ),
-                  const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _TrailCover(trail: widget.trail, height: 150),
-                          const SizedBox(height: 14),
-                          Text(
-                            'Offline Trail Map',
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(
-                                  color: _TrailColors.textFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            widget.trail.name,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: _TrailColors.secondaryTextFor(context),
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 14),
-                          const _StatusRow(
-                            label: 'Map package',
-                            value: 'Not available',
-                          ),
-                          const _HorizontalSeparator(),
-                          _StatusRow(
-                            label: 'Route file',
-                            value: widget.trail.routeFilePath.isEmpty
-                                ? 'Not available'
-                                : widget.trail.routeFilePath,
-                          ),
-                          const _HorizontalSeparator(),
-                          const _StatusRow(label: 'Estimated size', value: '—'),
-                          const SizedBox(height: 14),
-                          FilledButton.icon(
-                            onPressed: null,
-                            icon: const Icon(Icons.download_rounded),
-                            label: const Text('Offline download unavailable'),
-                          ),
-                        ],
-                      ),
-                    ),
                   ),
                 ],
               ),
@@ -4800,6 +4711,7 @@ class _RoutePreviewState extends State<_RoutePreview> {
             highlightedCheckpointIndex: widget.highlightedCheckpointIndex,
             isRouteLoading: _isLoadingRoute,
             loadingMessage: _loadingMessage,
+            localDatabase: widget.localDatabase,
           ),
         ),
       ),

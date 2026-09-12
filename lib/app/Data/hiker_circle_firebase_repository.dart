@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -1017,8 +1018,9 @@ class HikerCircleFirebaseRepository {
   };
 
   Future<List<Trail>> loadTrails() async {
+    final cached = await _loadCachedTrails();
     if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
+      return cached;
     }
 
     try {
@@ -1038,16 +1040,20 @@ class HikerCircleFirebaseRepository {
           .toList();
 
       await _enrichWithLiveWeather(liveTrails, snapshot.docs);
-
+      await _cacheTrails(liveTrails);
       return liveTrails;
     } catch (_) {
-      return const [];
+      return cached;
     }
   }
 
-  Stream<List<Trail>> watchTrails() {
-    if (!_firebaseBootstrapResult.isAvailable) return Stream.value(const []);
-    return _trails
+  Stream<List<Trail>> watchTrails() async* {
+    final cached = await _loadCachedTrails();
+    if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
+      yield cached;
+    }
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    yield* _trails
         .orderBy('isVerifiedTrail', descending: true)
         .orderBy('ratingAverage', descending: true)
         .snapshots()
@@ -1060,8 +1066,43 @@ class HikerCircleFirebaseRepository {
               .whereType<Trail>()
               .toList();
           await _enrichWithLiveWeather(trails, snapshot.docs);
+          await _cacheTrails(trails);
           return trails;
-        });
+        })
+        .handleError((Object _, StackTrace __) {});
+  }
+
+  Future<List<Trail>> _loadCachedTrails() async {
+    try {
+      final rows = await _localDatabase.loadCachedEntities(
+        ownerPhoneNumber: '',
+        entityType: 'trail',
+        includeExpired: true,
+      );
+      return rows.map((row) => Trail.fromPersistence(row.payload)).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _cacheTrails(List<Trail> trails) async {
+    final now = DateTime.now().toUtc();
+    await _localDatabase.replaceCachedEntitySet(
+      ownerPhoneNumber: '',
+      entityType: 'trail',
+      entities: trails
+          .map(
+            (trail) => LocalCachedEntity(
+              ownerPhoneNumber: '',
+              entityType: 'trail',
+              entityId: trail.trailId,
+              parentId: '',
+              payload: trail.toPersistence(),
+              cachedAt: now,
+            ),
+          )
+          .toList(),
+    );
   }
 
   Future<void> _enrichWithLiveWeather(
@@ -1435,7 +1476,8 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<List<GroupChat>> loadUserGroupChats(String phoneNumber) async {
-    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    final cached = await _loadCachedGroupChats(phoneNumber);
+    if (!_firebaseBootstrapResult.isAvailable) return cached;
     try {
       final snapshot = await _groupChats
           .where('participantPhones', arrayContains: phoneNumber)
@@ -1450,9 +1492,11 @@ class HikerCircleFirebaseRepository {
           a.lastMessageAt ?? a.createdAt,
         ),
       );
-      return _hydrateGroupChatsWithPhotos(chats);
+      final hydrated = await _hydrateGroupChatsWithPhotos(chats);
+      await _cacheGroupChats(phoneNumber, hydrated);
+      return hydrated;
     } catch (_) {
-      return const [];
+      return cached;
     }
   }
 
@@ -1476,8 +1520,13 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  Stream<List<GroupChat>> userGroupChatsStream(String phoneNumber) {
-    return _groupChats
+  Stream<List<GroupChat>> userGroupChatsStream(String phoneNumber) async* {
+    final cached = await _loadCachedGroupChats(phoneNumber);
+    if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
+      yield cached;
+    }
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    yield* _groupChats
         .where('participantPhones', arrayContains: phoneNumber)
         .orderBy('createdAtLocal', descending: true)
         .snapshots()
@@ -1491,8 +1540,51 @@ class HikerCircleFirebaseRepository {
               a.lastMessageAt ?? a.createdAt,
             ),
           );
-          return _hydrateGroupChatsWithPhotos(chats);
-        });
+          final hydrated = await _hydrateGroupChatsWithPhotos(chats);
+          await _cacheGroupChats(phoneNumber, hydrated);
+          return hydrated;
+        })
+        .handleError((Object _, StackTrace __) {});
+  }
+
+  Future<List<GroupChat>> _loadCachedGroupChats(String phoneNumber) async {
+    try {
+      final rows = await _localDatabase.loadCachedEntities(
+        ownerPhoneNumber: phoneNumber,
+        entityType: 'group_chat',
+        includeExpired: true,
+      );
+      return rows
+          .map((row) => GroupChat.fromFirestore(row.entityId, row.payload))
+          .where(_shouldRenderGroupChat)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _cacheGroupChats(
+    String phoneNumber,
+    List<GroupChat> chats,
+  ) async {
+    final now = DateTime.now().toUtc();
+    await _localDatabase.replaceCachedEntitySet(
+      ownerPhoneNumber: phoneNumber,
+      entityType: 'group_chat',
+      entities: chats
+          .map(
+            (chat) => LocalCachedEntity(
+              ownerPhoneNumber: phoneNumber,
+              entityType: 'group_chat',
+              entityId: chat.id,
+              parentId: '',
+              payload: chat.toFirestore(),
+              cachedAt: now,
+              sourceUpdatedAt: chat.lastMessageAt ?? chat.createdAt,
+            ),
+          )
+          .toList(),
+    );
   }
 
   Stream<List<GroupChat>> formedTeamChatsForHostStream(String phoneNumber) {
@@ -1594,18 +1686,29 @@ class HikerCircleFirebaseRepository {
   Future<List<Map<String, dynamic>>> loadCommunityProfiles({
     required AppSession session,
   }) async {
+    final cached = await _loadCachedMapEntities(
+      ownerPhoneNumber: session.phoneNumber,
+      entityType: 'community_profile',
+    );
     if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
+      return cached;
     }
     try {
       final ownId = _userIdFor(session);
       final profiles = await _getPublicProfiles({'limit': 80});
-      return profiles
+      final visible = profiles
           .where((profile) => _stringFrom(profile['userId']) != ownId)
           .where((profile) => _stringFrom(profile['phoneNumber']).isNotEmpty)
           .toList();
+      await _cacheMapEntities(
+        ownerPhoneNumber: session.phoneNumber,
+        entityType: 'community_profile',
+        idKey: 'userId',
+        rows: visible,
+      );
+      return visible;
     } catch (_) {
-      return const [];
+      return cached;
     }
   }
 
@@ -2238,24 +2341,37 @@ class HikerCircleFirebaseRepository {
     final now = DateTime.now().toUtc();
     final phoneKey = _phoneKeyFor(phoneNumber);
     if (phoneKey.isEmpty) return;
-    await _localDatabase.saveChatReadReceipt(chatId, now, synced: false);
+    await _localDatabase.saveChatReadReceipt(
+      chatId,
+      now,
+      ownerPhoneNumber: phoneNumber,
+      synced: false,
+    );
     if (!_firebaseBootstrapResult.isAvailable) return;
     try {
       await _groupChats.doc(chatId).set({
         'lastReadAt.$phoneKey': now.toIso8601String(),
         'unreadCount.$phoneKey': 0,
       }, SetOptions(merge: true));
-      await _localDatabase.markChatReadReceiptSynced(chatId);
+      await _localDatabase.markChatReadReceiptSynced(
+        chatId,
+        ownerPhoneNumber: phoneNumber,
+      );
     } catch (_) {}
   }
 
   Future<void> syncPendingReadReceipts({required String phoneNumber}) async {
     if (!_firebaseBootstrapResult.isAvailable) return;
-    final chatIds = await _localDatabase.loadUnsyncedReadReceiptChatIds();
+    final chatIds = await _localDatabase.loadUnsyncedReadReceiptChatIds(
+      ownerPhoneNumber: phoneNumber,
+    );
     if (chatIds.isEmpty) return;
     for (final chatId in chatIds) {
       try {
-        final localReadAt = await _localDatabase.loadChatReadReceipt(chatId);
+        final localReadAt = await _localDatabase.loadChatReadReceipt(
+          chatId,
+          ownerPhoneNumber: phoneNumber,
+        );
         if (localReadAt == null) continue;
         final phoneKey = _phoneKeyFor(phoneNumber);
         if (phoneKey.isEmpty) continue;
@@ -2263,21 +2379,40 @@ class HikerCircleFirebaseRepository {
           'lastReadAt.$phoneKey': localReadAt.toUtc().toIso8601String(),
           'unreadCount.$phoneKey': 0,
         }, SetOptions(merge: true));
-        await _localDatabase.markChatReadReceiptSynced(chatId);
+        await _localDatabase.markChatReadReceiptSynced(
+          chatId,
+          ownerPhoneNumber: phoneNumber,
+        );
       } catch (_) {}
     }
   }
 
-  Future<DateTime?> loadLocalLastReadAt(String chatId) async {
-    return _localDatabase.loadChatReadReceipt(chatId);
+  Future<DateTime?> loadLocalLastReadAt(
+    String chatId, {
+    required String ownerPhoneNumber,
+  }) async {
+    return _localDatabase.loadChatReadReceipt(
+      chatId,
+      ownerPhoneNumber: ownerPhoneNumber,
+    );
   }
 
-  Future<Map<String, DateTime>> loadAllLocalLastReadAt() async {
-    return _localDatabase.loadAllChatReadReceipts();
+  Future<Map<String, DateTime>> loadAllLocalLastReadAt({
+    required String ownerPhoneNumber,
+  }) async {
+    return _localDatabase.loadAllChatReadReceipts(
+      ownerPhoneNumber: ownerPhoneNumber,
+    );
   }
 
-  Future<List<ChatMessage>> loadPendingMessagesForChat(String chatId) async {
-    final rows = await _localDatabase.loadPendingMessagesForChat(chatId);
+  Future<List<ChatMessage>> loadPendingMessagesForChat(
+    String chatId, {
+    required String ownerPhoneNumber,
+  }) async {
+    final rows = await _localDatabase.loadPendingMessagesForChat(
+      chatId,
+      ownerPhoneNumber: ownerPhoneNumber,
+    );
     return rows
         .map(
           (row) => ChatMessage.fromPending(
@@ -2295,12 +2430,19 @@ class HikerCircleFirebaseRepository {
         .toList();
   }
 
-  Future<List<ChatMessage>> loadAllLocalMessagesForChat(String chatId) async {
-    final rows = await _localDatabase.loadAllLocalMessagesForChat(chatId);
+  Future<List<ChatMessage>> loadAllLocalMessagesForChat(
+    String chatId, {
+    required String ownerPhoneNumber,
+  }) async {
+    final rows = await _localDatabase.loadAllLocalMessagesForChat(
+      chatId,
+      ownerPhoneNumber: ownerPhoneNumber,
+    );
     return rows.map((row) {
       final statusStr = row['send_status'] as String? ?? 'pending';
       final status = switch (statusStr) {
         'sent' => SendStatus.sent,
+        'failed' || 'unsent' => SendStatus.failed,
         _ => SendStatus.sending,
       };
       return ChatMessage.fromPending(
@@ -2320,8 +2462,9 @@ class HikerCircleFirebaseRepository {
 
   Future<void> cacheChatMessages(
     List<ChatMessage> messages,
-    String chatId,
-  ) async {
+    String chatId, {
+    required String ownerPhoneNumber,
+  }) async {
     final rows = messages
         .map(
           (m) => {
@@ -2337,21 +2480,29 @@ class HikerCircleFirebaseRepository {
             'attachment_json': m.attachment == null
                 ? ''
                 : jsonEncode(m.attachment!.toFirestore()),
+            'owner_phone_number': ownerPhoneNumber.trim(),
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+            'last_error': '',
           },
         )
         .toList();
     await _localDatabase.upsertChatMessages(rows);
   }
 
-  Future<void> flushPendingMessages() async {
-    final rows = await _localDatabase.loadPendingMessages();
+  Future<void> flushPendingMessages({String? ownerPhoneNumber}) async {
+    final owner = ownerPhoneNumber?.trim().isNotEmpty == true
+        ? ownerPhoneNumber!.trim()
+        : (await _localDatabase.loadSession())?.phoneNumber.trim() ?? '';
+    if (owner.isEmpty) return;
+    final rows = await _localDatabase.loadPendingMessages(
+      ownerPhoneNumber: owner,
+    );
     for (final row in rows) {
       final localId = row['local_id'] as String;
       final chatId = row['chat_id'] as String;
       final senderPhone = row['sender_phone'] as String;
       final senderName = row['sender_name'] as String? ?? '';
       final text = row['text'] as String;
-      final retryCount = row['retry_count'] as int? ?? 0;
       final storedFirestoreDocId = row['firestore_doc_id'] as String? ?? '';
       final firestoreDocId = storedFirestoreDocId.isNotEmpty
           ? storedFirestoreDocId
@@ -2359,11 +2510,6 @@ class HikerCircleFirebaseRepository {
       final sentAt =
           DateTime.tryParse(row['created_at'] as String? ?? '') ??
           DateTime.now();
-
-      if (retryCount > 5) {
-        await _localDatabase.deletePendingMessage(localId);
-        continue;
-      }
 
       try {
         final existing = await _groupChatMessagesFor(
@@ -2407,7 +2553,12 @@ class HikerCircleFirebaseRepository {
           'sent',
           firestoreDocId: msgDoc.id,
         );
-      } catch (_) {
+      } catch (error) {
+        await _localDatabase.updateLocalMessageStatus(
+          localId,
+          'failed',
+          lastError: error.toString(),
+        );
         await _localDatabase.incrementPendingMessageRetry(localId);
       }
     }
@@ -2615,7 +2766,8 @@ class HikerCircleFirebaseRepository {
               'sourceUpcomingHikeId': sourceUpcomingHikeId.trim(),
             if (teamHikeSessionId.trim().isNotEmpty)
               'teamHikeSessionId': teamHikeSessionId.trim(),
-          });
+          })
+          .timeout(_firebaseWriteTimeout);
       final sessionId = _stringFrom(response.data['sessionId']);
       if (sessionId.isEmpty) {
         throw const HikerCircleFirebaseRepositoryException(
@@ -2629,6 +2781,8 @@ class HikerCircleFirebaseRepository {
         allowsOfflineFallback:
             activeHikeStartAllowsOfflineFallbackForFunctionsCode(error.code),
       );
+    } on TimeoutException {
+      return localSession;
     }
   }
 
@@ -2985,23 +3139,74 @@ class HikerCircleFirebaseRepository {
     required ActiveHikeSession activeHike,
     required SosTriggerLocation? location,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return;
-    }
+    final idempotencyKey =
+        'checkin_${activeHike.sessionId}_${activeHike.checkIns + 1}';
+    final now = DateTime.now().toUtc();
+    final payload = <String, dynamic>{
+      'sessionId': activeHike.sessionId,
+      'idempotencyKey': idempotencyKey,
+      'batteryLevel': activeHike.hasKnownBatteryLevel
+          ? activeHike.batteryLevel
+          : null,
+      if (location != null) 'location': location.toFirestore(),
+    };
+    await _localDatabase.enqueueSyncOperation(
+      LocalSyncOperation(
+        operationId: idempotencyKey,
+        ownerPhoneNumber: session.phoneNumber,
+        operationType: 'callable',
+        entityType: 'active_hike_check_in',
+        entityId: activeHike.sessionId,
+        idempotencyKey: idempotencyKey,
+        payload: payload,
+        status: 'pending',
+        attemptCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    if (!_firebaseBootstrapResult.isAvailable) return;
     try {
-      await _resolvedFunctions.httpsCallable('recordActiveHikeCheckIn').call({
-        'sessionId': activeHike.sessionId,
-        'idempotencyKey':
-            'checkin_${activeHike.sessionId}_${activeHike.checkIns + 1}',
-        'batteryLevel': activeHike.hasKnownBatteryLevel
-            ? activeHike.batteryLevel
-            : null,
-        if (location != null) 'location': location.toFirestore(),
-      });
-    } on FirebaseFunctionsException catch (error) {
-      throw HikerCircleFirebaseRepositoryException(
-        error.message ?? 'Unable to record this safety check-in.',
+      await _resolvedFunctions
+          .httpsCallable('recordActiveHikeCheckIn')
+          .call(payload)
+          .timeout(_firebaseWriteTimeout);
+      await _localDatabase.deleteSyncOperation(idempotencyKey);
+    } catch (error) {
+      await _localDatabase.markSyncOperationRetry(
+        idempotencyKey,
+        lastError: error.toString(),
+        nextAttemptAt: now.add(const Duration(seconds: 30)),
       );
+    }
+  }
+
+  Future<void> flushSyncOutbox({required AppSession session}) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    final operations = await _localDatabase.loadDueSyncOperations(
+      ownerPhoneNumber: session.phoneNumber,
+    );
+    for (final operation in operations) {
+      if (operation.entityType != 'active_hike_check_in') continue;
+      try {
+        await _resolvedFunctions
+            .httpsCallable('recordActiveHikeCheckIn')
+            .call(operation.payload)
+            .timeout(_firebaseWriteTimeout);
+        await _localDatabase.deleteSyncOperation(operation.operationId);
+      } catch (error) {
+        final delaySeconds = math.min(
+          3600,
+          30 * math.pow(2, operation.attemptCount).toInt(),
+        );
+        await _localDatabase.markSyncOperationRetry(
+          operation.operationId,
+          lastError: error.toString(),
+          nextAttemptAt: DateTime.now().toUtc().add(
+            Duration(seconds: delaySeconds),
+          ),
+        );
+      }
     }
   }
 
@@ -3253,7 +3458,8 @@ class HikerCircleFirebaseRepository {
     try {
       final response = await _resolvedFunctions
           .httpsCallable('completeActiveHikeSession')
-          .call<Map<String, dynamic>>(payload);
+          .call<Map<String, dynamic>>(payload)
+          .timeout(_firebaseWriteTimeout);
       return parseActiveHikeCloudCompletionResult(
         response.data,
         requestedSessionId: activeHike.sessionId,
@@ -3350,7 +3556,7 @@ class HikerCircleFirebaseRepository {
       trailId: trail.trailId,
       trailName: trail.name,
       localFilePath: trail.routeFilePath.isEmpty
-          ? 'offline/maps/${trail.trailId}.mbtiles'
+          ? 'mapbox-tile-region://trail-${trail.trailId}'
           : trail.routeFilePath,
     );
 
@@ -3368,7 +3574,7 @@ class HikerCircleFirebaseRepository {
       'trailId': trail.trailId,
       'trailName': trail.name,
       'localFilePath': trail.routeFilePath.isEmpty
-          ? 'offline/maps/${trail.trailId}.mbtiles'
+          ? 'mapbox-tile-region://trail-${trail.trailId}'
           : trail.routeFilePath,
       'downloadedAt': FieldValue.serverTimestamp(),
       'downloadedAtLocal': now.toIso8601String(),
@@ -3521,8 +3727,12 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<List<Map<String, dynamic>>> loadCommunityPosts() async {
+    final cached = await _loadCachedMapEntities(
+      ownerPhoneNumber: '',
+      entityType: 'community_post',
+    );
     if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
+      return cached;
     }
 
     try {
@@ -3553,11 +3763,18 @@ class HikerCircleFirebaseRepository {
         final second = _dateFromValue(b['createdAtLocal']) ?? DateTime(1970);
         return second.compareTo(first);
       });
-      return _hydrateCommunityAuthorLevels(posts.take(20).toList());
-    } catch (_) {
-      throw const HikerCircleFirebaseRepositoryException(
-        'Unable to load community posts right now.',
+      final hydrated = await _hydrateCommunityAuthorLevels(
+        posts.take(20).toList(),
       );
+      await _cacheMapEntities(
+        ownerPhoneNumber: '',
+        entityType: 'community_post',
+        idKey: 'postId',
+        rows: hydrated,
+      );
+      return hydrated;
+    } catch (_) {
+      return cached;
     }
   }
 
@@ -3591,19 +3808,32 @@ class HikerCircleFirebaseRepository {
   Future<List<Map<String, dynamic>>> loadCommunityComments({
     required String postId,
   }) async {
+    final cached = await _loadCachedMapEntities(
+      ownerPhoneNumber: '',
+      entityType: 'community_comment',
+      parentId: postId,
+    );
     if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
+      return cached;
     }
 
     try {
       final snapshot = await _communityCommentsFor(
         postId,
       ).orderBy('createdAtLocal', descending: false).limit(100).get();
-      return _hydrateCommunityAuthorLevels(
+      final hydrated = await _hydrateCommunityAuthorLevels(
         snapshot.docs.map((document) => document.data()).toList(),
       );
+      await _cacheMapEntities(
+        ownerPhoneNumber: '',
+        entityType: 'community_comment',
+        idKey: 'commentId',
+        parentId: postId,
+        rows: hydrated,
+      );
+      return hydrated;
     } catch (_) {
-      return const [];
+      return cached;
     }
   }
 
@@ -4110,15 +4340,41 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<List<HikeHistorySummary>> loadMyHikeHistory({int limit = 100}) async {
-    _throwIfFirebaseUnavailable();
+    final owner = (await _localDatabase.loadSession())?.phoneNumber ?? '';
+    final cached = await _localDatabase.loadCachedEntity(
+      ownerPhoneNumber: owner,
+      entityType: 'hike_history_list',
+      entityId: 'latest',
+      includeExpired: true,
+    );
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return cached == null ? const [] : parseHikeHistoryList(cached.payload);
+    }
     try {
       final response = await _resolvedFunctions
           .httpsCallable('listMyHikeHistory')
-          .call<Map<String, dynamic>>({'limit': limit.clamp(1, 200)});
+          .call<Map<String, dynamic>>({'limit': limit.clamp(1, 200)})
+          .timeout(_firebaseReadTimeout);
+      await _localDatabase.saveCachedEntity(
+        LocalCachedEntity(
+          ownerPhoneNumber: owner,
+          entityType: 'hike_history_list',
+          entityId: 'latest',
+          parentId: '',
+          payload: Map<String, dynamic>.from(response.data),
+          cachedAt: DateTime.now().toUtc(),
+        ),
+      );
       return parseHikeHistoryList(response.data);
     } on FirebaseFunctionsException catch (error) {
+      if (cached != null) return parseHikeHistoryList(cached.payload);
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to load your hike history.',
+      );
+    } on TimeoutException {
+      if (cached != null) return parseHikeHistoryList(cached.payload);
+      throw const HikerCircleFirebaseRepositoryException(
+        'Unable to load your hike history.',
       );
     } on TypeError catch (_) {
       throw const HikerCircleFirebaseRepositoryException(
@@ -4128,20 +4384,49 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<HikeHistoryDetail> loadMyHikeHistoryDetail(String sessionId) async {
-    _throwIfFirebaseUnavailable();
     if (sessionId.trim().isEmpty) {
       throw const HikerCircleFirebaseRepositoryException(
         'The hike history entry is invalid.',
       );
     }
+    final owner = (await _localDatabase.loadSession())?.phoneNumber ?? '';
+    final cached = await _localDatabase.loadCachedEntity(
+      ownerPhoneNumber: owner,
+      entityType: 'hike_history_detail',
+      entityId: sessionId.trim(),
+      includeExpired: true,
+    );
+    if (!_firebaseBootstrapResult.isAvailable) {
+      if (cached != null) return parseHikeHistoryDetail(cached.payload);
+      throw const HikerCircleFirebaseRepositoryException(
+        'This hike has not been cached on this device yet.',
+      );
+    }
     try {
       final response = await _resolvedFunctions
           .httpsCallable('loadMyHikeHistoryDetail')
-          .call<Map<String, dynamic>>({'sessionId': sessionId.trim()});
+          .call<Map<String, dynamic>>({'sessionId': sessionId.trim()})
+          .timeout(_firebaseReadTimeout);
+      await _localDatabase.saveCachedEntity(
+        LocalCachedEntity(
+          ownerPhoneNumber: owner,
+          entityType: 'hike_history_detail',
+          entityId: sessionId.trim(),
+          parentId: '',
+          payload: Map<String, dynamic>.from(response.data),
+          cachedAt: DateTime.now().toUtc(),
+        ),
+      );
       return parseHikeHistoryDetail(response.data);
     } on FirebaseFunctionsException catch (error) {
+      if (cached != null) return parseHikeHistoryDetail(cached.payload);
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to load this completed hike.',
+      );
+    } on TimeoutException {
+      if (cached != null) return parseHikeHistoryDetail(cached.payload);
+      throw const HikerCircleFirebaseRepositoryException(
+        'Unable to load this completed hike.',
       );
     } on FormatException catch (_) {
       throw const HikerCircleFirebaseRepositoryException(
@@ -4420,6 +4705,73 @@ class HikerCircleFirebaseRepository {
           ),
         )
         .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> _loadCachedMapEntities({
+    required String ownerPhoneNumber,
+    required String entityType,
+    String? parentId,
+  }) async {
+    try {
+      final rows = await _localDatabase.loadCachedEntities(
+        ownerPhoneNumber: ownerPhoneNumber,
+        entityType: entityType,
+        parentId: parentId,
+        includeExpired: true,
+      );
+      return rows.map((row) => row.payload).toList(growable: false);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _cacheMapEntities({
+    required String ownerPhoneNumber,
+    required String entityType,
+    required String idKey,
+    required List<Map<String, dynamic>> rows,
+    String parentId = '',
+  }) async {
+    final now = DateTime.now().toUtc();
+    await _localDatabase.replaceCachedEntitySet(
+      ownerPhoneNumber: ownerPhoneNumber,
+      entityType: entityType,
+      parentId: parentId,
+      entities: rows.indexed.map((entry) {
+        final id = _stringFrom(entry.$2[idKey]);
+        return LocalCachedEntity(
+          ownerPhoneNumber: ownerPhoneNumber,
+          entityType: entityType,
+          entityId: id.isEmpty ? '${entry.$1}' : id,
+          parentId: parentId,
+          payload: _jsonSafeMap(entry.$2),
+          cachedAt: now,
+          sourceUpdatedAt: _dateFromValue(entry.$2['createdAtLocal']),
+        );
+      }).toList(),
+    );
+  }
+
+  Map<String, dynamic> _jsonSafeMap(Map<String, dynamic> source) {
+    Object? convert(Object? value) {
+      if (value == null || value is String || value is num || value is bool) {
+        return value;
+      }
+      if (value is Timestamp) return value.toDate().toUtc().toIso8601String();
+      if (value is DateTime) return value.toUtc().toIso8601String();
+      if (value is GeoPoint) {
+        return {'latitude': value.latitude, 'longitude': value.longitude};
+      }
+      if (value is Map) {
+        return value.map(
+          (key, nested) => MapEntry(key.toString(), convert(nested)),
+        );
+      }
+      if (value is Iterable) return value.map(convert).toList();
+      return value.toString();
+    }
+
+    return Map<String, dynamic>.from(convert(source) as Map);
   }
 
   Future<GroupChat> _hydrateGroupChatWithPhotos(GroupChat chat) async {

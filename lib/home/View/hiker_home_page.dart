@@ -739,7 +739,13 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
     await _runReconnectStep(
       'chat messages',
-      hikerCircleRepository.flushPendingMessages,
+      () => hikerCircleRepository.flushPendingMessages(
+        ownerPhoneNumber: widget.session.phoneNumber,
+      ),
+    );
+    await _runReconnectStep(
+      'offline changes',
+      () => hikerCircleRepository.flushSyncOutbox(session: widget.session),
     );
     await _runReconnectStep(
       'ended hikes',

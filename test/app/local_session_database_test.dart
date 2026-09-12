@@ -7,6 +7,7 @@ import 'package:hiker_circle/app/Model/app_session.dart';
 import 'package:hiker_circle/home/Model/hike_session_models.dart';
 import 'package:hiker_circle/trail/Model/trail_models.dart';
 import 'package:path/path.dart' as path;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
   late Directory temporaryDirectory;
@@ -486,6 +487,303 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  test('offline entity cache is account scoped and replaceable', () async {
+    final now = DateTime.utc(2026, 9, 11);
+    await database.saveCachedEntities([
+      LocalCachedEntity(
+        ownerPhoneNumber: 'owner-a',
+        entityType: 'community_post',
+        entityId: 'post-1',
+        parentId: '',
+        payload: const {'postId': 'post-1', 'caption': 'cached'},
+        cachedAt: now,
+      ),
+      LocalCachedEntity(
+        ownerPhoneNumber: 'owner-b',
+        entityType: 'community_post',
+        entityId: 'post-2',
+        parentId: '',
+        payload: const {'postId': 'post-2'},
+        cachedAt: now,
+      ),
+    ]);
+
+    expect(
+      (await database.loadCachedEntities(
+        ownerPhoneNumber: 'owner-a',
+        entityType: 'community_post',
+      )).single.payload['caption'],
+      'cached',
+    );
+    expect(
+      await database.loadCachedEntities(
+        ownerPhoneNumber: 'owner-c',
+        entityType: 'community_post',
+      ),
+      isEmpty,
+    );
+  });
+
+  test('sync outbox retains retries across a database reopen', () async {
+    final now = DateTime.utc(2026, 9, 11);
+    await database.enqueueSyncOperation(
+      LocalSyncOperation(
+        operationId: 'operation-1',
+        ownerPhoneNumber: 'owner-a',
+        operationType: 'callable',
+        entityType: 'active_hike_check_in',
+        entityId: 'hike-1',
+        idempotencyKey: 'checkin-hike-1-1',
+        payload: const {'sessionId': 'hike-1'},
+        status: 'pending',
+        attemptCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await database.markSyncOperationRetry(
+      'operation-1',
+      lastError: 'offline',
+      nextAttemptAt: DateTime.utc(2026, 9, 11),
+    );
+    await database.close();
+    database = LocalSessionDatabase(
+      databasePath: path.join(temporaryDirectory.path, 'session.db'),
+    );
+
+    final operation = (await database.loadDueSyncOperations(
+      ownerPhoneNumber: 'owner-a',
+    )).single;
+    expect(operation.attemptCount, 1);
+    expect(operation.lastError, 'offline');
+  });
+
+  test('preferences, map regions, and chat rows remain owner scoped', () async {
+    await database.saveLocalPreference(
+      ownerPhoneNumber: 'owner-a',
+      key: 'sos_note',
+      value: 'Stay calm',
+      isDirty: true,
+    );
+    await database.upsertOfflineMapRegion(
+      LocalOfflineMapRegion(
+        trailId: 'trail-1',
+        regionId: 'trail-trail-1',
+        styleUri: 'mapbox://styles/mapbox/outdoors-v12',
+        bounds: const {'south': 3.0, 'north': 3.2},
+        minZoom: 8,
+        maxZoom: 16,
+        status: 'complete',
+        completedResourceCount: 10,
+        requiredResourceCount: 10,
+        completedBytes: 2048,
+        downloadedAt: DateTime.utc(2026, 9, 11),
+        updatedAt: DateTime.utc(2026, 9, 11),
+      ),
+    );
+    for (final owner in ['owner-a', 'owner-b']) {
+      await database.insertPendingMessage(
+        localId: 'message-$owner',
+        chatId: 'shared-chat',
+        senderPhone: owner,
+        senderName: owner,
+        text: 'hello',
+        ownerPhoneNumber: owner,
+      );
+    }
+
+    expect(
+      await database.loadLocalPreference(
+        ownerPhoneNumber: 'owner-a',
+        key: 'sos_note',
+      ),
+      'Stay calm',
+    );
+    expect((await database.loadOfflineMapRegions()).single.isComplete, isTrue);
+    expect(
+      await database.loadAllLocalMessagesForChat(
+        'shared-chat',
+        ownerPhoneNumber: 'owner-a',
+      ),
+      hasLength(1),
+    );
+    await database.deleteOfflineMapRegion('trail-1');
+    expect(await database.loadOfflineMapRegions(), isEmpty);
+  });
+
+  test('v24 migration retains chat messages and read receipts', () async {
+    final databasePath = path.join(temporaryDirectory.path, 'session.db');
+    sqfliteFfiInit();
+    final legacy = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(
+        version: 24,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE users (
+              phone_number TEXT PRIMARY KEY,
+              signed_in_at TEXT NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE pending_messages (
+              local_id TEXT PRIMARY KEY,
+              chat_id TEXT NOT NULL,
+              sender_phone TEXT NOT NULL,
+              sender_name TEXT NOT NULL DEFAULT '',
+              text TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              send_status TEXT NOT NULL DEFAULT 'pending',
+              retry_count INTEGER NOT NULL DEFAULT 0,
+              firestore_doc_id TEXT DEFAULT '',
+              attachment_json TEXT DEFAULT ''
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE chat_read_receipts (
+              chat_id TEXT PRIMARY KEY,
+              last_read_at TEXT NOT NULL,
+              is_synced INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await db.insert('users', {
+            'phone_number': 'owner-a',
+            'signed_in_at': DateTime.utc(2026, 9, 10).toIso8601String(),
+          });
+          await db.insert('pending_messages', {
+            'local_id': 'legacy-message',
+            'chat_id': 'chat-1',
+            'sender_phone': 'owner-a',
+            'sender_name': 'A',
+            'text': 'retained',
+            'created_at': DateTime.utc(2026, 9, 10).toIso8601String(),
+          });
+          await db.insert('chat_read_receipts', {
+            'chat_id': 'chat-1',
+            'last_read_at': DateTime.utc(2026, 9, 10).toIso8601String(),
+          });
+        },
+      ),
+    );
+    await legacy.close();
+    database = LocalSessionDatabase(databasePath: databasePath);
+
+    final messages = await database.loadAllLocalMessagesForChat(
+      'chat-1',
+      ownerPhoneNumber: 'owner-a',
+    );
+    final receipt = await database.loadChatReadReceipt(
+      'chat-1',
+      ownerPhoneNumber: 'owner-a',
+    );
+    expect(messages.single['text'], 'retained');
+    expect(receipt, DateTime.utc(2026, 9, 10));
+  });
+
+  test(
+    'static hazard dataset is indexed, joined to trails, and clearable',
+    () async {
+      final downloadedAt = DateTime.utc(2026, 9, 11, 4);
+      final hazard = LocalStaticHazard(
+        hazardId: 'mapbox:trail-1:waterway:river:123',
+        hazardType: 'river',
+        title: 'Possible water crossing',
+        description: 'Mapped river at the route.',
+        latitude: 3.2,
+        longitude: 101.7,
+        severity: 'warning',
+        confidence: 'mapped_feature',
+        sourceName: 'Mapbox Streets / OpenStreetMap',
+        sourceUrl: 'https://example.test/source',
+        sourceFeatureId: '123',
+        safetyGuidance: 'Check conditions before crossing.',
+        downloadedAt: downloadedAt,
+        expiresAt: downloadedAt.add(const Duration(days: 90)),
+      );
+      await database.replaceStaticHazardDataset(
+        hazards: [hazard],
+        matches: [
+          LocalTrailHazardMatch(
+            trailId: 'trail-1',
+            hazard: hazard,
+            relationship: 'possible_crossing',
+            distanceMeters: 4.5,
+            routeProgress: 0.4,
+            computedAt: downloadedAt,
+          ),
+        ],
+        scannedTrailCount: 2,
+      );
+
+      final matches = await database.loadStaticHazardsForTrail('trail-1');
+      final summary = await database.loadStaticHazardDatasetSummary();
+      expect(matches.single.hazard.title, 'Possible water crossing');
+      expect(matches.single.distanceMeters, 4.5);
+      expect(summary.hazardCount, 1);
+      expect(summary.trailCount, 2);
+      expect(summary.isDownloaded, isTrue);
+
+      await database.clearStaticHazardDataset();
+      expect(await database.loadStaticHazardsForTrail('trail-1'), isEmpty);
+      expect(
+        (await database.loadStaticHazardDatasetSummary()).isDownloaded,
+        isFalse,
+      );
+    },
+  );
+
+  test('per-trail hazard refresh preserves other trail caches', () async {
+    final scannedAt = DateTime.utc(2026, 9, 11, 5);
+    LocalStaticHazard hazard(String trailId) => LocalStaticHazard(
+      hazardId: 'mapbox:$trailId:waterway:river:1',
+      hazardType: 'river',
+      title: 'Waterway nearby',
+      description: 'Mapped river near the route.',
+      latitude: 3.2,
+      longitude: 101.7,
+      severity: 'caution',
+      confidence: 'mapped_feature',
+      sourceName: 'Mapbox Streets / OpenStreetMap',
+      sourceUrl: 'https://example.test/source',
+      sourceFeatureId: '1',
+      safetyGuidance: 'Check conditions.',
+      downloadedAt: scannedAt,
+    );
+
+    for (final trailId in ['trail-1', 'trail-2']) {
+      final item = hazard(trailId);
+      await database.replaceStaticHazardsForTrail(
+        trailId: trailId,
+        hazards: [item],
+        matches: [
+          LocalTrailHazardMatch(
+            trailId: trailId,
+            hazard: item,
+            relationship: 'nearby',
+            distanceMeters: 20,
+            routeProgress: 0.5,
+            computedAt: scannedAt,
+          ),
+        ],
+        scannedAt: scannedAt,
+      );
+    }
+
+    expect(await database.loadStaticHazardsForTrail('trail-1'), hasLength(1));
+    expect(await database.loadStaticHazardsForTrail('trail-2'), hasLength(1));
+    expect((await database.loadStaticHazardDatasetSummary()).trailCount, 2);
+
+    await database.replaceStaticHazardsForTrail(
+      trailId: 'trail-1',
+      hazards: const [],
+      matches: const [],
+      scannedAt: scannedAt.add(const Duration(hours: 1)),
+    );
+    expect(await database.loadStaticHazardsForTrail('trail-1'), isEmpty);
+    expect(await database.loadStaticHazardsForTrail('trail-2'), hasLength(1));
+    expect(await database.loadStaticHazardScanTime('trail-1'), isNotNull);
   });
 }
 
