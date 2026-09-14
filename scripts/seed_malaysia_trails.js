@@ -178,9 +178,20 @@ function fromFirestoreValue(value) {
 
 async function firebaseAccessToken() {
   const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const globalNodeModules = execFileSync(npmExecutable, ['root', '-g'], {
-    encoding: 'utf8',
-  }).trim();
+  let globalNodeModules;
+  try {
+    globalNodeModules = execFileSync(npmExecutable, ['root', '-g'], {
+      encoding: 'utf8',
+    }).trim();
+  } catch (error) {
+    if (process.platform !== 'win32') throw error;
+    // Recent Node versions cannot always execute a .cmd shim directly.
+    globalNodeModules = execFileSync(
+      process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', 'npm.cmd root -g'],
+      { encoding: 'utf8' },
+    ).trim();
+  }
   const firebaseToolsRoot = path.join(globalNodeModules, 'firebase-tools', 'lib');
   const auth = require(path.join(firebaseToolsRoot, 'auth.js'));
   const scopes = require(path.join(firebaseToolsRoot, 'scopes.js'));

@@ -24,6 +24,8 @@ class HikingRouteResult {
     required this.duration,
     required this.encodedPolyline,
     this.elevationGainMeters,
+    this.minElevationMeters,
+    this.maxElevationMeters,
     this.sourceLabel = 'Unknown',
   });
 
@@ -31,7 +33,18 @@ class HikingRouteResult {
   final Duration duration;
   final String encodedPolyline;
   final double? elevationGainMeters;
+  final double? minElevationMeters;
+  final double? maxElevationMeters;
   final String sourceLabel;
+
+  bool get hasElevationRange =>
+      minElevationMeters != null &&
+      maxElevationMeters != null &&
+      maxElevationMeters! >= minElevationMeters!;
+
+  String get elevationRangeLabel => hasElevationRange
+      ? '${minElevationMeters!.round()} m – ${maxElevationMeters!.round()} m'
+      : 'Not available';
 
   String get distanceLabel {
     if (distanceMeters >= 1000) {
@@ -107,20 +120,11 @@ class HikingRouteService {
             'Mapbox returned an incomplete route.',
           );
         }
-        double elevation = 0;
-        try {
-          final decoded = PolylineCodec.decode(optimized.encodedPolyline);
-          final topo = await _openTopoDataService
-              .getElevations(
-                coordinates: decoded
-                    .map((point) => [point.longitude, point.latitude])
-                    .toList(),
-              )
-              .timeout(const Duration(seconds: 25));
-          elevation = topo.elevationGainMeters;
-        } catch (_) {
-          // Elevation enrichment is best effort.
-        }
+        final decoded = PolylineCodec.decode(optimized.encodedPolyline);
+        final topo = await _elevationProfile(
+          decoded.map((point) => [point.longitude, point.latitude]).toList(),
+        );
+        final elevation = topo?.elevationGainMeters ?? 0;
         return HikingRouteResult(
           distanceMeters: optimized.distanceMeters,
           duration: Duration(
@@ -131,6 +135,8 @@ class HikingRouteService {
           ),
           encodedPolyline: optimized.encodedPolyline,
           elevationGainMeters: elevation,
+          minElevationMeters: topo?.minimumElevationMeters,
+          maxElevationMeters: topo?.maximumElevationMeters,
           sourceLabel: 'Mapbox optimized walking route',
         );
       } on MapboxOptimizationException {
@@ -152,16 +158,9 @@ class HikingRouteService {
           .timeout(const Duration(seconds: 45));
 
       double elevation = ors.ascentMeters;
-      List<List<double>> coords = ors.coordinates;
-
-      if (elevation <= 0) {
-        try {
-          final topo = await _openTopoDataService
-              .getElevations(coordinates: coords)
-              .timeout(const Duration(seconds: 25));
-          elevation = topo.elevationGainMeters;
-        } catch (_) {}
-      }
+      final coords = ors.coordinates;
+      final topo = await _elevationProfile(coords);
+      if (elevation <= 0) elevation = topo?.elevationGainMeters ?? 0;
 
       final durationMin = hikingDurationMinutes(
         ors.distanceMeters,
@@ -176,6 +175,8 @@ class HikingRouteService {
         duration: Duration(minutes: durationMin),
         encodedPolyline: polyline,
         elevationGainMeters: elevation,
+        minElevationMeters: topo?.minimumElevationMeters,
+        maxElevationMeters: topo?.maximumElevationMeters,
         sourceLabel: 'ORS foot-hiking',
       );
     } on OpenRouteServiceException {
@@ -196,16 +197,9 @@ class HikingRouteService {
           .timeout(const Duration(seconds: 45));
 
       double elevation = geoapify.elevationGainMeters ?? 0;
-      List<List<double>> coords = geoapify.coordinates;
-
-      if (elevation <= 0) {
-        try {
-          final topo = await _openTopoDataService
-              .getElevations(coordinates: coords)
-              .timeout(const Duration(seconds: 25));
-          elevation = topo.elevationGainMeters;
-        } catch (_) {}
-      }
+      final coords = geoapify.coordinates;
+      final topo = await _elevationProfile(coords);
+      if (elevation <= 0) elevation = topo?.elevationGainMeters ?? 0;
 
       final durationMin = hikingDurationMinutes(
         geoapify.distanceMeters,
@@ -220,6 +214,8 @@ class HikingRouteService {
         duration: Duration(minutes: durationMin),
         encodedPolyline: polyline,
         elevationGainMeters: elevation,
+        minElevationMeters: topo?.minimumElevationMeters,
+        maxElevationMeters: topo?.maximumElevationMeters,
         sourceLabel: 'Geoapify hiking route',
       );
     } on GeoapifyException {
@@ -238,13 +234,24 @@ class HikingRouteService {
         );
       }
 
-      final durationMin = hikingDurationMinutes(googleRoute.distanceMeters);
+      final decoded = PolylineCodec.decode(googleRoute.encodedPolyline);
+      final topo = await _elevationProfile(
+        decoded.map((point) => [point.longitude, point.latitude]).toList(),
+      );
+      final elevation =
+          googleRoute.elevationGainMeters ?? topo?.elevationGainMeters ?? 0;
+      final durationMin = hikingDurationMinutes(
+        googleRoute.distanceMeters,
+        elevationGainMeters: elevation,
+      );
 
       return HikingRouteResult(
         distanceMeters: googleRoute.distanceMeters,
         duration: Duration(minutes: durationMin),
         encodedPolyline: googleRoute.encodedPolyline,
-        elevationGainMeters: googleRoute.elevationGainMeters,
+        elevationGainMeters: elevation,
+        minElevationMeters: topo?.minimumElevationMeters,
+        maxElevationMeters: topo?.maximumElevationMeters,
         sourceLabel: 'Google Walking Route',
       );
     } on TimeoutException {
@@ -281,6 +288,8 @@ class HikingRouteService {
         duration: Duration(minutes: trail.estimatedDurationMinutes),
         encodedPolyline: savedPolyline,
         elevationGainMeters: trail.elevationGainMeters.toDouble(),
+        minElevationMeters: trail.minElevationMeters?.toDouble(),
+        maxElevationMeters: trail.maxElevationMeters?.toDouble(),
         sourceLabel: 'Saved trail route',
       );
     }
@@ -301,6 +310,8 @@ class HikingRouteService {
               encodedPolyline: cachedPolyline,
               elevationGainMeters: (cached['elevation_gain_meters'] as num?)
                   ?.toDouble(),
+              minElevationMeters: trail.minElevationMeters?.toDouble(),
+              maxElevationMeters: trail.maxElevationMeters?.toDouble(),
               sourceLabel: '${cached['source_label']} (cached)',
             );
           }
@@ -335,6 +346,29 @@ class HikingRouteService {
     }
 
     return result;
+  }
+
+  Future<OpenTopoDataResult?> _elevationProfile(
+    List<List<double>> coordinates,
+  ) async {
+    if (coordinates.isEmpty) return null;
+    const maximumSamples = 100;
+    final sampled = coordinates.length <= maximumSamples
+        ? coordinates
+        : List<List<double>>.generate(maximumSamples, (index) {
+            final sourceIndex =
+                ((coordinates.length - 1) * index / (maximumSamples - 1))
+                    .round();
+            return coordinates[sourceIndex];
+          }, growable: false);
+    try {
+      return await _openTopoDataService
+          .getElevations(coordinates: sampled)
+          .timeout(const Duration(seconds: 25));
+    } catch (_) {
+      // Route creation remains usable if optional elevation sampling is down.
+      return null;
+    }
   }
 
   bool _isUsablePolyline(String encodedPolyline) {

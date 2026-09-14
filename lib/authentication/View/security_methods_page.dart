@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/verification_code_input.dart';
 
 import '../Data/multi_factor_auth_service.dart';
 import '../Data/passkey_build_support.dart';
@@ -421,16 +422,11 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
                     label: const Text('Copy setup key'),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  VerificationCodeInput(
                     controller: _codeController,
                     enabled: !_busy,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      labelText: '6-digit code',
-                      counterText: '',
-                    ),
+                    semanticLabel: 'Authenticator verification code',
+                    onCompleted: (_) => _finish(),
                     onSubmitted: (_) => _finish(),
                   ),
                   const SizedBox(height: 12),

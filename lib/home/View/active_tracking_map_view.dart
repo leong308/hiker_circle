@@ -143,11 +143,19 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   Future<void> _loadStaticHazards() async {
     final generation = ++_hazardLoadGeneration;
     try {
-      final cached = await _localDatabase.loadStaticHazardsForTrail(
+      final currentScan = await _localDatabase.loadStaticHazardScanTime(
         widget.activeHike.trail.trailId,
       );
       if (!mounted || generation != _hazardLoadGeneration) return;
-      _applyStaticHazards(cached);
+      if (currentScan != null) {
+        final cached = await _localDatabase.loadStaticHazardsForTrail(
+          widget.activeHike.trail.trailId,
+        );
+        if (!mounted || generation != _hazardLoadGeneration) return;
+        _applyStaticHazards(cached);
+      } else {
+        _applyStaticHazards(const []);
+      }
       final hazards = await StaticHazardDatasetService(
         database: _localDatabase,
       ).ensureForTrail(widget.activeHike.trail);
@@ -161,7 +169,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   void _applyStaticHazards(List<LocalTrailHazardMatch> hazards) {
     if (!mounted) return;
     setState(() {
-      _staticHazards = hazards;
+      _staticHazards = prepareStaticHazardsForMapDisplay(hazards);
       _routeRendered = false;
     });
     unawaited(_renderRouteIfReady());
@@ -905,14 +913,16 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     }
 
     if (_staticHazards.isNotEmpty) {
-      final hazardMarker = await staticHazardMarkerImage();
+      final hazardMarkers = await Future.wait([
+        for (final match in _staticHazards) staticHazardMarkerImageFor(match),
+      ]);
       if (!_isCurrentMap(map, mapGeneration) ||
           renderGeneration != _renderGeneration) {
         return;
       }
       final annotations = await pointManager.createMulti([
-        for (final match in _staticHazards)
-          staticHazardAnnotation(match, hazardMarker),
+        for (var index = 0; index < _staticHazards.length; index++)
+          staticHazardAnnotation(_staticHazards[index], hazardMarkers[index]),
       ]);
       for (var index = 0; index < annotations.length; index++) {
         final annotation = annotations[index];

@@ -34,6 +34,41 @@ test('pre-MFA WhatsApp verification cannot mint a Firebase token', () => {
   assert.match(block, /mfaLoginSessions|mfaSessionReference/);
 });
 
+test('sign-in requires password verification before WhatsApp OTP delivery', () => {
+  const sendBlock = exportedBlock(
+    'sendGreenApiLoginCode',
+    'sendSosWhatsAppMessage'
+  );
+  assert.match(sendBlock, /intent === 'sign_in'/);
+  assert.match(sendBlock, /requireLoginPasswordBeforeOtp/);
+  assert.match(sendBlock, /passwordVerified: intent === 'sign_in'/);
+  assert.match(
+    sendBlock,
+    /Your HikerCircle login verification code is \$\{code\}/
+  );
+  assert.ok(
+    sendBlock.indexOf('requireLoginPasswordBeforeOtp') <
+      sendBlock.indexOf("greenApiEndpoint('sendMessage'")
+  );
+
+  const verifyBlock = exportedBlock(
+    'verifyGreenApiLoginCode',
+    'registerWithGreenApiAndPassword'
+  );
+  assert.match(verifyBlock, /challenge\.passwordVerified !== true/);
+  assert.match(verifyBlock, /passwordVerified:[\s\S]*verification\.intent === 'sign_in'/);
+});
+
+test('authenticated security re-verification cannot impersonate another phone', () => {
+  const sendBlock = exportedBlock(
+    'sendGreenApiLoginCode',
+    'sendSosWhatsAppMessage'
+  );
+  assert.match(sendBlock, /intent === 'reauth'/);
+  assert.match(sendBlock, /authenticatedPhoneClaim\(request\) !== phoneNumber/);
+  assert.match(sendBlock, /requestedByUid/);
+});
+
 test('legacy password and saved-device token bypasses stay disabled', () => {
   const passwordBlock = exportedBlock('loginWithPassword', 'linkPasswordToAccount');
   const recoveryBlock = exportedBlock('authenticateAppSession', 'fetchWeatherForAllTrails');
@@ -62,6 +97,9 @@ test('factor and challenge collections are explicitly denied to mobile SDKs', ()
     'mfaLoginSessions',
     'mfaEnrollmentChallenges',
     'mfaAuthenticationChallenges',
+    'passwordResetChallenges',
+    'passwordResetSessions',
+    'passwordResetPasskeyChallenges',
   ]) {
     const location = rules.indexOf(collection);
     assert.ok(location >= 0, `Missing rules for ${collection}`);

@@ -81,6 +81,11 @@ h1 { color: var(--forest-950); font-size: clamp(3.8rem, 7vw, 6.5rem); line-heigh
 .trail-section { padding-top: 0; }
 .trail-section .community-layout { padding-top: clamp(3rem,6vw,5rem); border-top: 1px solid var(--line); }
 .community-layout { width: var(--page); margin: 0 auto; display: grid; grid-template-columns: minmax(260px,.72fr) minmax(0,1.28fr); gap: clamp(3rem,7vw,7rem); align-items: center; }
+@media (min-width: 981px) {
+  .trail-section .community-layout { grid-template-columns: minmax(0,1.28fr) minmax(260px,.72fr); }
+  .trail-section .community-stats-wrap { grid-column: 1; grid-row: 1; }
+  .trail-section .community-intro { grid-column: 2; grid-row: 1; }
+}
 .community-intro h2 { color: var(--forest-950); font-size: clamp(2.9rem,5vw,4.9rem); line-height: 1; }
 .community-intro > p:last-child { max-width: 470px; margin: 1.35rem 0 0; color: var(--muted); font-size: .92rem; line-height: 1.75; }
 .community-stats-wrap { min-width: 0; }

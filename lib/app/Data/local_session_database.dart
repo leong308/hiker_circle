@@ -288,7 +288,9 @@ class LocalSessionDatabase {
   LocalSessionDatabase({String? databasePath})
     : _databasePathOverride = databasePath;
 
-  static const _staticHazardScanPreferencePrefix = 'static_hazard_scan:';
+  // Versioned so devices refresh previously cached ten-sample/general-warning
+  // datasets after the route-specific hazard expansion was introduced.
+  static const _staticHazardScanPreferencePrefix = 'static_hazard_scan:v3:';
 
   Database? _database;
   Future<Database>? _openingDatabase;
@@ -2964,12 +2966,28 @@ class LocalSessionDatabase {
       CREATE INDEX IF NOT EXISTS idx_trail_hazard_matches_route
       ON trail_hazard_matches(trail_id, route_progress, distance_meters)
     ''');
+    // Android's system SQLite is not guaranteed to be compiled with the
+    // optional RTREE module. Keep the existing table name/data contract but
+    // use a portable table: current hazard reads are trail-id based, while
+    // these bounds remain available for a future indexed bounding-box query.
     await database.execute('''
-      CREATE VIRTUAL TABLE IF NOT EXISTS hazard_feature_rtree USING rtree(
-        local_id,
-        min_longitude, max_longitude,
-        min_latitude, max_latitude
+      CREATE TABLE IF NOT EXISTS hazard_feature_rtree (
+        local_id INTEGER PRIMARY KEY,
+        min_longitude REAL NOT NULL,
+        max_longitude REAL NOT NULL,
+        min_latitude REAL NOT NULL,
+        max_latitude REAL NOT NULL,
+        FOREIGN KEY (local_id) REFERENCES hazard_features(local_id)
+          ON DELETE CASCADE
       )
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_hazard_feature_bounds_longitude
+      ON hazard_feature_rtree(min_longitude, max_longitude)
+    ''');
+    await database.execute('''
+      CREATE INDEX IF NOT EXISTS idx_hazard_feature_bounds_latitude
+      ON hazard_feature_rtree(min_latitude, max_latitude)
     ''');
   }
 

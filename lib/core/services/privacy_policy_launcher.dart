@@ -6,9 +6,13 @@ final privacyPolicyUri = Uri.parse(privacyPolicyUrl);
 
 Future<bool> launchPrivacyPolicy() async {
   try {
+    if (!await supportsLaunchMode(LaunchMode.inAppBrowserView)) {
+      return false;
+    }
     return await launchUrl(
       privacyPolicyUri,
-      mode: LaunchMode.externalApplication,
+      mode: LaunchMode.inAppBrowserView,
+      browserConfiguration: const BrowserConfiguration(showTitle: true),
     );
   } catch (_) {
     return false;

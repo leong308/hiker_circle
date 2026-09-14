@@ -53,6 +53,7 @@ class SosAlertSubmission {
 
 class SosAlertRepository {
   static const int _maxImmediateSendAttempts = 1;
+  static const int _maxRecentSosAlertReferences = 30;
 
   SosAlertRepository({
     FirebaseFirestore? firestore,
@@ -193,6 +194,13 @@ class SosAlertRepository {
     }
 
     try {
+      final referencedAlerts = await _loadReferencedAlertLogs(
+        session: session,
+        limit: limit,
+      );
+      if (referencedAlerts.isNotEmpty) {
+        return referencedAlerts;
+      }
       final snapshot = await _sosAlerts
           .where(
             'userId',
@@ -210,6 +218,36 @@ class SosAlertRepository {
     } catch (_) {
       return const [];
     }
+  }
+
+  Future<List<SosAlert>> _loadReferencedAlertLogs({
+    required AppSession session,
+    required int limit,
+  }) async {
+    final userSnapshot = await _userDocumentFor(session).get();
+    final rawPaths = userSnapshot.data()?['recentSosAlertPaths'];
+    if (rawPaths is! Iterable) return const [];
+    final paths = rawPaths
+        .whereType<String>()
+        .where((path) => path.startsWith('sosAlerts/'))
+        .take(
+          limit < 0
+              ? 0
+              : limit > _maxRecentSosAlertReferences
+              ? _maxRecentSosAlertReferences
+              : limit,
+        )
+        .toList();
+    if (paths.isEmpty) return const [];
+    final snapshots = await Future.wait(
+      paths.map((path) => _resolvedFirestore.doc(path).get()),
+    );
+    final alerts = snapshots
+        .where((snapshot) => snapshot.exists && snapshot.data() != null)
+        .map((snapshot) => SosAlert.fromFirestore(snapshot.data()!))
+        .toList();
+    alerts.sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
+    return alerts;
   }
 
   Future<SosAlertResult> triggerAlert({
@@ -1086,25 +1124,69 @@ class SosAlertRepository {
     required SosAlert alert,
   }) async {
     try {
-      await Future.wait([
-        _userDocumentFor(session).set({
-          'latest_sos_alert': alert.toFirestore(),
-          'sos_alerts': FieldValue.arrayUnion([alert.toFirestore()]),
-          'sosAlertsCount': FieldValue.increment(1),
-          'sosAlertsUpdatedAt': FieldValue.serverTimestamp(),
-          'sosAlertsUpdatedAtLocal': alert.triggeredAt.toIso8601String(),
-          'phoneNumber': session.phoneNumber,
-        }, SetOptions(merge: true)),
-        _sosAlerts.doc(alert.id).set({
-          ...alert.toFirestore(),
-          'userId': FirebaseUserRepository.documentIdForPhoneNumber(
-            session.phoneNumber,
-          ),
-          'phoneNumber': session.phoneNumber,
-          'cloudLogPath': 'sosAlerts/${alert.id}',
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true)),
-      ]).timeout(_cloudWriteTimeout);
+      final userReference = _userDocumentFor(session);
+      final alertReference = _sosAlerts.doc(alert.id);
+      final alertPath = 'sosAlerts/${alert.id}';
+      await _resolvedFirestore
+          .runTransaction<void>((transaction) async {
+            final userSnapshot = await transaction.get(userReference);
+            final alertSnapshot = await transaction.get(alertReference);
+            final user = userSnapshot.data() ?? const <String, dynamic>{};
+            final existingPaths = user['recentSosAlertPaths'];
+            final previousLatestAt = DateTime.tryParse(
+              user['sosAlertsUpdatedAtLocal'] is String
+                  ? user['sosAlertsUpdatedAtLocal'] as String
+                  : '',
+            );
+            final isLatest =
+                previousLatestAt == null ||
+                !alert.triggeredAt.toUtc().isBefore(previousLatestAt.toUtc());
+            final existingRecentPaths = existingPaths is Iterable
+                ? existingPaths.whereType<String>()
+                : const Iterable<String>.empty();
+            final recentPaths = isLatest
+                ? <String>[alertPath, ...existingRecentPaths]
+                : <String>[...existingRecentPaths, alertPath];
+            final uniqueRecentPaths = <String>[];
+            for (final path in recentPaths) {
+              if (!path.startsWith('sosAlerts/') ||
+                  uniqueRecentPaths.contains(path)) {
+                continue;
+              }
+              uniqueRecentPaths.add(path);
+              if (uniqueRecentPaths.length >= _maxRecentSosAlertReferences) {
+                break;
+              }
+            }
+            transaction.set(alertReference, {
+              ...alert.toFirestore(),
+              'userId': FirebaseUserRepository.documentIdForPhoneNumber(
+                session.phoneNumber,
+              ),
+              'phoneNumber': session.phoneNumber,
+              'cloudLogPath': 'sosAlerts/${alert.id}',
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+            transaction.set(userReference, {
+              if (isLatest) 'latestSosAlertPath': alertPath,
+              'recentSosAlertPaths': uniqueRecentPaths,
+              'sosAlertReferenceVersion': 1,
+              if (!alertSnapshot.exists)
+                'sosAlertsCount': FieldValue.increment(1),
+              'sosAlertsUpdatedAt': FieldValue.serverTimestamp(),
+              if (isLatest)
+                'sosAlertsUpdatedAtLocal': alert.triggeredAt
+                    .toUtc()
+                    .toIso8601String(),
+              'phoneNumber': session.phoneNumber,
+              // SOS event bodies now live only in the canonical sosAlerts
+              // collection. Remove legacy copies after the canonical write and
+              // lightweight references are part of the same atomic transaction.
+              'latest_sos_alert': FieldValue.delete(),
+              'sos_alerts': FieldValue.delete(),
+            }, SetOptions(merge: true));
+          })
+          .timeout(_cloudWriteTimeout);
     } on FirebaseException catch (error) {
       throw SosAlertRepositoryException(
         'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',

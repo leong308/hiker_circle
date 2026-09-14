@@ -742,6 +742,107 @@ async function markOtpDeliveryUncertain(reference, error) {
   );
 }
 
+async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
+  if (!password) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Enter your password before requesting an OTP.'
+    );
+  }
+
+  const userReference = admin.firestore()
+    .collection('users')
+    .doc(userDocumentIdForPhone(phoneNumber));
+  const nowMillis = Date.now();
+  const result = await admin.firestore().runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userReference);
+    if (!snapshot.exists) {
+      return {
+        errorCode: 'not-found',
+        errorMessage:
+          'No account found with this phone number. Please sign up first.',
+      };
+    }
+    const user = snapshot.data() || {};
+    const cooldownMillis = dateMillis(user.loginCooldownUntil);
+    if (Number.isFinite(cooldownMillis) && cooldownMillis > nowMillis) {
+      const remainingMinutes = Math.max(
+        1,
+        Math.ceil((cooldownMillis - nowMillis) / (60 * 1000))
+      );
+      return {
+        errorCode: 'resource-exhausted',
+        errorMessage:
+          `Too many incorrect passwords. Try again in ${remainingMinutes} ` +
+          `minute${remainingMinutes === 1 ? '' : 's'}.`,
+      };
+    }
+    if (user.accountDisabled === true || user.status === 'disabled') {
+      return {
+        errorCode: 'permission-denied',
+        errorMessage: 'This HikerCircle account has been disabled.',
+      };
+    }
+
+    const storedHash = String(user.passwordHash || '');
+    if (!storedHash) {
+      return {
+        errorCode: 'failed-precondition',
+        errorMessage:
+          'This account does not have a password yet. Use Forgot password to create one.',
+      };
+    }
+
+    let passwordValid = false;
+    try {
+      passwordValid = await argon2.verify(storedHash, password);
+    } catch (error) {
+      logger.error('Login password hash verification failed', {
+        userId: userReference.id,
+        errorName: String(error?.name || ''),
+      });
+      return {
+        errorCode: 'internal',
+        errorMessage: 'Password verification failed. Please try again.',
+      };
+    }
+
+    if (!passwordValid) {
+      const failedAttempts = Number(user.loginFailedAttempts || 0) + 1;
+      if (failedAttempts >= 5) {
+        transaction.update(userReference, {
+          loginFailedAttempts: 0,
+          loginCooldownUntil: new Date(nowMillis + 30 * 60 * 1000),
+        });
+        return {
+          errorCode: 'resource-exhausted',
+          errorMessage:
+            'Too many incorrect passwords. Login is paused for 30 minutes.',
+        };
+      }
+      transaction.update(userReference, {
+        loginFailedAttempts: failedAttempts,
+      });
+      return {
+        errorCode: 'permission-denied',
+        errorMessage: 'The password is incorrect.',
+      };
+    }
+
+    transaction.update(userReference, {
+      loginFailedAttempts: 0,
+      loginCooldownUntil: admin.firestore.FieldValue.delete(),
+      lastPasswordVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastPasswordVerifiedAtLocal: new Date(nowMillis).toISOString(),
+    });
+    return { success: true };
+  });
+
+  if (result.errorCode) {
+    throw new HttpsError(result.errorCode, result.errorMessage);
+  }
+}
+
 async function updateTeamParticipantForHike(hike, nextStatus) {
   const teamHikeSessionId = String(hike.teamHikeSessionId || '');
   const phoneNumber = String(hike.userPhoneNumber || hike.phoneNumber || '');
@@ -812,7 +913,7 @@ exports.sendGreenApiLoginCode = onCall(
       );
     }
     const intent = String(request.data?.intent || '').trim();
-    if (!['sign_in', 'sign_up'].includes(intent)) {
+    if (!['sign_in', 'sign_up', 'reauth'].includes(intent)) {
       throw new HttpsError('invalid-argument', 'Choose Sign Up or Login and try again.');
     }
     const accountSnapshot = await admin.firestore()
@@ -826,6 +927,22 @@ exports.sendGreenApiLoginCode = onCall(
       throw new HttpsError(
         'already-exists',
         'This phone number already has an account. Log in instead.'
+      );
+    }
+    if (intent === 'reauth') {
+      if (
+        !accountSnapshot.exists ||
+        authenticatedPhoneClaim(request) !== phoneNumber
+      ) {
+        throw new HttpsError(
+          'unauthenticated',
+          'Sign in again before confirming a security change.'
+        );
+      }
+    } else if (intent === 'sign_in') {
+      await requireLoginPasswordBeforeOtp(
+        phoneNumber,
+        String(request.data?.password || '')
       );
     }
 
@@ -861,8 +978,22 @@ exports.sendGreenApiLoginCode = onCall(
       expiresAtMillis,
       cooldownMessage: 'Wait one minute before requesting another WhatsApp code.',
     });
-    await challengeReference.set({ intent }, { merge: true });
+    await challengeReference.set(
+      {
+        intent,
+        passwordVerified: intent === 'sign_in',
+        requestedByUid: intent === 'reauth'
+          ? String(request.auth?.uid || '')
+          : admin.firestore.FieldValue.delete(),
+      },
+      { merge: true }
+    );
     const digitsOnly = phoneNumber.replace(/\D/g, '');
+    const verificationMessage = intent === 'sign_in'
+      ? `Your HikerCircle login verification code is ${code}. ` +
+        'It expires in 5 minutes.'
+      : `Your HikerCircle verification code is ${code}. ` +
+        'It expires in 5 minutes.';
     let response;
     try {
       response = await fetch(
@@ -872,9 +1003,7 @@ exports.sendGreenApiLoginCode = onCall(
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chatId: `${digitsOnly}@c.us`,
-            message:
-              `Your HikerCircle verification code is ${code}. ` +
-              'It expires in 5 minutes.',
+            message: verificationMessage,
           }),
           signal: AbortSignal.timeout(12 * 1000),
         }
@@ -8003,6 +8132,29 @@ exports.verifyGreenApiLoginCode = onCall(
             errorMessage: 'Too many incorrect attempts. Request a new code.',
           };
         }
+        const intent = String(challenge.intent || '');
+        if (intent === 'sign_in' && challenge.passwordVerified !== true) {
+          return {
+            errorCode: 'failed-precondition',
+            errorMessage:
+              'Verify your password before entering a WhatsApp code.',
+          };
+        }
+        if (
+          intent === 'reauth' &&
+          (
+            authenticatedPhoneClaim(request) !==
+              String(challenge.phoneNumber || '') ||
+            String(request.auth?.uid || '') !==
+              String(challenge.requestedByUid || '')
+          )
+        ) {
+          return {
+            errorCode: 'unauthenticated',
+            errorMessage:
+              'Sign in again before confirming a security change.',
+          };
+        }
 
         const expected = Buffer.from(String(challenge.codeHash || ''), 'hex');
         const candidateHash = crypto
@@ -8027,7 +8179,11 @@ exports.verifyGreenApiLoginCode = onCall(
           verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
           codeHash: admin.firestore.FieldValue.delete(),
         });
-        return { phoneNumber: String(challenge.phoneNumber || '') };
+        return {
+          phoneNumber: String(challenge.phoneNumber || ''),
+          intent,
+          passwordVerified: challenge.passwordVerified === true,
+        };
       }
     );
     if (verification.errorCode) {
@@ -8042,6 +8198,15 @@ exports.verifyGreenApiLoginCode = onCall(
     }
     const userId = userDocumentIdForPhone(phoneNumber);
     const userSnapshot = await admin.firestore().collection('users').doc(userId).get();
+    if (verification.intent === 'sign_in' && !userSnapshot.exists) {
+      throw new HttpsError('not-found', 'This account no longer exists.');
+    }
+    if (verification.intent === 'sign_up' && userSnapshot.exists) {
+      throw new HttpsError(
+        'already-exists',
+        'This phone number already has an account. Log in instead.'
+      );
+    }
     const factors = await factorDocumentsForUser(userId);
     const methods = factorMethods(factors);
     const mfaToken = randomOpaqueToken(32);
@@ -8051,6 +8216,10 @@ exports.verifyGreenApiLoginCode = onCall(
       phoneNumber,
       whatsappChallengeId: challengeId,
       whatsappVerified: true,
+      passwordVerified:
+        verification.intent === 'sign_in' &&
+        verification.passwordVerified === true,
+      loginIntent: verification.intent,
       enrollmentRequired: methods.length === 0,
       methods,
       attemptsRemaining: 8,
@@ -8511,6 +8680,10 @@ exports.verifyPasswordResetOtp = onCall(
     const questions = user.safetyQuestions;
     const hasQuestions =
       questions && questions.q1 && questions.q2 && questions.a1Hash && questions.a2Hash;
+    const recoveryMethods = [
+      ...(hasQuestions ? ['secretQuestion'] : []),
+      ...factorMethods(await factorDocumentsForUser(userId)),
+    ];
 
     let questionField = null;
     let questionText = null;
@@ -8536,6 +8709,8 @@ exports.verifyPasswordResetOtp = onCall(
         expiresAtMillis: resetExpiresAt,
         safetyQuestionField: questionField,
         skipQuestion: !hasQuestions,
+        recoveryMethods,
+        recoveryVerified: false,
         attemptsRemaining: 3,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -8545,10 +8720,47 @@ exports.verifyPasswordResetOtp = onCall(
       questionField,
       questionText,
       skipQuestion: !hasQuestions,
+      recoveryMethods,
       expiresAtMillis: resetExpiresAt,
     };
   }
 );
+
+async function readUsablePasswordResetSession(resetToken, recoveryMethod = '') {
+  if (!/^[a-f0-9]{64}$/.test(resetToken)) {
+    throw new HttpsError('invalid-argument', 'The password reset session is invalid.');
+  }
+  const reference = admin.firestore()
+    .collection('passwordResetSessions')
+    .doc(resetToken);
+  const snapshot = await reference.get();
+  const session = snapshot.data() || {};
+  if (
+    !snapshot.exists
+    || session.used === true
+    || Date.now() > Number(session.expiresAtMillis || 0)
+  ) {
+    throw new HttpsError(
+      'deadline-exceeded',
+      'The password reset session has expired. Start again.'
+    );
+  }
+  const phoneNumber = String(session.phoneNumber || '');
+  const userId = userDocumentIdForPhone(phoneNumber);
+  if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
+    throw new HttpsError('internal', 'The password reset session is corrupted.');
+  }
+  const recoveryMethods = Array.isArray(session.recoveryMethods)
+    ? session.recoveryMethods.map((method) => String(method || ''))
+    : [];
+  if (recoveryMethod && !recoveryMethods.includes(recoveryMethod)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This security method is not bound to the account.'
+    );
+  }
+  return { reference, snapshot, session, phoneNumber, userId, recoveryMethods };
+}
 
 exports.checkSafetyAnswer = onCall(
   {},
@@ -8579,8 +8791,11 @@ exports.checkSafetyAnswer = onCall(
       if (Date.now() > Number(session.expiresAtMillis || 0)) {
         return { errorCode: 'deadline-exceeded', errorMessage: 'The reset session has expired. Start again.' };
       }
-      if (session.skipQuestion === true) {
-        return { valid: true };
+      if (
+        !Array.isArray(session.recoveryMethods)
+        || !session.recoveryMethods.includes('secretQuestion')
+      ) {
+        return { errorCode: 'failed-precondition', errorMessage: 'Safety questions are not bound to this account.' };
       }
 
       const phoneNumber = String(session.phoneNumber || '');
@@ -8618,6 +8833,11 @@ exports.checkSafetyAnswer = onCall(
         return { errorCode: 'permission-denied', errorMessage: 'The answer is incorrect.' };
       }
 
+      transaction.set(sessionRef, {
+        recoveryVerified: true,
+        recoveryMethod: 'secretQuestion',
+        recoveryVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
       return { valid: true };
     });
 
@@ -8628,11 +8848,252 @@ exports.checkSafetyAnswer = onCall(
   }
 );
 
+exports.verifyPasswordResetTotp = onCall(
+  { secrets: [mfaTotpEncryptionKey] },
+  async (request) => {
+    const resetToken = String(request.data?.resetToken || '').trim();
+    const code = String(request.data?.code || '').trim();
+    if (!/^\d{6}$/.test(code)) {
+      throw new HttpsError(
+        'invalid-argument',
+        'Enter the current 6-digit Authenticator code.'
+      );
+    }
+    const resolved = await readUsablePasswordResetSession(resetToken, 'totp');
+    const factorReference = admin.firestore()
+      .collection('users').doc(resolved.userId)
+      .collection('authFactors').doc('totp');
+    const result = await admin.firestore().runTransaction(async (transaction) => {
+      const [sessionSnapshot, factorSnapshot] = await Promise.all([
+        transaction.get(resolved.reference),
+        transaction.get(factorReference),
+      ]);
+      const session = sessionSnapshot.data() || {};
+      const factor = factorSnapshot.data() || {};
+      if (
+        !sessionSnapshot.exists
+        || session.used === true
+        || Date.now() > Number(session.expiresAtMillis || 0)
+      ) {
+        return { error: 'expired' };
+      }
+      if (
+        !Array.isArray(session.recoveryMethods)
+        || !session.recoveryMethods.includes('totp')
+        || !factorSnapshot.exists
+        || factor.enabled === false
+        || factor.type !== 'totp'
+      ) {
+        return { error: 'missing' };
+      }
+      const attemptsRemaining = Number(session.attemptsRemaining || 0);
+      if (attemptsRemaining <= 0) return { error: 'locked' };
+      const secret = decryptTotpSecret(
+        factor.encryptedSecret,
+        mfaTotpEncryptionKey.value()
+      );
+      const verification = verifyTotp({
+        secret,
+        code,
+        window: 1,
+        lastUsedStep: Number(factor.lastUsedStep ?? -1),
+      });
+      if (!verification.valid) {
+        transaction.set(resolved.reference, {
+          attemptsRemaining: attemptsRemaining - 1,
+        }, { merge: true });
+        return { error: 'incorrect' };
+      }
+      transaction.set(factorReference, {
+        lastUsedStep: verification.step,
+        lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      transaction.set(resolved.reference, {
+        recoveryVerified: true,
+        recoveryMethod: 'totp',
+        recoveryVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return { verified: true };
+    });
+    if (!result.verified) {
+      const messages = {
+        expired: 'The password reset session has expired.',
+        missing: 'Authenticator is not bound to this account.',
+        locked: 'Too many incorrect attempts. Start the password reset again.',
+        incorrect: 'The Authenticator code is incorrect or was already used.',
+      };
+      throw new HttpsError(
+        result.error === 'expired' ? 'deadline-exceeded' : 'permission-denied',
+        messages[result.error] || 'Authenticator verification failed.'
+      );
+    }
+    return { verified: true, method: 'totp' };
+  }
+);
+
+exports.beginPasswordResetPasskey = onCall({}, async (request) => {
+  const resetToken = String(request.data?.resetToken || '').trim();
+  const resolved = await readUsablePasswordResetSession(resetToken, 'passkey');
+  const factors = (await factorDocumentsForUser(resolved.userId))
+    .filter((document) => document.data()?.type === 'passkey');
+  if (factors.length === 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      'No passkey is bound to this account.'
+    );
+  }
+  const { generateAuthenticationOptions } = await simpleWebAuthn();
+  const options = await generateAuthenticationOptions({
+    rpID: MFA_RP_ID,
+    allowCredentials: factors.map((document) => {
+      const transports = normalizeAuthenticatorTransports(
+        document.data()?.transports
+      );
+      return {
+        id: String(document.data()?.credentialId || ''),
+        ...(transports.length > 0 ? { transports } : {}),
+      };
+    }),
+    userVerification: 'required',
+    timeout: 60_000,
+  });
+  const challengeId = randomOpaqueToken(24);
+  const expiresAtMillis = Date.now() + MFA_CHALLENGE_TTL_MILLIS;
+  await admin.firestore()
+    .collection('passwordResetPasskeyChallenges')
+    .doc(challengeId)
+    .set({
+      sessionDigest: opaqueTokenDigest(resetToken),
+      userId: resolved.userId,
+      webAuthnChallenge: options.challenge,
+      attemptsRemaining: 5,
+      consumed: false,
+      expiresAtMillis,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  return { challengeId, options, expiresAtMillis };
+});
+
+exports.finishPasswordResetPasskey = onCall({}, async (request) => {
+  const resetToken = String(request.data?.resetToken || '').trim();
+  const challengeId = String(request.data?.challengeId || '').trim();
+  const response = request.data?.response;
+  const resolved = await readUsablePasswordResetSession(resetToken, 'passkey');
+  if (!validMfaChallengeId(challengeId) || !response || typeof response !== 'object') {
+    throw new HttpsError('invalid-argument', 'The passkey response is invalid.');
+  }
+  const challengeReference = admin.firestore()
+    .collection('passwordResetPasskeyChallenges').doc(challengeId);
+  const challengeSnapshot = await challengeReference.get();
+  const challenge = challengeSnapshot.data() || {};
+  if (
+    !challengeSnapshot.exists
+    || challenge.userId !== resolved.userId
+    || challenge.sessionDigest !== opaqueTokenDigest(resetToken)
+    || challenge.consumed === true
+    || Date.now() > Number(challenge.expiresAtMillis || 0)
+  ) {
+    throw new HttpsError(
+      'deadline-exceeded',
+      'This passkey request has expired. Start again.'
+    );
+  }
+  if (Number(challenge.attemptsRemaining || 0) <= 0) {
+    throw new HttpsError(
+      'permission-denied',
+      'Too many failed passkey attempts. Start the password reset again.'
+    );
+  }
+  const credentialId = String(response.id || '');
+  const factors = await factorDocumentsForUser(resolved.userId);
+  const factorDocument = factors.find(
+    (document) => document.data()?.type === 'passkey'
+      && String(document.data()?.credentialId || '') === credentialId
+  );
+  if (!factorDocument) {
+    throw new HttpsError(
+      'permission-denied',
+      'This passkey is not bound to the account.'
+    );
+  }
+  const factor = factorDocument.data();
+  let verification;
+  try {
+    const { verifyAuthenticationResponse } = await simpleWebAuthn();
+    verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: String(challenge.webAuthnChallenge || ''),
+      expectedOrigin: MFA_EXPECTED_ORIGINS,
+      expectedRPID: MFA_RP_ID,
+      requireUserVerification: true,
+      credential: {
+        id: credentialId,
+        publicKey: new Uint8Array(
+          Buffer.from(String(factor.publicKey || ''), 'base64')
+        ),
+        counter: Number(factor.counter || 0),
+        transports: normalizeAuthenticatorTransports(factor.transports),
+      },
+    });
+  } catch (error) {
+    await decrementMfaChallengeAttempt(challengeReference);
+    logger.warn('Password reset passkey verification failed', {
+      userId: resolved.userId,
+      errorName: String(error?.name || ''),
+    });
+    throw new HttpsError(
+      'permission-denied',
+      'The passkey could not be verified.'
+    );
+  }
+  if (!verification.verified) {
+    await decrementMfaChallengeAttempt(challengeReference);
+    throw new HttpsError(
+      'permission-denied',
+      'The passkey could not be verified.'
+    );
+  }
+  await admin.firestore().runTransaction(async (transaction) => {
+    const [freshChallenge, freshSession, freshFactor] = await Promise.all([
+      transaction.get(challengeReference),
+      transaction.get(resolved.reference),
+      transaction.get(factorDocument.ref),
+    ]);
+    if (
+      !freshChallenge.exists
+      || freshChallenge.data()?.consumed === true
+      || !freshSession.exists
+      || freshSession.data()?.used === true
+      || Date.now() > Number(freshSession.data()?.expiresAtMillis || 0)
+      || Number(freshFactor.data()?.counter || 0) !== Number(factor.counter || 0)
+    ) {
+      throw new HttpsError(
+        'already-exists',
+        'This passkey response was already used.'
+      );
+    }
+    transaction.set(challengeReference, {
+      consumed: true,
+      consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+      webAuthnChallenge: admin.firestore.FieldValue.delete(),
+    }, { merge: true });
+    transaction.set(resolved.reference, {
+      recoveryVerified: true,
+      recoveryMethod: 'passkey',
+      recoveryVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    transaction.set(factorDocument.ref, {
+      counter: Number(verification.authenticationInfo?.newCounter || 0),
+      lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  });
+  return { verified: true, method: 'passkey' };
+});
+
 exports.resetPassword = onCall(
   {},
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
-    const answer = String(request.data?.answer || '');
     const newPassword = String(request.data?.newPassword || '');
 
     if (resetToken.length < 10) {
@@ -8658,47 +9119,24 @@ exports.resetPassword = onCall(
       if (Date.now() > Number(session.expiresAtMillis || 0)) {
         return { errorCode: 'deadline-exceeded', errorMessage: 'The reset session has expired. Start again.' };
       }
+      const recoveryMethod = String(session.recoveryMethod || '');
+      if (
+        session.recoveryVerified !== true
+        || !['secretQuestion', 'totp', 'passkey'].includes(recoveryMethod)
+        || !Array.isArray(session.recoveryMethods)
+        || !session.recoveryMethods.includes(recoveryMethod)
+      ) {
+        return {
+          errorCode: 'failed-precondition',
+          errorMessage: 'Verify one of your bound security methods before setting a new password.',
+        };
+      }
 
       const phoneNumber = String(session.phoneNumber || '');
-      const userId = userDocumentIdForPhone(phoneNumber);
-
-      if (!session.skipQuestion) {
-        if (!answer || answer.length < 2) {
-          return { errorCode: 'invalid-argument', errorMessage: 'Answer must be at least 2 characters.' };
-        }
-        const userSnapshot = await transaction.get(
-          admin.firestore().collection('users').doc(userId)
-        );
-        const user = userSnapshot.data() || {};
-        const questions = user.safetyQuestions;
-        if (!questions) {
-          return { errorCode: 'failed-precondition', errorMessage: 'Safety questions not found.' };
-        }
-
-        const questionField = String(session.safetyQuestionField || 'q1');
-        const answerField = questionField === 'q1' ? 'a1Hash' : 'a2Hash';
-        const storedHash = questions[answerField];
-
-        if (!storedHash) {
-          return { errorCode: 'failed-precondition', errorMessage: 'Safety question data is corrupted.' };
-        }
-
-        let answerValid;
-        try {
-          answerValid = await argon2.verify(storedHash, answer.toLowerCase());
-        } catch (_) {
-          return { errorCode: 'internal', errorMessage: 'Answer verification failed. Try again.' };
-        }
-        if (!answerValid) {
-          const remaining = Number(session.attemptsRemaining || 0) - 1;
-          if (remaining <= 0) {
-            transaction.update(sessionRef, { used: true, attemptsRemaining: 0 });
-            return { errorCode: 'permission-denied', errorMessage: 'Too many incorrect answers. Start the password reset again.' };
-          }
-          transaction.update(sessionRef, { attemptsRemaining: remaining });
-          return { errorCode: 'permission-denied', errorMessage: 'The answer is incorrect.' };
-        }
+      if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
+        return { errorCode: 'internal', errorMessage: 'The reset session is corrupted.' };
       }
+      const userId = userDocumentIdForPhone(phoneNumber);
 
       const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
       transaction.update(

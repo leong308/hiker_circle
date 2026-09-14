@@ -345,16 +345,19 @@ class _HikerCircleLoadingToastOverlayState
   @override
   Widget build(BuildContext context) {
     return Positioned.fill(
-      child: AbsorbPointer(
-        child: ColoredBox(
-          color: widget.dimBackground
-              ? const Color(0x66000000)
-              : Colors.transparent,
-          child: HikerCircleLoadingView(
-            message: widget.message,
-            detail: widget.detail,
-            progress: widget.progress,
-            compact: widget.compact,
+      child: Material(
+        type: MaterialType.transparency,
+        child: AbsorbPointer(
+          child: ColoredBox(
+            color: widget.dimBackground
+                ? const Color(0x66000000)
+                : Colors.transparent,
+            child: HikerCircleLoadingView(
+              message: widget.message,
+              detail: widget.detail,
+              progress: widget.progress,
+              compact: widget.compact,
+            ),
           ),
         ),
       ),

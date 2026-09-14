@@ -8,6 +8,7 @@ import 'package:hiker_circle/authentication/Data/multi_factor_auth_service.dart'
 import 'package:hiker_circle/authentication/Model/mfa_models.dart';
 import 'package:hiker_circle/authentication/View/security_verification_page.dart';
 import 'package:hiker_circle/core/widgets/loading_toast.dart';
+import 'package:hiker_circle/core/widgets/verification_code_input.dart';
 
 class _UnusedMfaService extends MultiFactorAuthService {}
 
@@ -110,7 +111,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('6-digit code'), findsOneWidget);
+    expect(find.byType(VerificationCodeInput), findsOneWidget);
   });
 
   testWidgets('shows the primary loading animation while verifying a code', (
@@ -135,8 +136,15 @@ void main() {
 
     await tester.tap(find.text('Use Authenticator'));
     await tester.pump();
-    await tester.enterText(find.byType(TextField), '123456');
-    await tester.tap(find.text('Verify and sign in'));
+    await tester.enterText(
+      find
+          .descendant(
+            of: find.byType(VerificationCodeInput),
+            matching: find.byType(TextField),
+          )
+          .first,
+      '123456',
+    );
     await tester.pump();
 
     expect(find.byType(HikerCircleLoadingToast), findsOneWidget);

@@ -21,7 +21,7 @@ Future<bool> confirmHikePrecautions(BuildContext context, Trail trail) async {
             }
             final cautions = snapshot.data!;
             return AlertDialog(
-              title: const Text('Before you set off'),
+              title: const Text('Before you set off now'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,

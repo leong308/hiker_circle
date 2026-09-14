@@ -7,6 +7,10 @@ void main() {
     expect(mapStyleUrls.first, 'mapbox://styles/mapbox/outdoors-v12');
   });
 
+  test('FPV uses Mapbox Standard Satellite', () {
+    expect(fpvMapStyleUrl, 'mapbox://styles/mapbox/standard-satellite');
+  });
+
   group('map point validation', () {
     test('rejects out-of-range and non-finite coordinates', () {
       expect(

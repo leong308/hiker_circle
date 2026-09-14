@@ -1,12 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/Data/session_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/privacy_policy_link.dart';
+import '../../core/widgets/verification_code_input.dart';
 import '../Model/auth_status.dart';
 import '../ModelView/auth_view_model.dart';
 import 'auth_brand_panel.dart';
+import 'forgot_password_page.dart';
 import 'inline_notice.dart';
 import 'security_verification_page.dart';
 
@@ -23,14 +27,24 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   final _formKey = GlobalKey<FormState>();
   final _phoneController = TextEditingController();
   final _otpController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _loadingOverlayController = OverlayPortalController(
+    debugLabel: 'phone-sign-in-loading',
+  );
+  final _resendCountdown = ValueNotifier<int>(0);
   late final AuthViewModel _viewModel;
+  Timer? _resendCooldownTimer;
+  bool _otpDialogOpen = false;
+  bool _isResendingOtp = false;
   bool _isCompletingSignIn = false;
+  bool _obscurePassword = true;
   String? _signInError;
 
   @override
   void initState() {
     super.initState();
     _viewModel = AuthViewModel();
+    _viewModel.setAuthMode(AuthMode.login);
     _viewModel.addListener(_refresh);
   }
 
@@ -40,6 +54,9 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     _viewModel.dispose();
     _phoneController.dispose();
     _otpController.dispose();
+    _passwordController.dispose();
+    _resendCooldownTimer?.cancel();
+    _resendCountdown.dispose();
     super.dispose();
   }
 
@@ -49,12 +66,114 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     }
   }
 
+  void _setLoadingOverlayVisible(bool visible) {
+    if (visible) {
+      _loadingOverlayController.show();
+    } else {
+      _loadingOverlayController.hide();
+    }
+  }
+
+  void _startResendCooldown() {
+    _resendCooldownTimer?.cancel();
+    _resendCountdown.value = 60;
+    _resendCooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_resendCountdown.value <= 1) {
+        timer.cancel();
+        _resendCountdown.value = 0;
+      } else {
+        _resendCountdown.value--;
+      }
+    });
+  }
+
+  void _resetOtpEntry() {
+    _resendCooldownTimer?.cancel();
+    _resendCountdown.value = 0;
+    _otpController.clear();
+    _viewModel.setAuthMode(_viewModel.authMode);
+  }
+
+  Future<void> _showOtpDialog() async {
+    if (!mounted || _otpDialogOpen) return;
+    _otpDialogOpen = true;
+    final deliveryMessage = _viewModel.message ?? 'OTP sent via WhatsApp.';
+    final verified = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _WhatsAppOtpDialog(
+        controller: _otpController,
+        viewModel: _viewModel,
+        deliveryMessage: deliveryMessage,
+        resendCountdown: _resendCountdown,
+        isResending: () => _isResendingOtp,
+        onVerify: _verifyOtp,
+        onResend: _resendOtp,
+        onCancel: () => Navigator.of(dialogContext).pop(false),
+      ),
+    );
+    _otpDialogOpen = false;
+    if (mounted && verified != true) {
+      _resetOtpEntry();
+    }
+  }
+
   Future<void> _sendCode() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
     FocusScope.of(context).unfocus();
-    await _viewModel.sendCode(_phoneController.text);
+    _setLoadingOverlayVisible(true);
+    await _viewModel.sendCode(
+      _phoneController.text,
+      password: _viewModel.authMode == AuthMode.login
+          ? _passwordController.text
+          : null,
+    );
+    if (!mounted) return;
+    _setLoadingOverlayVisible(false);
+    if (_viewModel.hasCodeBeenSent) {
+      _otpController.clear();
+      _startResendCooldown();
+      await _showOtpDialog();
+    }
+  }
+
+  Future<void> _resendOtp() async {
+    if (_viewModel.isBusy ||
+        _isCompletingSignIn ||
+        _isResendingOtp ||
+        _resendCountdown.value > 0) {
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() => _isResendingOtp = true);
+    _setLoadingOverlayVisible(true);
+    final sent = await _viewModel.resendCode(
+      _phoneController.text,
+      password: _viewModel.authMode == AuthMode.login
+          ? _passwordController.text
+          : null,
+    );
+    if (!mounted) return;
+    _setLoadingOverlayVisible(false);
+    setState(() => _isResendingOtp = false);
+    if (sent) {
+      _otpController.clear();
+      _startResendCooldown();
+    }
+  }
+
+  Future<void> _openForgotPassword() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ForgotPasswordPage(viewModel: _viewModel),
+      ),
+    );
   }
 
   Future<void> _verifyOtp() async {
@@ -62,15 +181,28 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
       return;
     }
     FocusScope.of(context).unfocus();
+    _setLoadingOverlayVisible(true);
     final continuation = await _viewModel.verifyOtp(_otpController.text);
+    if (!mounted) return;
+    _setLoadingOverlayVisible(false);
     if (continuation != null && mounted) {
+      if (_otpDialogOpen) {
+        _otpDialogOpen = false;
+        Navigator.of(context, rootNavigator: true).pop(true);
+      }
       final session = await Navigator.of(context).push<AppSession>(
         MaterialPageRoute<AppSession>(
           builder: (context) =>
               SecurityVerificationPage(continuation: continuation),
         ),
       );
-      if (session != null) await _completeSignIn(session);
+      if (session != null) {
+        await _completeSignIn(session);
+      } else if (mounted) {
+        // The WhatsApp challenge has already been consumed. Returning from
+        // the second-factor page must re-enable the login form for a fresh OTP.
+        _resetOtpEntry();
+      }
     }
   }
 
@@ -83,6 +215,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
       _isCompletingSignIn = true;
       _signInError = null;
     });
+    _setLoadingOverlayVisible(true);
 
     try {
       await widget.onSignedIn(session);
@@ -95,6 +228,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
       });
     } finally {
       if (mounted) {
+        _setLoadingOverlayVisible(false);
         setState(() {
           _isCompletingSignIn = false;
         });
@@ -115,140 +249,231 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     final scheme = theme.colorScheme;
     final isSignUp = _viewModel.authMode == AuthMode.signUp;
 
-    return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          children: [
-            LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 520),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              AuthBrandPanel(color: scheme.primary),
-                              const SizedBox(height: 20),
-                              Container(
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  color: scheme.surface,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: const Color(0xFFCFE5D6),
+    return OverlayPortal(
+      controller: _loadingOverlayController,
+      overlayLocation: OverlayChildLocation.rootOverlay,
+      overlayChildBuilder: (context) => HikerCircleLoadingToastOverlay(
+        message: _isCompletingSignIn
+            ? 'Finishing sign in…'
+            : _isResendingOtp
+            ? 'Sending a new OTP…'
+            : _viewModel.isVerifyingCode
+            ? 'Verifying WhatsApp code…'
+            : isSignUp
+            ? 'Sending WhatsApp code…'
+            : 'Verifying password and sending OTP…',
+        detail: 'Securing your HikerCircle account. This may take a moment.',
+        timeout: const Duration(seconds: 30),
+        onTimeout: () {
+          _viewModel.cancelPendingOperation();
+          _setLoadingOverlayVisible(false);
+          if (mounted) {
+            setState(() {
+              _isResendingOtp = false;
+              if (_isCompletingSignIn) {
+                _isCompletingSignIn = false;
+                _signInError = 'Sign in timed out. Please try again.';
+              }
+            });
+          }
+        },
+      ),
+      child: Scaffold(
+        body: SafeArea(
+          child: Stack(
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 24,
+                        ),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 520),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                AuthBrandPanel(color: scheme.primary),
+                                const SizedBox(height: 20),
+                                Container(
+                                  padding: const EdgeInsets.all(24),
+                                  decoration: BoxDecoration(
+                                    color: scheme.surface,
+                                    borderRadius: BorderRadius.circular(28),
+                                    border: Border.all(
+                                      color: scheme.outlineVariant.withValues(
+                                        alpha: 0.5,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Form(
+                                    key: _formKey,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Text(
+                                          isSignUp
+                                              ? 'Find your circle'
+                                              : 'Welcome back',
+                                          style: theme.textTheme.titleLarge
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          isSignUp
+                                              ? 'Create an account for safer adventures.'
+                                              : 'Sign in to your trails, friends and adventures.',
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                                color: scheme.onSurfaceVariant,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        _ModeToggle(
+                                          currentMode: _viewModel.authMode,
+                                          enabled:
+                                              !_viewModel.isBusy &&
+                                              !_isCompletingSignIn &&
+                                              !_viewModel.hasCodeBeenSent,
+                                          onChanged: (mode) {
+                                            _resendCooldownTimer?.cancel();
+                                            _otpController.clear();
+                                            _passwordController.clear();
+                                            _resendCountdown.value = 0;
+                                            _viewModel.setAuthMode(mode);
+                                          },
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Theme(
+                                          data: theme.copyWith(
+                                            inputDecorationTheme:
+                                                InputDecorationTheme(
+                                                  filled: true,
+                                                  fillColor: scheme.primary
+                                                      .withValues(alpha: 0.045),
+                                                  contentPadding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 18,
+                                                        vertical: 18,
+                                                      ),
+                                                  border: OutlineInputBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          16,
+                                                        ),
+                                                    borderSide: BorderSide.none,
+                                                  ),
+                                                  enabledBorder:
+                                                      OutlineInputBorder(
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              16,
+                                                            ),
+                                                        borderSide: BorderSide(
+                                                          color: scheme
+                                                              .outlineVariant
+                                                              .withValues(
+                                                                alpha: 0.4,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                  focusedBorder:
+                                                      OutlineInputBorder(
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              16,
+                                                            ),
+                                                        borderSide: BorderSide(
+                                                          color: scheme.primary,
+                                                          width: 2,
+                                                        ),
+                                                      ),
+                                                ),
+                                            filledButtonTheme:
+                                                FilledButtonThemeData(
+                                                  style: FilledButton.styleFrom(
+                                                    minimumSize:
+                                                        const Size.fromHeight(
+                                                          52,
+                                                        ),
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            16,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                ),
+                                          ),
+                                          child: AnimatedSize(
+                                            duration: const Duration(
+                                              milliseconds: 250,
+                                            ),
+                                            alignment: Alignment.topCenter,
+                                            child: _buildWhatsAppForm(),
+                                          ),
+                                        ),
+                                        if (_viewModel.message != null) ...[
+                                          const SizedBox(height: 16),
+                                          InlineNotice(
+                                            icon: Icons.check_circle_outline,
+                                            color: scheme.primary,
+                                            text: _viewModel.message!,
+                                          ),
+                                        ],
+                                        if (_viewModel.error != null) ...[
+                                          const SizedBox(height: 16),
+                                          InlineNotice(
+                                            icon: Icons.error_outline,
+                                            color: scheme.error,
+                                            text: _viewModel.error!,
+                                          ),
+                                        ],
+                                        if (_signInError != null) ...[
+                                          const SizedBox(height: 16),
+                                          InlineNotice(
+                                            icon: Icons.error_outline,
+                                            color: scheme.error,
+                                            text: _signInError!,
+                                          ),
+                                        ],
+                                      ],
+                                    ),
                                   ),
                                 ),
-                                child: Form(
-                                  key: _formKey,
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      Text(
-                                        isSignUp ? 'Sign Up' : 'Login',
-                                        style: theme.textTheme.titleLarge
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        isSignUp
-                                            ? 'Verify WhatsApp, then bind Authenticator or a passkey.'
-                                            : 'Verify WhatsApp, then use Authenticator or your passkey.',
-                                        style: theme.textTheme.bodySmall
-                                            ?.copyWith(
-                                              color: scheme.onSurfaceVariant,
-                                            ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      _ModeToggle(
-                                        currentMode: _viewModel.authMode,
-                                        enabled:
-                                            !_viewModel.isBusy &&
-                                            !_isCompletingSignIn &&
-                                            !_viewModel.hasCodeBeenSent,
-                                        onChanged: _viewModel.setAuthMode,
-                                      ),
-                                      const SizedBox(height: 16),
-                                      _buildWhatsAppForm(theme, scheme),
-                                      if (_viewModel.message != null) ...[
-                                        const SizedBox(height: 16),
-                                        InlineNotice(
-                                          icon: Icons.check_circle_outline,
-                                          color: scheme.primary,
-                                          text: _viewModel.message!,
-                                        ),
-                                      ],
-                                      if (_viewModel.error != null) ...[
-                                        const SizedBox(height: 16),
-                                        InlineNotice(
-                                          icon: Icons.error_outline,
-                                          color: scheme.error,
-                                          text: _viewModel.error!,
-                                        ),
-                                      ],
-                                      if (_signInError != null) ...[
-                                        const SizedBox(height: 16),
-                                        InlineNotice(
-                                          icon: Icons.error_outline,
-                                          color: scheme.error,
-                                          text: _signInError!,
-                                        ),
-                                      ],
-                                    ],
-                                  ),
+                                const SizedBox(height: 10),
+                                const Align(
+                                  alignment: Alignment.center,
+                                  child: PrivacyPolicyLink(),
                                 ),
-                              ),
-                              const SizedBox(height: 10),
-                              const Align(
-                                alignment: Alignment.center,
-                                child: PrivacyPolicyLink(),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
-            ),
-            if (_viewModel.isBusy || _isCompletingSignIn)
-              HikerCircleLoadingToastOverlay(
-                message: _isCompletingSignIn
-                    ? 'Finishing sign in…'
-                    : _viewModel.isVerifyingCode
-                    ? 'Verifying WhatsApp code…'
-                    : 'Sending WhatsApp code…',
-                detail:
-                    'Securing your HikerCircle account. This may take a moment.',
-                timeout: const Duration(seconds: 30),
-                onTimeout: () {
-                  _viewModel.cancelPendingOperation();
-                  if (mounted && _isCompletingSignIn) {
-                    setState(() {
-                      _isCompletingSignIn = false;
-                      _signInError = 'Sign in timed out. Please try again.';
-                    });
-                  }
+                  );
                 },
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildWhatsAppForm(ThemeData theme, ColorScheme scheme) {
+  Widget _buildWhatsAppForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -267,49 +492,239 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
           ),
           validator: _viewModel.validatePhone,
         ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: _viewModel.isSendingCode || _isCompletingSignIn
-              ? null
-              : _sendCode,
-          icon: Icon(
-            _viewModel.hasCodeBeenSent ? Icons.refresh : Icons.message_outlined,
-          ),
-          label: Text(_viewModel.hasCodeBeenSent ? 'Resend OTP' : 'Send OTP'),
-        ),
-        if (_viewModel.hasCodeBeenSent) ...[
-          const SizedBox(height: 18),
+        if (_viewModel.authMode == AuthMode.login) ...[
+          const SizedBox(height: 12),
           TextFormField(
-            controller: _otpController,
-            keyboardType: TextInputType.number,
+            controller: _passwordController,
+            obscureText: _obscurePassword,
             textInputAction: TextInputAction.done,
-            maxLength: 6,
-            enabled: !_viewModel.isBusy && !_isCompletingSignIn,
-            decoration: const InputDecoration(
-              counterText: '',
-              labelText: 'Verification code',
-              prefixIcon: Icon(Icons.lock_outline),
+            autofillHints: const [AutofillHints.password],
+            enabled:
+                !_viewModel.isBusy &&
+                !_isCompletingSignIn &&
+                !_viewModel.hasCodeBeenSent,
+            decoration: InputDecoration(
+              labelText: 'Password',
+              prefixIcon: const Icon(Icons.key_rounded),
+              suffixIcon: IconButton(
+                onPressed:
+                    _viewModel.isBusy ||
+                        _isCompletingSignIn ||
+                        _viewModel.hasCodeBeenSent
+                    ? null
+                    : () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                icon: Icon(
+                  _obscurePassword
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
+                ),
+              ),
             ),
-            onFieldSubmitted: (_) => _verifyOtp(),
+            validator: (value) {
+              if (_viewModel.authMode == AuthMode.login &&
+                  (value == null || value.isEmpty)) {
+                return 'Enter your password.';
+              }
+              return null;
+            },
+            onFieldSubmitted: (_) => _sendCode(),
           ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _viewModel.isBusy || _isCompletingSignIn
+                  ? null
+                  : _openForgotPassword,
+              child: const Text('Forgot password?'),
+            ),
+          ),
+        ],
+        if (!_viewModel.hasCodeBeenSent) ...[
           const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: _viewModel.isVerifyingCode || _isCompletingSignIn
+            onPressed: _viewModel.isBusy || _isCompletingSignIn
                 ? null
-                : _verifyOtp,
-            icon: const Icon(Icons.verified_user),
-            label: const Text('Verify and continue'),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Code delivered by WhatsApp',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
+                : _sendCode,
+            icon: const Icon(Icons.message_outlined),
+            label: Text(
+              _viewModel.authMode == AuthMode.login ? 'Proceed' : 'Send OTP',
             ),
           ),
         ],
       ],
+    );
+  }
+}
+
+class _WhatsAppOtpDialog extends StatelessWidget {
+  const _WhatsAppOtpDialog({
+    required this.controller,
+    required this.viewModel,
+    required this.deliveryMessage,
+    required this.resendCountdown,
+    required this.isResending,
+    required this.onVerify,
+    required this.onResend,
+    required this.onCancel,
+  });
+
+  final TextEditingController controller;
+  final AuthViewModel viewModel;
+  final String deliveryMessage;
+  final ValueNotifier<int> resendCountdown;
+  final bool Function() isResending;
+  final Future<void> Function() onVerify;
+  final Future<void> Function() onResend;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return AnimatedBuilder(
+      animation: viewModel,
+      builder: (context, _) => ValueListenableBuilder<int>(
+        valueListenable: resendCountdown,
+        builder: (context, secondsRemaining, _) {
+          final busy = viewModel.isBusy || isResending();
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 24,
+            ),
+            backgroundColor: scheme.surface,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+              side: BorderSide(
+                color: scheme.outlineVariant.withValues(alpha: 0.6),
+              ),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 20, 22, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                          child: Icon(
+                            Icons.message_rounded,
+                            color: scheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Check your WhatsApp',
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                deliveryMessage,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: busy ? null : onCancel,
+                          tooltip: 'Use a different number',
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'Enter the six-digit code to continue.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    VerificationCodeInput(
+                      controller: controller,
+                      enabled: !busy,
+                      autofocus: true,
+                      semanticLabel: 'WhatsApp verification code',
+                      onCompleted: (_) => onVerify(),
+                      onSubmitted: (_) => onVerify(),
+                    ),
+                    if (viewModel.error != null) ...[
+                      const SizedBox(height: 14),
+                      InlineNotice(
+                        icon: Icons.error_outline_rounded,
+                        color: scheme.error,
+                        text: viewModel.error!,
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    FilledButton.icon(
+                      onPressed: busy ? null : onVerify,
+                      icon: const Icon(Icons.verified_user_rounded),
+                      label: const Text('Verify and continue'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          'Didn\'t receive the code?',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: busy || secondsRemaining > 0
+                              ? null
+                              : onResend,
+                          child: Text(
+                            secondsRemaining > 0
+                                ? 'Resend in ${secondsRemaining}s'
+                                : 'Resend code',
+                          ),
+                        ),
+                      ],
+                    ),
+                    TextButton.icon(
+                      onPressed: busy ? null : onCancel,
+                      icon: const Icon(Icons.phone_iphone_rounded, size: 18),
+                      label: const Text('Use a different number'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -372,16 +787,16 @@ class _ToggleButton extends StatelessWidget {
       duration: const Duration(milliseconds: 200),
       child: Material(
         color: isSelected ? scheme.primary : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: enabled ? onTap : null,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(14),
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: isSelected ? scheme.primary : const Color(0xFFCFE5D6),
+                color: isSelected ? scheme.primary : scheme.outlineVariant,
               ),
             ),
             child: Center(

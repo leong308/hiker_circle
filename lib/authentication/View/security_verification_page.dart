@@ -1,9 +1,12 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/page_header_style.dart';
+import '../../core/widgets/verification_code_input.dart';
 import '../Data/multi_factor_auth_service.dart';
 import '../Data/passkey_build_support.dart';
 import '../Model/mfa_models.dart';
@@ -146,22 +149,27 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
     final passkeyIsRelevant =
         _isEnrollment || widget.continuation.methods.contains('passkey');
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _isEnrollment ? 'Protect your account' : 'Verify it is you',
-        ),
-      ),
       body: SafeArea(
         child: Stack(
           children: [
             SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 560),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      _SecurityVerificationHeader(
+                        title: _isEnrollment
+                            ? 'Protect your account'
+                            : 'Verify it is you',
+                        subtitle: _isEnrollment
+                            ? 'Add a secure method for future sign-ins'
+                            : 'Complete your second verification step',
+                        onBack: () => Navigator.of(context).maybePop(),
+                      ),
+                      const SizedBox(height: 24),
                       Container(
                         padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
@@ -366,18 +374,11 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
               ),
             ],
             const SizedBox(height: 12),
-            TextField(
+            VerificationCodeInput(
               controller: _codeController,
               enabled: !_busy,
-              keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.done,
-              maxLength: 6,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: '6-digit code',
-                counterText: '',
-                prefixIcon: Icon(Icons.lock_clock_rounded),
-              ),
+              semanticLabel: 'Authenticator verification code',
+              onCompleted: (_) => _submitTotp(),
               onSubmitted: (_) => _submitTotp(),
             ),
             const SizedBox(height: 12),
@@ -400,6 +401,61 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SecurityVerificationHeader extends StatelessWidget {
+  const _SecurityVerificationHeader({
+    required this.title,
+    required this.subtitle,
+    required this.onBack,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+      child: Row(
+        children: [
+          PageHeaderAction(
+            tooltip: 'Back',
+            icon: CupertinoIcons.chevron_back,
+            onPressed: onBack,
+            color: scheme.primary,
+            surface: scheme.surfaceContainerHigh,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: PageHeaderStyle.title(context, scheme.onSurface),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: PageHeaderStyle.subtitle(
+                    context,
+                    scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

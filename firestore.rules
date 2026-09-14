@@ -391,6 +391,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /passwordResetChallenges/{challengeId} {
+      allow read, write: if false;
+    }
+
+    match /passwordResetSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /passwordResetPasskeyChallenges/{challengeId} {
+      allow read, write: if false;
+    }
+
     match /live_location_shares/{shareId} {
       allow read: if (
         resource.data.isActive == true

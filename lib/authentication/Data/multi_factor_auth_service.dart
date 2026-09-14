@@ -123,6 +123,24 @@ class MultiFactorAuthService {
     return _requiredSession(data);
   }
 
+  Future<void> verifyPasswordResetPasskey({required String resetToken}) async {
+    _requirePasskeysEnabled();
+    final begin = await _call('beginPasswordResetPasskey', {
+      'resetToken': resetToken,
+    });
+    final platformResponse = await _runPasskeyOperation(
+      operation: 'authenticate for password reset',
+      callback: () => _passkeys.authenticate(
+        AuthenticateRequestType.fromJson(_requiredMap(begin, 'options')),
+      ),
+    );
+    await _call('finishPasswordResetPasskey', {
+      'resetToken': resetToken,
+      'challengeId': _requiredString(begin, 'challengeId'),
+      'response': platformResponse.toJson(),
+    });
+  }
+
   Future<MfaStatus> loadStatus() async {
     final data = await _call('getMfaStatus', const {});
     final rawFactors = data['factors'];

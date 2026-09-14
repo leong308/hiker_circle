@@ -1463,6 +1463,17 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     final duration = int.tryParse(_durationController.text.trim());
     final elevation = int.tryParse(_elevationController.text.trim()) ?? 0;
 
+    if (_routeResult?.hasElevationRange != true) {
+      if (mounted) {
+        setState(() {
+          _step = _AddTrailStep.form;
+          _errorMessage =
+              'Could not calculate the trail elevation range. Check your connection and try again.';
+        });
+      }
+      return;
+    }
+
     if (distance == null ||
         distance <= 0 ||
         duration == null ||
@@ -1487,6 +1498,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       distance: distance,
       duration: duration,
       elevation: elevation,
+      minElevation: _routeResult?.minElevationMeters?.round(),
+      maxElevation: _routeResult?.maxElevationMeters?.round(),
       checkpoints: checkpoints,
     );
   }
@@ -1501,6 +1514,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     required double distance,
     required int duration,
     required int elevation,
+    required int? minElevation,
+    required int? maxElevation,
     required List<TrailCheckpoint> checkpoints,
   }) async {
     final polyline = _routeResult?.encodedPolyline;
@@ -1569,6 +1584,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         difficulty: '',
         estimatedDurationMinutes: duration,
         elevationGainMeters: elevation,
+        minElevationMeters: minElevation,
+        maxElevationMeters: maxElevation,
         ratingAverage: 0,
         offlineMapAvailable: false,
         offlineMapDownloaded: false,
@@ -2029,14 +2046,12 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                         'Duration',
                         '${_durationController.text.trim()} min',
                       ),
-                      if (_elevationController.text.trim().isNotEmpty &&
-                          double.tryParse(_elevationController.text.trim()) !=
-                              0) ...[
+                      if (_routeResult != null) ...[
                         const SizedBox(height: 4),
                         _routeMetricRow(
                           context,
-                          'Elevation gain',
-                          '${_elevationController.text.trim()} m',
+                          'Elevation range',
+                          _routeResult!.elevationRangeLabel,
                         ),
                       ],
                     ],
@@ -3393,8 +3408,6 @@ class _TrailDetailHero extends StatelessWidget {
                       children: [
                         if (trail.hasCommunityDifficulty)
                           _HeroPill(label: trail.difficulty),
-                        if (trail.isVerifiedTrail)
-                          const _HeroPill(label: 'Verified trail'),
                         _HeroPill(label: trail.ratingLabel),
                       ],
                     ),
@@ -4033,6 +4046,12 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                     widget.trail.elevationGainMeters)
                 .round()
           : widget.trail.elevationGainMeters,
+      minElevationMeters:
+          routeForSave?.minElevationMeters?.round() ??
+          widget.trail.minElevationMeters,
+      maxElevationMeters:
+          routeForSave?.maxElevationMeters?.round() ??
+          widget.trail.maxElevationMeters,
       routeEncodedPolyline: routeForSave?.encodedPolyline,
       routeCheckpointsHash: routeForSave == null
           ? widget.trail.routeCheckpointsHash
@@ -4173,10 +4192,9 @@ class _EditTrailPageState extends State<_EditTrailPage> {
                         _metricRow(
                           context,
                           Icons.trending_up_rounded,
-                          'Elevation gain',
-                          _refreshedRoute != null
-                              ? '${_refreshedRoute!.elevationGainMeters ?? 0} m'
-                              : '${widget.trail.elevationGainMeters} m',
+                          'Elevation range',
+                          _refreshedRoute?.elevationRangeLabel ??
+                              widget.trail.elevationRangeLabel,
                         ),
                         const SizedBox(height: 6),
                         _metricRow(
@@ -4500,7 +4518,7 @@ class _MetricGroup extends StatelessWidget {
             Expanded(
               child: _MetricCell(
                 label: 'Elevation',
-                value: '${trail.elevationGainMeters} m',
+                value: trail.elevationRangeLabel,
               ),
             ),
             const _VerticalSeparator(),
@@ -4573,6 +4591,7 @@ class _RoutePreview extends StatefulWidget {
 
 class _RoutePreviewState extends State<_RoutePreview> {
   HikingRouteResult? _route;
+  RoutePreviewMode _previewMode = RoutePreviewMode.normal;
   Timer? _retryTimer;
   var _loadGeneration = 0;
   var _attempt = 0;
@@ -4633,6 +4652,8 @@ class _RoutePreviewState extends State<_RoutePreview> {
       duration: Duration(minutes: trail.estimatedDurationMinutes),
       encodedPolyline: encoded,
       elevationGainMeters: trail.elevationGainMeters.toDouble(),
+      minElevationMeters: trail.minElevationMeters?.toDouble(),
+      maxElevationMeters: trail.maxElevationMeters?.toDouble(),
       sourceLabel: 'Saved trail route',
     );
   }
@@ -4700,20 +4721,94 @@ class _RoutePreviewState extends State<_RoutePreview> {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
-      child: SizedBox(
-        height: 240,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: RoutePreviewMap(
-            key: ValueKey(widget.trail.trailId),
-            trail: widget.trail,
-            route: _route,
-            highlightedCheckpointIndex: widget.highlightedCheckpointIndex,
-            isRouteLoading: _isLoadingRoute,
-            loadingMessage: _loadingMessage,
-            localDatabase: widget.localDatabase,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        height: _previewMode == RoutePreviewMode.firstPerson ? 420 : 318,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: CupertinoSlidingSegmentedControl<RoutePreviewMode>(
+                  groupValue: _previewMode,
+                  backgroundColor: _TrailColors.greenSoftFor(context),
+                  thumbColor: _TrailColors.green,
+                  padding: const EdgeInsets.all(3),
+                  children: {
+                    RoutePreviewMode.normal: _RoutePreviewModeLabel(
+                      icon: Icons.map_outlined,
+                      label: 'Normal',
+                      selected: _previewMode == RoutePreviewMode.normal,
+                    ),
+                    RoutePreviewMode.firstPerson: _RoutePreviewModeLabel(
+                      icon: Icons.navigation_rounded,
+                      label: 'FPV',
+                      selected: _previewMode == RoutePreviewMode.firstPerson,
+                    ),
+                  },
+                  onValueChanged: (mode) {
+                    if (mode == null || mode == _previewMode) return;
+                    setState(() => _previewMode = mode);
+                  },
+                ),
+              ),
+              const SizedBox(height: 9),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: RoutePreviewMap(
+                    key: ValueKey(widget.trail.trailId),
+                    trail: widget.trail,
+                    route: _route,
+                    previewMode: _previewMode,
+                    highlightedCheckpointIndex:
+                        widget.highlightedCheckpointIndex,
+                    isRouteLoading: _isLoadingRoute,
+                    loadingMessage: _loadingMessage,
+                    localDatabase: widget.localDatabase,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _RoutePreviewModeLabel extends StatelessWidget {
+  const _RoutePreviewModeLabel({
+    required this.icon,
+    required this.label,
+    required this.selected,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? Colors.white : _TrailColors.textFor(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
       ),
     );
   }

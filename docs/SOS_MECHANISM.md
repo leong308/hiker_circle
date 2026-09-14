@@ -359,7 +359,7 @@ Manifest/background declarations show configured capabilities, not granted permi
 | User custom-note/timezone fields | Message preferences; server validates/normalizes inputs |
 | Local `queued_alerts` | Durable retry payloads, status, contact outcomes, coordinates and failure information |
 | `sosAlerts/{alertId}` | Owner-facing event history; owner/admin reads, owner-scoped create/update, client delete denied |
-| User `latest_sos_alert`, `sos_alerts`, `sosAlertsCount` | Client-written summaries; not authoritative proof of provider acceptance |
+| User `latestSosAlertPath`, `recentSosAlertPaths`, `sosAlertsCount` | Lightweight pointers (latest plus at most 30 recent paths) and a summary count; event bodies stay in `sosAlerts` |
 | `sosWhatsAppDispatches` | Server dispatch lease, payload hash, nonce, provider result and retry audit; admin read, client writes denied |
 | `sosMessageRateLimits` | Server-only counters; client read/write denied |
 | Legacy `whatsAppMessageLogs` | Admin-read legacy records, client write denied; not authoritative new dispatch ledger |
@@ -368,7 +368,7 @@ Manifest/background declarations show configured capabilities, not granted permi
 | Android preferences / iOS defaults | Native active session, motion clock, pending event state |
 | Native paired-button registry | Account-scoped secret/counter state; secure storage and backup constraints apply |
 
-The client summary `_saveAlert` merges the alert but also increments a user count and appends an array entry. Retrying a partially completed cloud write can affect summary counts/history. Use server dispatch IDs/results for delivery auditing, not a raw summary counter.
+The client `_saveAlert` transaction writes the canonical event and its lightweight user pointers atomically. It checks whether the canonical alert already exists before incrementing `sosAlertsCount`, removes legacy embedded `latest_sos_alert`/`sos_alerts` copies, and caps `recentSosAlertPaths` at 30. The path list accelerates the normal recent-history view; the canonical collection remains the authority. Use server dispatch IDs/results for delivery auditing, not the summary counter.
 
 ## 14. Known limitations and review observations
 

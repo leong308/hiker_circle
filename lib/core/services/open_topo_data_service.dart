@@ -12,11 +12,21 @@ class OpenTopoDataException implements Exception {
 }
 
 class OpenTopoDataResult {
-  const OpenTopoDataResult({
-    required this.elevations,
-  });
+  const OpenTopoDataResult({required this.elevations});
 
   final List<double> elevations;
+
+  double? get minimumElevationMeters {
+    final values = elevations.where((value) => value.isFinite).toList();
+    if (values.isEmpty) return null;
+    return values.reduce((first, second) => first < second ? first : second);
+  }
+
+  double? get maximumElevationMeters {
+    final values = elevations.where((value) => value.isFinite).toList();
+    if (values.isEmpty) return null;
+    return values.reduce((first, second) => first > second ? first : second);
+  }
 
   double get elevationGainMeters {
     if (elevations.length < 2) return 0;
@@ -39,15 +49,11 @@ class OpenTopoDataService {
   }) async {
     final client = _client ?? http.Client();
     try {
-      final locations = coordinates
-          .map((c) => '${c[1]},${c[0]}')
-          .join('|');
+      final locations = coordinates.map((c) => '${c[1]},${c[0]}').join('|');
       final response = await client.get(
-        Uri.https(
-          'api.opentopodata.org',
-          '/v1/aster30m',
-          {'locations': locations},
-        ),
+        Uri.https('api.opentopodata.org', '/v1/aster30m', {
+          'locations': locations,
+        }),
       );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -60,9 +66,7 @@ class OpenTopoDataService {
     } on OpenTopoDataException {
       rethrow;
     } catch (_) {
-      throw const OpenTopoDataException(
-        'Unable to fetch elevation data.',
-      );
+      throw const OpenTopoDataException('Unable to fetch elevation data.');
     } finally {
       if (_client == null) {
         client.close();
@@ -81,12 +85,14 @@ class OpenTopoDataService {
       throw const OpenTopoDataException('No elevation data returned.');
     }
 
-    final elevations = results.map((r) {
-      if (r is! Map) return 0.0;
-      final elevation = r['elevation'];
-      if (elevation is num) return elevation.toDouble();
-      return 0.0;
-    }).toList();
+    final elevations = <double>[];
+    for (final result in results) {
+      if (result is! Map) continue;
+      final elevation = result['elevation'];
+      if (elevation is num && elevation.isFinite) {
+        elevations.add(elevation.toDouble());
+      }
+    }
 
     if (elevations.isEmpty) {
       throw const OpenTopoDataException('Empty elevation data.');

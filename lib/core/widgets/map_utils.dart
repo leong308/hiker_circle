@@ -21,6 +21,11 @@ const mapStyleUrls = [
   'https://tiles.openfreemap.org/styles/bright',
 ];
 
+/// The photographic Mapbox style reserved for the immersive route preview.
+const fpvMapStyleUrl = MapboxStyles.STANDARD_SATELLITE;
+
+const mapTerrainExaggeration = 1.5;
+
 Future<void> enableTerrain3D(MapboxMap map) async {
   try {
     await map.style.addSource(
@@ -32,7 +37,7 @@ Future<void> enableTerrain3D(MapboxMap map) async {
   } catch (_) {}
   try {
     await map.style.setStyleTerrain(
-      '{"source": "mapbox-dem", "exaggeration": 1.5}',
+      '{"source": "mapbox-dem", "exaggeration": $mapTerrainExaggeration}',
     );
   } catch (_) {}
 }

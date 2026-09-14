@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/verification_code_input.dart';
 import '../Model/auth_status.dart';
 import '../ModelView/auth_view_model.dart';
 import 'inline_notice.dart';
@@ -48,7 +49,10 @@ class _RecentSecurityVerificationPageState
   Future<void> _sendCode() async {
     if (!mounted || _viewModel.isBusy) return;
     setState(() => _error = null);
-    await _viewModel.sendCode(widget.phoneNumber);
+    await _viewModel.sendCode(
+      widget.phoneNumber,
+      authenticatedReverification: true,
+    );
   }
 
   Future<void> _verifyCode() async {
@@ -169,18 +173,12 @@ class _RecentSecurityVerificationPageState
                           ),
                         ] else ...[
                           const SizedBox(height: 16),
-                          TextField(
+                          VerificationCodeInput(
                             controller: _codeController,
                             enabled: !busy,
                             autofocus: true,
-                            keyboardType: TextInputType.number,
-                            textInputAction: TextInputAction.done,
-                            maxLength: 6,
-                            decoration: const InputDecoration(
-                              labelText: '6-digit verification code',
-                              counterText: '',
-                              prefixIcon: Icon(Icons.message_outlined),
-                            ),
+                            semanticLabel: 'WhatsApp verification code',
+                            onCompleted: (_) => _verifyCode(),
                             onSubmitted: (_) => _verifyCode(),
                           ),
                           const SizedBox(height: 12),

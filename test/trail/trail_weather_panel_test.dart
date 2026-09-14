@@ -135,6 +135,9 @@ void main() {
       );
       expect(find.text('Hourly readings'), findsNothing);
       expect(find.byType(RunningBorder), findsOneWidget);
+      expect(find.text('Before you set off now'), findsOneWidget);
+      expect(find.text('Forecast is up to date'), findsOneWidget);
+      expect(find.text('Weather data: Open-Meteo'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   }

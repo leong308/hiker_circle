@@ -278,6 +278,8 @@ class Trail {
     required this.difficulty,
     required this.estimatedDurationMinutes,
     required this.elevationGainMeters,
+    this.minElevationMeters,
+    this.maxElevationMeters,
     required this.ratingAverage,
     this.ratingCount = 0,
     this.easyDifficultyVotes = 0,
@@ -338,6 +340,8 @@ class Trail {
       difficulty: _trailDifficultyFrom(data['difficulty']),
       estimatedDurationMinutes: _trailIntFrom(data['estimatedDurationMinutes']),
       elevationGainMeters: _trailIntFrom(data['elevationGainMeters']),
+      minElevationMeters: _trailNullableIntFrom(data['minElevationMeters']),
+      maxElevationMeters: _trailNullableIntFrom(data['maxElevationMeters']),
       ratingAverage: _trailDoubleFrom(data['ratingAverage']),
       ratingCount: _trailIntFrom(data['ratingCount']),
       easyDifficultyVotes: _trailIntFrom(difficultyVoteCounts['easy']),
@@ -387,6 +391,8 @@ class Trail {
   final String difficulty;
   final int estimatedDurationMinutes;
   final int elevationGainMeters;
+  final int? minElevationMeters;
+  final int? maxElevationMeters;
   final double ratingAverage;
   final int ratingCount;
   final int easyDifficultyVotes;
@@ -454,6 +460,8 @@ class Trail {
       'difficultyRatingCount': difficultyRatingCount,
       'estimatedDurationMinutes': estimatedDurationMinutes,
       'elevationGainMeters': elevationGainMeters,
+      if (minElevationMeters != null) 'minElevationMeters': minElevationMeters,
+      if (maxElevationMeters != null) 'maxElevationMeters': maxElevationMeters,
       'ratingAverage': ratingAverage,
       'ratingCount': ratingCount,
       'offlineMapAvailable': offlineMapAvailable,
@@ -521,6 +529,15 @@ class Trail {
 
   String get distanceLabel => '${distanceKm.toStringAsFixed(1)} km';
 
+  bool get hasElevationRange =>
+      minElevationMeters != null &&
+      maxElevationMeters != null &&
+      maxElevationMeters! >= minElevationMeters!;
+
+  String get elevationRangeLabel => hasElevationRange
+      ? '$minElevationMeters m – $maxElevationMeters m'
+      : 'Not available';
+
   String get ratingLabel => ratingCount <= 0
       ? 'No ratings yet'
       : '${ratingAverage.toStringAsFixed(1)} ($ratingCount)';
@@ -537,6 +554,8 @@ class Trail {
     String? difficulty,
     int? estimatedDurationMinutes,
     int? elevationGainMeters,
+    int? minElevationMeters,
+    int? maxElevationMeters,
     double? ratingAverage,
     int? ratingCount,
     int? easyDifficultyVotes,
@@ -578,6 +597,8 @@ class Trail {
       estimatedDurationMinutes:
           estimatedDurationMinutes ?? this.estimatedDurationMinutes,
       elevationGainMeters: elevationGainMeters ?? this.elevationGainMeters,
+      minElevationMeters: minElevationMeters ?? this.minElevationMeters,
+      maxElevationMeters: maxElevationMeters ?? this.maxElevationMeters,
       ratingAverage: ratingAverage ?? this.ratingAverage,
       ratingCount: ratingCount ?? this.ratingCount,
       easyDifficultyVotes: easyDifficultyVotes ?? this.easyDifficultyVotes,

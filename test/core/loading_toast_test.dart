@@ -194,4 +194,24 @@ void main() {
     await tester.pump(const Duration(seconds: 30));
     expect(timedOut, isTrue);
   });
+
+  testWidgets('provides normal Material text styling in a root overlay', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Stack(
+          children: [
+            HikerCircleLoadingToastOverlay(message: 'Root overlay loading…'),
+          ],
+        ),
+      ),
+    );
+
+    final messageContext = tester.element(find.text('Root overlay loading…'));
+    expect(
+      DefaultTextStyle.of(messageContext).style.decoration,
+      TextDecoration.none,
+    );
+  });
 }

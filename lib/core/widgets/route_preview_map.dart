@@ -11,12 +11,31 @@ import '../../trail/Model/trail_models.dart';
 import 'loading_toast.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
+import 'route_preview_camera.dart';
 import 'route_endpoint_marker.dart';
 import 'route_animation_geometry.dart';
 import 'static_hazard_marker.dart';
 
 bool _isValidMapPoint(mapbox.Point point) {
   return mapPointCoordinatesOrNull(point) != null;
+}
+
+enum RoutePreviewMode { normal, firstPerson }
+
+class _FpvTelemetry {
+  const _FpvTelemetry({
+    required this.distanceMeters,
+    required this.elapsed,
+    required this.progress,
+    this.elevationMeters,
+    this.gradePercent,
+  });
+
+  final double distanceMeters;
+  final Duration elapsed;
+  final double progress;
+  final double? elevationMeters;
+  final double? gradePercent;
 }
 
 class RoutePreviewMap extends StatefulWidget {
@@ -35,6 +54,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.isRouteLoading = false,
     this.loadingMessage = 'Loading route…',
     this.initialStyleIndex = 0,
+    this.previewMode = RoutePreviewMode.normal,
     this.localDatabase,
   });
 
@@ -51,6 +71,7 @@ class RoutePreviewMap extends StatefulWidget {
   final bool isRouteLoading;
   final String loadingMessage;
   final int initialStyleIndex;
+  final RoutePreviewMode previewMode;
   final LocalSessionDatabase? localDatabase;
 
   List<TrailCheckpoint> get effectiveCheckpoints =>
@@ -110,6 +131,19 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   int _renderGeneration = 0;
   int _mapGeneration = 0;
   bool _hasUsableGeometry = false;
+  bool _fpvCameraUpdateInFlight = false;
+  double? _pendingFpvProgress;
+  int _lastFpvCameraUpdateMs = 0;
+  double _fpvZoom = 17.2;
+  double _fpvPitch = 68;
+  double _fpvZoomOffset = 0;
+  double _fpvLookAheadMeters = 25;
+  double _fpvPlaybackSpeed = 1;
+  late final ValueNotifier<_FpvTelemetry> _fpvTelemetry;
+  final ValueNotifier<double> _fpvBearing = ValueNotifier(0);
+  bool _terrainQueryInFlight = false;
+  int _lastTerrainQueryMs = 0;
+  int _terrainQueryGeneration = 0;
 
   @override
   void initState() {
@@ -126,7 +160,70 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _routeAnimController.addListener(_onRouteAnimationTick);
     _routeAnimController.addStatusListener(_onAnimationStatusChange);
     _buildPoints();
+    _fpvTelemetry = ValueNotifier(_telemetryAt(distanceMeters: 0));
+    _syncRouteAnimationDuration();
     unawaited(_loadStaticHazards());
+  }
+
+  Duration get _estimatedHikeDuration {
+    final routeDuration = widget.route?.duration;
+    if (routeDuration != null && routeDuration > Duration.zero) {
+      return routeDuration;
+    }
+    return Duration(minutes: widget.trail.estimatedDurationMinutes);
+  }
+
+  double get _totalRouteDistanceMeters =>
+      _routeDistances.isEmpty ? 0 : _routeDistances.last;
+
+  String get _activeStyleUrl =>
+      widget.previewMode == RoutePreviewMode.firstPerson
+      ? fpvMapStyleUrl
+      : mapStyleUrls[_styleIndex];
+
+  _FpvTelemetry _telemetryAt({
+    required double distanceMeters,
+    double? elevationMeters,
+    double? gradePercent,
+  }) {
+    final totalDistance = _totalRouteDistanceMeters;
+    final safeDistance = distanceMeters.clamp(0.0, totalDistance).toDouble();
+    final progress = totalDistance <= 0
+        ? 0.0
+        : (safeDistance / totalDistance).clamp(0.0, 1.0).toDouble();
+    return _FpvTelemetry(
+      distanceMeters: safeDistance,
+      elapsed: Duration(
+        milliseconds: (_estimatedHikeDuration.inMilliseconds * progress)
+            .round(),
+      ),
+      progress: progress,
+      elevationMeters: elevationMeters,
+      gradePercent: gradePercent,
+    );
+  }
+
+  void _syncRouteAnimationDuration() {
+    _routeAnimController.duration =
+        widget.previewMode == RoutePreviewMode.firstPerson
+        ? routePreviewPlaybackDuration(
+            totalDistanceMeters: _totalRouteDistanceMeters,
+            speed: _fpvPlaybackSpeed,
+          )
+        : widget.animationDuration;
+  }
+
+  void _setFpvPlaybackSpeed(double speed) {
+    if (_fpvPlaybackSpeed == speed) return;
+    final shouldResume = _routeAnimController.isAnimating;
+    _routeAnimController.stop();
+    setState(() {
+      _fpvPlaybackSpeed = speed;
+      _syncRouteAnimationDuration();
+    });
+    if (shouldResume && !_isPaused) {
+      _routeAnimController.forward();
+    }
   }
 
   LocalSessionDatabase get _localDatabase =>
@@ -135,11 +232,21 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   Future<void> _loadStaticHazards() async {
     final generation = ++_hazardLoadGeneration;
     try {
-      final cached = await _localDatabase.loadStaticHazardsForTrail(
+      final currentScan = await _localDatabase.loadStaticHazardScanTime(
         widget.trail.trailId,
       );
       if (!mounted || generation != _hazardLoadGeneration) return;
-      _applyStaticHazards(cached);
+      if (currentScan != null) {
+        final cached = await _localDatabase.loadStaticHazardsForTrail(
+          widget.trail.trailId,
+        );
+        if (!mounted || generation != _hazardLoadGeneration) return;
+        _applyStaticHazards(cached);
+      } else {
+        // Do not flash markers produced by an older detection algorithm while
+        // the versioned route-specific scan is being refreshed.
+        _applyStaticHazards(const []);
+      }
 
       final hazards = await StaticHazardDatasetService(
         database: _localDatabase,
@@ -155,7 +262,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   void _applyStaticHazards(List<LocalTrailHazardMatch> hazards) {
     if (!mounted) return;
     setState(() {
-      _staticHazards = hazards;
+      _staticHazards = prepareStaticHazardsForMapDisplay(hazards);
       _routeRendered = false;
     });
     unawaited(_renderRouteIfReady());
@@ -183,7 +290,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     final manager = _polylineManager;
     if (!mounted || annotation == null || manager == null) return;
 
+    _pauseTimer?.cancel();
+    _loopPauseTimer?.cancel();
     _routeAnimController.reset();
+    _fpvTelemetry.value = _telemetryAt(distanceMeters: 0);
     _lastAnimatedIndex = math.min(1, _routePoints.length);
     annotation.geometry = mapbox.LineString(
       coordinates: [
@@ -206,6 +316,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       return;
     }
     _isPaused = false;
+    _queueFpvCameraUpdate(0, force: true);
     _routeAnimController.forward(from: 0);
   }
 
@@ -232,7 +343,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         }
       }
     }
-    if (targetIndex == _lastAnimatedIndex) return;
+    if (targetIndex == _lastAnimatedIndex) {
+      // The line is revealed point-by-point, but the FPV camera must continue
+      // interpolating between those points for smooth slow-speed playback.
+      _queueFpvCameraUpdate(progress);
+      return;
+    }
     _lastAnimatedIndex = targetIndex;
 
     final partialCoordinates = <mapbox.Position>[
@@ -264,6 +380,13 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         unawaited(manager.update(_cometLayers[layer]).catchError((_) {}));
       }
     }
+
+    _queueFpvCameraUpdate(
+      reachedCheckpointRouteIndex == null
+          ? progress
+          : reachedCheckpointRouteIndex / (_routePoints.length - 1),
+      force: reachedCheckpointRouteIndex != null,
+    );
 
     if (reachedCheckpointRouteIndex != null) {
       _pauseAtCheckpoint(reachedCheckpointRouteIndex);
@@ -351,11 +474,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _fitRetryTimer?.cancel();
     _renderGeneration++;
     _mapGeneration++;
+    _terrainQueryGeneration++;
+    _pendingFpvProgress = null;
     _mapboxMap = null;
     _annotationManagersFuture = null;
     _routeAnimController.removeListener(_onRouteAnimationTick);
     _routeAnimController.removeStatusListener(_onAnimationStatusChange);
     _routeAnimController.dispose();
+    _fpvTelemetry.dispose();
+    _fpvBearing.dispose();
     super.dispose();
   }
 
@@ -444,6 +571,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     if (geometryChanged) {
       final previouslyHadGeometry = _hasUsableGeometry;
       _buildPoints();
+      _syncRouteAnimationDuration();
+      _fpvTelemetry.value = _telemetryAt(distanceMeters: 0);
       if (previouslyHadGeometry != _hasUsableGeometry) {
         _mapGeneration++;
         _styleLoaded = false;
@@ -467,6 +596,40 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _fitRetryTimer?.cancel();
       _renderGeneration++;
       unawaited(_renderRouteIfReady());
+    }
+    if (oldWidget.previewMode != widget.previewMode) {
+      _routeAnimController.stop();
+      _pauseTimer?.cancel();
+      _loopPauseTimer?.cancel();
+      _pendingFpvProgress = null;
+      _isPaused = false;
+      _initialFitComplete = false;
+      _lastFpvCameraUpdateMs = 0;
+      _lastTerrainQueryMs = 0;
+      _terrainQueryGeneration++;
+      _fpvPitch = 68;
+      _fpvZoomOffset = 0;
+      _fpvLookAheadMeters = 25;
+      _syncRouteAnimationDuration();
+      _mapGeneration++;
+      _styleLoaded = false;
+      _routeRendered = false;
+      _mapboxMap = null;
+      _polylineManager = null;
+      _circleManager = null;
+      _pointManager = null;
+      _pointTapEvents?.cancel();
+      _pointTapEvents = null;
+      _hazardsByAnnotationId.clear();
+      _annotationManagersFuture = null;
+      _animatedPolyline = null;
+      _cometLayers.clear();
+      _lastAnimatedIndex = 0;
+      _renderGeneration++;
+      _fpvTelemetry.value = _telemetryAt(distanceMeters: 0);
+      _fpvBearing.value = 0;
+    } else if (oldWidget.animationDuration != widget.animationDuration) {
+      _syncRouteAnimationDuration();
     }
     if (oldWidget.highlightedCheckpointIndex !=
         widget.highlightedCheckpointIndex) {
@@ -524,14 +687,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         mapbox.CompassSettings(enabled: false),
       );
       await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
-      await mapboxMap.gestures.updateSettings(
-        mapbox.GesturesSettings(
-          scrollEnabled: true,
-          pinchToZoomEnabled: true,
-          rotateEnabled: true,
-          pitchEnabled: true,
-        ),
-      );
+      await mapboxMap.gestures.updateSettings(_gestureSettingsForPreviewMode);
       await mapboxMap.setBounds(
         mapbox.CameraBoundsOptions(minZoom: kMapMinZoom, maxZoom: kMapMaxZoom),
       );
@@ -785,14 +941,16 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         ),
       ]);
 
-      final hazardMarker = await staticHazardMarkerImage();
+      final hazardMarkers = await Future.wait([
+        for (final match in _staticHazards) staticHazardMarkerImageFor(match),
+      ]);
       if (!_isCurrentMap(map, mapGeneration) ||
           generation != _renderGeneration) {
         return;
       }
       final hazardAnnotations = await _pointManager!.createMulti([
-        for (final match in _staticHazards)
-          staticHazardAnnotation(match, hazardMarker),
+        for (var index = 0; index < _staticHazards.length; index++)
+          staticHazardAnnotation(_staticHazards[index], hazardMarkers[index]),
       ]);
       for (var index = 0; index < hazardAnnotations.length; index++) {
         final annotation = hazardAnnotations[index];
@@ -849,7 +1007,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         _routeRendered = true;
       });
       await Future.delayed(const Duration(milliseconds: 180));
-      await _fitRoute();
+      await _positionCameraForPreviewMode();
     } catch (_) {
       if (mounted && generation == _renderGeneration) {
         setState(() {
@@ -901,6 +1059,220 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   void _animateRoute(mapbox.PolylineAnnotation annotation) {
     if (!mounted) return;
     _routeAnimController.forward(from: 0);
+  }
+
+  mapbox.GesturesSettings get _gestureSettingsForPreviewMode {
+    final cameraIsFollowing =
+        widget.previewMode == RoutePreviewMode.firstPerson;
+    return mapbox.GesturesSettings(
+      scrollEnabled: !cameraIsFollowing,
+      pinchToZoomEnabled: !cameraIsFollowing,
+      rotateEnabled: !cameraIsFollowing,
+      pitchEnabled: !cameraIsFollowing,
+    );
+  }
+
+  Future<void> _positionCameraForPreviewMode() {
+    if (widget.previewMode == RoutePreviewMode.firstPerson) {
+      return _setFpvCamera(_routeAnimProgress.value, force: true);
+    }
+    return _fitRoute();
+  }
+
+  void _queueFpvCameraUpdate(double progress, {bool force = false}) {
+    if (widget.previewMode != RoutePreviewMode.firstPerson) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (!force && now - _lastFpvCameraUpdateMs < 80) return;
+    _lastFpvCameraUpdateMs = now;
+    _pendingFpvProgress = progress;
+    if (!_fpvCameraUpdateInFlight) {
+      unawaited(_drainFpvCameraUpdates());
+    }
+  }
+
+  Future<void> _drainFpvCameraUpdates() async {
+    _fpvCameraUpdateInFlight = true;
+    try {
+      while (mounted && _pendingFpvProgress != null) {
+        final progress = _pendingFpvProgress!;
+        _pendingFpvProgress = null;
+        await _setFpvCamera(progress);
+      }
+    } finally {
+      _fpvCameraUpdateInFlight = false;
+    }
+  }
+
+  Future<void> _setFpvCamera(double progress, {bool force = false}) async {
+    if (widget.previewMode != RoutePreviewMode.firstPerson) return;
+    final map = _mapboxMap;
+    final generation = _mapGeneration;
+    final cameraPoints = _routePoints.length >= 2
+        ? _routePoints
+        : _checkpointPoints;
+    if (map == null || cameraPoints.length < 2) return;
+
+    var distances = _routeDistances;
+    if (cameraPoints.length != distances.length) {
+      distances = [0];
+      for (var i = 1; i < cameraPoints.length; i++) {
+        distances.add(
+          distances.last + distanceMeters(cameraPoints[i - 1], cameraPoints[i]),
+        );
+      }
+    }
+    final frame = routePreviewCameraFrame(
+      points: cameraPoints,
+      cumulativeDistances: distances,
+      progress: progress,
+    );
+    if (frame == null) return;
+
+    final previousTelemetry = _fpvTelemetry.value;
+    final targetTuning = routePreviewCameraTuning(
+      previousTelemetry.gradePercent,
+    );
+    const tuningResponse = 0.18;
+    _fpvPitch += (targetTuning.pitch - _fpvPitch) * tuningResponse;
+    _fpvZoomOffset +=
+        (targetTuning.zoomOffset - _fpvZoomOffset) * tuningResponse;
+    _fpvLookAheadMeters +=
+        (targetTuning.lookAheadMeters - _fpvLookAheadMeters) * tuningResponse;
+    final cameraTarget = routePreviewPointAtDistance(
+      points: cameraPoints,
+      cumulativeDistances: distances,
+      distanceMeters: math.min(
+        distances.last,
+        frame.distanceMeters + _fpvLookAheadMeters,
+      ),
+    );
+    _fpvTelemetry.value = _telemetryAt(
+      distanceMeters: frame.distanceMeters,
+      elevationMeters: previousTelemetry.elevationMeters,
+      gradePercent: previousTelemetry.gradePercent,
+    );
+    _fpvBearing.value = frame.bearing;
+
+    try {
+      await map.setCamera(
+        mapbox.CameraOptions(
+          center: cameraTarget ?? frame.center,
+          zoom: (_fpvZoom + _fpvZoomOffset).clamp(14.5, kMapMaxZoom).toDouble(),
+          bearing: frame.bearing,
+          pitch: _fpvPitch,
+          padding: mapbox.MbxEdgeInsets(
+            top: 84,
+            left: 20,
+            bottom: 24,
+            right: 20,
+          ),
+        ),
+      );
+      _queueTerrainTelemetryUpdate(
+        map: map,
+        generation: generation,
+        frame: frame,
+        cameraPoints: cameraPoints,
+        cumulativeDistances: distances,
+      );
+      if (_isCurrentMap(map, generation) && !_initialFitComplete) {
+        setState(() {
+          _initialFitComplete = true;
+        });
+      }
+    } catch (_) {
+      if (force && _isCurrentMap(map, generation)) {
+        _fitRetryTimer?.cancel();
+        _fitRetryTimer = Timer(const Duration(milliseconds: 350), () {
+          if (mounted && generation == _mapGeneration) {
+            _queueFpvCameraUpdate(progress, force: true);
+          }
+        });
+      }
+    }
+  }
+
+  void _queueTerrainTelemetryUpdate({
+    required mapbox.MapboxMap map,
+    required int generation,
+    required RoutePreviewCameraFrame frame,
+    required List<mapbox.Point> cameraPoints,
+    required List<double> cumulativeDistances,
+  }) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_terrainQueryInFlight || now - _lastTerrainQueryMs < 350) return;
+    _terrainQueryInFlight = true;
+    _lastTerrainQueryMs = now;
+    final queryGeneration = ++_terrainQueryGeneration;
+    unawaited(() async {
+      try {
+        const halfSlopeSampleMeters = 15.0;
+        final sampleStartDistance = math.max(
+          0.0,
+          frame.distanceMeters - halfSlopeSampleMeters,
+        );
+        final sampleEndDistance = math.min(
+          cumulativeDistances.last,
+          frame.distanceMeters + halfSlopeSampleMeters,
+        );
+        final sampleStartPoint = routePreviewPointAtDistance(
+          points: cameraPoints,
+          cumulativeDistances: cumulativeDistances,
+          distanceMeters: sampleStartDistance,
+        );
+        final sampleEndPoint = routePreviewPointAtDistance(
+          points: cameraPoints,
+          cumulativeDistances: cumulativeDistances,
+          distanceMeters: sampleEndDistance,
+        );
+        final elevations = await Future.wait<double?>([
+          map.getElevation(frame.center),
+          sampleStartPoint == null
+              ? Future<double?>.value()
+              : map.getElevation(sampleStartPoint),
+          sampleEndPoint == null
+              ? Future<double?>.value()
+              : map.getElevation(sampleEndPoint),
+        ]);
+        final currentRaw = elevations[0];
+        final sampleStartRaw = elevations[1];
+        final sampleEndRaw = elevations[2];
+        if (!_isCurrentMap(map, generation) ||
+            queryGeneration != _terrainQueryGeneration ||
+            currentRaw == null ||
+            !currentRaw.isFinite) {
+          return;
+        }
+
+        // Mapbox returns terrain elevation after visual exaggeration.
+        final elevation = currentRaw / mapTerrainExaggeration;
+        double? grade;
+        final sampleDistance = sampleEndDistance - sampleStartDistance;
+        if (sampleStartRaw != null &&
+            sampleStartRaw.isFinite &&
+            sampleEndRaw != null &&
+            sampleEndRaw.isFinite &&
+            sampleDistance >= 8) {
+          final startElevation = sampleStartRaw / mapTerrainExaggeration;
+          final endElevation = sampleEndRaw / mapTerrainExaggeration;
+          grade = ((endElevation - startElevation) / sampleDistance * 100)
+              .clamp(-99.0, 99.0)
+              .toDouble();
+        }
+        final current = _fpvTelemetry.value;
+        _fpvTelemetry.value = _FpvTelemetry(
+          distanceMeters: current.distanceMeters,
+          elapsed: current.elapsed,
+          progress: current.progress,
+          elevationMeters: elevation,
+          gradePercent: grade,
+        );
+      } catch (_) {
+        // Terrain tiles can still be loading. A later camera frame retries.
+      } finally {
+        _terrainQueryInFlight = false;
+      }
+    }());
   }
 
   Future<void> _fitRoute() async {
@@ -1029,6 +1401,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   Future<void> _zoomBy(double amount) async {
     if (_mapboxMap == null) return;
+    if (widget.previewMode == RoutePreviewMode.firstPerson) {
+      _fpvZoom = (_fpvZoom + amount).clamp(14.5, kMapMaxZoom).toDouble();
+      _queueFpvCameraUpdate(_routeAnimProgress.value, force: true);
+      return;
+    }
     try {
       await _mapboxMap!.flyTo(
         mapbox.CameraOptions(zoom: _currentZoom + amount),
@@ -1039,6 +1416,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   void _cycleStyle() {
+    if (widget.previewMode == RoutePreviewMode.firstPerson) return;
     setState(() {
       _mapGeneration++;
       _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
@@ -1061,8 +1439,17 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   void _onMapIdle() {
     unawaited(_syncScaleFromCamera());
     if (_routeRendered && !_initialFitComplete) {
-      unawaited(_fitRoute());
+      unawaited(_positionCameraForPreviewMode());
     }
+  }
+
+  Future<void> _resetCameraForPreviewMode() async {
+    if (widget.previewMode == RoutePreviewMode.firstPerson) {
+      _fpvZoom = 17.2;
+      await _setFpvCamera(_routeAnimProgress.value, force: true);
+      return;
+    }
+    await _fitRoute();
   }
 
   Future<void> _syncScaleFromCamera() async {
@@ -1187,13 +1574,14 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     final isPreparingMap =
         !_styleLoaded || !_routeRendered || !_initialFitComplete;
     final mapGeneration = _mapGeneration;
+    final activeStyleUrl = _activeStyleUrl;
     return Stack(
       fit: StackFit.expand,
       children: [
         DeferredMap(
           child: mapbox.MapWidget(
-            key: ValueKey(mapStyleUrls[_styleIndex]),
-            styleUri: mapStyleUrls[_styleIndex],
+            key: ValueKey('$activeStyleUrl#$mapGeneration'),
+            styleUri: activeStyleUrl,
             gestureRecognizers: widget.captureAllGestures
                 ? eagerMapGestureRecognizers
                 : mapGestureRecognizers,
@@ -1212,25 +1600,94 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             },
           ),
         ),
-        Align(
-          alignment: Alignment.topRight,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: MapZoomControls(
-              onZoomIn: () => _zoomBy(1),
-              onZoomOut: () => _zoomBy(-1),
-              onReset: _fitRoute,
-              onLayer: widget.showLayerToggle ? _cycleStyle : null,
+        if (widget.previewMode == RoutePreviewMode.normal)
+          Align(
+            alignment: Alignment.topRight,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: MapZoomControls(
+                onZoomIn: () => _zoomBy(1),
+                onZoomOut: () => _zoomBy(-1),
+                onReset: _resetCameraForPreviewMode,
+                onLayer: widget.showLayerToggle ? _cycleStyle : null,
+              ),
             ),
           ),
-        ),
-        Align(
-          alignment: Alignment.bottomLeft,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
+        if (widget.previewMode == RoutePreviewMode.firstPerson &&
+            !isPreparingMap)
+          Positioned(
+            left: 10,
+            top: 10,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xE817241C),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: const Color(0x5534A853)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.navigation_rounded,
+                      color: Color(0xFF7EE2A0),
+                      size: 14,
+                    ),
+                    SizedBox(width: 5),
+                    Text(
+                      'FPV route preview',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
+        if (widget.previewMode == RoutePreviewMode.firstPerson &&
+            !isPreparingMap)
+          Positioned(
+            right: 10,
+            top: 10,
+            width: 132,
+            child: ValueListenableBuilder<_FpvTelemetry>(
+              valueListenable: _fpvTelemetry,
+              builder: (context, telemetry, _) =>
+                  _FpvTelemetryPanel(telemetry: telemetry),
+            ),
+          ),
+        if (widget.previewMode == RoutePreviewMode.firstPerson &&
+            !isPreparingMap)
+          Positioned(
+            left: 10,
+            bottom: 10,
+            child: _FpvSpeedControl(
+              speed: _fpvPlaybackSpeed,
+              onChanged: _setFpvPlaybackSpeed,
+            ),
+          ),
+        if (widget.previewMode == RoutePreviewMode.firstPerson &&
+            !isPreparingMap)
+          Positioned(
+            right: 10,
+            bottom: 10,
+            child: ValueListenableBuilder<double>(
+              valueListenable: _fpvBearing,
+              builder: (context, bearing, _) => _FpvCompass(bearing: bearing),
+            ),
+          ),
+        if (widget.previewMode == RoutePreviewMode.normal)
+          Align(
+            alignment: Alignment.bottomLeft,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
+            ),
+          ),
         if (isPreparingMap)
           Positioned.fill(
             child: ColoredBox(
@@ -1296,6 +1753,320 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             ),
           ),
       ],
+    );
+  }
+}
+
+class _FpvTelemetryPanel extends StatelessWidget {
+  const _FpvTelemetryPanel({required this.telemetry});
+
+  final _FpvTelemetry telemetry;
+
+  @override
+  Widget build(BuildContext context) {
+    const muted = Color(0xFFB9C8BE);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xEA101A14),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0x5534A853)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x44000000),
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'LIVE ROUTE',
+                  style: TextStyle(
+                    color: Color(0xFF7EE2A0),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${(telemetry.progress * 100).round()}%',
+                  style: const TextStyle(
+                    color: muted,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(99),
+              child: LinearProgressIndicator(
+                minHeight: 3,
+                value: telemetry.progress,
+                color: const Color(0xFF4ADE80),
+                backgroundColor: const Color(0xFF29372E),
+              ),
+            ),
+            const SizedBox(height: 8),
+            _FpvTelemetryRow(
+              icon: Icons.terrain_rounded,
+              label: 'Elevation',
+              value: telemetry.elevationMeters == null
+                  ? 'Loading…'
+                  : '${telemetry.elevationMeters!.round()} m',
+            ),
+            _FpvTelemetryRow(
+              icon: _gradeIcon(telemetry.gradePercent),
+              label: 'Steepness',
+              value: _gradeLabel(telemetry.gradePercent),
+            ),
+            _FpvTelemetryRow(
+              icon: Icons.schedule_rounded,
+              label: 'Est. elapsed',
+              value: _durationLabel(telemetry.elapsed),
+            ),
+            _FpvTelemetryRow(
+              icon: Icons.route_rounded,
+              label: 'Distance',
+              value: _distanceLabel(telemetry.distanceMeters),
+              bottomPadding: 0,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _gradeIcon(double? grade) {
+    if (grade == null || grade.abs() < 2) return Icons.trending_flat_rounded;
+    return grade > 0 ? Icons.trending_up_rounded : Icons.trending_down_rounded;
+  }
+
+  String _gradeLabel(double? grade) {
+    if (grade == null) return 'Loading…';
+    final degrees = routePreviewSlopeDegrees(grade);
+    if (degrees.abs() < 1) return 'Level';
+    return '${degrees.abs().round()}° ${degrees > 0 ? 'up' : 'down'}';
+  }
+
+  String _durationLabel(Duration value) {
+    final minutes = value.inMinutes;
+    if (minutes == 0 && value > Duration.zero) return '<1 min';
+    if (minutes < 60) return '${math.max(0, minutes)} min';
+    final hours = minutes ~/ 60;
+    final remaining = minutes % 60;
+    return remaining == 0 ? '${hours}h' : '${hours}h ${remaining}m';
+  }
+
+  String _distanceLabel(double meters) {
+    if (meters < 1000) return '${math.max(0, meters).round()} m';
+    return '${(meters / 1000).toStringAsFixed(1)} km';
+  }
+}
+
+class _FpvTelemetryRow extends StatelessWidget {
+  const _FpvTelemetryRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.bottomPadding = 6,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final double bottomPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomPadding),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF7EE2A0)),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF9EADA3),
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    height: 1.05,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FpvSpeedControl extends StatelessWidget {
+  const _FpvSpeedControl({required this.speed, required this.onChanged});
+
+  static const _speeds = <double>[0.5, 1, 2, 4];
+
+  final double speed;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xEA101A14),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x5534A853)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x44000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final option in _speeds)
+              Tooltip(
+                message: '${option == 0.5 ? 'Half' : option.toInt()} speed',
+                child: Semantics(
+                  button: true,
+                  selected: speed == option,
+                  label: '${option == 0.5 ? 'Half' : option.toInt()} speed',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(7),
+                    onTap: () => onChanged(option),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      width: 34,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: speed == option
+                            ? const Color(0xFF34A853)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Text(
+                        option == 0.5 ? '½×' : '${option.toInt()}×',
+                        style: TextStyle(
+                          color: speed == option
+                              ? Colors.white
+                              : const Color(0xFFC7D2CA),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FpvCompass extends StatelessWidget {
+  const _FpvCompass({required this.bearing});
+
+  final double bearing;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = bearing.isFinite ? (bearing % 360 + 360) % 360 : 0.0;
+    final cardinal = routePreviewCardinalDirection(normalized);
+    return Semantics(
+      label: 'Compass. Heading ${normalized.round()} degrees $cardinal',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xEA101A14),
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0x7734A853), width: 1.2),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x55000000),
+              blurRadius: 9,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: SizedBox.square(
+          dimension: 62,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Positioned(
+                top: 7,
+                child: Transform.rotate(
+                  angle: -normalized * math.pi / 180,
+                  child: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'N',
+                        style: TextStyle(
+                          color: Color(0xFFFF6B61),
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          height: 1,
+                        ),
+                      ),
+                      Icon(
+                        Icons.navigation_rounded,
+                        size: 24,
+                        color: Color(0xFFFF6B61),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 6,
+                child: Text(
+                  '${normalized.round()}° $cardinal',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

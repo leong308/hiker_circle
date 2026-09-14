@@ -7,47 +7,43 @@ class AuthBrandPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const textGreen = Color(0xFF17382C);
-
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 26),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF234E38), Color(0xFF102C22)],
+        ),
+        borderRadius: BorderRadius.circular(28),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(Icons.terrain, color: color, size: 30),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: Image.asset(
+                  'assets/icons/AppIcon-Android-1024.png',
+                  width: 58,
+                  height: 58,
+                  semanticLabel: 'HikerCircle logo',
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Text(
                   'HikerCircle',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: textGreen,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 23,
                     fontWeight: FontWeight.w800,
+                    letterSpacing: -0.7,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Emergency and alert assistant for hiker safety',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF4E6A59),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),

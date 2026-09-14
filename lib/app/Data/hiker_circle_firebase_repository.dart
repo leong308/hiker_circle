@@ -5273,6 +5273,8 @@ class HikerCircleFirebaseRepository {
       difficulty: _titleCase(_stringFrom(data['difficulty'])),
       estimatedDurationMinutes: _intFrom(data['estimatedDurationMinutes']),
       elevationGainMeters: _intFrom(data['elevationGainMeters']),
+      minElevationMeters: _nullableIntFrom(data['minElevationMeters']),
+      maxElevationMeters: _nullableIntFrom(data['maxElevationMeters']),
       ratingAverage: _doubleFrom(data['ratingAverage']),
       ratingCount: _intFrom(data['ratingCount']),
       easyDifficultyVotes: _intFrom(difficultyVoteCounts['easy']),

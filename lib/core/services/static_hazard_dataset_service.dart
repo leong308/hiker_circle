@@ -8,6 +8,7 @@ import '../../app/Data/local_session_database.dart';
 import '../../trail/Model/trail_models.dart';
 import '../config/google_api_config.dart';
 import 'hiking_route_service.dart';
+import 'trail_hazard_enrichment_service.dart';
 
 typedef HazardDatasetProgress = void Function(int completed, int total);
 
@@ -30,13 +31,20 @@ class StaticHazardDatasetService {
     required LocalSessionDatabase database,
     http.Client? client,
     String? accessToken,
+    TrailHazardEnrichmentService? enrichmentService,
+    this.enableExtendedHazards = true,
   }) : _database = database,
        _client = client ?? http.Client(),
-       _accessToken = accessToken;
+       _accessToken = accessToken {
+    _enrichmentService =
+        enrichmentService ?? TrailHazardEnrichmentService(client: _client);
+  }
 
   final LocalSessionDatabase _database;
   final http.Client _client;
   final String? _accessToken;
+  late final TrailHazardEnrichmentService _enrichmentService;
+  final bool enableExtendedHazards;
 
   static const _tilesetId = 'mapbox.mapbox-streets-v8';
   static const _sourceUrl =
@@ -119,7 +127,9 @@ class StaticHazardDatasetService {
         work.add((trail: trail, sample: sample));
       }
     }
-    onProgress?.call(0, work.length);
+    final totalSteps =
+        work.length + (enableExtendedHazards ? usableTrails.length : 0);
+    onProgress?.call(0, totalSteps);
 
     final hazardsById = <String, LocalStaticHazard>{};
     final matchesById = <String, LocalTrailHazardMatch>{};
@@ -147,7 +157,7 @@ class StaticHazardDatasetService {
         lastError = error;
       } finally {
         completed++;
-        onProgress?.call(completed, work.length);
+        onProgress?.call(completed, totalSteps);
       }
     }
 
@@ -156,6 +166,33 @@ class StaticHazardDatasetService {
         'Mapbox returned no successful hazard queries. ${lastError ?? 'Check the connection and token restrictions.'}',
       );
     }
+
+    if (enableExtendedHazards) {
+      const enrichmentBatchSize = 4;
+      for (
+        var start = 0;
+        start < usableTrails.length;
+        start += enrichmentBatchSize
+      ) {
+        final end = math.min(start + enrichmentBatchSize, usableTrails.length);
+        final batch = usableTrails.sublist(start, end);
+        final enriched = await Future.wait([
+          for (final trail in batch)
+            _enrichmentService.fetchForTrail(
+              trail: trail,
+              routePoints: _pointsForTrail(trail),
+            ),
+        ]);
+        for (final extended in enriched) {
+          for (final match in extended) {
+            _mergeMatch(hazardsById, matchesById, match);
+          }
+          completed++;
+          onProgress?.call(completed, totalSteps);
+        }
+      }
+    }
+    _suppressSpatialDuplicates(hazardsById, matchesById);
 
     await _database.replaceStaticHazardDataset(
       hazards: hazardsById.values.toList(growable: false),
@@ -205,6 +242,16 @@ class StaticHazardDatasetService {
         'Unable to refresh mapped hazards. ${lastError ?? 'Check the connection and token restrictions.'}',
       );
     }
+    if (enableExtendedHazards) {
+      final extended = await _enrichmentService.fetchForTrail(
+        trail: trail,
+        routePoints: points,
+      );
+      for (final match in extended) {
+        _mergeMatch(hazardsById, matchesById, match);
+      }
+    }
+    _suppressSpatialDuplicates(hazardsById, matchesById);
     final scannedAt = DateTime.now().toUtc();
     await _database.replaceStaticHazardsForTrail(
       trailId: trail.trailId,
@@ -216,6 +263,72 @@ class StaticHazardDatasetService {
   }
 
   Future<void> clear() => _database.clearStaticHazardDataset();
+
+  void _mergeMatch(
+    Map<String, LocalStaticHazard> hazardsById,
+    Map<String, LocalTrailHazardMatch> matchesById,
+    LocalTrailHazardMatch match,
+  ) {
+    final existing = matchesById[match.hazard.hazardId];
+    if (existing == null || match.distanceMeters < existing.distanceMeters) {
+      hazardsById[match.hazard.hazardId] = match.hazard;
+      matchesById[match.hazard.hazardId] = match;
+    }
+  }
+
+  void _suppressSpatialDuplicates(
+    Map<String, LocalStaticHazard> hazardsById,
+    Map<String, LocalTrailHazardMatch> matchesById,
+  ) {
+    final authoritative = matchesById.values
+        .where((match) => match.hazard.hazardId.startsWith('osm:'))
+        .toList(growable: false);
+    final removals = <String>[];
+    for (final match in matchesById.values) {
+      if (!match.hazard.hazardId.startsWith('mapbox:')) continue;
+      final duplicate = authoritative.any((candidate) {
+        final distance = _hazardDistance(match.hazard, candidate.hazard);
+        if (distance > 35) return false;
+        final family = _hazardFamily(match.hazard.hazardType);
+        final candidateFamily = _hazardFamily(candidate.hazard.hazardType);
+        if (family == candidateFamily) return true;
+        return family == 'water' &&
+            const {'bridge', 'ford'}.contains(candidateFamily);
+      });
+      if (duplicate) removals.add(match.hazard.hazardId);
+    }
+    for (final hazardId in removals) {
+      matchesById.remove(hazardId);
+      hazardsById.remove(hazardId);
+    }
+  }
+
+  String _hazardFamily(String type) => switch (type) {
+    'river' || 'stream' || 'stream_intermittent' => 'water',
+    'bridge_crossing' => 'bridge',
+    'ford_crossing' || 'stepping_stones' => 'ford',
+    _ => type,
+  };
+
+  double _hazardDistance(LocalStaticHazard first, LocalStaticHazard second) {
+    const radius = 6371000.0;
+    final latitude1 = first.latitude * math.pi / 180;
+    final latitude2 = second.latitude * math.pi / 180;
+    final latitudeDelta = (second.latitude - first.latitude) * math.pi / 180;
+    final longitudeDelta = (second.longitude - first.longitude) * math.pi / 180;
+    final a =
+        math.sin(latitudeDelta / 2) * math.sin(latitudeDelta / 2) +
+        math.cos(latitude1) *
+            math.cos(latitude2) *
+            math.sin(longitudeDelta / 2) *
+            math.sin(longitudeDelta / 2);
+    return radius *
+        2 *
+        math.atan2(
+          math.sqrt(a.clamp(0.0, 1.0)),
+          math.sqrt((1 - a).clamp(0.0, 1.0)),
+        );
+  }
 
   Future<List<Map<String, dynamic>>> _query(
     _RouteSample sample,
@@ -261,29 +374,71 @@ class StaticHazardDatasetService {
   }) {
     final parsed =
         <({LocalStaticHazard hazard, LocalTrailHazardMatch match})>[];
-    final waterways = <_FeaturePoint>[];
+    final routePoints = _pointsForTrail(trail);
+    final waterways = <({Map<String, dynamic> feature, _FeaturePoint point})>[];
     final bridges = <({Map<String, dynamic> feature, _FeaturePoint point})>[];
+    final fords = <({Map<String, dynamic> feature, _FeaturePoint point})>[];
     for (final feature in features) {
-      final point = _featurePoint(feature);
+      final rawPoint = _featurePoint(feature);
+      final point = rawPoint == null
+          ? null
+          : _projectFeaturePointToRoute(rawPoint, routePoints);
       if (point != null && point.layer == 'waterway' && _isWaterway(point)) {
-        waterways.add(point);
+        waterways.add((feature: feature, point: point));
       }
       if (point != null &&
           point.layer == 'road' &&
-          point.structure == 'bridge') {
+          point.structure == 'bridge' &&
+          _isHikingBridge(point)) {
         bridges.add((feature: feature, point: point));
       }
-      final hazard = _parseFeature(feature, trail: trail, sample: sample);
+      if (point != null && point.layer == 'road' && point.structure == 'ford') {
+        fords.add((feature: feature, point: point));
+      }
+      if (point != null &&
+          point.layer == 'structure' &&
+          point.featureClass == 'cliff') {
+        final hazard = _parseFeature(
+          feature,
+          point: point,
+          trail: trail,
+          sample: sample,
+        );
+        if (hazard != null) parsed.add(hazard);
+      }
+    }
+    final mappedCrossings = [
+      for (final bridge in bridges)
+        if (bridge.point.distance <= 12) bridge.point,
+      for (final ford in fords)
+        if (ford.point.distance <= 10) ford.point,
+    ];
+    for (final waterway in waterways) {
+      if (waterway.point.distance > 10 ||
+          mappedCrossings.any(
+            (crossing) =>
+                _distanceBetween(crossing, waterway.point) <=
+                _bridgeWaterwayToleranceMeters,
+          )) {
+        continue;
+      }
+      final hazard = _parseFeature(
+        waterway.feature,
+        point: waterway.point,
+        trail: trail,
+        sample: sample,
+      );
       if (hazard != null) parsed.add(hazard);
     }
     for (final bridge in bridges) {
+      if (bridge.point.distance > 12) continue;
       _FeaturePoint? crossedWaterway;
       var closestDistance = double.infinity;
       for (final waterway in waterways) {
-        final distance = _distanceBetween(bridge.point, waterway);
+        final distance = _distanceBetween(bridge.point, waterway.point);
         if (distance < closestDistance) {
           closestDistance = distance;
-          crossedWaterway = waterway;
+          crossedWaterway = waterway.point;
         }
       }
       if (crossedWaterway == null ||
@@ -300,29 +455,49 @@ class StaticHazardDatasetService {
         ),
       );
     }
+    for (final ford in fords) {
+      if (ford.point.distance > 10) continue;
+      parsed.add(
+        _parseFordFeature(
+          ford.feature,
+          ford.point,
+          trail: trail,
+          sample: sample,
+        ),
+      );
+    }
     return parsed;
+  }
+
+  bool _isHikingBridge(_FeaturePoint point) {
+    // A trail can geometrically cross beneath or beside a vehicle bridge.
+    // Mapbox's tile query returns that bridge at zero distance too, so only
+    // accept bridge segments whose road classification is walk/trail based.
+    return point.featureClass == 'path' ||
+        const {
+          'path',
+          'footway',
+          'steps',
+          'pedestrian',
+          'track',
+          'bridleway',
+        }.contains(point.featureType);
   }
 
   ({LocalStaticHazard hazard, LocalTrailHazardMatch match})? _parseFeature(
     Map<String, dynamic> feature, {
+    required _FeaturePoint point,
     required Trail trail,
     required _RouteSample sample,
   }) {
-    final geometry = feature['geometry'];
     final properties = feature['properties'];
-    if (geometry is! Map || properties is! Map) return null;
-    final coordinates = geometry['coordinates'];
-    final tilequery = properties['tilequery'];
-    if (coordinates is! List || coordinates.length < 2 || tilequery is! Map) {
-      return null;
-    }
-    final longitude = (coordinates[0] as num?)?.toDouble();
-    final latitude = (coordinates[1] as num?)?.toDouble();
-    final distance = (tilequery['distance'] as num?)?.toDouble();
-    final layer = tilequery['layer']?.toString().toLowerCase() ?? '';
-    final featureClass = properties['class']?.toString().toLowerCase() ?? '';
-    final featureType = properties['type']?.toString().toLowerCase() ?? '';
-    if (longitude == null || latitude == null || distance == null) return null;
+    if (properties is! Map) return null;
+    final longitude = point.longitude;
+    final latitude = point.latitude;
+    final distance = point.distance;
+    final layer = point.layer;
+    final featureClass = point.featureClass;
+    final featureType = point.featureType;
 
     late final String hazardType;
     if (layer == 'structure' && featureClass == 'cliff') {
@@ -338,7 +513,7 @@ class StaticHazardDatasetService {
       return null;
     }
 
-    final isOnRoute = distance <= (hazardType == 'cliff' ? 20 : 8);
+    final isOnRoute = distance <= (hazardType == 'cliff' ? 20 : 10);
     final relationship = isOnRoute
         ? hazardType == 'cliff'
               ? 'on_route'
@@ -355,9 +530,7 @@ class StaticHazardDatasetService {
         ? isOnRoute
               ? 'Mapped cliff at route'
               : 'Mapped cliff nearby'
-        : isOnRoute
-        ? 'Possible water crossing'
-        : 'Waterway nearby';
+        : 'Possible water crossing';
     final description = isCliff
         ? 'Map data places a cliff about $roundedDistance m from this route position. Coverage may be incomplete.'
         : 'Map data places a ${_waterwayLabel(hazardType)} about $roundedDistance m from this route position. This does not confirm current depth, flow, flooding, or a safe crossing.';
@@ -387,7 +560,7 @@ class StaticHazardDatasetService {
         hazard: hazard,
         relationship: relationship,
         distanceMeters: distance,
-        routeProgress: sample.progress,
+        routeProgress: point.routeProgress ?? sample.progress,
         computedAt: now,
       ),
     );
@@ -400,7 +573,6 @@ class StaticHazardDatasetService {
     required Trail trail,
     required _RouteSample sample,
   }) {
-    final isOnRoute = bridge.distance <= 12;
     final featureId =
         feature['id']?.toString() ??
         '${bridge.longitude.toStringAsFixed(5)},${bridge.latitude.toStringAsFixed(5)}';
@@ -414,14 +586,12 @@ class StaticHazardDatasetService {
     final hazard = LocalStaticHazard(
       hazardId: 'mapbox:${trail.trailId}:road:bridge_crossing:$featureId',
       hazardType: 'bridge_crossing',
-      title: isOnRoute
-          ? 'Mapped bridge at water crossing'
-          : 'Mapped bridge crossing nearby',
+      title: 'Mapped bridge at water crossing',
       description:
           'Map data places a bridge over a $waterwayLabel about $roundedDistance m from this route position. Its condition and accessibility are not verified.',
       latitude: bridge.latitude,
       longitude: bridge.longitude,
-      severity: isOnRoute ? 'warning' : 'caution',
+      severity: 'warning',
       confidence: 'mapped_feature_pair',
       sourceName: 'Mapbox Streets / OpenStreetMap',
       sourceUrl: _sourceUrl,
@@ -436,9 +606,50 @@ class StaticHazardDatasetService {
       match: LocalTrailHazardMatch(
         trailId: trail.trailId,
         hazard: hazard,
-        relationship: isOnRoute ? 'bridge_crossing' : 'bridge_crossing_nearby',
+        relationship: 'bridge_crossing',
         distanceMeters: bridge.distance,
-        routeProgress: sample.progress,
+        routeProgress: bridge.routeProgress ?? sample.progress,
+        computedAt: now,
+      ),
+    );
+  }
+
+  ({LocalStaticHazard hazard, LocalTrailHazardMatch match}) _parseFordFeature(
+    Map<String, dynamic> feature,
+    _FeaturePoint ford, {
+    required Trail trail,
+    required _RouteSample sample,
+  }) {
+    final featureId =
+        feature['id']?.toString() ??
+        '${ford.longitude.toStringAsFixed(5)},${ford.latitude.toStringAsFixed(5)}';
+    final now = DateTime.now().toUtc();
+    final hazard = LocalStaticHazard(
+      hazardId: 'mapbox:${trail.trailId}:road:ford_crossing:$featureId',
+      hazardType: 'ford_crossing',
+      title: 'Mapped river ford',
+      description:
+          'Map data identifies a ford about ${ford.distance.round()} m from this route position. A ford requires passing through water and conditions can change quickly.',
+      latitude: ford.latitude,
+      longitude: ford.longitude,
+      severity: ford.distance <= 10 ? 'warning' : 'caution',
+      confidence: 'mapped_feature',
+      sourceName: 'Mapbox Streets / OpenStreetMap',
+      sourceUrl: _sourceUrl,
+      sourceFeatureId: featureId,
+      safetyGuidance:
+          'Assess water depth, speed and footing before entering. Do not cross fast, rising or opaque water.',
+      downloadedAt: now,
+      expiresAt: now.add(const Duration(days: 90)),
+    );
+    return (
+      hazard: hazard,
+      match: LocalTrailHazardMatch(
+        trailId: trail.trailId,
+        hazard: hazard,
+        relationship: ford.distance <= 10 ? 'ford_crossing' : 'ford_nearby',
+        distanceMeters: ford.distance,
+        routeProgress: ford.routeProgress ?? sample.progress,
         computedAt: now,
       ),
     );
@@ -489,6 +700,81 @@ class StaticHazardDatasetService {
     return earthRadiusMeters *
         2 *
         math.atan2(math.sqrt(clamped), math.sqrt(1 - clamped));
+  }
+
+  _FeaturePoint _projectFeaturePointToRoute(
+    _FeaturePoint point,
+    List<LatLng> route,
+  ) {
+    if (route.isEmpty) return point;
+    if (route.length == 1) {
+      return point.withRoutePosition(
+        distance: _coordinateDistance(
+          point.latitude,
+          point.longitude,
+          route.single.latitude,
+          route.single.longitude,
+        ),
+        routeProgress: 0,
+      );
+    }
+
+    var bestDistance = double.infinity;
+    var bestProgress = 0.0;
+    for (var index = 1; index < route.length; index++) {
+      final start = route[index - 1];
+      final end = route[index];
+      const latitudeScale = 111320.0;
+      final longitudeScale =
+          latitudeScale * math.cos(point.latitude * math.pi / 180);
+      final segmentX = (end.longitude - start.longitude) * longitudeScale;
+      final segmentY = (end.latitude - start.latitude) * latitudeScale;
+      final pointX = (point.longitude - start.longitude) * longitudeScale;
+      final pointY = (point.latitude - start.latitude) * latitudeScale;
+      final lengthSquared = segmentX * segmentX + segmentY * segmentY;
+      final fraction = lengthSquared <= 0
+          ? 0.0
+          : ((pointX * segmentX + pointY * segmentY) / lengthSquared).clamp(
+              0.0,
+              1.0,
+            );
+      final deltaX = pointX - segmentX * fraction;
+      final deltaY = pointY - segmentY * fraction;
+      final distance = math.sqrt(deltaX * deltaX + deltaY * deltaY);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestProgress = (index - 1 + fraction) / (route.length - 1);
+      }
+    }
+    return point.withRoutePosition(
+      distance: bestDistance,
+      routeProgress: bestProgress,
+    );
+  }
+
+  double _coordinateDistance(
+    double firstLatitude,
+    double firstLongitude,
+    double secondLatitude,
+    double secondLongitude,
+  ) {
+    const earthRadiusMeters = 6371000.0;
+    final latitude1 = firstLatitude * math.pi / 180;
+    final latitude2 = secondLatitude * math.pi / 180;
+    final latitudeDelta = (secondLatitude - firstLatitude) * math.pi / 180;
+    final longitudeDelta = (secondLongitude - firstLongitude) * math.pi / 180;
+    final a =
+        math.sin(latitudeDelta / 2) * math.sin(latitudeDelta / 2) +
+        math.cos(latitude1) *
+            math.cos(latitude2) *
+            math.sin(longitudeDelta / 2) *
+            math.sin(longitudeDelta / 2);
+    return earthRadiusMeters *
+        2 *
+        math.atan2(
+          math.sqrt(a.clamp(0.0, 1.0)),
+          math.sqrt((1 - a).clamp(0.0, 1.0)),
+        );
   }
 
   List<LatLng> _pointsForTrail(Trail trail, {HikingRouteResult? route}) {
@@ -560,7 +846,24 @@ class _FeaturePoint {
     required this.featureClass,
     required this.featureType,
     required this.structure,
+    this.routeProgress,
   });
+
+  _FeaturePoint withRoutePosition({
+    required double distance,
+    required double routeProgress,
+  }) {
+    return _FeaturePoint(
+      latitude: latitude,
+      longitude: longitude,
+      distance: distance,
+      layer: layer,
+      featureClass: featureClass,
+      featureType: featureType,
+      structure: structure,
+      routeProgress: routeProgress,
+    );
+  }
 
   final double latitude;
   final double longitude;
@@ -569,6 +872,7 @@ class _FeaturePoint {
   final String featureClass;
   final String featureType;
   final String structure;
+  final double? routeProgress;
 }
 
 class _RouteSample {

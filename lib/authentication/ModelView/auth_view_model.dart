@@ -1,25 +1,25 @@
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../../app/Model/app_session.dart';
+import '../Data/multi_factor_auth_service.dart';
 import '../Data/phone_number_formatter.dart';
 import '../Model/auth_status.dart';
 import '../Model/mfa_models.dart';
 
 class AuthViewModel extends ChangeNotifier {
   AuthViewModel({
-    FirebaseAuth? firebaseAuth,
     FirebaseFunctions? firebaseFunctions,
-    Future<void> Function(AppSession session)? onAutomaticallyVerified,
-  }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
-       _firebaseFunctions = firebaseFunctions ?? FirebaseFunctions.instance,
-       _onAutomaticallyVerified = onAutomaticallyVerified;
+    MultiFactorAuthService? multiFactorAuthService,
+  }) : _firebaseFunctions = firebaseFunctions ?? FirebaseFunctions.instance,
+       _multiFactorAuthService =
+           multiFactorAuthService ??
+           MultiFactorAuthService(
+             functions: firebaseFunctions ?? FirebaseFunctions.instance,
+           );
 
-  final FirebaseAuth _firebaseAuth;
   final FirebaseFunctions _firebaseFunctions;
-  final Future<void> Function(AppSession session)? _onAutomaticallyVerified;
+  final MultiFactorAuthService _multiFactorAuthService;
 
   AuthMode _authMode = AuthMode.signUp;
   AuthStatus _status = AuthStatus.enteringPhone;
@@ -57,10 +57,16 @@ class AuthViewModel extends ChangeNotifier {
     return null;
   }
 
-  Future<void> sendCode(String phoneNumber) async {
+  Future<void> sendCode(
+    String phoneNumber, {
+    String? password,
+    bool authenticatedReverification = false,
+  }) async {
     final normalized = PhoneNumberFormatter.normalize(phoneNumber);
     _status = AuthStatus.sendingCode;
-    _message = 'Sending a verification code through WhatsApp...';
+    _message = _authMode == AuthMode.login && !authenticatedReverification
+        ? 'Verifying your password before sending a WhatsApp code...'
+        : 'Sending a verification code through WhatsApp...';
     _error = null;
     _greenApiChallengeId = null;
     notifyListeners();
@@ -70,7 +76,13 @@ class AuthViewModel extends ChangeNotifier {
           .httpsCallable('sendGreenApiLoginCode')
           .call(<String, Object?>{
             'phoneNumber': normalized,
-            'intent': _authMode == AuthMode.signUp ? 'sign_up' : 'sign_in',
+            'intent': authenticatedReverification
+                ? 'reauth'
+                : _authMode == AuthMode.signUp
+                ? 'sign_up'
+                : 'sign_in',
+            if (_authMode == AuthMode.login && !authenticatedReverification)
+              'password': password ?? '',
           });
       final data = response.data;
       if (data is! Map || data['challengeId'] is! String) {
@@ -81,7 +93,7 @@ class AuthViewModel extends ChangeNotifier {
       }
       _greenApiChallengeId = data['challengeId'] as String;
       _status = AuthStatus.enteringCode;
-      _message = 'GreenAPI sent a WhatsApp code to $normalized.';
+      _message = 'OTP sent to $normalized via WhatsApp.';
       _error = null;
     } catch (error) {
       _status = AuthStatus.enteringPhone;
@@ -89,6 +101,31 @@ class AuthViewModel extends ChangeNotifier {
       _error = _friendlyFunctionsError(error);
     }
     notifyListeners();
+  }
+
+  Future<bool> resendCode(
+    String phoneNumber, {
+    String? password,
+    bool authenticatedReverification = false,
+  }) async {
+    final previousChallengeId = _greenApiChallengeId;
+    await sendCode(
+      phoneNumber,
+      password: password,
+      authenticatedReverification: authenticatedReverification,
+    );
+    final sent = _greenApiChallengeId != null;
+    if (sent) return true;
+
+    // Keep the original challenge usable when a resend fails. The original
+    // WhatsApp message may still arrive, so the user must remain on the OTP
+    // step instead of being sent back to the phone-number form.
+    _greenApiChallengeId = previousChallengeId;
+    if (previousChallengeId != null) {
+      _status = AuthStatus.enteringCode;
+    }
+    notifyListeners();
+    return false;
   }
 
   Future<MfaContinuation?> verifyOtp(String code) async {
@@ -149,60 +186,6 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
-  Future<AppSession?> loginWithPassword(
-    String phoneNumber,
-    String password,
-  ) async {
-    final normalized = PhoneNumberFormatter.normalize(phoneNumber);
-    _status = AuthStatus.loggingIn;
-    _message = 'Signing in...';
-    _error = null;
-    notifyListeners();
-
-    try {
-      final response = await _firebaseFunctions
-          .httpsCallable('loginWithPassword')
-          .call(<String, Object?>{
-            'phoneNumber': normalized,
-            'password': password,
-          });
-      final data = response.data;
-      if (data is! Map ||
-          data['customToken'] is! String ||
-          data['phoneNumber'] is! String) {
-        throw FirebaseFunctionsException(
-          code: 'invalid-response',
-          message: 'Login service returned invalid data.',
-        );
-      }
-      final credential = await _firebaseAuth.signInWithCustomToken(
-        data['customToken'] as String,
-      );
-      if (credential.user == null) {
-        throw FirebaseAuthException(
-          code: 'login-sign-in-failed',
-          message: 'Firebase could not complete the login.',
-        );
-      }
-      final session = AppSession(
-        phoneNumber: data['phoneNumber'] as String,
-        signedInAt: DateTime.now(),
-      );
-      _status = AuthStatus.signedIn;
-      _message = null;
-      _error = null;
-      notifyListeners();
-      await _onAutomaticallyVerified?.call(session);
-      return session;
-    } catch (error) {
-      _status = AuthStatus.enteringPhone;
-      _message = null;
-      _error = _friendlyFunctionsError(error);
-      notifyListeners();
-      return null;
-    }
-  }
-
   // ─── Password Reset ──────────────────────────────────────────
 
   String? _resetChallengeId;
@@ -210,18 +193,25 @@ class AuthViewModel extends ChangeNotifier {
   String? _resetQuestionField;
   String? _resetQuestionText;
   bool _resetSkipQuestion = false;
+  List<String> _resetRecoveryMethods = const [];
 
   String? get resetChallengeId => _resetChallengeId;
   String? get resetToken => _resetToken;
   String? get resetQuestionField => _resetQuestionField;
   String? get resetQuestionText => _resetQuestionText;
   bool get resetSkipQuestion => _resetSkipQuestion;
+  List<String> get resetRecoveryMethods => _resetRecoveryMethods;
 
   Future<void> sendPasswordResetCode(String phoneNumber) async {
     final normalized = PhoneNumberFormatter.normalize(phoneNumber);
     _message = 'Sending a verification code through WhatsApp...';
     _error = null;
     _resetChallengeId = null;
+    _resetToken = null;
+    _resetQuestionField = null;
+    _resetQuestionText = null;
+    _resetSkipQuestion = false;
+    _resetRecoveryMethods = const [];
     notifyListeners();
 
     try {
@@ -236,13 +226,31 @@ class AuthViewModel extends ChangeNotifier {
         );
       }
       _resetChallengeId = data['challengeId'] as String;
-      _message = 'GreenAPI sent a password reset code to $normalized.';
+      _message = 'A password reset code was sent through WhatsApp.';
       _error = null;
     } catch (error) {
       _message = null;
       _error = _friendlyFunctionsError(error);
     }
     notifyListeners();
+  }
+
+  Future<bool> resendPasswordResetCode(String phoneNumber) async {
+    final previousChallengeId = _resetChallengeId;
+    await sendPasswordResetCode(phoneNumber);
+    final sent = _resetChallengeId != null;
+    if (sent) {
+      _message = 'A new password reset code was sent through WhatsApp.';
+      notifyListeners();
+      return true;
+    }
+
+    // A transport failure must not invalidate the previous challenge in the
+    // client. It may still be usable if the original WhatsApp message arrives
+    // late, while the error remains visible so the user can retry later.
+    _resetChallengeId = previousChallengeId;
+    notifyListeners();
+    return false;
   }
 
   Future<bool> verifyPasswordResetOtp(String code) async {
@@ -275,6 +283,11 @@ class AuthViewModel extends ChangeNotifier {
       _resetQuestionField = data['questionField'] as String?;
       _resetQuestionText = data['questionText'] as String?;
       _resetSkipQuestion = data['skipQuestion'] == true;
+      _resetRecoveryMethods = data['recoveryMethods'] is List
+          ? (data['recoveryMethods'] as List)
+                .map((method) => method.toString())
+                .toList(growable: false)
+          : const [];
       _message = null;
       _error = null;
       notifyListeners();
@@ -312,7 +325,57 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
-  Future<bool> resetPassword(String answer, String newPassword) async {
+  Future<bool> verifyPasswordResetTotp(String code) async {
+    final token = _resetToken;
+    if (token == null || token.isEmpty) {
+      _error = 'Password reset session expired. Start again.';
+      notifyListeners();
+      return false;
+    }
+
+    _error = null;
+    _message = null;
+    notifyListeners();
+
+    try {
+      await _firebaseFunctions.httpsCallable('verifyPasswordResetTotp').call(
+        <String, Object?>{'resetToken': token, 'code': code.trim()},
+      );
+      return true;
+    } catch (error) {
+      _message = null;
+      _error = _friendlyFunctionsError(error);
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> verifyPasswordResetPasskey() async {
+    final token = _resetToken;
+    if (token == null || token.isEmpty) {
+      _error = 'Password reset session expired. Start again.';
+      notifyListeners();
+      return false;
+    }
+
+    _error = null;
+    _message = null;
+    notifyListeners();
+
+    try {
+      await _multiFactorAuthService.verifyPasswordResetPasskey(
+        resetToken: token,
+      );
+      return true;
+    } catch (error) {
+      _message = null;
+      _error = readableMfaError(error);
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> resetPassword(String newPassword) async {
     final token = _resetToken;
     if (token == null || token.isEmpty) {
       _error = 'Password reset session expired. Start again.';
@@ -326,11 +389,7 @@ class AuthViewModel extends ChangeNotifier {
 
     try {
       await _firebaseFunctions.httpsCallable('resetPassword').call(
-        <String, Object?>{
-          'resetToken': token,
-          'answer': answer,
-          'newPassword': newPassword,
-        },
+        <String, Object?>{'resetToken': token, 'newPassword': newPassword},
       );
       _message = 'Password has been reset. You can now sign in.';
       _error = null;
@@ -350,6 +409,7 @@ class AuthViewModel extends ChangeNotifier {
     _resetQuestionField = null;
     _resetQuestionText = null;
     _resetSkipQuestion = false;
+    _resetRecoveryMethods = const [];
     _message = null;
     _error = null;
     notifyListeners();
@@ -378,9 +438,6 @@ class AuthViewModel extends ChangeNotifier {
 
   String _friendlyFunctionsError(Object error) {
     if (error is FirebaseFunctionsException) {
-      return error.message ?? _codeMessage(error.code);
-    }
-    if (error is FirebaseAuthException) {
       return error.message ?? _codeMessage(error.code);
     }
     if (error is PlatformException) {

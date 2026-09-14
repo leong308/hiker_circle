@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../Model/trail_models.dart';
 import '../Model/trail_precautions.dart';
 import '../../core/widgets/running_border.dart';
@@ -102,7 +101,7 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Before you set off',
+                'Before you set off now',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
@@ -276,7 +275,7 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
             _detailSection(
               context,
               Icons.shield_outlined,
-              'Before you set off',
+              'Before you set off now',
               cautions.isEmpty
                   ? 'Check local conditions before departure'
                   : '${cautions.length} relevant precautions',
@@ -418,46 +417,7 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
               ),
             ],
             const SizedBox(height: 24),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  widget.weather.isStale
-                      ? Icons.history_rounded
-                      : Icons.update_rounded,
-                  size: 18,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.weather.isStale
-                            ? 'Cached forecast · check before departure'
-                            : 'Forecast updated',
-                        style: theme.textTheme.labelMedium,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${date(widget.weather.cachedAt.millisecondsSinceEpoch / 1000)} · ${clock(widget.weather.cachedAt.millisecondsSinceEpoch / 1000)}\n${data['timezone'] ?? 'Trail local time'}',
-                        style: theme.textTheme.bodySmall?.copyWith(height: 1.5),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            TextButton(
-              onPressed: () => launchUrl(Uri.parse('https://open-meteo.com/')),
-              style: TextButton.styleFrom(
-                foregroundColor: theme.colorScheme.onSurfaceVariant,
-                textStyle: theme.textTheme.bodySmall,
-              ),
-              child: const Text('Weather data: Open-Meteo'),
-            ),
+            _forecastFreshnessCard(context),
           ],
         ),
       ),
@@ -496,9 +456,88 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
         children: children,
       ),
     );
-    return title == 'Before you set off'
+    return title == 'Before you set off now'
         ? RunningBorder(color: theme.colorScheme.primary, child: card)
         : card;
+  }
+
+  Widget _forecastFreshnessCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final cachedEpoch = widget.weather.cachedAt.millisecondsSinceEpoch / 1000;
+    final timezone = data['timezone']?.toString().trim();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.34),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.22),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.14),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              widget.weather.isStale
+                  ? Icons.history_rounded
+                  : Icons.cloud_done_rounded,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.weather.isStale
+                      ? 'Forecast may be outdated'
+                      : 'Forecast is up to date',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Updated ${date(cachedEpoch)} at ${clock(cachedEpoch)}',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                if (timezone != null && timezone.isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.schedule_rounded,
+                        size: 15,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          timezone.replaceAll('_', ' '),
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _reading(BuildContext context, String label, String reading) {
