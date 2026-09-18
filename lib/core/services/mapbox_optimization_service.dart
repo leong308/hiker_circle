@@ -34,6 +34,94 @@ class MapboxOptimizationService {
   final http.Client? _client;
   final String _accessToken;
 
+  /// Follows checkpoints in their specified order; a trail is not a
+  /// travelling-salesperson tour whose intermediate stops may be reordered.
+  Future<MapboxOptimizationResult> walkingRouteInOrder(
+    List<TrailCheckpoint> checkpoints,
+  ) async {
+    if (checkpoints.length < 2 ||
+        checkpoints.length > 12 ||
+        checkpoints.any(
+          (c) =>
+              !c.latitude.isFinite ||
+              !c.longitude.isFinite ||
+              c.latitude.abs() > 90 ||
+              c.longitude.abs() > 180,
+        )) {
+      throw const MapboxOptimizationException('Use 2–12 valid checkpoints.');
+    }
+    if (_accessToken.trim().isEmpty) {
+      throw const MapboxOptimizationException(
+        'Mapbox access token is not configured.',
+      );
+    }
+    final sorted = [...checkpoints]..sort((a, b) => a.order.compareTo(b.order));
+    final coordinates = sorted
+        .map((c) => '${c.longitude},${c.latitude}')
+        .join(';');
+    final uri = Uri.https(
+      'api.mapbox.com',
+      '/directions/v5/mapbox/walking/$coordinates',
+      {
+        'access_token': _accessToken,
+        'overview': 'full',
+        'geometries': 'polyline',
+        'steps': 'false',
+        'alternatives': 'false',
+        'continue_straight': 'false',
+        'radiuses': List.filled(sorted.length, '50').join(';'),
+      },
+    );
+    final client = _client ?? http.Client();
+    try {
+      final response = await client
+          .get(uri)
+          .timeout(const Duration(seconds: 30));
+      final body = jsonDecode(response.body);
+      if (response.statusCode != 200 || body is! Map || body['code'] != 'Ok') {
+        throw const MapboxOptimizationException(
+          'No walking route through these checkpoints.',
+        );
+      }
+      final routes = body['routes'];
+      if (routes is! List || routes.isEmpty || routes.first is! Map) {
+        throw const MapboxOptimizationException(
+          'Mapbox returned no walking route.',
+        );
+      }
+      final route = routes.first as Map;
+      final geometry = route['geometry'];
+      final legs = route['legs'];
+      final distance = _roundedPositiveMetric(route['distance']);
+      final duration = _roundedPositiveMetric(route['duration']);
+      if (geometry is! String ||
+          geometry.isEmpty ||
+          distance == 0 ||
+          duration == 0 ||
+          legs is! List ||
+          legs.length != sorted.length - 1) {
+        throw const MapboxOptimizationException(
+          'Mapbox returned an incomplete walking route.',
+        );
+      }
+      return MapboxOptimizationResult(
+        distanceMeters: distance,
+        durationSeconds: duration,
+        encodedPolyline: geometry,
+      );
+    } on http.ClientException {
+      throw const MapboxOptimizationException(
+        'Unable to reach Mapbox Directions.',
+      );
+    } on FormatException {
+      throw const MapboxOptimizationException(
+        'Mapbox returned invalid route data.',
+      );
+    } finally {
+      if (_client == null) client.close();
+    }
+  }
+
   Future<MapboxOptimizationResult> optimizeWalkingRoute(
     List<TrailCheckpoint> checkpoints,
   ) async {

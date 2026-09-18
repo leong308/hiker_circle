@@ -6,6 +6,7 @@ import CoreLocation
 import CoreMotion
 import Contacts
 import UserNotifications
+import WidgetKit
 import FirebaseCore
 import FirebaseFirestore
 #if canImport(ActivityKit)
@@ -110,6 +111,7 @@ import ActivityKit
     }
     configureSosDeviceAlertChannel()
     configureDeepLinkChannel()
+    configureHomeWidgetsChannel()
     configureSafetyNotifications()
     configureActiveHikeLiveStatusChannel()
     iosHikeSafetyMonitor.restorePersistedSessionIfNeeded()
@@ -270,6 +272,30 @@ import ActivityKit
       default:
         result(FlutterMethodNotImplemented)
       }
+    }
+  }
+
+  private func configureHomeWidgetsChannel() {
+    guard let controller = window?.rootViewController as? FlutterViewController else { return }
+    let channel = FlutterMethodChannel(name: "hiker_circle/home_widgets", binaryMessenger: controller.binaryMessenger)
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "update" else { result(FlutterMethodNotImplemented); return }
+      guard let json = call.arguments as? String,
+            let bytes = json.data(using: .utf8),
+            (try? JSONSerialization.jsonObject(with: bytes)) is [String: Any] else {
+        result(FlutterError(code: "invalid_widget_snapshot", message: "Invalid widget snapshot", details: nil))
+        return
+      }
+      guard FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.leongziqi.hikercircle.widgets") != nil,
+            let defaults = UserDefaults(suiteName: "group.com.leongziqi.hikercircle.widgets") else {
+        result(FlutterError(code: "widget_app_group_unavailable", message: "Widget App Group is not configured", details: nil))
+        return
+      }
+      defaults.set(json, forKey: "hikeWidgetSnapshot")
+      WidgetCenter.shared.reloadTimelines(ofKind: "NextHikeHomeWidget")
+      WidgetCenter.shared.reloadTimelines(ofKind: "HikeWeatherHomeWidget")
+      WidgetCenter.shared.reloadTimelines(ofKind: "UpcomingHikesHomeWidget")
+      result(nil)
     }
   }
 

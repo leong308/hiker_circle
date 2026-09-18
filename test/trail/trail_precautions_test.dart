@@ -177,4 +177,96 @@ void main() {
     );
     expect(ids(result), containsAll(['wind', 'uv', 'visibility', 'ascent']));
   });
+  test('early departure warning explains sunrise, not sunset', () {
+    final caution = evaluate(
+      weather(),
+      departure: 5 * 60,
+      duration: 210,
+    ).firstWhere((c) => c.id == 'dark');
+    expect(caution.title, 'Departure is before sunrise');
+    expect(caution.message, contains('Departure: 05:00; sunrise: 06:00.'));
+    expect(caution.message, contains('Estimated finish: 08:30.'));
+    expect(caution.message, isNot(contains('sunset')));
+    expect(caution.message, isNot(contains('start time')));
+    expect(caution.message, isNot(contains('earlier')));
+  });
+
+  test(
+    'daytime hike has no darkness warning; evening warning cites sunset',
+    () {
+      expect(
+        ids(evaluate(weather(), departure: 8 * 60, duration: 30)),
+        isNot(contains('dark')),
+      );
+      final evening = evaluate(
+        weather(),
+        departure: 17 * 60 + 1,
+      ).firstWhere((c) => c.id == 'dark');
+      expect(evening.title, 'Hike extends past sunset');
+      expect(evening.message, contains('sunset: 19:00'));
+      expect(evening.message, contains('earlier departure'));
+      expect(evening.message, isNot(contains('sunrise')));
+    },
+  );
+
+  test('finish at sunset keeps lighting advice without a departure change', () {
+    final caution = evaluate(
+      weather(),
+      departure: 17 * 60,
+    ).firstWhere((c) => c.id == 'dark');
+    expect(caution.title, 'Estimated finish is at sunset');
+    expect(caution.message, contains('headlamp'));
+    expect(caution.message, isNot(contains('earlier departure')));
+  });
+
+  test('wet trail caution appears strictly above 50 percent', () {
+    for (final probability in [29, 50, 51]) {
+      final result = evaluate(
+        weather(
+          overrides: {
+            'precipitation_probability': List.filled(48, probability),
+            'precipitation': List.filled(48, 0.2),
+          },
+        ),
+      );
+      expect(
+        result.any((c) => c.title == 'Wet trail expected'),
+        probability > 50,
+      );
+    }
+  });
+
+  test('rain chance uses the selected hiking window including the buffer', () {
+    final chances = List<num?>.filled(48, 29)..[12] = 90;
+    expect(
+      ids(
+        evaluate(
+          weather(overrides: {'precipitation_probability': chances}),
+          departure: 8 * 60,
+          duration: 120,
+        ),
+      ),
+      isNot(contains('rain')),
+    );
+    chances[10] = 51;
+    expect(
+      ids(
+        evaluate(
+          weather(overrides: {'precipitation_probability': chances}),
+          departure: 8 * 60,
+          duration: 120,
+        ),
+      ),
+      contains('rain'),
+    );
+  });
+
+  test('ascent caution omits the altitude explanation', () {
+    final caution = evaluate(
+      weather(),
+      gain: 769,
+    ).firstWhere((c) => c.id == 'ascent');
+    expect(caution.message, contains('769 m'));
+    expect(caution.message, isNot(contains('altitude above sea level')));
+  });
 }

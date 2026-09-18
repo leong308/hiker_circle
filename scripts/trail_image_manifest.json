@@ -78,15 +78,15 @@
   "malaysia-the-habitat-penang-hill-route": {
     "commonsFiles": ["File:Penang Hill-Habitat walk.jpg"]
   },
-  "trail_bukit_bendera_1781715992541600": {
+  "malaysia-penang-hill-heritage-trail": {
     "commonsFiles": [
       "File:Trees of Bukit Bendera, Penang.jpg",
       "File:Pulau Pinang dari atas Bukit Bendera (Penang Hill).jpg"
     ]
   },
-  "trail_bukit_gasing_loop_1782225621903565": { "keepExisting": true },
-  "trail_bukit_jambul_trail_1782232587060378": { "keepExisting": true },
-  "trail_near_teluk_kumbar_1781870736276385": { "routeCover": true },
+  "malaysia-bukit-gasing-loop": { "keepExisting": true },
+  "malaysia-bukit-jambul-trail": { "keepExisting": true },
+  "malaysia-near-teluk-kumbar": { "routeCover": true },
   "malaysia-mount-lambak": { "routeCover": true },
   "malaysia-gunung-keriang": { "routeCover": true },
   "malaysia-jelawang-waterfall": { "routeCover": true },

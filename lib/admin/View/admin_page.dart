@@ -9,13 +9,16 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/page_header_style.dart';
 import '../../feedback/feedback_page.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
+import 'button_debugging_page.dart';
+import 'admin_ui.dart';
 
-enum _AdminSection { overview, trails, hazards, community, achievements }
+enum _AdminSection { overview, trails, hazards, community, achievements, tools }
 
 enum _DebugSection { firestore, local, runtime }
 
@@ -53,7 +56,18 @@ class _AdminPageState extends State<AdminPage> {
   String? _errorMessage;
   _AdminSection _selectedSection = _AdminSection.overview;
 
-  int _debugTapCount = 0;
+  final _pageScroll = ScrollController();
+  String _search = '';
+  DateTime? _lastLoadedAt;
+
+  void _selectSection(_AdminSection section) {
+    if (_pageScroll.hasClients) _pageScroll.jumpTo(0);
+    setState(() {
+      _selectedSection = section;
+      _search = '';
+    });
+  }
+
   bool _debugMode = false;
   _DebugSection? _selectedDebugSection;
   Map<String, List<Map<String, dynamic>>> _localDbData = const {};
@@ -63,9 +77,15 @@ class _AdminPageState extends State<AdminPage> {
   String? _debugError;
 
   @override
+  void dispose() {
+    _pageScroll.dispose();
+    super.dispose();
+  }
+
+  @override
   void initState() {
     super.initState();
-    unawaited(_loadAdminData());
+    if (widget.session.isAdmin) unawaited(_loadAdminData());
   }
 
   Future<void> _loadAdminData() async {
@@ -85,6 +105,7 @@ class _AdminPageState extends State<AdminPage> {
         return;
       }
       setState(() {
+        _lastLoadedAt = DateTime.now();
         _trails = results[0] as List<Trail>;
         _hazardReports = results[1] as List<Map<String, dynamic>>;
         _communityPosts = results[2] as List<Map<String, dynamic>>;
@@ -312,19 +333,13 @@ class _AdminPageState extends State<AdminPage> {
       );
   }
 
-  void _onDebugTitleTap() {
-    _debugTapCount++;
-    if (_debugTapCount >= 5) {
-      _debugTapCount = 0;
-      setState(() {
-        _debugMode = true;
-        _selectedDebugSection = null;
-        _localDbData = const {};
-        _firestoreData = const [];
-        _runtimeData = const {};
-        _debugError = null;
-      });
-    }
+  void _openDiagnostics() {
+    if (_pageScroll.hasClients) _pageScroll.jumpTo(0);
+    setState(() {
+      _debugMode = true;
+      _selectedDebugSection = null;
+      _debugError = null;
+    });
   }
 
   Future<void> _loadFirestoreDebugData() async {
@@ -581,6 +596,7 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   void _exitDebugMode() {
+    if (_pageScroll.hasClients) _pageScroll.jumpTo(0);
     setState(() {
       _debugMode = false;
       _selectedDebugSection = null;
@@ -609,52 +625,47 @@ class _AdminPageState extends State<AdminPage> {
       return visibility == 'hidden' || visibility == 'removed';
     }).length;
     final title = switch (_selectedSection) {
-      _AdminSection.overview => 'Admin Dashboard',
+      _AdminSection.overview => 'Dashboard',
       _AdminSection.trails => 'Trail Management',
       _AdminSection.hazards => 'Hazard Reports',
       _AdminSection.community => 'Community Moderation',
-      _AdminSection.achievements => 'Achievement Management',
+      _AdminSection.achievements => 'Achievements',
+      _AdminSection.tools => 'Admin tools',
     };
     final subtitle = switch (_selectedSection) {
       _AdminSection.overview =>
-        'Manage Firebase content and safety moderation.',
-      _AdminSection.trails => 'Create, review, and update Firebase trails.',
+        'Your workspace for trails, safety and community.',
+      _AdminSection.trails =>
+        'Manage routes, checkpoints and trail verification.',
       _AdminSection.hazards => 'Verify or reject community safety reports.',
       _AdminSection.community => 'Review public community posts.',
       _AdminSection.achievements =>
-        'Create and maintain point-bearing achievement rules.',
+        'Create rewards and milestones for your hikers.',
+      _AdminSection.tools => 'Support hikers and inspect app activity.',
     };
     final content = switch (_selectedSection) {
       _AdminSection.overview => _AdminOverviewDashboard(
+        dataReady: !_isLoading && _errorMessage == null,
+        onOpenTools: () => _selectSection(_AdminSection.tools),
         trailCount: _trails.length,
         verifiedTrailCount: verifiedTrails,
         pendingHazardCount: pendingHazards,
         communityPostCount: _communityPosts.length,
         moderatedPostCount: moderatedPosts,
         achievementCount: _achievements.length,
-        onOpenTrails: () {
-          setState(() {
-            _selectedSection = _AdminSection.trails;
-          });
-        },
-        onOpenHazards: () {
-          setState(() {
-            _selectedSection = _AdminSection.hazards;
-          });
-        },
-        onOpenCommunity: () {
-          setState(() {
-            _selectedSection = _AdminSection.community;
-          });
-        },
-        onOpenAchievements: () {
-          setState(() {
-            _selectedSection = _AdminSection.achievements;
-          });
-        },
+        onOpenTrails: () => _selectSection(_AdminSection.trails),
+        onOpenHazards: () => _selectSection(_AdminSection.hazards),
+        onOpenCommunity: () => _selectSection(_AdminSection.community),
+        onOpenAchievements: () => _selectSection(_AdminSection.achievements),
       ),
       _AdminSection.trails => _TrailManagementSection(
-        trails: _trails,
+        trails: _trails
+            .where(
+              (trail) => '${trail.name} ${trail.locationLabel}'
+                  .toLowerCase()
+                  .contains(_search),
+            )
+            .toList(),
         isLoading: _isLoading,
         isSaving: _isSaving,
         onAddTrail: () => unawaited(_addTrail()),
@@ -665,31 +676,80 @@ class _AdminPageState extends State<AdminPage> {
             unawaited(_toggleTrailVerification(trail)),
       ),
       _AdminSection.hazards => _HazardReportsSection(
-        hazardReports: _hazardReports,
+        hazardReports: _hazardReports
+            .where(
+              (row) => row.values.join(' ').toLowerCase().contains(_search),
+            )
+            .toList(),
         isSaving: _isSaving,
         onApprove: (report) => unawaited(_reviewHazard(report, approved: true)),
         onReject: (report) => unawaited(_reviewHazard(report, approved: false)),
       ),
       _AdminSection.community => _CommunityModerationSection(
-        communityPosts: _communityPosts,
+        communityPosts: _communityPosts
+            .where(
+              (row) => row.values.join(' ').toLowerCase().contains(_search),
+            )
+            .toList(),
         isSaving: _isSaving,
         onApprove: (post) => unawaited(_moderatePost(post, status: 'approved')),
         onHide: (post) => unawaited(_moderatePost(post, status: 'hidden')),
         onRemove: (post) => unawaited(_moderatePost(post, status: 'removed')),
       ),
       _AdminSection.achievements => _AchievementManagementSection(
-        achievements: _achievements,
+        achievements: _achievements
+            .where(
+              (row) => row.values.join(' ').toLowerCase().contains(_search),
+            )
+            .toList(),
         isSaving: _isSaving,
         onAdd: () => unawaited(_addAchievement()),
         onEdit: (achievement) => unawaited(_editAchievement(achievement)),
         onToggleActive: (achievement) =>
             unawaited(_toggleAchievement(achievement)),
       ),
+      _AdminSection.tools => _AdminTileGrid(
+        children: [
+          _AdminDashboardCard(
+            title: 'Hiker feedback',
+            subtitle: 'Read feedback and follow up on reported issues.',
+            metric: 'Support',
+            detail: 'Feedback inbox',
+            icon: Icons.feedback_outlined,
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const FeedbackInboxPage(admin: true),
+              ),
+            ),
+          ),
+          _AdminDashboardCard(
+            title: 'Button Debugging',
+            subtitle: 'Capture button activity and inspect decoded HEX logs.',
+            metric: 'Device tools',
+            detail: 'Live capture & saved sessions',
+            icon: Icons.bluetooth_searching_rounded,
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ButtonDebuggingPage(session: widget.session),
+              ),
+            ),
+          ),
+          _AdminDashboardCard(
+            title: 'Data diagnostics',
+            subtitle: 'Inspect cloud records, local storage and runtime state.',
+            metric: 'Diagnostics',
+            detail: 'Read-only inspection',
+            icon: Icons.storage_outlined,
+            onTap: _openDiagnostics,
+          ),
+        ],
+      ),
     };
 
     return ColoredBox(
       color: _AdminColors.backgroundFor(context),
       child: Stack(
+        fit: StackFit.expand,
         children: [
           SafeArea(
             child: RefreshIndicator(
@@ -706,11 +766,12 @@ class _AdminPageState extends State<AdminPage> {
                     }
                   : _loadAdminData,
               child: SingleChildScrollView(
+                controller: _pageScroll,
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(18, 14, 18, 100),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 720),
+                    constraints: const BoxConstraints(maxWidth: 1040),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -758,24 +819,77 @@ class _AdminPageState extends State<AdminPage> {
                             onRefresh: () => unawaited(_loadAdminData()),
                             onBack: _selectedSection == _AdminSection.overview
                                 ? null
-                                : () {
-                                    setState(() {
-                                      _selectedSection = _AdminSection.overview;
-                                    });
-                                  },
-                            onTitleTap: _onDebugTitleTap,
+                                : () => _selectSection(_AdminSection.overview),
                           ),
-                        if (!_debugMode)
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.feedback_outlined),
-                            label: const Text('Hiker feedback inbox'),
-                            onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) =>
-                                    const FeedbackInboxPage(admin: true),
+                        if (!_debugMode) ...[
+                          const SizedBox(height: 16),
+                          _AdminNavigation(
+                            selected: _selectedSection,
+                            onSelect: _selectSection,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            _isLoading
+                                ? 'Refreshing workspace…'
+                                : _errorMessage != null
+                                ? 'Unable to refresh workspace'
+                                : _lastLoadedAt == null
+                                ? 'No data loaded'
+                                : 'Updated at ${_lastLoadedAt!.hour.toString().padLeft(2, '0')}:${_lastLoadedAt!.minute.toString().padLeft(2, '0')}',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: _AdminColors.secondaryTextFor(context),
+                                ),
+                          ),
+                          if (_selectedSection != _AdminSection.overview &&
+                              _selectedSection != _AdminSection.tools) ...[
+                            const SizedBox(height: 18),
+                            TextField(
+                              key: ValueKey(
+                                'admin-search-${_selectedSection.name}',
+                              ),
+                              onChanged: (value) => setState(
+                                () => _search = value.trim().toLowerCase(),
+                              ),
+                              decoration: InputDecoration(
+                                hintText:
+                                    'Search ${switch (_selectedSection) {
+                                      _AdminSection.trails => 'trails',
+                                      _AdminSection.hazards => 'reports',
+                                      _AdminSection.community => 'posts',
+                                      _ => 'achievements',
+                                    }}',
+                                prefixIcon: const Icon(Icons.search_rounded),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: BorderSide(
+                                    color: AdminUi.border(context),
+                                  ),
+                                ),
+                                filled: true,
+                                fillColor: _AdminColors.surfaceFor(context),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(
+                                    color: _AdminColors.separatorFor(context),
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                            if (_search.isNotEmpty)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 8),
+                                child: Text(
+                                  'Showing matching records. Clear the search to see all.',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
+                          ],
+                        ],
                         if (_debugError != null) ...[
                           const SizedBox(height: 12),
                           _AdminNotice(message: _debugError!),
@@ -866,80 +980,184 @@ class _AdminHeader extends StatelessWidget {
     required this.isLoading,
     required this.onRefresh,
     this.onBack,
-    this.onTitleTap,
   });
-
-  final String title;
-  final String subtitle;
+  final String title, subtitle;
   final bool isLoading;
   final VoidCallback onRefresh;
   final VoidCallback? onBack;
-  final VoidCallback? onTitleTap;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
-      decoration: BoxDecoration(
-        color: _AdminColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _AdminColors.green.withValues(alpha: 0.16)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 18,
-            offset: const Offset(0, 7),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+    child: Row(
+      children: [
+        if (onBack != null) ...[
+          PageHeaderAction(
+            tooltip: 'Back to admin dashboard',
+            icon: Icons.arrow_back_rounded,
+            onPressed: onBack,
+            color: _AdminColors.greenFor(context),
+            surface: _AdminColors.surfaceFor(context),
           ),
+          const SizedBox(width: 8),
         ],
-      ),
-      child: Row(
-        children: [
-          if (onBack == null)
-            const _CircleIcon(icon: Icons.admin_panel_settings_rounded)
-          else
-            _CircleIconButton(
-              icon: Icons.arrow_back_rounded,
-              tooltip: 'Back to admin dashboard',
-              onPressed: onBack!,
-            ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                GestureDetector(
-                  onTap: onTitleTap,
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: _AdminColors.textFor(context),
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: PageHeaderStyle.title(
+                  context,
+                  _AdminColors.textFor(context),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: PageHeaderStyle.subtitle(
+                  context,
+                  _AdminColors.secondaryTextFor(context),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        PageHeaderAction(
+          tooltip: 'Refresh admin data',
+          icon: Icons.refresh_rounded,
+          onPressed: isLoading ? null : onRefresh,
+          color: _AdminColors.greenFor(context),
+          surface: _AdminColors.surfaceFor(context),
+        ),
+      ],
+    ),
+  );
+}
+
+class _AdminNavigation extends StatelessWidget {
+  const _AdminNavigation({required this.selected, required this.onSelect});
+  final _AdminSection selected;
+  final ValueChanged<_AdminSection> onSelect;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final largeText = MediaQuery.textScalerOf(context).scale(12) > 17;
+      final columns = constraints.maxWidth >= 760 && !largeText
+          ? 6
+          : largeText
+          ? 2
+          : 3;
+      return AdminPanel(
+        padding: const EdgeInsets.all(5),
+        child: Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: [
+            for (final section in _AdminSection.values)
+              SizedBox(
+                width:
+                    (constraints.maxWidth - 10 - (columns - 1) * 4) / columns,
+                child: Semantics(
+                  selected: selected == section,
+                  button: true,
+                  child: Material(
+                    color: selected == section
+                        ? AdminUi.green(context).withValues(alpha: .09)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
+                    child: InkWell(
+                      key: ValueKey('admin-nav-${section.name}'),
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => onSelect(section),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 12,
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              switch (section) {
+                                _AdminSection.overview =>
+                                  Icons.grid_view_rounded,
+                                _AdminSection.trails => Icons.route_rounded,
+                                _AdminSection.hazards => Icons.shield_outlined,
+                                _AdminSection.community => Icons.forum_outlined,
+                                _AdminSection.achievements =>
+                                  Icons.emoji_events_outlined,
+                                _AdminSection.tools => Icons.tune_rounded,
+                              },
+                              size: 19,
+                              color: selected == section
+                                  ? AdminUi.green(context)
+                                  : AdminUi.muted(context),
+                            ),
+                            const SizedBox(height: 5),
+                            Text(
+                              switch (section) {
+                                _AdminSection.overview => 'Overview',
+                                _AdminSection.trails => 'Trails',
+                                _AdminSection.hazards => 'Safety',
+                                _AdminSection.community => 'Community',
+                                _AdminSection.achievements => 'Rewards',
+                                _AdminSection.tools => 'Tools',
+                              },
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: selected == section
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: selected == section
+                                    ? AdminUi.green(context)
+                                    : AdminUi.muted(context),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _AdminColors.secondaryTextFor(context),
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
+              ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// Natural-height tiles avoid clipping when system text size is increased.
+class _AdminTileGrid extends StatelessWidget {
+  const _AdminTileGrid({required this.children, this.compact = false});
+  final List<Widget> children;
+  final bool compact;
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+      final columns = compact
+          ? (constraints.maxWidth >= 760 && scale < 1.5
+                ? 4
+                : constraints.maxWidth >= 310 && scale < 1.5
+                ? 2
+                : 1)
+          : (constraints.maxWidth >= 640 && scale < 1.5 ? 2 : 1);
+      return Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: [
+          for (final child in children)
+            SizedBox(
+              width: (constraints.maxWidth - (columns - 1) * 12) / columns,
+              child: child,
             ),
-          ),
-          Tooltip(
-            message: 'Refresh admin data',
-            child: IconButton(
-              onPressed: isLoading ? null : onRefresh,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-          ),
         ],
-      ),
-    );
-  }
+      );
+    },
+  );
 }
 
 class _AdminOverviewDashboard extends StatelessWidget {
@@ -954,109 +1172,124 @@ class _AdminOverviewDashboard extends StatelessWidget {
     required this.onOpenHazards,
     required this.onOpenCommunity,
     required this.onOpenAchievements,
+    required this.onOpenTools,
+    required this.dataReady,
   });
-
-  final int trailCount;
-  final int verifiedTrailCount;
-  final int pendingHazardCount;
-  final int communityPostCount;
-  final int moderatedPostCount;
-  final int achievementCount;
-  final VoidCallback onOpenTrails;
-  final VoidCallback onOpenHazards;
-  final VoidCallback onOpenCommunity;
-  final VoidCallback onOpenAchievements;
-
+  final int trailCount,
+      verifiedTrailCount,
+      pendingHazardCount,
+      communityPostCount,
+      moderatedPostCount,
+      achievementCount;
+  final bool dataReady;
+  final VoidCallback onOpenTrails,
+      onOpenHazards,
+      onOpenCommunity,
+      onOpenAchievements,
+      onOpenTools;
   @override
   Widget build(BuildContext context) {
-    final unverifiedTrailCount = trailCount - verifiedTrailCount;
-
+    String count(int value) => dataReady ? '$value' : '—';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF173F2B), Color(0xFF2F7D4A)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+        const AdminSectionHeading(
+          title: 'Workspace overview',
+          subtitle: 'Select a collection to manage it.',
+        ),
+        const SizedBox(height: 14),
+        _AdminTileGrid(
+          compact: true,
+          children: [
+            _AdminCollectionTile(
+              title: 'Trail library',
+              value: count(trailCount),
+              detail: '${count(verifiedTrailCount)} verified',
+              icon: Icons.route_rounded,
+              tint: AdminUi.green(context),
+              onTap: onOpenTrails,
             ),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: _AdminColors.green.withValues(alpha: 0.2),
-                blurRadius: 22,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
+            _AdminCollectionTile(
+              title: 'Safety reports',
+              value: count(pendingHazardCount),
+              detail: 'Pending · latest 50',
+              icon: Icons.shield_outlined,
+              tint: _AdminColors.orangeFor(context),
+              onTap: onOpenHazards,
+            ),
+            _AdminCollectionTile(
+              title: 'Community',
+              value: count(communityPostCount),
+              detail: '${count(moderatedPostCount)} moderated · latest 50',
+              icon: Icons.forum_outlined,
+              tint: AdminUi.blue(context),
+              onTap: onOpenCommunity,
+            ),
+            _AdminCollectionTile(
+              title: 'Achievements',
+              value: count(achievementCount),
+              detail: 'Reward rules',
+              icon: Icons.emoji_events_outlined,
+              tint: Theme.of(context).colorScheme.tertiary,
+              onTap: onOpenAchievements,
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        const AdminSectionHeading(
+          title: 'Review queue',
+          subtitle: 'Safety reports from your community.',
+        ),
+        const SizedBox(height: 12),
+        AdminPanel(
+          onTap: onOpenHazards,
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 52,
-                height: 52,
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(16),
+                  color: _AdminColors.orangeFor(context).withValues(alpha: .1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
-                  Icons.monitor_heart_rounded,
-                  color: Colors.white,
-                  size: 28,
+                child: Icon(
+                  Icons.fact_check_outlined,
+                  size: 22,
+                  color: _AdminColors.orangeFor(context),
                 ),
               ),
-              const SizedBox(width: 14),
-              const Expanded(
+              const SizedBox(width: 12),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'SYSTEM OPERATIONS',
-                      style: TextStyle(
-                        color: Color(0xFFBDE8C8),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.8,
+                      !dataReady
+                          ? 'Safety review queue'
+                          : pendingHazardCount == 0
+                          ? 'No pending reports in the latest batch'
+                          : '$pendingHazardCount safety ${pendingHazardCount == 1 ? 'report needs' : 'reports need'} review',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
                       ),
                     ),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     Text(
-                      'HikerCircle is operational',
+                      'Review reports before publishing hazards to trails.',
                       style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 19,
-                        fontWeight: FontWeight.w900,
+                        color: AdminUi.muted(context),
+                        fontSize: 12,
+                        height: 1.4,
                       ),
                     ),
-                    SizedBox(height: 3),
+                    const SizedBox(height: 12),
                     Text(
-                      'Review safety queues and manage live platform content.',
-                      style: TextStyle(color: Color(0xFFDDEDE2)),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.circle, size: 9, color: Color(0xFF7CF29A)),
-                    SizedBox(width: 6),
-                    Text(
-                      'LIVE',
+                      'Open safety reports →',
                       style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 11,
+                        color: AdminUi.green(context),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],
@@ -1065,78 +1298,89 @@ class _AdminOverviewDashboard extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _AdminMetric(
-                label: 'Trails',
-                value: '$trailCount',
-                icon: Icons.terrain_rounded,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _AdminMetric(
-                label: 'Pending Hazards',
-                value: '$pendingHazardCount',
-                icon: Icons.warning_amber_rounded,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _AdminMetric(
-                label: 'Moderated Posts',
-                value: '$moderatedPostCount',
-                icon: Icons.shield_rounded,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        _SectionTitle(label: 'Main Admin Sections'),
-        const SizedBox(height: 8),
-        _AdminDashboardCard(
-          title: 'Trails',
-          subtitle:
-              'Manage Firebase trails, route metadata, checkpoints, and verification.',
-          metric: '$trailCount total',
-          detail: '$verifiedTrailCount verified - $unverifiedTrailCount draft',
-          icon: Icons.terrain_rounded,
-          isPrimary: true,
-          onTap: onOpenTrails,
+        const SizedBox(height: 24),
+        const AdminSectionHeading(
+          title: 'Support & diagnostics',
+          subtitle: 'Feedback, device activity and data inspection.',
         ),
         const SizedBox(height: 12),
         _AdminDashboardCard(
-          title: 'Hazard Reports',
-          subtitle: 'Review community-submitted safety reports.',
-          metric: '$pendingHazardCount pending',
-          detail: 'Approve reports to attach hazards to trails',
-          icon: Icons.report_problem_rounded,
-          onTap: onOpenHazards,
-        ),
-        const SizedBox(height: 12),
-        _AdminDashboardCard(
-          title: 'Community Posts',
-          subtitle: 'Moderate public feed posts and unsafe content.',
-          metric: '$communityPostCount posts',
-          detail: '$moderatedPostCount hidden or removed',
-          icon: Icons.forum_rounded,
-          onTap: onOpenCommunity,
-        ),
-        const SizedBox(height: 12),
-        _AdminDashboardCard(
-          title: 'Achievements',
-          subtitle:
-              'Configure one-time and accumulation-based rewards and points.',
-          metric: '$achievementCount rules',
-          detail: 'Points automatically determine each hiker level',
-          icon: Icons.emoji_events_rounded,
-          onTap: onOpenAchievements,
+          title: 'Admin tools',
+          subtitle: 'Feedback inbox, button debugging and data inspection.',
+          metric: '3 tools',
+          detail: 'Open toolkit',
+          icon: Icons.tune_rounded,
+          onTap: onOpenTools,
         ),
       ],
     );
   }
+}
+
+class _AdminCollectionTile extends StatelessWidget {
+  const _AdminCollectionTile({
+    required this.title,
+    required this.value,
+    required this.detail,
+    required this.icon,
+    required this.tint,
+    required this.onTap,
+  });
+  final String title, value, detail;
+  final IconData icon;
+  final Color tint;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => AdminPanel(
+    onTap: onTap,
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: tint.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: tint, size: 21),
+            ),
+            const Spacer(),
+            Icon(
+              Icons.north_east_rounded,
+              size: 16,
+              color: AdminUi.muted(context),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.w700,
+            height: 1,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          detail,
+          style: TextStyle(
+            color: AdminUi.muted(context),
+            fontSize: 11,
+            height: 1.5,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _AdminDashboardCard extends StatelessWidget {
@@ -1147,127 +1391,69 @@ class _AdminDashboardCard extends StatelessWidget {
     required this.detail,
     required this.icon,
     required this.onTap,
-    this.isPrimary = false,
   });
-
-  final String title;
-  final String subtitle;
-  final String metric;
-  final String detail;
+  final String title, subtitle, metric, detail;
   final IconData icon;
   final VoidCallback onTap;
-  final bool isPrimary;
-
   @override
-  Widget build(BuildContext context) {
-    final iconBackground = isPrimary
-        ? _AdminColors.green
-        : _AdminColors.greenSoftFor(context);
-    final iconColor = isPrimary ? Colors.white : _AdminColors.green;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: _AdminColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isPrimary
-              ? _AdminColors.green.withValues(alpha: 0.34)
-              : _AdminColors.separatorFor(context),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.045),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Material(
-        color: isPrimary
-            ? _AdminColors.green.withValues(alpha: 0.035)
-            : Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: EdgeInsets.all(isPrimary ? 16 : 14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: isPrimary ? 48 : 42,
-                  height: isPrimary ? 48 : 42,
-                  decoration: BoxDecoration(
-                    color: iconBackground,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(
-                    icon,
-                    color: iconColor,
-                    size: isPrimary ? 26 : 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: _AdminColors.textFor(context),
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _AdminColors.secondaryTextFor(context),
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        detail,
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              color: _AdminColors.secondaryTextFor(context),
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      metric,
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: _AdminColors.green,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      color: _AdminColors.secondaryTextFor(context),
-                    ),
-                  ],
-                ),
-              ],
+  Widget build(BuildContext context) => AdminPanel(
+    onTap: onTap,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AdminUi.blue(context).withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: AdminUi.blue(context), size: 22),
             ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 20,
+              color: AdminUi.muted(context),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Text(
+          subtitle,
+          style: TextStyle(
+            fontSize: 13,
+            height: 1.5,
+            color: AdminUi.muted(context),
           ),
         ),
-      ),
-    );
-  }
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            AdminTag(label: metric, color: AdminUi.blue(context)),
+            Text(
+              detail,
+              style: TextStyle(color: AdminUi.muted(context), fontSize: 11),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 class _TrailManagementSection extends StatelessWidget {
@@ -1298,7 +1484,7 @@ class _TrailManagementSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Expanded(child: _SectionTitle(label: 'Firebase Trails')),
+            const Expanded(child: _SectionTitle(label: 'Trail library')),
             FilledButton.icon(
               onPressed: isSaving ? null : onAddTrail,
               icon: const Icon(Icons.add_rounded),
@@ -1316,16 +1502,15 @@ class _TrailManagementSection extends StatelessWidget {
           ),
           const SizedBox(height: 8),
         ],
-        _InsetGroup(
-          child: Column(
-            children: [
-              if (trails.isEmpty)
-                const _EmptyState(
-                  message: 'No Firebase trails found. Add the first trail.',
-                )
-              else
-                for (var index = 0; index < trails.length; index++) ...[
-                  _TrailAdminRow(
+        Column(
+          children: [
+            if (trails.isEmpty)
+              const _EmptyState(message: 'No trails to display.')
+            else
+              for (var index = 0; index < trails.length; index++) ...[
+                AdminPanel(
+                  padding: EdgeInsets.zero,
+                  child: _TrailAdminRow(
                     trail: trails[index],
                     isSaving: isSaving,
                     onOpen: () => onOpenTrail(trails[index]),
@@ -1334,10 +1519,10 @@ class _TrailManagementSection extends StatelessWidget {
                     onToggleVerification: () =>
                         onToggleVerification(trails[index]),
                   ),
-                  if (index != trails.length - 1) const _HorizontalSeparator(),
-                ],
-            ],
-          ),
+                ),
+                if (index != trails.length - 1) const SizedBox(height: 12),
+              ],
+          ],
         ),
       ],
     );
@@ -1389,9 +1574,13 @@ class _TrailAdminRow extends StatelessWidget {
                       '$checkpointLabel - ${trail.durationLabel} - Rating ${trail.ratingAverage.toStringAsFixed(1)}',
                 ),
               ),
-              const SizedBox(width: 8),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            children: [
               _AdminStatusPill(
-                label: trail.isVerifiedTrail ? 'Verified' : 'Draft',
+                label: trail.isVerifiedTrail ? 'Verified' : 'Unverified',
                 color: trail.isVerifiedTrail
                     ? _AdminColors.green
                     : _AdminColors.orangeFor(context),
@@ -1403,6 +1592,22 @@ class _TrailAdminRow extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
+              PopupMenuButton<String>(
+                tooltip: 'Trail actions',
+                enabled: !isSaving,
+                onSelected: (action) {
+                  if (action == 'edit') {
+                    unawaited(onEdit());
+                  } else {
+                    unawaited(onDelete());
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Edit trail')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete trail')),
+                ],
+                icon: const Icon(Icons.more_horiz_rounded),
+              ),
               FilledButton.icon(
                 onPressed: onOpen,
                 icon: const Icon(Icons.edit_location_alt_rounded),
@@ -1415,9 +1620,7 @@ class _TrailAdminRow extends StatelessWidget {
                       ? Icons.visibility_off_rounded
                       : Icons.verified_rounded,
                 ),
-                label: Text(
-                  trail.isVerifiedTrail ? 'Mark Draft' : 'Verify Trail',
-                ),
+                label: Text(trail.isVerifiedTrail ? 'Unverify' : 'Verify'),
               ),
             ],
           ),
@@ -1520,24 +1723,25 @@ class _HazardReportsSection extends StatelessWidget {
       children: [
         _SectionTitle(label: 'Hazard Reports'),
         const SizedBox(height: 8),
-        _InsetGroup(
-          child: Column(
-            children: [
-              if (hazardReports.isEmpty)
-                const _EmptyState(message: 'No hazard reports to review.')
-              else
-                for (var index = 0; index < hazardReports.length; index++) ...[
-                  _HazardAdminRow(
+        Column(
+          children: [
+            if (hazardReports.isEmpty)
+              const _EmptyState(message: 'No hazard reports to review.')
+            else
+              for (var index = 0; index < hazardReports.length; index++) ...[
+                AdminPanel(
+                  padding: EdgeInsets.zero,
+                  child: _HazardAdminRow(
                     report: hazardReports[index],
                     isSaving: isSaving,
                     onApprove: () => onApprove(hazardReports[index]),
                     onReject: () => onReject(hazardReports[index]),
                   ),
-                  if (index != hazardReports.length - 1)
-                    const _HorizontalSeparator(),
-                ],
-            ],
-          ),
+                ),
+                if (index != hazardReports.length - 1)
+                  const SizedBox(height: 12),
+              ],
+          ],
         ),
       ],
     );
@@ -1566,25 +1770,26 @@ class _CommunityModerationSection extends StatelessWidget {
       children: [
         _SectionTitle(label: 'Community Moderation'),
         const SizedBox(height: 8),
-        _InsetGroup(
-          child: Column(
-            children: [
-              if (communityPosts.isEmpty)
-                const _EmptyState(message: 'No community posts to moderate.')
-              else
-                for (var index = 0; index < communityPosts.length; index++) ...[
-                  _PostAdminRow(
+        Column(
+          children: [
+            if (communityPosts.isEmpty)
+              const _EmptyState(message: 'No community posts to moderate.')
+            else
+              for (var index = 0; index < communityPosts.length; index++) ...[
+                AdminPanel(
+                  padding: EdgeInsets.zero,
+                  child: _PostAdminRow(
                     post: communityPosts[index],
                     isSaving: isSaving,
                     onApprove: () => onApprove(communityPosts[index]),
                     onHide: () => onHide(communityPosts[index]),
                     onRemove: () => onRemove(communityPosts[index]),
                   ),
-                  if (index != communityPosts.length - 1)
-                    const _HorizontalSeparator(),
-                ],
-            ],
-          ),
+                ),
+                if (index != communityPosts.length - 1)
+                  const SizedBox(height: 12),
+              ],
+          ],
         ),
       ],
     );
@@ -1620,34 +1825,36 @@ class _AchievementManagementSection extends StatelessWidget {
             FilledButton.icon(
               onPressed: isSaving ? null : onAdd,
               icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('Add achievement'),
+              label: const Text('Add rule'),
             ),
           ],
         ),
         const SizedBox(height: 8),
         _AdminNotice(
+          isError: false,
           message:
               '$active active of ${achievements.length}. Rewards are granted once; accumulation rules track progress until their target is reached.',
         ),
         const SizedBox(height: 10),
-        _InsetGroup(
-          child: Column(
-            children: [
-              if (achievements.isEmpty)
-                const _EmptyState(message: 'No achievement rules configured.')
-              else
-                for (var index = 0; index < achievements.length; index++) ...[
-                  _AchievementAdminRow(
+        Column(
+          children: [
+            if (achievements.isEmpty)
+              const _EmptyState(message: 'No achievement rules configured.')
+            else
+              for (var index = 0; index < achievements.length; index++) ...[
+                AdminPanel(
+                  padding: EdgeInsets.zero,
+                  child: _AchievementAdminRow(
                     achievement: achievements[index],
                     isSaving: isSaving,
                     onEdit: () => onEdit(achievements[index]),
                     onToggleActive: () => onToggleActive(achievements[index]),
                   ),
-                  if (index != achievements.length - 1)
-                    const _HorizontalSeparator(),
-                ],
-            ],
-          ),
+                ),
+                if (index != achievements.length - 1)
+                  const SizedBox(height: 12),
+              ],
+          ],
         ),
       ],
     );
@@ -2045,52 +2252,6 @@ class _AchievementEditorSheetState extends State<_AchievementEditorSheet> {
   }
 }
 
-class _AdminMetric extends StatelessWidget {
-  const _AdminMetric({
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Icon(icon, color: _AdminColors.green, size: 22),
-            const SizedBox(height: 7),
-            Text(
-              value,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _AdminColors.textFor(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: _AdminColors.secondaryTextFor(context),
-                letterSpacing: 0,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _HazardAdminRow extends StatelessWidget {
   const _HazardAdminRow({
     required this.report,
@@ -2132,22 +2293,19 @@ class _HazardAdminRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: isSaving ? null : onApprove,
-                  icon: const Icon(Icons.verified_rounded),
-                  label: const Text('Approve'),
-                ),
+              FilledButton.icon(
+                onPressed: isSaving ? null : onApprove,
+                icon: const Icon(Icons.verified_rounded),
+                label: const Text('Approve'),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: isSaving ? null : onReject,
-                  icon: const Icon(Icons.block_rounded),
-                  label: const Text('Reject'),
-                ),
+              OutlinedButton.icon(
+                onPressed: isSaving ? null : onReject,
+                icon: const Icon(Icons.block_rounded),
+                label: const Text('Reject'),
               ),
             ],
           ),
@@ -2277,15 +2435,20 @@ class _AdminTextBlock extends StatelessWidget {
 }
 
 class _AdminNotice extends StatelessWidget {
-  const _AdminNotice({required this.message});
+  const _AdminNotice({required this.message, this.isError = true});
 
   final String message;
+  final bool isError;
 
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _AdminColors.redFor(context).withValues(alpha: 0.1),
+        color:
+            (isError
+                    ? _AdminColors.redFor(context)
+                    : _AdminColors.secondaryTextFor(context))
+                .withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -2293,7 +2456,9 @@ class _AdminNotice extends StatelessWidget {
         child: Text(
           message,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: _AdminColors.redFor(context),
+            color: (isError
+                ? _AdminColors.redFor(context)
+                : _AdminColors.secondaryTextFor(context)),
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
           ),
@@ -2305,23 +2470,10 @@ class _AdminNotice extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.message});
-
   final String message;
-
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Text(
-        message,
-        textAlign: TextAlign.center,
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: _AdminColors.secondaryTextFor(context),
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      AdminEmptyState(title: 'Nothing to show', message: message);
 }
 
 class _SectionTitle extends StatelessWidget {
@@ -2332,11 +2484,11 @@ class _SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      label.toUpperCase(),
+      label,
       style: Theme.of(context).textTheme.labelSmall?.copyWith(
         color: _AdminColors.secondaryTextFor(context),
-        fontSize: 12,
-        fontWeight: FontWeight.w800,
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
         letterSpacing: 0,
       ),
     );
@@ -2362,37 +2514,6 @@ class _CircleIcon extends StatelessWidget {
   }
 }
 
-class _CircleIconButton extends StatelessWidget {
-  const _CircleIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: _AdminColors.greenSoftFor(context),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: SizedBox.square(
-            dimension: 36,
-            child: Icon(icon, color: _AdminColors.green, size: 20),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _AdminStatusPill extends StatelessWidget {
   const _AdminStatusPill({required this.label, required this.color});
 
@@ -2401,18 +2522,21 @@ class _AdminStatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor = color == _AdminColors.green
+        ? _AdminColors.greenFor(context)
+        : color;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: effectiveColor.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.28)),
+        border: Border.all(color: effectiveColor.withValues(alpha: 0.28)),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
         child: Text(
           label,
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: color,
+            color: effectiveColor,
             fontWeight: FontWeight.w800,
             letterSpacing: 0,
           ),
@@ -2430,9 +2554,13 @@ class _InsetGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(16),
       child: DecoratedBox(
-        decoration: BoxDecoration(color: _AdminColors.surfaceFor(context)),
+        decoration: BoxDecoration(
+          color: _AdminColors.surfaceFor(context),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _AdminColors.separatorFor(context)),
+        ),
         child: child,
       ),
     );
@@ -2537,9 +2665,9 @@ class _DebugSectionPicker extends StatelessWidget {
         _SectionTitle(label: 'All Debug Data Sources'),
         const SizedBox(height: 8),
         const _DebugSourceNotice(
-          title: 'Read-only full diagnostic inventory',
+          title: 'Inspect app data',
           message:
-              'Cloud data, every on-device SQLite table, and app-scoped temporary runtime state are separated below. This app does not use Hive or SharedPreferences. Sensitive values are intentionally shown because this mode is admin-only.',
+              'Choose a source to inspect its current records. These views are read-only and available to administrators.',
           icon: Icons.visibility_rounded,
         ),
         const SizedBox(height: 12),
@@ -3251,12 +3379,10 @@ int _intFrom(Object? value) {
 }
 
 abstract final class _AdminColors {
-  static const Color green = Color(0xFF34A853);
+  static const Color green = Color(0xFF3C8964);
   static const Color greenSoft = Color(0xFFEAF7EE);
-  static const Color background = Color(0xFFF2F8F4);
   static const Color text = Color(0xFF111111);
   static const Color secondaryText = Color(0xFF6E6E73);
-  static const Color separator = Color(0xFFE5EFE8);
   static const Color red = Color(0xFFE11D48);
   static const Color orange = Color(0xFFF59E0B);
 
@@ -3264,16 +3390,17 @@ abstract final class _AdminColors {
       Theme.of(context).brightness == Brightness.dark;
 
   static Color backgroundFor(BuildContext context) =>
-      isDark(context) ? const Color(0xFF0C120F) : background;
+      AdminUi.background(context);
 
-  static Color surfaceFor(BuildContext context) =>
-      isDark(context) ? const Color(0xFF141C17) : Colors.white;
+  static Color surfaceFor(BuildContext context) => AdminUi.surface(context);
+
+  static Color greenFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF83C9A4) : green;
 
   static Color greenSoftFor(BuildContext context) =>
       isDark(context) ? const Color(0xFF183625) : greenSoft;
 
-  static Color separatorFor(BuildContext context) =>
-      isDark(context) ? const Color(0xFF2B3A31) : separator;
+  static Color separatorFor(BuildContext context) => AdminUi.border(context);
 
   static Color textFor(BuildContext context) =>
       isDark(context) ? const Color(0xFFEAF4EE) : text;

@@ -1,3 +1,4 @@
+const { validateSoloHikeDistance } = require('./solo_hike_policy');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const {
@@ -4175,6 +4176,18 @@ async function ensureTeamChatDocument(
   });
 }
 
+exports.cancelUpcomingHike = onCall({}, async (request) => {
+  const { phoneNumber, uid } = authenticatedPhoneFor(request, 'Sign in to cancel a hike.');
+  const hikeId = String(request.data?.hikeId || '').trim();
+  if (!validFirestoreDocumentId(hikeId)) {
+    throw new HttpsError('invalid-argument', 'Select a valid upcoming hike.');
+  }
+  return require('./cancel_upcoming_hike').cancelUpcomingHike(
+    admin.firestore(), { hikeId, uid, phoneNumber }, HttpsError,
+    () => admin.firestore.FieldValue.serverTimestamp()
+  );
+});
+
 exports.scheduleUpcomingHike = onCall(
   {},
   async (request) => {
@@ -4281,9 +4294,11 @@ exports.scheduleUpcomingHike = onCall(
       );
       const isGroupHike =
         String(rawDraft?.hikeType || '') === 'team' || invitedPhones.length > 0;
+      validateSoloHikeDistance(Number(trail.distanceKm), isGroupHike, rawDraft?.soloDistanceAcknowledgedKm, HttpsError);
       const draft = {
         ...sharedHikePlan(rawDraft, trail, buddies),
         hikeType: isGroupHike ? 'team' : 'solo',
+        ...(isGroupHike ? {} : { soloDistanceAcknowledgedKm: rawDraft?.soloDistanceAcknowledgedKm ?? null }),
       };
       const departureMillis = dateMillis(draft.departureTime);
       if (

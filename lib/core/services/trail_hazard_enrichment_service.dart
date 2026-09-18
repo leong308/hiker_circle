@@ -34,7 +34,8 @@ class TrailHazardEnrichmentService {
   static const _elevationSourceUrl =
       'https://open-meteo.com/en/docs/elevation-api';
   static const _routeCorridorMeters = 35.0;
-  static const _minimumSteepGradePercent = 25.0;
+  // Cautions begin at 12.5 degrees in either travel direction.
+  static final _minimumSteepGradePercent = math.tan(12.5 * math.pi / 180) * 100;
   static const _minimumSteepRiseMeters = 15.0;
   static const _steepWindowIntervals = 3;
   static const _maximumElevationSamples = 500;

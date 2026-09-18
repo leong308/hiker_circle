@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../Data/session_repository.dart';
+import '../../home/Data/home_screen_widget_service.dart';
 import '../Model/app_session.dart';
 
 class AppViewModel extends ChangeNotifier {
@@ -40,13 +41,21 @@ class AppViewModel extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _sessionRepository.loadSavedSession();
+    if (!_sessionRepository.isSignedIn) {
+      await HomeScreenWidgetService.shared.clear();
+    }
     if (_isDisposed) return;
+    if (_sessionRepository.isSignedIn) {
+      HomeScreenWidgetService.shared.activate();
+    }
     _isInitializing = false;
     notifyListeners();
   }
 
   Future<void> completeSignIn(AppSession session) async {
+    await HomeScreenWidgetService.shared.clear();
     await _sessionRepository.signIn(session);
+    HomeScreenWidgetService.shared.activate();
     if (_isDisposed) return;
     notifyListeners();
   }
@@ -58,6 +67,7 @@ class AppViewModel extends ChangeNotifier {
   }
 
   void signOut() {
+    unawaited(HomeScreenWidgetService.shared.clear());
     _sessionRepository.signOut();
     if (_isDisposed) return;
     notifyListeners();
@@ -74,6 +84,7 @@ class AppViewModel extends ChangeNotifier {
         session == null) {
       return;
     }
+    unawaited(HomeScreenWidgetService.shared.clear());
     _sessionRepository.signOut();
     notifyListeners();
   }

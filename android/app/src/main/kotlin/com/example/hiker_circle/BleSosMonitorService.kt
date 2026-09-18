@@ -330,6 +330,7 @@ class BleSosMonitorService : Service() {
     }
 
     private fun handleScanResult(result: ScanResult) {
+        ButtonDebugTrace.advertisement(result)
         updateMonitorHealth(resultReceived = true)
         val serviceUuids = result.scanRecord?.serviceUuids.orEmpty()
         if (serviceUuids.any {
@@ -914,7 +915,7 @@ class BleSosMonitorService : Service() {
                     closeHelpGatt(gatt)
                     return
                 }
-                gatt.readCharacteristic(characteristic)
+                ButtonDebugTrace.read(gatt, characteristic)
             }
 
             override fun onCharacteristicRead(
@@ -922,6 +923,7 @@ class BleSosMonitorService : Service() {
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
             ) {
+            ButtonDebugTrace.gatt("RX", "read_response", gatt, characteristic, if (status == BluetoothGatt.GATT_SUCCESS) (characteristic.value ?: byteArrayOf()) else byteArrayOf(), "GATT $status")
                 if (status == BluetoothGatt.GATT_SUCCESS &&
                     characteristic.uuid == HikerBleProtocol.SOS_HELP_CHARACTERISTIC_UUID
                 ) {

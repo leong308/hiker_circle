@@ -70,4 +70,48 @@ void main() {
     expect(profile.maximumElevationMeters, 190);
     expect(profile.elevationGainMeters, 115);
   });
+  test('checkpoint fingerprint is portable and ignores label-only edits', () {
+    const points = [
+      TrailCheckpoint(
+        name: 'Start',
+        latitude: 5.41,
+        longitude: 100.27,
+        order: 1,
+      ),
+      TrailCheckpoint(
+        name: 'Finish',
+        latitude: 5.42,
+        longitude: 100.28,
+        order: 2,
+      ),
+    ];
+    expect(
+      HikingRouteService.checkpointsHash(points),
+      'sha256:aa81bdb1669aa970b8c83b8d57f5dc52cc166376c0e7c5062350624fada02ad0',
+    );
+    final trail = Trail.fromPersistence({
+      'routeCheckpointsHash': HikingRouteService.checkpointsHash(points),
+      'checkpoints': [
+        {'name': 'Renamed', 'latitude': 5.41, 'longitude': 100.27, 'order': 1},
+        {'name': 'Finish', 'latitude': 5.42, 'longitude': 100.28, 'order': 2},
+      ],
+    });
+    expect(HikingRouteService.savedRouteMatchesCheckpoints(trail), isTrue);
+    expect(
+      HikingRouteService.savedRouteMatchesCheckpoints(
+        trail.copyWith(
+          checkpoints: [
+            points.first,
+            const TrailCheckpoint(
+              name: 'Moved',
+              latitude: 5.45,
+              longitude: 100.28,
+              order: 2,
+            ),
+          ],
+        ),
+      ),
+      isFalse,
+    );
+  });
 }

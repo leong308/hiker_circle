@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/hike_widget_root" android:layout_width="match_parent"
+    android:layout_height="match_parent" android:orientation="vertical"
+    android:padding="16dp" android:background="@drawable/hike_home_widget_background">
+    <TextView android:id="@+id/hike_widget_heading" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="HIKERCIRCLE" android:textColor="#9CE0B4" android:textStyle="bold" android:textSize="11sp" />
+    <TextView android:id="@+id/hike_widget_context" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="2dp" android:textColor="#B7CBC0" android:textSize="10sp"
+        android:maxLines="1" android:visibility="gone" />
+    <TextView android:id="@+id/hike_widget_name" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" android:text="Plan your next hike" android:textColor="#FFFFFF"
+        android:textStyle="bold" android:textSize="17sp" android:maxLines="2" android:ellipsize="end" />
+    <TextView android:id="@+id/hike_widget_main" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" android:textColor="#9DDFFC" android:textSize="15sp" android:textStyle="bold" android:maxLines="2" />
+    <TextView android:id="@+id/hike_widget_detail" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="4dp" android:textColor="#DFEAE4" android:textSize="12sp" android:maxLines="2" />
+    <Chronometer android:id="@+id/hike_widget_countdown" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="4dp" android:textColor="#9CE0B4" android:textSize="12sp" android:visibility="gone" />
+    <TextView android:id="@+id/hike_widget_footer" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" android:text="Open HikerCircle →" android:textColor="#B7CBC0" android:textSize="11sp" android:maxLines="2" />
+</LinearLayout>

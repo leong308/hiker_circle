@@ -696,14 +696,9 @@ class _CirclePageState extends State<CirclePage> {
 
   Future<void> _openGroupChat(GroupChat chat) async {
     final repo = widget.hikerCircleRepository;
-    final phone = widget.session.phoneNumber;
     final now = DateTime.now();
-    try {
-      await repo.markGroupChatAsRead(chatId: chat.id, phoneNumber: phone);
-    } catch (_) {
-      // Receipt sync should not prevent opening a locally cached chat.
-    }
-    if (!mounted) return;
+    // Opening the page must not wait for a server acknowledgement. The detail
+    // page persists and syncs the read receipt after capturing its unread cutoff.
     setState(() {
       _localLastReadAt = Map<String, DateTime>.from(_localLastReadAt)
         ..[chat.id] = now;

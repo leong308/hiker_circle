@@ -99,6 +99,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   int? _firstUnreadIndex;
   int _unreadMessagesCount = 0;
   bool _hasScrolledToInitialPosition = false;
+  late final Future<void> _initialCutoffLoaded;
 
   int get _totalSearchableMessages =>
       _messages.where((m) => !m.isSystemMessage).length;
@@ -109,13 +110,13 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   @override
   void initState() {
     super.initState();
+    _initialCutoffLoaded = _loadInitialCutoff();
     _loadUpcomingHike();
     _listenToMessages();
-    _markChatAsRead();
+    unawaited(_markChatAsRead());
     _monitorConnectivity();
     _loadPending();
     unawaited(_loadNotificationSettings());
-    _loadInitialCutoff();
     _timeRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
@@ -558,8 +559,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       _computeUnreadPosition();
     });
     await _loadPending();
+    if (!mounted) return;
     _markUnseenMessages(firestoreMessages);
-    await _markChatAsRead();
+    unawaited(_markChatAsRead());
 
     if (!_hasScrolledToInitialPosition) {
       _scrollToInitialPosition();
@@ -604,6 +606,10 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
   Future<void> _markChatAsRead() async {
     final myPhone = widget.session.phoneNumber;
     try {
+      // Keep the previous receipt available for the unread divider. This local
+      // read never blocks navigation or rendering while Firebase syncs below.
+      await _initialCutoffLoaded;
+      if (!mounted) return;
       await widget.repository.markGroupChatAsRead(
         chatId: widget.chat.id,
         phoneNumber: myPhone,
@@ -613,7 +619,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     }
   }
 
-  void _loadInitialCutoff() {
+  Future<void> _loadInitialCutoff() async {
     final myPhone = widget.session.phoneNumber;
     final fromWidget = widget.chat.lastReadAtFor(myPhone);
     if (fromWidget != null) {
@@ -623,14 +629,15 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       });
       return;
     }
-    unawaited(_loadLocalReadReceipt());
+    await _loadLocalReadReceipt();
   }
 
   Future<void> _loadLocalReadReceipt() async {
     DateTime? local;
     try {
-      local = await widget.repository.localDatabase.loadChatReadReceipt(
+      local = await widget.repository.loadLocalLastReadAt(
         widget.chat.id,
+        ownerPhoneNumber: widget.session.phoneNumber,
       );
     } catch (_) {
       return;

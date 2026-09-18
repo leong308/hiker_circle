@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/app/Data/local_session_database.dart';
 import 'package:hiker_circle/app/Model/app_session.dart';
+import 'package:hiker_circle/home/Data/planned_hike_state_service.dart';
 import 'package:hiker_circle/home/Model/hike_session_models.dart';
 import 'package:hiker_circle/trail/Model/trail_models.dart';
 import 'package:path/path.dart' as path;
@@ -278,6 +279,127 @@ void main() {
     );
   });
 
+  test(
+    'offline restart hides expired cached hikes and keeps future plans',
+    () async {
+      const owner = '+60111111111';
+      final now = DateTime.parse('2026-09-15T18:14:00+08:00');
+      HikeSessionDraft draftAt(DateTime departure) =>
+          HikeSessionDraft.fromTrail(_activeHike().trail).copyWith(
+            departureTime: departure,
+            expectedReturnTime: departure.add(const Duration(hours: 4)),
+          );
+      final old = _upcomingHike(
+        id: 'old-august-22',
+        draft: draftAt(DateTime.parse('2026-08-22T04:30:00+08:00')),
+      );
+      final pendingOld = _upcomingHike(
+        id: 'local_pending_old',
+        draft: draftAt(now.subtract(const Duration(days: 2))),
+      );
+      final future = _upcomingHike(
+        id: 'future-confirmed',
+        draft: draftAt(now.add(const Duration(days: 1))),
+      );
+      await database.saveUpcomingHikesForPlanning(
+        ownerPhoneNumber: owner,
+        upcomingHikes: [old, pendingOld, future],
+      );
+      await database.savePlannedHikeChecklist(
+        ownerPhoneNumber: owner,
+        upcomingHikeId: future.id,
+        completedItems: const {'Charged phone'},
+      );
+      await database.close();
+      database = LocalSessionDatabase(
+        databasePath: path.join(temporaryDirectory.path, 'session.db'),
+      );
+      // Restore from SQLite only: no Firebase or connectivity service is used.
+      final saved = await database.loadPlannedHikeStates(
+        ownerPhoneNumber: owner,
+      );
+      expect(saved, hasLength(3));
+      final visible = PlannedHikeStateResolver.mergeUpcomingHikes(
+        remote: const [],
+        cached: saved.map((state) => state.upcomingHike),
+        retainUnconfirmedCachedHikes: true,
+        consumedHikeIds: {
+          for (final state in saved)
+            if (state.isConsumed) state.upcomingHike.id,
+        },
+        now: now,
+      );
+      expect(visible.map((hike) => hike.id), [future.id]);
+      expect(
+        saved
+            .singleWhere((s) => s.upcomingHike.id == future.id)
+            .completedChecklistItems,
+        {'Charged phone'},
+      );
+    },
+  );
+
+  test(
+    'offline expiry and later restart require no fresh cloud snapshot',
+    () async {
+      const owner = '+60111111111';
+      final departure = DateTime.utc(2026, 9, 15, 10);
+      final hike = _upcomingHike(
+        id: 'offline-expiry',
+        draft: HikeSessionDraft.fromTrail(_activeHike().trail).copyWith(
+          departureTime: departure,
+          expectedReturnTime: departure.add(const Duration(hours: 4)),
+        ),
+      );
+      await database.saveUpcomingHikesForPlanning(
+        ownerPhoneNumber: owner,
+        upcomingHikes: [hike],
+      );
+      final saved = await database.loadPlannedHikeStates(
+        ownerPhoneNumber: owner,
+      );
+      final beforeExpiry = PlannedHikeStateResolver.mergeUpcomingHikes(
+        remote: const [],
+        cached: saved.map((state) => state.upcomingHike),
+        retainUnconfirmedCachedHikes: true,
+        now: hike.visibleUntil.subtract(const Duration(seconds: 1)),
+      );
+      expect(beforeExpiry, hasLength(1));
+      // The on-device expiry timer rebuilds this in-memory list, even offline.
+      final afterExpiry = PlannedHikeStateResolver.mergeUpcomingHikes(
+        remote: beforeExpiry,
+        cached: const [],
+        retainUnconfirmedCachedHikes: false,
+        now: hike.visibleUntil,
+      );
+      expect(afterExpiry, isEmpty);
+      expect(
+        PlannedHikeStateResolver.selectNext(
+          beforeExpiry,
+          now: hike.visibleUntil,
+        ),
+        isNull,
+      );
+
+      await database.close();
+      database = LocalSessionDatabase(
+        databasePath: path.join(temporaryDirectory.path, 'session.db'),
+      );
+      final restored = await database.loadPlannedHikeStates(
+        ownerPhoneNumber: owner,
+      );
+      expect(
+        PlannedHikeStateResolver.mergeUpcomingHikes(
+          remote: const [],
+          cached: restored.map((state) => state.upcomingHike),
+          retainUnconfirmedCachedHikes: true,
+          now: hike.visibleUntil.add(const Duration(days: 7)),
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   test('planned hike and checklist survive a database reopen', () async {
     const phoneNumber = '+60111111111';
     final draft = HikeSessionDraft.fromTrail(_activeHike().trail).copyWith(
@@ -293,7 +415,11 @@ void main() {
     await database.savePlannedHikeChecklist(
       ownerPhoneNumber: phoneNumber,
       upcomingHikeId: upcoming.id,
-      completedItems: const {'Charged phone', 'not a real checklist item'},
+      completedItems: const {
+        'Charged phone',
+        'gear:scenario:river:on',
+        'not a real checklist item',
+      },
     );
 
     final databasePath = path.join(temporaryDirectory.path, 'session.db');
@@ -309,7 +435,10 @@ void main() {
     final restoredDeparture = restored.single.upcomingHike.draft!.departureTime;
     expect(restoredDeparture.isUtc, isFalse);
     expect(restoredDeparture.toUtc(), draft.departureTime.toUtc());
-    expect(restored.single.completedChecklistItems, {'Charged phone'});
+    expect(restored.single.completedChecklistItems, {
+      'Charged phone',
+      'gear:scenario:river:on',
+    });
     expect(restored.single.isConsumed, isFalse);
 
     await database.markPlannedHikeConsumed(

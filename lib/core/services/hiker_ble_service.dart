@@ -58,10 +58,20 @@ class HikerBleService {
   // the paired-button setup page) to replace the Home page listener, and its
   // cancellation can then clear the native sink completely. Keep one shared
   // platform subscription and fan its events out to every Dart listener.
-  static final Stream<HikerBleEvent> _events = _eventChannel
+  static final Stream<Object?> _platformEvents = _eventChannel
       .receiveBroadcastStream()
-      .map(HikerBleEvent.fromPlatform)
       .asBroadcastStream();
+
+  static final Stream<HikerBleEvent> _events = _platformEvents
+      .where((event) => event is! Map || event['type'] != 'buttonDebug')
+      .map(HikerBleEvent.fromPlatform);
+
+  Stream<Map<Object?, Object?>> get buttonDebugEvents => _platformEvents
+      .where((event) => event is Map && event['type'] == 'buttonDebug')
+      .map((event) => Map<Object?, Object?>.from(event as Map));
+
+  Future<void> setButtonDebugCapture(bool enabled) => _methodChannel
+      .invokeMethod<void>('setButtonDebugCapture', {'enabled': enabled});
 
   Stream<HikerBleEvent> get events => _events;
 

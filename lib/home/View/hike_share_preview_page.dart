@@ -8,11 +8,10 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
-import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../Model/hike_session_models.dart';
-import '../../trail/Model/trail_models.dart';
+import '../Model/recorded_hike_map_points.dart';
 
 class HikeSharePreviewPage extends StatefulWidget {
   const HikeSharePreviewPage({
@@ -21,7 +20,7 @@ class HikeSharePreviewPage extends StatefulWidget {
     required this.report,
     required this.activeHike,
     required this.onShareExternally,
-    this.onPostToCommunity,
+    required this.onPostToCommunity,
     this.initialMapStyleIndex = 0,
   });
 
@@ -31,7 +30,7 @@ class HikeSharePreviewPage extends StatefulWidget {
   final Future<void> Function(
     String caption,
     List<CommunityPostImageUpload> images,
-  )?
+  )
   onPostToCommunity;
   final Future<void> Function(String text) onShareExternally;
   final int initialMapStyleIndex;
@@ -62,7 +61,7 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
 
   Future<void> _postToCommunity() async {
     final post = widget.onPostToCommunity;
-    if (post == null || _isPosting || _isSharingExternally) return;
+    if (_isPosting || _isSharingExternally) return;
 
     final caption = _captionController.text.trim();
     if (caption.isEmpty) {
@@ -87,7 +86,11 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
       if (mounted) {
-        _showMessage('Unable to share this hike right now. $error');
+        _showMessage(
+          error is HikerCircleFirebaseRepositoryException
+              ? error.message
+              : 'Unable to share this hike right now. Please try again.',
+        );
       }
     } finally {
       if (mounted) setState(() => _isPosting = false);
@@ -151,7 +154,6 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
   Widget build(BuildContext context) {
     final report = widget.report;
     final isBusy = _isPosting || _isSharingExternally;
-    final communityAvailable = widget.onPostToCommunity != null;
 
     return PopScope(
       canPop: !isBusy,
@@ -202,9 +204,7 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              _AudienceRow(
-                                communityAvailable: communityAvailable,
-                              ),
+                              const _AudienceRow(),
                               const SizedBox(height: 12),
                               _PostPreviewCard(
                                 session: widget.session,
@@ -225,9 +225,7 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                communityAvailable
-                                    ? 'Your route and hike totals will be included with this post.'
-                                    : 'Community posting is unavailable for this hike, but you can still share it to another app.',
+                                'Your route and hike totals will be included with this post.',
                                 textAlign: TextAlign.center,
                                 style: Theme.of(context).textTheme.bodySmall
                                     ?.copyWith(
@@ -244,7 +242,6 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
                     ),
                   ),
                   _ShareActionBar(
-                    communityAvailable: communityAvailable,
                     isPosting: _isPosting,
                     isSharingExternally: _isSharingExternally,
                     onPost: _postToCommunity,
@@ -263,11 +260,10 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
                   timeout: const Duration(seconds: 30),
                   onTimeout: () {
                     if (mounted) {
-                      setState(() {
-                        _isPosting = false;
-                        _isSharingExternally = false;
-                      });
-                      _showMessage('Sharing timed out. Please try again.');
+                      _showMessage(
+                        'Sharing is taking longer than usual. '
+                        'Please wait while the current request finishes.',
+                      );
                     }
                   },
                 ),
@@ -280,9 +276,7 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
 }
 
 class _AudienceRow extends StatelessWidget {
-  const _AudienceRow({required this.communityAvailable});
-
-  final bool communityAvailable;
+  const _AudienceRow();
 
   @override
   Widget build(BuildContext context) {
@@ -306,16 +300,10 @@ class _AudienceRow extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                communityAvailable
-                    ? Icons.groups_2_rounded
-                    : Icons.ios_share_rounded,
-                color: _ShareColors.green,
-                size: 16,
-              ),
+              Icon(Icons.groups_2_rounded, color: _ShareColors.green, size: 16),
               const SizedBox(width: 6),
               Text(
-                communityAvailable ? 'Public community' : 'Other apps',
+                'Public community',
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   color: _ShareColors.green,
                   fontWeight: FontWeight.w700,
@@ -439,11 +427,10 @@ class _PostPreviewCard extends StatelessWidget {
             height: 230,
             child: RoutePreviewMap(
               trail: activeHike.trail,
-              route: _completedRouteResult(report, activeHike),
+              recordedTrackPoints: recordedHikeMapPoints(activeHike),
               pinnedPoints: _pinPoints(activeHike),
               checkInPoints: _checkInPoints(activeHike),
               captureAllGestures: true,
-              customCheckpoints: _recordedRouteCheckpoints(activeHike),
               animateRoute: true,
               initialStyleIndex: initialMapStyleIndex,
             ),
@@ -764,14 +751,12 @@ class _MetricDivider extends StatelessWidget {
 
 class _ShareActionBar extends StatelessWidget {
   const _ShareActionBar({
-    required this.communityAvailable,
     required this.isPosting,
     required this.isSharingExternally,
     required this.onPost,
     required this.onShareExternally,
   });
 
-  final bool communityAvailable;
   final bool isPosting;
   final bool isSharingExternally;
   final VoidCallback onPost;
@@ -811,12 +796,6 @@ class _ShareActionBar extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 640),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                if (!communityAvailable) {
-                  return SizedBox(
-                    width: double.infinity,
-                    child: externalAction,
-                  );
-                }
                 if (constraints.maxWidth < 420) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -886,31 +865,6 @@ String _formatShareDate(DateTime value) {
   return '${months[local.month - 1]} ${local.day}';
 }
 
-HikingRouteResult? _completedRouteResult(
-  HikeSummaryReport report,
-  ActiveHikeSession activeHike,
-) {
-  final recordedPoints = List<HikeCoordinate>.of(activeHike.routePoints);
-  final latest = activeHike.latestLocation;
-  if (latest != null &&
-      (recordedPoints.isEmpty || recordedPoints.last.distanceTo(latest) > 2)) {
-    recordedPoints.add(latest);
-  }
-  recordedPoints.sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
-  if (recordedPoints.length < 2) return null;
-  final encoded = PolylineCodec.encode(
-    recordedPoints
-        .map((point) => LatLng(point.latitude, point.longitude))
-        .toList(),
-  );
-  if (encoded.isEmpty) return null;
-  return HikingRouteResult(
-    distanceMeters: (report.distanceKm * 1000).round(),
-    duration: report.duration,
-    encodedPolyline: encoded,
-  );
-}
-
 List<mapbox.Point> _pinPoints(ActiveHikeSession activeHike) {
   return activeHike.manualPinLocations
       .map(
@@ -937,31 +891,6 @@ List<mapbox.Point> _checkInPoints(ActiveHikeSession activeHike) {
         ),
       )
       .toList();
-}
-
-List<TrailCheckpoint> _recordedRouteCheckpoints(ActiveHikeSession activeHike) {
-  final route = List<HikeCoordinate>.of(activeHike.routePoints)
-    ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
-  final checkpoints = <HikeCoordinate>[
-    if (route.isNotEmpty) route.first,
-    ...activeHike.checkInRecords
-        .map((record) => record.coordinate)
-        .whereType<HikeCoordinate>(),
-    if (route.length > 1) route.last,
-  ];
-  return [
-    for (var index = 0; index < checkpoints.length; index++)
-      TrailCheckpoint(
-        name: index == 0
-            ? 'Start'
-            : index == checkpoints.length - 1
-            ? 'End'
-            : 'Check-in $index',
-        latitude: checkpoints[index].latitude,
-        longitude: checkpoints[index].longitude,
-        order: index,
-      ),
-  ];
 }
 
 abstract final class _ShareColors {

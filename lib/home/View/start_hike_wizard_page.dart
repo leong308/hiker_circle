@@ -1,3 +1,5 @@
+import 'solo_hike_distance_dialog.dart';
+import 'hike_start_navigation.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -100,8 +102,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     );
   }
 
-  void _next() {
-    if (_isScheduling || _isStarting) return;
+  bool _checkingDistance = false;
+
+  Future<void> _next() async {
+    if (_isScheduling || _isStarting || _checkingDistance) return;
     final currentStep = _steps[_stepIndex];
 
     if (currentStep == _StartHikeWizardStep.timing &&
@@ -136,6 +140,23 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       return;
     }
 
+    if (currentStep == _StartHikeWizardStep.type ||
+        currentStep == _StartHikeWizardStep.trail ||
+        _isFinalStep) {
+      _checkingDistance = true;
+      final checked = await confirmSoloHikeDistance(
+        context,
+        _draft,
+        onChooseGroup: () => setState(() {
+          _draft = _draft.copyWith(hikeType: HikeType.team);
+          _stepIndex = 0;
+        }),
+      );
+      _checkingDistance = false;
+      if (!mounted || checked == null) return;
+      _draft = checked;
+    }
+
     if (_isFinalStep) {
       if (_isUpcomingHike) {
         unawaited(_scheduleAndFinish());
@@ -156,13 +177,14 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
 
   Future<void> _startNowAndFinish() async {
     if (_isStarting) return;
+    final route = ModalRoute.of(context);
     setState(() => _isStarting = true);
     try {
       final safetyAccepted = await _confirmPreHikeSafety();
       if (!safetyAccepted || !mounted) return;
       final started = await widget.onStartNow!.call(_draftForNow());
-      if (started && mounted) {
-        Navigator.of(context).pop();
+      if (started) {
+        HikeStartNavigation.closeOwnedRoute(route);
       }
     } finally {
       if (mounted) {
@@ -679,8 +701,17 @@ class _HikeTypeStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return _StepCard(
       title: 'Choose your hiking mode',
-      subtitle: 'Select how this active session should behave.',
+      subtitle: 'Choose solo or group tracking for this route.',
       children: [
+        if (draft.trail.distanceKm > 10)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              draft.trail.distanceKm > 20
+                  ? '${draft.trail.distanceKm.toStringAsFixed(1)} km · Group setup required above 20 km'
+                  : '${draft.trail.distanceKm.toStringAsFixed(1)} km · Solo acknowledgement required above 10 km',
+            ),
+          ),
         _ChoiceTile(
           selected: draft.hikeType == HikeType.solo,
           icon: Icons.person_pin_circle_rounded,

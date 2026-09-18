@@ -99,6 +99,7 @@ flutter:
     - assets/audios/sos_alarm.mp3
     - assets/audios/med_alarm.mp3
     - assets/guides/first_aid_guide.json
+    - assets/maps/malaysia_states.geojson
     - assets/animations/hiker_circle_loading.json
     - assets/animations/processing_checkmark.json
     - assets/animations/loading_spinner.json

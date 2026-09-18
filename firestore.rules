@@ -433,6 +433,11 @@ service cloud.firestore {
     match /trails/{trailId} {
       allow read: if signedIn();
       allow write: if admin();
+
+      match /routeGeometry/{geometryId} {
+        allow read: if signedIn();
+        allow write: if admin();
+      }
     }
 
     match /hikeSessions/{sessionId} {

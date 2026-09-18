@@ -1,3 +1,5 @@
+import 'route_gear_assessment.dart';
+import 'trail_gear_plan.dart';
 import 'dart:math' as math;
 
 import '../../sos/Model/sos_models.dart';
@@ -166,14 +168,19 @@ class GearChecklistCatalog {
     ],
   };
 
-  static final Set<String> allItems = Set<String>.unmodifiable(
-    sections.values.expand((items) => items),
-  );
+  static final Set<String> allItems = Set<String>.unmodifiable({
+    ...sections.values.expand((items) => items),
+    ...TrailGearPlan.allItems,
+  });
 
   static int get itemCount => allItems.length;
 
   static Set<String> sanitize(Iterable<String> items) {
-    return Set<String>.unmodifiable(items.where(allItems.contains));
+    return Set<String>.unmodifiable(
+      items.where(
+        (item) => allItems.contains(item) || TrailGearPlan.isPreference(item),
+      ),
+    );
   }
 }
 
@@ -192,8 +199,10 @@ class PlannedHike {
     this.upcomingHikeId = '',
     this.hasKnownBatteryLevel = true,
     this.completedChecklistItems = const {},
+    this.gearAssessment,
   });
 
+  final RouteGearAssessment? gearAssessment;
   final Trail trail;
   final DateTime plannedStartTime;
   final DateTime expectedReturnTime;
@@ -207,6 +216,22 @@ class PlannedHike {
   final String upcomingHikeId;
   final bool hasKnownBatteryLevel;
   final Set<String> completedChecklistItems;
+
+  TrailGearPlan get gearPlan => TrailGearPlan.forTrail(
+    trail,
+    plannedStartTime,
+    expectedReturnTime,
+    saved: completedChecklistItems,
+    assessment: gearAssessment,
+  );
+  Set<String> get missingRequiredGear =>
+      gearPlan.missingRequired(completedChecklistItems);
+  bool get requiredGearReady => missingRequiredGear.isEmpty;
+
+  PlannedHike withGearProgress() => copyWith(
+    checklistCompleted: gearPlan.completed(completedChecklistItems),
+    checklistTotal: gearPlan.items.length,
+  );
 
   int get preparationPercent {
     if (checklistTotal == 0) {
@@ -229,6 +254,7 @@ class PlannedHike {
   }
 
   PlannedHike copyWith({
+    RouteGearAssessment? gearAssessment,
     Trail? trail,
     DateTime? plannedStartTime,
     DateTime? expectedReturnTime,
@@ -244,6 +270,7 @@ class PlannedHike {
     Set<String>? completedChecklistItems,
   }) {
     return PlannedHike(
+      gearAssessment: gearAssessment ?? this.gearAssessment,
       trail: trail ?? this.trail,
       plannedStartTime: plannedStartTime ?? this.plannedStartTime,
       expectedReturnTime: expectedReturnTime ?? this.expectedReturnTime,
@@ -753,6 +780,7 @@ class HikeSessionDraft {
     required this.completedChecklistItems,
     this.teamBuddies = const [],
     this.customCheckpoints,
+    this.soloDistanceAcknowledgedKm,
   });
 
   static const defaultLocationRecordingInterval = Duration(seconds: 30);
@@ -921,9 +949,12 @@ class HikeSessionDraft {
         data['teamBuddies'],
       ).map(TeamHikeBuddy.fromFirestore).toList(),
       customCheckpoints: customCheckpoints,
+      soloDistanceAcknowledgedKm: (data['soloDistanceAcknowledgedKm'] as num?)
+          ?.toDouble(),
     );
   }
 
+  final double? soloDistanceAcknowledgedKm;
   final HikeType hikeType;
   final Trail trail;
   final String startPointName;
@@ -947,6 +978,8 @@ class HikeSessionDraft {
   Map<String, dynamic> toPersistence() {
     return {
       'hikeType': hikeType.name,
+      if (soloDistanceAcknowledgedKm != null)
+        'soloDistanceAcknowledgedKm': soloDistanceAcknowledgedKm,
       'trail': trail.toPersistence(),
       'startPointName': startPointName,
       'destinationName': destinationName,
@@ -1056,6 +1089,7 @@ class HikeSessionDraft {
   bool get hasCustomCheckpoints => customCheckpoints != null;
 
   HikeSessionDraft copyWith({
+    double? soloDistanceAcknowledgedKm,
     HikeType? hikeType,
     Trail? trail,
     String? startPointName,
@@ -1077,6 +1111,13 @@ class HikeSessionDraft {
     List<TrailCheckpoint>? customCheckpoints,
   }) {
     return HikeSessionDraft(
+      soloDistanceAcknowledgedKm:
+          soloDistanceAcknowledgedKm ??
+          ((trail == null ||
+                  (trail.trailId == this.trail.trailId &&
+                      trail.distanceKm == this.trail.distanceKm))
+              ? this.soloDistanceAcknowledgedKm
+              : null),
       hikeType: hikeType ?? this.hikeType,
       trail: trail ?? this.trail,
       startPointName: startPointName ?? this.startPointName,
@@ -1564,7 +1605,7 @@ class HikeSummaryReport {
     required ActiveHikeSession activeHike,
     required DateTime endedAt,
   }) {
-    final routePoints = _actualRoutePointsFor(activeHike);
+    final routePoints = recordedRoutePointsFor(activeHike);
     final distanceKm = _recordedDistanceKmFor(routePoints);
     final measuredDuration = endedAt.difference(activeHike.startedAt);
     final duration = measuredDuration.isNegative
@@ -1608,12 +1649,13 @@ class HikeSummaryReport {
     );
   }
 
-  static List<HikeCoordinate> _actualRoutePointsFor(
+  static List<HikeCoordinate> recordedRoutePointsFor(
     ActiveHikeSession activeHike,
   ) {
     final points = activeHike.routePoints
         .where((point) => point.hasValidPosition)
         .toList();
+    points.sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
     final latest = activeHike.latestLocation;
     if (latest?.hasValidPosition == true &&
         (points.isEmpty || points.last.distanceTo(latest!) > 2)) {
@@ -1809,6 +1851,9 @@ HikeSessionDraft? _modelDraftFromValue(Object? value) {
 }
 
 class UpcomingHike {
+  // Match the backend's window for starting a scheduled hike.
+  static const visibleAfterDepartureGrace = Duration(minutes: 15);
+
   const UpcomingHike({
     required this.id,
     required this.sessionId,
@@ -1874,6 +1919,12 @@ class UpcomingHike {
   bool get requiresJoinApproval => joinPolicy != 'open';
 
   bool get isLocalPendingSync => id.startsWith('local_pending_');
+
+  DateTime get visibleUntil =>
+      departureTime.toUtc().add(visibleAfterDepartureGrace);
+
+  bool isUpcomingAt(DateTime now) =>
+      !isDeleted && visibleUntil.isAfter(now.toUtc());
 
   Map<String, dynamic> toFirestore() => {
     'sessionId': sessionId,
@@ -1971,7 +2022,8 @@ class UpcomingHike {
       destinationName: _modelStringFrom(data['destinationName']),
       departureTime:
           _modelLocalDateFromValue(data['departureTimeLocal']) ??
-          DateTime.now(),
+          _modelLocalDateFromValue(data['departureTime']) ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
       expectedReturnTime:
           _modelLocalDateFromValue(data['expectedReturnTimeLocal']) ??
           DateTime.now(),

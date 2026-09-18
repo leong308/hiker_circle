@@ -17,13 +17,16 @@ import '../../core/services/geoapify_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/cached_trail_image.dart';
 import '../../core/widgets/map_controls.dart';
+import '../../core/widgets/state_boundary_overlay.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/route_preview_map.dart';
+import '../../core/widgets/route_checkpoint_progress.dart';
 import '../../core/widgets/worldwide_region_picker.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/trail_models.dart';
+import '../Model/malaysia_map_region.dart';
 import 'trail_weather_panel.dart';
 import 'checkpoint_flow.dart';
 
@@ -487,6 +490,8 @@ class TrailDetailPage extends StatefulWidget {
 }
 
 class _TrailDetailPageState extends State<TrailDetailPage> {
+  final _checkpointPlayback = ValueNotifier(const RouteCheckpointProgress());
+  DateTime? _previewDepartureTime;
   late Trail _trail = widget.trail;
   final _scrollController = ScrollController();
   final _routePreviewKey = GlobalKey();
@@ -554,6 +559,8 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
   @override
   void dispose() {
     _trailSubscription?.cancel();
+    _checkpointPlayback.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -646,15 +653,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     onStartHike: () => _startTrailHike(trail),
                   ),
                   const SizedBox(height: 22),
-                  _SectionTitle(
-                    label: 'Route Preview',
-                    trailing: trail.routeReferenceUrl.trim().isEmpty
-                        ? null
-                        : _RouteReferenceButton(
-                            referenceName: trail.routeReferenceName,
-                            referenceUrl: trail.routeReferenceUrl,
-                          ),
-                  ),
+                  const _SectionTitle(label: 'Route Preview'),
                   const SizedBox(height: 8),
                   if (trail.checkpoints.isEmpty)
                     const _EmptyState(
@@ -665,6 +664,9 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     _RoutePreview(
                       key: _routePreviewKey,
                       trail: trail,
+                      departureTime: _previewDepartureTime,
+                      onAnimationProgress: (value) =>
+                          _checkpointPlayback.value = value,
                       highlightedCheckpointIndex: _highlightedCheckpointIndex,
                       onHighlightCleared: () {
                         if (_highlightedCheckpointIndex != null) {
@@ -681,6 +683,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                   else
                     CheckpointFlow(
                       checkpoints: trail.checkpoints,
+                      playback: _checkpointPlayback,
                       highlightedIndex: _highlightedCheckpointIndex,
                       onShowOnMap: _showCheckpointOnMap,
                     ),
@@ -701,6 +704,8 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                       weather: trail.weather,
                       elevationGainMeters: trail.elevationGainMeters,
                       durationMinutes: trail.estimatedDurationMinutes,
+                      onDepartureChanged: (time) =>
+                          setState(() => _previewDepartureTime = time),
                     ),
                   ],
                   const SizedBox(height: 10),
@@ -1033,6 +1038,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   final List<_CheckpointDraft> _checkpoints = [];
   String? _errorMessage;
   bool _hasFetchedRoute = false;
+  String? _routeResultCheckpointsHash;
   bool _locationFailed = false;
   bool _isUploadingImages = false;
   HikingRouteResult? _routeResult;
@@ -1350,6 +1356,9 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       _elevationController.text = route.elevationGainMeters!.round().toString();
     }
     _hasFetchedRoute = true;
+    _routeResultCheckpointsHash = HikingRouteService.checkpointsHash(
+      checkpoints ?? _checkpointModels(),
+    );
 
     final pts = checkpoints ?? _checkpointModels();
     if (pts.isNotEmpty) {
@@ -1442,7 +1451,11 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       return;
     }
 
-    if (!_hasFetchedRoute) {
+    if (!_hasFetchedRoute ||
+        _routeResultCheckpointsHash !=
+            HikingRouteService.checkpointsHash(checkpoints)) {
+      _routeResult = null;
+      _hasFetchedRoute = false;
       setState(() {
         _step = _AddTrailStep.loading;
         _errorMessage = null;
@@ -1654,14 +1667,16 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _TrailColors.backgroundFor(context),
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.close_rounded),
-          onPressed: _isUploadingImages
-              ? null
-              : () => Navigator.of(context).pop(),
-        ),
-      ),
+      appBar: _step == _AddTrailStep.pickCheckpoints
+          ? null
+          : AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.close_rounded),
+                onPressed: _isUploadingImages
+                    ? null
+                    : () => Navigator.of(context).pop(),
+              ),
+            ),
       body: Stack(
         children: [
           switch (_step) {
@@ -1689,6 +1704,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
 
   Widget _buildCheckpointPicker() {
     return _MapBasedCheckpointPicker(
+      showStateFocus: true,
+      onClose: () => Navigator.of(context).pop(),
       singlePinMode: true,
       pins: _trailPins,
       onPinsChanged: (pins) => _trailPins
@@ -2127,6 +2144,8 @@ class _MapBasedCheckpointPicker extends StatefulWidget {
     required this.onPinsChanged,
     required this.onConfirm,
     this.singlePinMode = false,
+    this.showStateFocus = false,
+    this.onClose,
     this.editableIndex,
     this.routeCoordinates,
   });
@@ -2135,6 +2154,8 @@ class _MapBasedCheckpointPicker extends StatefulWidget {
   final ValueChanged<List<mapbox.Point>> onPinsChanged;
   final ValueChanged<List<mapbox.Point>> onConfirm;
   final bool singlePinMode;
+  final bool showStateFocus;
+  final VoidCallback? onClose;
   final int? editableIndex;
   final List<mapbox.Position>? routeCoordinates;
 
@@ -2149,12 +2170,26 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
   mapbox.PointAnnotationManager? _pointManager;
   mapbox.PolylineAnnotationManager? _polylineManager;
   bool _styleLoaded = false;
+  Future<void>? _styleSetup;
+  Future<void> _pinRendering = Future.value();
+  int _pinRevision = 0;
+  // Camera-only state. Confirm returns pins; this selection never leaves the picker.
+  MalaysiaMapRegion _focusRegion = MalaysiaMapRegion.peninsula;
+  int _focusRevision = 0;
+  final _stateBoundary = StateBoundaryOverlay();
   late List<mapbox.Point> _pins;
 
   @override
   void initState() {
     super.initState();
     _pins = _validPoints(widget.pins);
+    if (widget.showStateFocus) {
+      unawaited(
+        StateBoundaryOverlay.prewarm()
+            .then<void>((_) {})
+            .catchError((Object _) {}),
+      );
+    }
   }
 
   @override
@@ -2169,6 +2204,9 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
 
   @override
   void dispose() {
+    _focusRevision++;
+    _pinRevision++;
+    _stateBoundary.dispose();
     _mapboxMap = null;
     _circleManager = null;
     _pointManager = null;
@@ -2200,7 +2238,69 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
 
   mapbox.Point _initialCenter() => _pins.isNotEmpty
       ? _pins.first
+      : widget.showStateFocus
+      ? mapbox.Point(
+          coordinates: mapbox.Position(
+            _focusRegion.longitude,
+            _focusRegion.latitude,
+          ),
+        )
       : mapbox.Point(coordinates: mapbox.Position(101.6869, 3.1390));
+
+  Future<void> _focusOnRegion({int duration = 450}) async {
+    final map = _mapboxMap;
+    if (map == null) return;
+    final region = _focusRegion;
+    final revision = ++_focusRevision;
+    try {
+      final camera = await map.cameraForCoordinateBounds(
+        mapbox.CoordinateBounds(
+          southwest: mapbox.Point(
+            coordinates: mapbox.Position(region.west, region.south),
+          ),
+          northeast: mapbox.Point(
+            coordinates: mapbox.Position(region.east, region.north),
+          ),
+          infiniteBounds: false,
+        ),
+        mapbox.MbxEdgeInsets(top: 32, left: 24, bottom: 110, right: 54),
+        0,
+        0,
+        null,
+        null,
+      );
+      if (!mounted ||
+          !identical(map, _mapboxMap) ||
+          revision != _focusRevision) {
+        return;
+      }
+      await map.flyTo(camera, mapbox.MapAnimationOptions(duration: duration));
+    } catch (_) {
+      // Navigation can dispose the native map while it computes the framing.
+    }
+  }
+
+  void _selectFocusRegion(MalaysiaMapRegion? region) {
+    if (region == null) return;
+    setState(() => _focusRegion = region);
+    unawaited(_updateStateBoundary(_stateBoundary.select(region)));
+    unawaited(_focusOnRegion());
+  }
+
+  Future<void> _updateStateBoundary(Future<void> update) async {
+    try {
+      await update;
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'State outline could not load. You can still select a location.',
+          ),
+        ),
+      );
+    }
+  }
 
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
     if (!mounted) return;
@@ -2221,40 +2321,57 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
       await mapboxMap.setBounds(
         mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 21),
       );
-      final polylineManager = await mapboxMap.annotations
-          .createPolylineAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      final circleManager = await mapboxMap.annotations
-          .createCircleAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      final pointManager = await mapboxMap.annotations
-          .createPointAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      _polylineManager = polylineManager;
-      _circleManager = circleManager;
-      _pointManager = pointManager;
-      await mapboxMap.flyTo(
-        mapbox.CameraOptions(
-          center: _initialCenter(),
-          zoom: _pins.isNotEmpty ? 15 : 6,
-        ),
-        mapbox.MapAnimationOptions(duration: 0),
-      );
-      await _syncRoute();
-      await _syncPins();
+      if (widget.showStateFocus && _pins.isEmpty) {
+        await _focusOnRegion(duration: 0);
+      } else {
+        await mapboxMap.flyTo(
+          mapbox.CameraOptions(
+            center: _initialCenter(),
+            zoom: _pins.isNotEmpty ? 15 : 6,
+          ),
+          mapbox.MapAnimationOptions(duration: 0),
+        );
+      }
+      if (await mapboxMap.style.isStyleLoaded()) await _onStyleLoaded();
     } catch (_) {
       // The native map can be disposed or replaced during initialization.
     }
   }
 
-  Future<void> _onStyleLoaded() async {
+  Future<void> _onStyleLoaded() {
+    final existing = _styleSetup;
+    if (existing != null) return existing;
+    final future = _prepareStyle();
+    _styleSetup = future;
+    return future.whenComplete(() {
+      if (identical(_styleSetup, future)) _styleSetup = null;
+    });
+  }
+
+  Future<void> _prepareStyle() async {
     final map = _mapboxMap;
     if (map == null || !mounted) return;
     try {
-      await enableTerrain3D(map);
+      _polylineManager ??= await map.annotations
+          .createPolylineAnnotationManager();
       if (!mounted || !identical(map, _mapboxMap)) return;
-      schedulePitch(map);
+      _circleManager ??= await map.annotations.createCircleAnnotationManager();
+      if (!mounted || !identical(map, _mapboxMap)) return;
+      _pointManager ??= await map.annotations.createPointAnnotationManager();
+      if (!mounted || !identical(map, _mapboxMap)) return;
+      await _pointManager!.setTextAllowOverlap(true);
       _styleLoaded = true;
+      await _syncPins();
+      // State selection is a flat overview: terrain draping can obscure the
+      // border beneath hills and reorder it below the basemap's symbols.
+      if (!widget.showStateFocus) {
+        await enableTerrain3D(map);
+        if (!mounted || !identical(map, _mapboxMap)) return;
+        schedulePitch(map);
+      }
+      if (widget.showStateFocus) {
+        unawaited(_updateStateBoundary(_stateBoundary.onStyleLoaded(map)));
+      }
       await _syncRoute();
       await _syncPins();
     } catch (_) {
@@ -2286,7 +2403,16 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
     }
   }
 
-  Future<void> _syncPins() async {
+  Future<void> _syncPins() {
+    final revision = ++_pinRevision;
+    _pinRendering = _pinRendering.catchError((Object _) {}).then((_) async {
+      if (!mounted || revision != _pinRevision) return;
+      await _renderPins(revision);
+    });
+    return _pinRendering;
+  }
+
+  Future<void> _renderPins(int revision) async {
     if (!_styleLoaded) return;
     final circleManager = _circleManager;
     final pointManager = _pointManager;
@@ -2301,8 +2427,10 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
         return;
       }
 
-      for (var i = 0; i < _pins.length; i++) {
-        final point = _pins[i];
+      final pins = List<mapbox.Point>.of(_pins);
+      for (var i = 0; i < pins.length; i++) {
+        if (!mounted || revision != _pinRevision) return;
+        final point = pins[i];
         final isEditable =
             widget.editableIndex != null && i == widget.editableIndex;
         if (isEditable) {
@@ -2329,8 +2457,8 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
           await circleManager.create(
             mapbox.CircleAnnotationOptions(
               geometry: point,
-              circleRadius: 10,
-              circleColor: const Color(0xFF34A853).toARGB32(),
+              circleRadius: widget.singlePinMode ? 14 : 10,
+              circleColor: const Color(0xFF147DDB).toARGB32(),
               circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
               circleStrokeWidth: 2.5,
             ),
@@ -2378,11 +2506,17 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
       unawaited(_syncPins());
       return;
     }
+    if (widget.singlePinMode) {
+      setState(() => _pins = [coordinate]);
+      widget.onPinsChanged(List.of(_pins));
+      unawaited(_syncPins());
+      return;
+    }
     final tappedIndex = _tappedPinIndex(coordinate);
     if (tappedIndex != null) {
       setState(() => _pins.removeAt(tappedIndex));
     } else {
-      if (!widget.singlePinMode && _pins.length >= 12) {
+      if (_pins.length >= 12) {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
@@ -2394,9 +2528,6 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
         return;
       }
       setState(() {
-        if (widget.singlePinMode && _pins.isNotEmpty) {
-          _pins.clear();
-        }
         _pins.add(coordinate);
       });
     }
@@ -2424,7 +2555,11 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
   }
 
   Future<void> _fitPins() async {
-    if (_pins.isEmpty) return;
+    if (_pins.isEmpty) {
+      if (widget.showStateFocus) await _focusOnRegion();
+      return;
+    }
+    _focusRevision++;
     final map = _mapboxMap;
     if (map == null) return;
     try {
@@ -2450,6 +2585,74 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
     return SafeArea(
       child: Column(
         children: [
+          if (widget.showStateFocus)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 18, 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Select a Starting Point',
+                          style: PageHeaderStyle.title(
+                            context,
+                            _TrailColors.textFor(context),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Tap the map to choose where the trail begins.',
+                          style: PageHeaderStyle.subtitle(
+                            context,
+                            _TrailColors.secondaryTextFor(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  PageHeaderAction(
+                    tooltip: 'Close starting point selection',
+                    icon: Icons.close_rounded,
+                    onPressed: widget.onClose,
+                    color: _TrailColors.textFor(context),
+                    surface: _TrailColors.surfaceFor(context),
+                  ),
+                ],
+              ),
+            ),
+          if (widget.showStateFocus)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+              child: DropdownButtonFormField<MalaysiaMapRegion>(
+                key: const ValueKey('add-trail-state-focus'),
+                initialValue: _focusRegion,
+                isExpanded: true,
+                menuMaxHeight: 360,
+                decoration: const InputDecoration(
+                  labelText: 'Focus map on a state',
+                  prefixIcon: Icon(Icons.map_outlined),
+                  helperText: 'The selected pin determines the saved location.',
+                  helperMaxLines: 2,
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final region in MalaysiaMapRegion.values)
+                    DropdownMenuItem(
+                      value: region,
+                      child: Text(
+                        region.label,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: _selectFocusRegion,
+              ),
+            ),
           Expanded(
             child: Stack(
               fit: StackFit.expand,
@@ -2457,10 +2660,21 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                 DeferredMap(
                   child: mapbox.MapWidget(
                     key: const ValueKey('checkpoint-picker'),
+                    // Initial framing only; subsequent camera moves use flyTo.
+                    // ignore: deprecated_member_use
+                    cameraOptions: widget.showStateFocus
+                        ? mapbox.CameraOptions(
+                            center: _initialCenter(),
+                            zoom: _pins.isEmpty ? 5 : 15,
+                            pitch: 0,
+                            bearing: 0,
+                          )
+                        : null,
                     styleUri: mapStyleUrls[0],
-                    gestureRecognizers: mapGestureRecognizers,
+                    gestureRecognizers: eagerMapGestureRecognizers,
                     onMapCreated: _onMapCreated,
                     onStyleLoadedListener: (_) => _onStyleLoaded(),
+                    onMapLoadedListener: (_) => _onStyleLoaded(),
                     // ignore: deprecated_member_use
                     onTapListener: (context) => _onMapTap(context.point),
                   ),
@@ -2489,25 +2703,29 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                       ),
                     ),
                   ),
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 60),
-                    child: Card(
-                      margin: EdgeInsets.zero,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        child: Text(
-                          editable != null
-                              ? 'Tap the map to set a new location for checkpoint ${editable + 1}'
-                              : widget.singlePinMode
-                              ? 'Tap the map to select a trail location'
-                              : 'Add 3–12 pins · tap a pin to remove',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.labelSmall,
+                IgnorePointer(
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 60),
+                      child: Card(
+                        margin: EdgeInsets.zero,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            editable != null
+                                ? 'Tap the map to set a new location for checkpoint ${editable + 1}'
+                                : widget.singlePinMode
+                                ? _pins.isEmpty
+                                      ? 'Tap the map to select a trail location'
+                                      : 'Starting point selected\n${_pins.first.coordinates.lat.toStringAsFixed(6)}, ${_pins.first.coordinates.lng.toStringAsFixed(6)}'
+                                : 'Add 3–12 pins · tap a pin to remove',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
                         ),
                       ),
                     ),
@@ -3406,8 +3624,7 @@ class _TrailDetailHero extends StatelessWidget {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        if (trail.hasCommunityDifficulty)
-                          _HeroPill(label: trail.difficulty),
+                        _HeroPill(label: trail.difficultyDisplayLabel),
                         _HeroPill(label: trail.ratingLabel),
                       ],
                     ),
@@ -3997,7 +4214,8 @@ class _EditTrailPageState extends State<_EditTrailPage> {
             HikingRouteService.checkpointsHash(models)
         ? _refreshedRoute
         : null;
-    if (_routeInputsChanged(models) || routeForSave == null) {
+    if (_routeInputsChanged(models) ||
+        (widget.trail.routeEncodedPolyline?.trim().isEmpty ?? true)) {
       setState(() {
         _isRefreshing = true;
         _routeRefreshError = null;
@@ -4053,9 +4271,12 @@ class _EditTrailPageState extends State<_EditTrailPage> {
           routeForSave?.maxElevationMeters?.round() ??
           widget.trail.maxElevationMeters,
       routeEncodedPolyline: routeForSave?.encodedPolyline,
-      routeCheckpointsHash: routeForSave == null
-          ? widget.trail.routeCheckpointsHash
-          : HikingRouteService.checkpointsHash(models),
+      routeCheckpointsHash: HikingRouteService.checkpointsHash(models),
+      dataSource: routeForSave?.sourceLabel,
+      routeProvider: routeForSave == null ? null : 'checkpoint-routing',
+      routeReferenceNote: routeForSave == null
+          ? null
+          : 'Current path generated through the manually selected checkpoints in order.',
     );
     Navigator.of(context).pop(updatedTrail);
   }
@@ -4578,8 +4799,12 @@ class _RoutePreview extends StatefulWidget {
     this.highlightedCheckpointIndex,
     this.onHighlightCleared,
     this.localDatabase,
+    this.departureTime,
+    this.onAnimationProgress,
   });
 
+  final ValueChanged<RouteCheckpointProgress>? onAnimationProgress;
+  final DateTime? departureTime;
   final Trail trail;
   final int? highlightedCheckpointIndex;
   final VoidCallback? onHighlightCleared;
@@ -4637,7 +4862,8 @@ class _RoutePreviewState extends State<_RoutePreview> {
 
   HikingRouteResult? _routeStoredWithTrail(Trail trail) {
     final encoded = trail.routeEncodedPolyline?.trim() ?? '';
-    if (encoded.isEmpty) {
+    if (encoded.isEmpty ||
+        !HikingRouteService.savedRouteMatchesCheckpoints(trail)) {
       return null;
     }
     try {
@@ -4762,6 +4988,8 @@ class _RoutePreviewState extends State<_RoutePreview> {
                     key: ValueKey(widget.trail.trailId),
                     trail: widget.trail,
                     route: _route,
+                    departureTime: widget.departureTime,
+                    onAnimationProgress: widget.onAnimationProgress,
                     previewMode: _previewMode,
                     highlightedCheckpointIndex:
                         widget.highlightedCheckpointIndex,
@@ -5407,10 +5635,9 @@ class _StatusRow extends StatelessWidget {
 }
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.label, this.trailing});
+  const _SectionTitle({required this.label});
 
   final String label;
-  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -5427,57 +5654,7 @@ class _SectionTitle extends StatelessWidget {
               letterSpacing: 0,
             ),
           ),
-          if (trailing != null) const Spacer(),
-          if (trailing != null) trailing!,
         ],
-      ),
-    );
-  }
-}
-
-class _RouteReferenceButton extends StatelessWidget {
-  const _RouteReferenceButton({
-    required this.referenceName,
-    required this.referenceUrl,
-  });
-
-  final String referenceName;
-  final String referenceUrl;
-
-  Future<void> _openReference(BuildContext context) async {
-    final uri = Uri.tryParse(referenceUrl.trim());
-    final opened =
-        uri != null &&
-        (uri.scheme == 'https' || uri.scheme == 'http') &&
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Unable to open the external route reference.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tooltip = referenceName.trim().isEmpty
-        ? 'View route reference on AllTrails'
-        : 'View $referenceName on AllTrails';
-    return Tooltip(
-      message: tooltip,
-      child: TextButton.icon(
-        onPressed: () => _openReference(context),
-        style: TextButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        ),
-        icon: const Icon(Icons.open_in_new_rounded, size: 15),
-        label: const Text('AllTrails'),
       ),
     );
   }

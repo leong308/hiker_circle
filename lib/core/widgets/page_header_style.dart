@@ -32,7 +32,7 @@ class PageHeaderAction extends StatelessWidget {
   });
   final String tooltip;
   final IconData icon;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final Color color;
   final Color surface;
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/core/services/hiking_route_service.dart';
@@ -8,6 +9,54 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  for (final angle in [12.4, 12.6, -12.4, -12.6]) {
+    test('steep caution starts at 12.5 degrees: $angle degree slope', () async {
+      final client = MockClient((request) async {
+        if (request.url.host == 'overpass.test') {
+          return http.Response('{"elements":[]}', 200);
+        }
+        final latitudes = request.url.queryParameters['latitude']!.split(',');
+        return http.Response(
+          jsonEncode({
+            'elevation': [
+              for (final lat in latitudes)
+                200 +
+                    double.parse(lat) *
+                        math.pi /
+                        180 *
+                        6371000 *
+                        math.tan(angle * math.pi / 180),
+            ],
+          }),
+          200,
+        );
+      });
+      final service = TrailHazardEnrichmentService(
+        client: client,
+        overpassEndpoint: Uri.parse('https://overpass.test/api'),
+        elevationEndpoint: Uri.parse('https://elevation.test/api'),
+      );
+      final hazards = await service.fetchForTrail(
+        trail: _trail(),
+        routePoints: const [LatLng(0, 101), LatLng(.004, 101)],
+      );
+      if (angle.abs() < 12.5) {
+        expect(hazards, isEmpty);
+      } else {
+        expect(hazards, isNotEmpty);
+        expect(
+          hazards.every(
+            (h) =>
+                h.hazard.hazardType ==
+                (angle > 0 ? 'steep_ascent' : 'steep_descent'),
+          ),
+          isTrue,
+        );
+        expect(hazards.every((h) => h.hazard.severity == 'caution'), isTrue);
+      }
+    });
+  }
+
   test('maps priority OSM hazards and suppresses bridged water', () async {
     final client = MockClient((request) async {
       if (request.url.host == 'overpass.test') {

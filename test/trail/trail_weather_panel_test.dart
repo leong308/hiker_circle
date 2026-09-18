@@ -6,6 +6,62 @@ import 'package:hiker_circle/trail/Model/trail_models.dart';
 import 'package:hiker_circle/trail/View/trail_weather_panel.dart';
 
 void main() {
+  testWidgets('departure and selected day propagate to route preview in UTC', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(600, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final midnight = DateTime.utc(2026, 9, 13, 16);
+    final epoch = midnight.millisecondsSinceEpoch ~/ 1000;
+    DateTime? departure;
+    final weather = TrailWeather.fromPersistence({
+      'cachedAtLocal': DateTime.now().toIso8601String(),
+      'forecastData': {
+        'utc_offset_seconds': 28800,
+        'daily': {
+          'time': [epoch, epoch + 86400],
+        },
+        'hourly': {
+          'time': [epoch],
+          'precipitation_probability': [10],
+        },
+      },
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: TrailWeatherPanel(
+              weather: weather,
+              durationMinutes: 210,
+              onDepartureChanged: (time) => departure = time,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.ensureVisible(find.text('Set departure time'));
+    await tester.tap(find.text('Set departure time'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(departure, DateTime.utc(2026, 9, 14)); // 08:00 in Malaysia.
+    await tester.ensureVisible(find.text('Tue 15/9'));
+    await tester.tap(find.text('Tue 15/9'));
+    await tester.pumpAndSettle();
+    expect(departure, DateTime.utc(2026, 9, 15));
+    await tester.ensureVisible(find.text('Daily outlook'));
+    await tester.tap(find.text('Daily outlook'));
+    await tester.pumpAndSettle();
+    expect(departure, isNull);
+  });
+
   testWidgets(
     'humidity replaces gusts and wind requires elevation above 250m',
     (tester) async {

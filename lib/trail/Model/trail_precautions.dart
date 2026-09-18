@@ -16,6 +16,8 @@ List<TrailPrecaution> trailPrecautions({
   int elevationGain = 0,
   int durationMinutes = 0,
   int? departureMinute,
+  DateTime? assessmentStart,
+  DateTime? assessmentEnd,
 }) {
   final result = <TrailPrecaution>[];
   void add(String id, int priority, String title, String message) =>
@@ -39,15 +41,21 @@ List<TrailPrecaution> trailPrecautions({
       : departureMinute == null
       ? start + 86400
       : start + (durationMinutes + 60) * 60;
+  final assessmentFrom = assessmentStart != null
+      ? assessmentStart.toUtc().millisecondsSinceEpoch / 1000
+      : start;
+  final assessmentTo = assessmentEnd != null
+      ? assessmentEnd.toUtc().millisecondsSinceEpoch / 1000
+      : finish;
   final times = hourly['time'] is List ? hourly['time'] as List : const [];
   final rows = <int>[];
   for (var i = 0; i < times.length; i++) {
     final time = read(hourly, 'time', i);
     if (time != null &&
-        start != null &&
-        finish != null &&
-        time + 3600 > start &&
-        time < finish) {
+        assessmentFrom != null &&
+        assessmentTo != null &&
+        time + 3600 > assessmentFrom &&
+        time < assessmentTo) {
       rows.add(i);
     }
   }
@@ -75,9 +83,10 @@ List<TrailPrecaution> trailPrecautions({
   ];
   final incomplete =
       rows.isEmpty ||
-      (start != null &&
+      (assessmentFrom != null &&
           rows.isNotEmpty &&
-          (read(hourly, 'time', rows.first) ?? double.infinity) > start) ||
+          (read(hourly, 'time', rows.first) ?? double.infinity) >
+              assessmentFrom) ||
       rows
           .skip(1)
           .any(
@@ -88,9 +97,10 @@ List<TrailPrecaution> trailPrecautions({
       requiredKeys.any(
         (key) => rows.any((i) => read(hourly, key, i) == null),
       ) ||
-      (finish != null &&
+      (assessmentTo != null &&
           (times.isEmpty ||
-              (read(hourly, 'time', times.length - 1) ?? 0) + 3600 < finish));
+              (read(hourly, 'time', times.length - 1) ?? 0) + 3600 <
+                  assessmentTo));
   if (stale || incomplete) {
     add(
       'data',
@@ -107,11 +117,7 @@ List<TrailPrecaution> trailPrecautions({
         (read(hourly, 'precipitation', i) ?? -1) >= 10 ||
         [65, 67, 82].contains(read(hourly, 'weather_code', i)),
   );
-  final rain = any(
-    (i) =>
-        (read(hourly, 'precipitation', i) ?? -1) > 0 ||
-        (read(hourly, 'precipitation_probability', i) ?? -1) >= 60,
-  );
+  final rain = (peak('precipitation_probability') ?? -1) > 50;
   if (thunder) {
     add(
       'storm',
@@ -150,7 +156,7 @@ List<TrailPrecaution> trailPrecautions({
       'heat',
       2,
       humidHeat ? 'Heat and humidity increase strain' : 'Heat stress risk',
-      'Peak temperature: ${metric('temperature_2m', '°C')}; feels like: ${metric('apparent_temperature', '°C')}.${elevationGain >= 500 ? ' The $elevationGain m ascent adds exertion.' : ''} Start earlier, slow down, rest in shade and carry drinking water. Stop if dizzy or unusually fatigued.',
+      'Peak temperature: ${metric('temperature_2m', '°C')}; feels like: ${metric('apparent_temperature', '°C')}.${elevationGain >= 500 ? ' The $elevationGain m ascent adds exertion.' : ''} Slow down, rest in shade and carry drinking water. Stop if dizzy or unusually fatigued.',
     );
   }
   if (any(
@@ -181,7 +187,7 @@ List<TrailPrecaution> trailPrecautions({
       'ascent',
       elevationGain >= 1000 ? 2 : 1,
       'Demanding ascent',
-      'This route climbs $elevationGain m. Pace yourself, allow extra breaks and save energy for the descent. Elevation gain is not altitude above sea level.',
+      'This route climbs $elevationGain m. Pace yourself, allow extra breaks and save energy for the descent.',
     );
   }
   if ((peak('uv_index') ?? -1) >= 3) {
@@ -228,15 +234,25 @@ List<TrailPrecaution> trailPrecautions({
       add(
         'dark',
         3,
-        'Hike overlaps darkness',
-        'Estimated finish: ${clock(end)}; sunset: ${clock(sunset)}. Carry a headlamp and spare power; consider changing your start time.',
+        start < sunrise
+            ? (end >= sunset
+                  ? 'Hike overlaps darkness'
+                  : 'Departure is before sunrise')
+            : start >= sunset
+            ? 'Departure is after sunset'
+            : end == sunset
+            ? 'Estimated finish is at sunset'
+            : 'Hike extends past sunset',
+        '${start < sunrise ? 'Departure: ${clock(start)}; sunrise: ${clock(sunrise)}. ' : ''}'
+            '${end >= sunset ? 'Estimated finish: ${clock(end)}; sunset: ${clock(sunset)}. ' : 'Estimated finish: ${clock(end)}. '}'
+            'Carry a headlamp and spare power.${end > sunset ? ' Consider an earlier departure or a shorter route to finish before sunset.' : ''}',
       );
     } else if (end >= sunset - 3600) {
       add(
         'sunset',
         2,
         'Limited daylight buffer',
-        'Estimated finish: ${clock(end)}; sunset: ${clock(sunset)}. Start earlier or shorten your route. Carry a headlamp.',
+        'Estimated finish: ${clock(end)}; sunset: ${clock(sunset)}. Allow for delays and carry a headlamp with spare power.',
       );
     }
   }

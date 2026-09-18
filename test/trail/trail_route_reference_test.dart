@@ -32,4 +32,28 @@ void main() {
     expect(copied.routeReferenceUrl, trail.routeReferenceUrl);
     expect(copied.routeVerifiedAtLocal, trail.routeVerifiedAtLocal);
   });
+  test(
+    'exact-source metadata survives edits and clears when geometry changes',
+    () {
+      final trail = Trail.fromPersistence({
+        'trailId': 'imported',
+        'name': 'Imported track',
+        'routeEncodedPolyline': '_p~iF~ps|U_ulLnnqC_mqNvxq`@',
+        'routeGeometryMetadata': {
+          'origin': 'alltrails-gpx-export',
+          'sourcePointCount': 1081,
+          'maximumVertexErrorMeters': 0,
+        },
+      });
+      final renamed = trail.copyWith(name: 'New title');
+      expect(
+        renamed.toFirestore()['routeGeometryMetadata'],
+        trail.routeGeometryMetadata,
+      );
+      expect(
+        trail.copyWith(routeEncodedPolyline: 'new-route').routeGeometryMetadata,
+        isEmpty,
+      );
+    },
+  );
 }

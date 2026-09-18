@@ -108,4 +108,63 @@ void main() {
       throwsA(isA<MapboxOptimizationException>()),
     );
   });
+  test('manual routes keep checkpoint order and allow two endpoints', () async {
+    late Uri requested;
+    final service = MapboxOptimizationService(
+      accessToken: 'test',
+      client: MockClient((request) async {
+        requested = request.url;
+        return http.Response(
+          jsonEncode({
+            'code': 'Ok',
+            'routes': [
+              {
+                'geometry': '_p~iF~ps|U_ulLnnqC_mqNvxq`@',
+                'distance': 1200,
+                'duration': 1000,
+                'legs': [{}, {}],
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+    await service.walkingRouteInOrder(checkpoints.reversed.toList());
+    expect(
+      requested.path,
+      '/directions/v5/mapbox/walking/101.6,3.1;101.62,3.12;101.64,3.14',
+    );
+    expect(requested.queryParameters['radiuses'], '50;50;50');
+    expect(requested.queryParameters.containsKey('roundtrip'), isFalse);
+  });
+
+  test(
+    'ordered routing rejects a response that skipped a checkpoint',
+    () async {
+      final service = MapboxOptimizationService(
+        accessToken: 'test',
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'code': 'Ok',
+              'routes': [
+                {
+                  'geometry': 'abc',
+                  'distance': 1200,
+                  'duration': 1000,
+                  'legs': [{}],
+                },
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+      await expectLater(
+        service.walkingRouteInOrder(checkpoints),
+        throwsA(isA<MapboxOptimizationException>()),
+      );
+    },
+  );
 }

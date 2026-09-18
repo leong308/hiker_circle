@@ -288,9 +288,9 @@ class LocalSessionDatabase {
   LocalSessionDatabase({String? databasePath})
     : _databasePathOverride = databasePath;
 
-  // Versioned so devices refresh previously cached ten-sample/general-warning
-  // datasets after the route-specific hazard expansion was introduced.
-  static const _staticHazardScanPreferencePrefix = 'static_hazard_scan:v3:';
+  // Refresh older scans after lowering the steep-caution threshold to 12.5°.
+  // Existing offline hazards remain available until the refresh succeeds.
+  static const _staticHazardScanPreferencePrefix = 'static_hazard_scan:v4:';
 
   Database? _database;
   Future<Database>? _openingDatabase;
@@ -298,6 +298,131 @@ class LocalSessionDatabase {
   static bool _isDesktopFactoryConfigured = false;
   static Future<Database>? _sharedDefaultDatabaseOpening;
   static final Set<String> _loggedDatabasePaths = <String>{};
+
+  Future<void> createButtonDebugSession(
+    String id,
+    String owner,
+    DateTime start,
+  ) async {
+    final db = await _openDatabase();
+    await db.insert('button_debug_sessions', {
+      'id': id,
+      'owner_phone_number': owner,
+      'started_at': start.toUtc().toIso8601String(),
+      'status': 'recording',
+    });
+  }
+
+  Future<void> appendButtonDebugEntry(
+    String owner,
+    Map<String, Object?> entry,
+  ) async {
+    final db = await _openDatabase();
+    await db.transaction((txn) async {
+      final session = await txn.query(
+        'button_debug_sessions',
+        where: 'id = ? AND owner_phone_number = ? AND status = ?',
+        whereArgs: [entry['session_id'], owner, 'recording'],
+      );
+      if (session.isEmpty) throw StateError('Debug session is not recording.');
+      await txn.insert('button_debug_entries', entry);
+    });
+  }
+
+  Future<List<Map<String, Object?>>> loadButtonDebugSessions(
+    String owner,
+  ) async {
+    final db = await _openDatabase();
+    return db.query(
+      'button_debug_sessions',
+      columns: [
+        'id',
+        'owner_phone_number',
+        'started_at',
+        'ended_at',
+        'status',
+        'end_reason',
+        'file_path',
+      ],
+      where: 'owner_phone_number = ?',
+      whereArgs: [owner],
+      orderBy: 'started_at DESC',
+    );
+  }
+
+  Future<String?> loadButtonDebugLog(String owner, String id) async {
+    final db = await _openDatabase();
+    final rows = await db.query(
+      'button_debug_sessions',
+      columns: ['log_text'],
+      where: 'owner_phone_number = ? AND id = ?',
+      whereArgs: [owner, id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first['log_text'] as String?;
+  }
+
+  Future<List<Map<String, Object?>>> loadButtonDebugEntries(
+    String owner,
+    String id,
+  ) async {
+    final db = await _openDatabase();
+    return db.rawQuery(
+      '''
+      SELECT e.* FROM button_debug_entries e
+      JOIN button_debug_sessions s ON s.id = e.session_id
+      WHERE s.owner_phone_number = ? AND s.id = ? ORDER BY e.sequence
+    ''',
+      [owner, id],
+    );
+  }
+
+  Future<void> concludeButtonDebugSession({
+    required String owner,
+    required String id,
+    required DateTime endedAt,
+    required String reason,
+    required String logText,
+    String? filePath,
+  }) async {
+    final db = await _openDatabase();
+    await db.update(
+      'button_debug_sessions',
+      {
+        'ended_at': endedAt.toUtc().toIso8601String(),
+        'status': 'concluded',
+        'end_reason': reason,
+        'log_text': logText,
+        'file_path': filePath,
+      },
+      where: 'id = ? AND owner_phone_number = ?',
+      whereArgs: [id, owner],
+    );
+  }
+
+  Future<void> _createButtonDebugTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS button_debug_sessions (
+        id TEXT PRIMARY KEY, owner_phone_number TEXT NOT NULL,
+        started_at TEXT NOT NULL, ended_at TEXT,
+        status TEXT NOT NULL, end_reason TEXT, log_text TEXT, file_path TEXT
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS button_debug_entries (
+        session_id TEXT NOT NULL REFERENCES button_debug_sessions(id),
+        sequence INTEGER NOT NULL, timestamp TEXT NOT NULL,
+        direction TEXT NOT NULL, operation TEXT NOT NULL,
+        device_id TEXT NOT NULL, characteristic TEXT NOT NULL,
+        status TEXT NOT NULL, payload BLOB NOT NULL,
+        interpretation TEXT NOT NULL, PRIMARY KEY (session_id, sequence)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS button_debug_owner_time '
+      'ON button_debug_sessions(owner_phone_number, started_at)',
+    );
+  }
 
   Future<AppSession?> loadSession() async {
     final database = await _openDatabase();
@@ -1993,7 +2118,7 @@ class LocalSessionDatabase {
 
     final opening = openDatabase(
       databasePath,
-      version: 26,
+      version: 27,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2023,6 +2148,7 @@ class LocalSessionDatabase {
         await _createAchievementProgressCacheTable(database);
         await _createOfflineFirstTables(database);
         await _createStaticHazardTables(database);
+        await _createButtonDebugTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -2270,6 +2396,9 @@ class LocalSessionDatabase {
         }
         if (oldVersion < 26) {
           await _createStaticHazardTables(database);
+        }
+        if (oldVersion < 27) {
+          await _createButtonDebugTables(database);
         }
       },
     );

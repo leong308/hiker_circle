@@ -9,9 +9,12 @@ import '../../core/services/hiking_route_service.dart';
 import '../../core/services/static_hazard_dataset_service.dart';
 import '../../trail/Model/trail_models.dart';
 import 'loading_toast.dart';
+import '../services/weather_map_service.dart';
+import 'weather_map_overlay.dart';
 import 'map_controls.dart';
 import 'map_utils.dart';
 import 'route_preview_camera.dart';
+import 'route_checkpoint_progress.dart';
 import 'route_endpoint_marker.dart';
 import 'route_animation_geometry.dart';
 import 'static_hazard_marker.dart';
@@ -43,6 +46,7 @@ class RoutePreviewMap extends StatefulWidget {
     super.key,
     required this.trail,
     this.route,
+    this.recordedTrackPoints,
     this.highlightedCheckpointIndex,
     this.customCheckpoints,
     this.showLayerToggle = false,
@@ -56,10 +60,18 @@ class RoutePreviewMap extends StatefulWidget {
     this.initialStyleIndex = 0,
     this.previewMode = RoutePreviewMode.normal,
     this.localDatabase,
+    this.departureTime,
+    this.onAnimationProgress,
   });
 
+  final ValueChanged<RouteCheckpointProgress>? onAnimationProgress;
+  final DateTime? departureTime;
   final Trail trail;
   final HikingRouteResult? route;
+
+  /// Non-null selects recorded-track mode, including an empty recording.
+  /// Coordinates are chronological GPS samples, never snapped to the trail.
+  final List<mapbox.Point>? recordedTrackPoints;
   final int? highlightedCheckpointIndex;
   final List<TrailCheckpoint>? customCheckpoints;
   final bool showLayerToggle;
@@ -74,8 +86,9 @@ class RoutePreviewMap extends StatefulWidget {
   final RoutePreviewMode previewMode;
   final LocalSessionDatabase? localDatabase;
 
-  List<TrailCheckpoint> get effectiveCheckpoints =>
-      customCheckpoints ?? trail.checkpoints;
+  List<TrailCheckpoint> get effectiveCheckpoints => recordedTrackPoints != null
+      ? const []
+      : customCheckpoints ?? trail.checkpoints;
 
   @override
   State<RoutePreviewMap> createState() => _RoutePreviewMapState();
@@ -83,10 +96,51 @@ class RoutePreviewMap extends StatefulWidget {
 
 class _RoutePreviewMapState extends State<RoutePreviewMap>
     with SingleTickerProviderStateMixin {
+  DateTime _previewStartedAt = DateTime.now();
+  final _fpvHeadingFilter = RoutePreviewHeadingFilter();
+  final _fpvCameraClock = Stopwatch()..start();
+  final _weatherOverlayKey = GlobalKey<WeatherMapOverlayState>();
+
   static const _routeLineWidth = 2.65;
+  static const _routeTrailColor = Color(0xFF7DD3FC);
+  static const _routeHighlightColor = Color(0xFF007AFF);
 
   late List<mapbox.Point> _routePoints;
   late List<mapbox.Point> _checkpointPoints;
+  List<int> _checkpointOriginalIndices = [];
+  Map<int, double> _checkpointFractions = const {};
+  Map<int, double> _checkpointDistancesMeters = const {};
+  RouteCheckpointProgress? _pendingCheckpointProgress;
+  bool _checkpointNotificationScheduled = false;
+
+  void _publishCheckpointProgress(double progress) {
+    if (widget.onAnimationProgress == null) return;
+    final position =
+        progress.clamp(0.0, 1.0) * math.max(0, _routeDistances.length - 1);
+    final lower = position.floor();
+    final upper = math.min(lower + 1, _routeDistances.length - 1);
+    final distance = _routeDistances.isEmpty
+        ? 0.0
+        : _routeDistances[lower] +
+              (_routeDistances[upper] - _routeDistances[lower]) *
+                  (position - lower);
+    _pendingCheckpointProgress = RouteCheckpointProgress(
+      progress: progress.clamp(0.0, 1.0),
+      checkpointFractions: _checkpointFractions,
+      checkpointDistancesMeters: _checkpointDistancesMeters,
+      distanceMeters: distance,
+      estimatedDuration: _estimatedHikeDuration,
+    );
+    if (_checkpointNotificationScheduled) return;
+    _checkpointNotificationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkpointNotificationScheduled = false;
+      if (!mounted) return;
+      final value = _pendingCheckpointProgress;
+      if (value != null) widget.onAnimationProgress?.call(value);
+    });
+  }
+
   late mapbox.Point _startPoint;
   late mapbox.Point _endPoint;
   late double _currentZoom;
@@ -231,6 +285,10 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   Future<void> _loadStaticHazards() async {
     final generation = ++_hazardLoadGeneration;
+    if (widget.recordedTrackPoints != null) {
+      _staticHazards = const [];
+      return;
+    }
     try {
       final currentScan = await _localDatabase.loadStaticHazardScanTime(
         widget.trail.trailId,
@@ -293,6 +351,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _pauseTimer?.cancel();
     _loopPauseTimer?.cancel();
     _routeAnimController.reset();
+    _publishCheckpointProgress(0);
     _fpvTelemetry.value = _telemetryAt(distanceMeters: 0);
     _lastAnimatedIndex = math.min(1, _routePoints.length);
     annotation.geometry = mapbox.LineString(
@@ -343,6 +402,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         }
       }
     }
+    _publishCheckpointProgress(
+      reachedCheckpointRouteIndex == null
+          ? progress
+          : reachedCheckpointRouteIndex / (_routePoints.length - 1),
+    );
     if (targetIndex == _lastAnimatedIndex) {
       // The line is revealed point-by-point, but the FPV camera must continue
       // interpolating between those points for smooth slow-speed playback.
@@ -429,7 +493,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _checkpointGlowTimers.remove(checkpointIdx)?.cancel();
     unawaited(() async {
       try {
-        annotation.circleColor = const Color(0xFF34A853).toARGB32();
+        annotation.circleColor = _routeHighlightColor.toARGB32();
         annotation.circleRadius = 9;
         annotation.circleStrokeColor = const Color(0xFFFFFFFF).toARGB32();
         annotation.circleStrokeWidth = 2.4;
@@ -440,7 +504,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           const Duration(milliseconds: 500),
           () {
             if (!mounted || !identical(manager, _circleManager)) return;
-            annotation.circleColor = const Color(0xFF2F8E50).toARGB32();
+            annotation.circleColor = _routeHighlightColor.toARGB32();
             annotation.circleRadius = 4.2;
             annotation.circleStrokeColor = const Color(0xFFFFFFFF).toARGB32();
             annotation.circleStrokeWidth = 1.2;
@@ -487,11 +551,20 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   void _buildPoints() {
-    final checkpoints =
-        widget.effectiveCheckpoints
-            .where((checkpoint) => checkpoint.hasValidCoordinate)
-            .toList()
-          ..sort((a, b) => a.order.compareTo(b.order));
+    _fpvHeadingFilter.reset();
+    _checkpointOriginalIndices =
+        [
+          for (var i = 0; i < widget.effectiveCheckpoints.length; i++)
+            if (widget.effectiveCheckpoints[i].hasValidCoordinate) i,
+        ]..sort(
+          (a, b) => widget.effectiveCheckpoints[a].order.compareTo(
+            widget.effectiveCheckpoints[b].order,
+          ),
+        );
+    final checkpoints = [
+      for (final i in _checkpointOriginalIndices)
+        widget.effectiveCheckpoints[i],
+    ];
     _checkpointPoints = checkpoints
         .map(
           (cp) => mapbox.Point(
@@ -500,7 +573,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         )
         .toList();
     final route = widget.route;
-    final decodedRoute = route == null
+    final decodedRoute = widget.recordedTrackPoints != null
+        ? widget.recordedTrackPoints!.where(_isValidMapPoint).toList()
+        : route == null
         ? const <mapbox.Point>[]
         : _decodePolyline(route.encodedPolyline);
     if (_checkpointPoints.isNotEmpty) {
@@ -520,6 +595,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _routePoints = const [];
     }
     _computeCheckpointIndices();
+    _publishCheckpointProgress(0);
     _currentZoom = 13.5;
     final centerCoordinates = _hasUsableGeometry
         ? mapPointCoordinatesOrNull(centerFor(_visibleMapPoints))
@@ -537,6 +613,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             distanceMeters(_routePoints[i - 1], _routePoints[i]),
       );
     }
+    _checkpointFractions = const {};
+    _checkpointDistancesMeters = const {};
     _checkpointIndices.clear();
     _checkpointIndicesByRouteIndex = {};
     if (_routePoints.isEmpty || _checkpointPoints.isEmpty) return;
@@ -545,6 +623,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       for (final checkpoint in _checkpointPoints)
         [for (final point in _routePoints) distanceMeters(checkpoint, point)],
     ]);
+    _checkpointFractions = Map.unmodifiable({
+      for (var c = 0; c < matches.length; c++)
+        _checkpointOriginalIndices[c]:
+            matches[c] / math.max(1, _routePoints.length - 1),
+    });
+    _checkpointDistancesMeters = Map.unmodifiable({
+      for (var c = 0; c < matches.length; c++)
+        _checkpointOriginalIndices[c]: _routeDistances[matches[c]],
+    });
     for (var c = 1; c < matches.length - 1; c++) {
       final index = matches[c];
       if (index > 0 && index < _routePoints.length - 1) {
@@ -559,12 +646,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.trail.trailId != widget.trail.trailId ||
         oldWidget.localDatabase != widget.localDatabase ||
+        (oldWidget.recordedTrackPoints == null) !=
+            (widget.recordedTrackPoints == null) ||
         oldWidget.route?.encodedPolyline != widget.route?.encodedPolyline) {
       unawaited(_loadStaticHazards());
     }
     final geometryChanged =
         oldWidget.effectiveCheckpoints != widget.effectiveCheckpoints ||
-        oldWidget.route != widget.route;
+        oldWidget.route != widget.route ||
+        oldWidget.recordedTrackPoints != widget.recordedTrackPoints;
     final overlayPointsChanged =
         oldWidget.pinnedPoints != widget.pinnedPoints ||
         oldWidget.checkInPoints != widget.checkInPoints;
@@ -598,6 +688,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       unawaited(_renderRouteIfReady());
     }
     if (oldWidget.previewMode != widget.previewMode) {
+      _previewStartedAt = DateTime.now();
       _routeAnimController.stop();
       _pauseTimer?.cancel();
       _loopPauseTimer?.cancel();
@@ -634,8 +725,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     if (oldWidget.highlightedCheckpointIndex !=
         widget.highlightedCheckpointIndex) {
       final index = widget.highlightedCheckpointIndex;
-      if (index != null && index >= 0 && index < _checkpointPoints.length) {
-        _focusOnCheckpoint(_checkpointPoints[index]);
+      final sortedIndex = index == null
+          ? -1
+          : _checkpointOriginalIndices.indexOf(index);
+      if (sortedIndex >= 0) {
+        _focusOnCheckpoint(_checkpointPoints[sortedIndex]);
       }
     }
   }
@@ -843,8 +937,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           await _polylineManager!.create(
             mapbox.PolylineAnnotationOptions(
               geometry: mapbox.LineString(coordinates: coordinates),
-              lineColor: const Color(0xFF4ADE80).toARGB32(),
-              lineOpacity: 0.12,
+              lineColor: _routeTrailColor.toARGB32(),
+              lineOpacity: 0.45,
               lineWidth: _routeLineWidth + 3,
               lineJoin: mapbox.LineJoin.ROUND,
             ),
@@ -856,7 +950,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
                 geometry: mapbox.LineString(
                   coordinates: coordinates.take(2).toList(),
                 ),
-                lineColor: const Color(0xFF2F8E50).toARGB32(),
+                lineColor: _routeHighlightColor.toARGB32(),
                 lineOpacity: .18 + layer * .22,
                 lineWidth: _routeLineWidth,
                 lineJoin: mapbox.LineJoin.ROUND,
@@ -869,7 +963,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               geometry: mapbox.LineString(
                 coordinates: coordinates.take(2).toList(),
               ),
-              lineColor: const Color(0xFF2F8E50).toARGB32(),
+              lineColor: _routeHighlightColor.toARGB32(),
               lineOpacity: 0.9,
               lineWidth: _routeLineWidth,
               lineJoin: mapbox.LineJoin.ROUND,
@@ -884,7 +978,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               geometry: mapbox.LineString(coordinates: coordinates),
               lineColor:
                   (hasDetailedRoute
-                          ? const Color(0xFF2F8E50)
+                          ? _routeHighlightColor
                           : const Color(0xFFF59E0B))
                       .toARGB32(),
               lineOpacity: hasDetailedRoute ? 0.9 : 0.72,
@@ -904,7 +998,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
                 .take(math.max(0, _checkpointPoints.length - 2)))
           mapbox.CircleAnnotationOptions(
             geometry: checkpoint,
-            circleColor: const Color(0xFF2F8E50).toARGB32(),
+            circleColor: _routeHighlightColor.toARGB32(),
             circleOpacity: 0.65,
             circleRadius: 4.2,
             circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
@@ -929,16 +1023,19 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       await _pointManager!.createMulti([
         routeEndpointAnnotation(
           geometry: _startPoint,
-          label: 'Start',
+          label: widget.recordedTrackPoints != null && _routePoints.length == 1
+              ? 'Recorded location'
+              : 'Start',
           pinImage: endpointPin,
           separateLabel: separateEndpointLabels,
         ),
-        routeEndpointAnnotation(
-          geometry: _endPoint,
-          label: 'End',
-          pinImage: endpointPin,
-          separateLabel: separateEndpointLabels,
-        ),
+        if (widget.recordedTrackPoints == null || _routePoints.length > 1)
+          routeEndpointAnnotation(
+            geometry: _endPoint,
+            label: 'End',
+            pinImage: endpointPin,
+            separateLabel: separateEndpointLabels,
+          ),
       ]);
 
       final hazardMarkers = await Future.wait([
@@ -1082,7 +1179,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   void _queueFpvCameraUpdate(double progress, {bool force = false}) {
     if (widget.previewMode != RoutePreviewMode.firstPerson) return;
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (!force && now - _lastFpvCameraUpdateMs < 80) return;
+    if (!force && now - _lastFpvCameraUpdateMs < 120) return;
     _lastFpvCameraUpdateMs = now;
     _pendingFpvProgress = progress;
     if (!_fpvCameraUpdateInFlight) {
@@ -1125,6 +1222,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       points: cameraPoints,
       cumulativeDistances: distances,
       progress: progress,
+      lookAheadMeters: 60,
+      headingSampleMeters: 20,
     );
     if (frame == null) return;
 
@@ -1151,23 +1250,28 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       elevationMeters: previousTelemetry.elevationMeters,
       gradePercent: previousTelemetry.gradePercent,
     );
-    _fpvBearing.value = frame.bearing;
+    if (!_initialFitComplete) _fpvHeadingFilter.reset();
+    final heading = _fpvHeadingFilter.update(
+      bearing: frame.bearing,
+      distanceMeters: frame.distanceMeters,
+      elapsed: _fpvCameraClock.elapsed,
+    );
+    _fpvBearing.value = heading;
 
     try {
-      await map.setCamera(
-        mapbox.CameraOptions(
-          center: cameraTarget ?? frame.center,
-          zoom: (_fpvZoom + _fpvZoomOffset).clamp(14.5, kMapMaxZoom).toDouble(),
-          bearing: frame.bearing,
-          pitch: _fpvPitch,
-          padding: mapbox.MbxEdgeInsets(
-            top: 84,
-            left: 20,
-            bottom: 24,
-            right: 20,
-          ),
-        ),
+      final options = mapbox.CameraOptions(
+        center: cameraTarget ?? frame.center,
+        zoom: (_fpvZoom + _fpvZoomOffset).clamp(14.5, kMapMaxZoom).toDouble(),
+        bearing: heading,
+        pitch: _fpvPitch,
+        padding: mapbox.MbxEdgeInsets(top: 84, left: 20, bottom: 24, right: 20),
       );
+      if (!_initialFitComplete || force) {
+        await map.setCamera(options);
+      } else {
+        // Interpolate between camera samples rather than jumping every tick.
+        await map.easeTo(options, mapbox.MapAnimationOptions(duration: 180));
+      }
       _queueTerrainTelemetryUpdate(
         map: map,
         generation: generation,
@@ -1291,22 +1395,25 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
     _isFitting = true;
     try {
-      final camera = await map.cameraForCoordinateBounds(
-        mapbox.CoordinateBounds(
-          southwest: mapbox.Point(
-            coordinates: mapbox.Position(bounds.minLon, bounds.minLat),
-          ),
-          northeast: mapbox.Point(
-            coordinates: mapbox.Position(bounds.maxLon, bounds.maxLat),
-          ),
-          infiniteBounds: false,
-        ),
-        mapbox.MbxEdgeInsets(top: 48, left: 48, bottom: 48, right: 48),
-        null,
-        null,
-        null,
-        null,
-      );
+      final camera =
+          bounds.minLon == bounds.maxLon && bounds.minLat == bounds.maxLat
+          ? mapbox.CameraOptions(center: _startPoint, zoom: 16)
+          : await map.cameraForCoordinateBounds(
+              mapbox.CoordinateBounds(
+                southwest: mapbox.Point(
+                  coordinates: mapbox.Position(bounds.minLon, bounds.minLat),
+                ),
+                northeast: mapbox.Point(
+                  coordinates: mapbox.Position(bounds.maxLon, bounds.maxLat),
+                ),
+                infiniteBounds: false,
+              ),
+              mapbox.MbxEdgeInsets(top: 48, left: 48, bottom: 48, right: 48),
+              null,
+              null,
+              null,
+              null,
+            );
       final cameraCenter = camera.center == null
           ? null
           : mapPointCoordinatesOrNull(camera.center!);
@@ -1563,7 +1670,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         child: Center(
           child: Text(
-            'Trail coordinates are unavailable',
+            widget.recordedTrackPoints != null
+                ? 'No GPS movement was recorded for this hike'
+                : 'Trail coordinates are unavailable',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
@@ -1588,6 +1697,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             onMapCreated: (map) => _onMapCreated(map, mapGeneration),
             onStyleLoadedListener: (_) => _onStyleLoaded(mapGeneration),
             onMapLoadedListener: (_) => _onMapLoaded(mapGeneration),
+            onMapLoadErrorListener: (error) {
+              if (mapGeneration == _mapGeneration) {
+                _weatherOverlayKey.currentState?.reportMapError(error.sourceId);
+              }
+            },
             onCameraChangeListener: (data) {
               if (mapGeneration == _mapGeneration) {
                 _onCameraChange(data);
@@ -1600,6 +1714,13 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             },
           ),
         ),
+        if (widget.previewMode == RoutePreviewMode.normal)
+          WeatherMapOverlay(
+            key: _weatherOverlayKey,
+            latitude: widget.trail.latitude,
+            longitude: widget.trail.longitude,
+            map: _styleLoaded ? _mapboxMap : null,
+          ),
         if (widget.previewMode == RoutePreviewMode.normal)
           Align(
             alignment: Alignment.topRight,
@@ -1616,48 +1737,29 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         if (widget.previewMode == RoutePreviewMode.firstPerson &&
             !isPreparingMap)
           Positioned(
-            left: 10,
-            top: 10,
-            child: IgnorePointer(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xE817241C),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: const Color(0x5534A853)),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.navigation_rounded,
-                      color: Color(0xFF7EE2A0),
-                      size: 14,
-                    ),
-                    SizedBox(width: 5),
-                    Text(
-                      'FPV route preview',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        if (widget.previewMode == RoutePreviewMode.firstPerson &&
-            !isPreparingMap)
-          Positioned(
             right: 10,
             top: 10,
             width: 132,
             child: ValueListenableBuilder<_FpvTelemetry>(
               valueListenable: _fpvTelemetry,
-              builder: (context, telemetry, _) =>
-                  _FpvTelemetryPanel(telemetry: telemetry),
+              builder: (context, telemetry, _) {
+                final arrival = (widget.departureTime ?? _previewStartedAt).add(
+                  telemetry.elapsed,
+                );
+                final rain = trailRainEstimateAt(
+                  widget.trail.weather,
+                  forecastTime: arrival,
+                  now: DateTime.now(),
+                );
+                return _FpvTelemetryPanel(
+                  telemetry: telemetry,
+                  rainTimeLabel: trailForecastArrivalLabel(
+                    widget.trail.weather,
+                    rain.time,
+                  ),
+                  rainProbability: rain.probability,
+                );
+              },
             ),
           ),
         if (widget.previewMode == RoutePreviewMode.firstPerson &&
@@ -1758,7 +1860,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 }
 
 class _FpvTelemetryPanel extends StatelessWidget {
-  const _FpvTelemetryPanel({required this.telemetry});
+  const _FpvTelemetryPanel({
+    required this.telemetry,
+    required this.rainTimeLabel,
+    this.rainProbability,
+  });
+
+  final String rainTimeLabel;
+
+  final int? rainProbability;
 
   final _FpvTelemetry telemetry;
 
@@ -1837,7 +1947,22 @@ class _FpvTelemetryPanel extends StatelessWidget {
               icon: Icons.route_rounded,
               label: 'Distance',
               value: _distanceLabel(telemetry.distanceMeters),
-              bottomPadding: 0,
+            ),
+            Tooltip(
+              triggerMode: TooltipTriggerMode.tap,
+              message:
+                  'Estimated hourly rain-probability trend at your arrival time, '
+                  'sampled every 10 hiking minutes between hourly forecasts. '
+                  'Not a separate 10-minute forecast.',
+              child: _FpvTelemetryRow(
+                icon: Icons.water_drop_outlined,
+                label: 'Rain est. · $rainTimeLabel',
+                labelMaxLines: 2,
+                value: rainProbability == null
+                    ? 'Unavailable'
+                    : '$rainProbability% · 10m',
+                bottomPadding: 0,
+              ),
             ),
           ],
         ),
@@ -1878,12 +2003,14 @@ class _FpvTelemetryRow extends StatelessWidget {
     required this.label,
     required this.value,
     this.bottomPadding = 6,
+    this.labelMaxLines = 1,
   });
 
   final IconData icon;
   final String label;
   final String value;
   final double bottomPadding;
+  final int labelMaxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -1899,7 +2026,7 @@ class _FpvTelemetryRow extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  maxLines: 1,
+                  maxLines: labelMaxLines,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Color(0xFF9EADA3),
@@ -1977,7 +2104,7 @@ class _FpvSpeedControl extends StatelessWidget {
                         borderRadius: BorderRadius.circular(7),
                       ),
                       child: Text(
-                        option == 0.5 ? '½×' : '${option.toInt()}×',
+                        option == 0.5 ? '0.5×' : '${option.toInt()}×',
                         style: TextStyle(
                           color: speed == option
                               ? Colors.white

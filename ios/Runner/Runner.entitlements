@@ -12,5 +12,9 @@
 	<string>$(APP_ATTEST_ENVIRONMENT)</string>
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.leongziqi.hikercircle.widgets</string>
+	</array>
 </dict>
 </plist>

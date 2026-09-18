@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/home/View/start_hike_wizard_page.dart';
+import 'package:hiker_circle/home/View/hike_start_navigation.dart';
 import 'package:hiker_circle/trail/Model/trail_models.dart';
 
 void main() {
@@ -69,6 +70,77 @@ void main() {
     );
     expect(find.text('Start Hiking Session'), findsOneWidget);
     expect(find.text('Create Hiking Session'), findsOneWidget);
+  });
+
+  testWidgets('successful callback reveals Home without a late extra pop', (
+    tester,
+  ) async {
+    const bleChannel = MethodChannel('hiker_circle/ble_bridge');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(bleChannel, (call) async {
+          return call.method == 'getSosButtonReadiness'
+              ? <String, Object?>{}
+              : null;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(bleChannel, null),
+    );
+    final navigator = GlobalKey<NavigatorState>();
+    late BuildContext homeContext;
+    var active = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        home: Builder(
+          builder: (context) {
+            homeContext = context;
+            return const Scaffold(body: Text('Home'));
+          },
+        ),
+      ),
+    );
+    navigator.currentState!.push(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(body: Text('Trail details')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    navigator.currentState!.push(
+      MaterialPageRoute<void>(
+        builder: (_) => StartHikeWizardPage(
+          availableTrails: [_trail()],
+          onStartNow: (_) async {
+            active = true;
+            HikeStartNavigation.revealHome(homeContext);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (var step = 0; step < 3; step++) {
+      final button = find.widgetWithText(FilledButton, 'Continue');
+      await tester.ensureVisible(button);
+      tester.widget<FilledButton>(button).onPressed!();
+      await tester.pump();
+    }
+    final button = find.widgetWithText(FilledButton, 'Start Hiking Session');
+    await tester.ensureVisible(button);
+    tester.widget<FilledButton>(button).onPressed!();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    final confirm = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(FilledButton),
+    );
+    tester.widget<FilledButton>(confirm).onPressed!();
+    await tester.pumpAndSettle();
+    expect(active, isTrue);
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.byType(StartHikeWizardPage), findsNothing);
+    expect(navigator.currentState!.canPop(), isFalse);
+    expect(tester.takeException(), isNull);
   });
 }
 

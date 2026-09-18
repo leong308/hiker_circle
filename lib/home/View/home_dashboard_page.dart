@@ -1,6 +1,6 @@
 import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
-import 'dart:math' as math;
+import '../../core/services/mapbox_travel_distance_service.dart';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +14,7 @@ import '../../sos/Model/sos_models.dart';
 import '../Model/hike_session_models.dart';
 import '../ModelView/fall_stillness_monitor.dart';
 import 'active_tracking_map_view.dart';
+import 'next_hike_briefing.dart';
 
 class HomeDashboardPage extends StatelessWidget {
   const HomeDashboardPage({
@@ -84,6 +85,7 @@ class HomeDashboardPage extends StatelessWidget {
                   ? planned == null
                         ? _TrailDiscoveryDashboard(
                             myUpcomingHikes: myUpcomingHikes,
+                            isVisible: isVisible,
                             phoneNumber: phoneNumber,
                             trails: trails,
                             isLoadingTrails: isLoadingTrails,
@@ -98,6 +100,7 @@ class HomeDashboardPage extends StatelessWidget {
                           )
                         : _PreparationDashboard(
                             myUpcomingHikes: myUpcomingHikes,
+                            isVisible: isVisible,
                             phoneNumber: phoneNumber,
                             plannedHike: planned,
                             trails: trails,
@@ -271,6 +274,7 @@ class HomeDashboardPage extends StatelessWidget {
 class _PreparationDashboard extends StatelessWidget {
   const _PreparationDashboard({
     this.myUpcomingHikes = const [],
+    required this.isVisible,
     required this.phoneNumber,
     required this.plannedHike,
     required this.trails,
@@ -285,6 +289,7 @@ class _PreparationDashboard extends StatelessWidget {
   });
 
   final List<UpcomingHike> myUpcomingHikes;
+  final bool isVisible;
   final String phoneNumber;
   final PlannedHike plannedHike;
   final List<Trail> trails;
@@ -305,8 +310,8 @@ class _PreparationDashboard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _HomeDashboardHeader(
-          title: 'Hike Plan Ready',
-          subtitle: 'Review your route, preparation, and nearby trail options.',
+          title: 'Home',
+          subtitle: 'Your hikes, preparation and trail discoveries.',
         ),
         const SizedBox(height: 16),
         _StartHikeActions(onStartHike: onStartHike, onFindHike: onFindHike),
@@ -314,6 +319,9 @@ class _PreparationDashboard extends StatelessWidget {
           const SizedBox(height: 22),
           _MyUpcomingHikesSection(
             hikes: myUpcomingHikes,
+            trails: trails,
+            plannedHike: plannedHike,
+            isVisible: isVisible,
             phoneNumber: phoneNumber,
             onTapHike: onTapUpcomingHike,
           ),
@@ -327,7 +335,8 @@ class _PreparationDashboard extends StatelessWidget {
           onEditTrailByAdmin: onEditTrailByAdmin,
           onDeleteTrailByAdmin: onDeleteTrailByAdmin,
         ),
-        if (plannedHike.missingPreparationItems.isNotEmpty) ...[
+        if (myUpcomingHikes.isEmpty &&
+            plannedHike.missingPreparationItems.isNotEmpty) ...[
           const SizedBox(height: 14),
           _PreparationWarning(
             plannedHike: plannedHike,
@@ -371,6 +380,7 @@ class _PreparationDashboard extends StatelessWidget {
 class _TrailDiscoveryDashboard extends StatelessWidget {
   const _TrailDiscoveryDashboard({
     this.myUpcomingHikes = const [],
+    required this.isVisible,
     required this.phoneNumber,
     required this.trails,
     required this.isLoadingTrails,
@@ -384,6 +394,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
   });
 
   final List<UpcomingHike> myUpcomingHikes;
+  final bool isVisible;
   final String phoneNumber;
   final List<Trail> trails;
   final bool isLoadingTrails;
@@ -401,8 +412,8 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const _HomeDashboardHeader(
-          title: 'Plan Your Hike',
-          subtitle: 'Start a solo session or choose from Hiking Trails.',
+          title: 'Home',
+          subtitle: 'Find a trail and plan your next adventure.',
         ),
         const SizedBox(height: 16),
         _StartHikeActions(onStartHike: onStartHike, onFindHike: onFindHike),
@@ -410,6 +421,8 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
           const SizedBox(height: 22),
           _MyUpcomingHikesSection(
             hikes: myUpcomingHikes,
+            trails: trails,
+            isVisible: isVisible,
             phoneNumber: phoneNumber,
             onTapHike: onTapUpcomingHike,
           ),
@@ -486,7 +499,12 @@ class _BestMatchesSection extends StatefulWidget {
   State<_BestMatchesSection> createState() => _BestMatchesSectionState();
 }
 
-class _BestMatchesSectionState extends State<_BestMatchesSection> {
+class _BestMatchesSectionState extends State<_BestMatchesSection>
+    with WidgetsBindingObserver {
+  final _travelDistances = MapboxTravelDistanceService();
+  Map<String, double?> _roadDistancesKm = {};
+  bool _isRouting = false;
+  int _distanceGeneration = 0;
   _TrailFilterMode _filterMode = _TrailFilterMode.nearest;
   WorldwideRegion? _region;
   SosTriggerLocation? _userLocation;
@@ -496,9 +514,70 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => unawaited(_useNearest()),
     );
+  }
+
+  List<TravelDestination> _destinations(List<Trail> trails) => [
+    for (final trail in trails)
+      (() {
+        final checkpoints = [...trail.checkpoints]
+          ..sort((a, b) => a.order.compareTo(b.order));
+        return (
+          id: trail.trailId,
+          latitude: checkpoints.isEmpty
+              ? trail.latitude
+              : checkpoints.first.latitude,
+          longitude: checkpoints.isEmpty
+              ? trail.longitude
+              : checkpoints.first.longitude,
+        );
+      })(),
+  ];
+
+  @override
+  void didUpdateWidget(covariant _BestMatchesSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_destinations(oldWidget.trails).toString() !=
+        _destinations(widget.trails).toString()) {
+      unawaited(_refreshRoadDistances());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_useNearest(select: false));
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _distanceGeneration++;
+    super.dispose();
+  }
+
+  Future<void> _refreshRoadDistances() async {
+    final location = _userLocation;
+    if (location == null) return;
+    final generation = ++_distanceGeneration;
+    setState(() {
+      _isRouting = true;
+      _roadDistancesKm = {};
+    });
+    final distances = await _travelDistances.distancesKm(
+      latitude: location.latitude,
+      longitude: location.longitude,
+      destinations: _destinations(widget.trails),
+    );
+    if (!mounted || generation != _distanceGeneration) return;
+    setState(() {
+      _roadDistancesKm = distances;
+      _isRouting = false;
+    });
   }
 
   bool _matchesRegion(Trail trail) {
@@ -508,12 +587,8 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
         trail.state.trim().toLowerCase() == region.state.toLowerCase();
   }
 
-  Future<void> _useNearest() async {
+  Future<void> _useNearest({bool select = true}) async {
     if (_isLocating) return;
-    if (_userLocation != null) {
-      setState(() => _filterMode = _TrailFilterMode.nearest);
-      return;
-    }
     setState(() => _isLocating = true);
     try {
       final snapshots = LocationSnapshotService.instance;
@@ -534,8 +609,9 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
       }
       setState(() {
         _userLocation = location;
-        _filterMode = _TrailFilterMode.nearest;
+        if (select) _filterMode = _TrailFilterMode.nearest;
       });
+      await _refreshRoadDistances();
     } finally {
       if (mounted) setState(() => _isLocating = false);
     }
@@ -618,15 +694,18 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
   Widget build(BuildContext context) {
     final filteredTrails = widget.trails.where(_matchesRegion).toList();
     final location = _userLocation;
-    if (_filterMode == _TrailFilterMode.nearest && location != null) {
+    if (_filterMode == _TrailFilterMode.nearest &&
+        location != null &&
+        !_isRouting) {
       filteredTrails.removeWhere(
-        (trail) => _distanceFromTrail(trail, location) > _nearestRadiusKm,
+        (trail) =>
+            (_roadDistancesKm[trail.trailId] ?? double.infinity) >
+            _nearestRadiusKm,
       );
       filteredTrails.sort(
-        (a, b) => _distanceFromTrail(
-          a,
-          location,
-        ).compareTo(_distanceFromTrail(b, location)),
+        (a, b) => (_roadDistancesKm[a.trailId] ?? double.infinity).compareTo(
+          _roadDistancesKm[b.trailId] ?? double.infinity,
+        ),
       );
     } else {
       filteredTrails.sort((a, b) => b.ratingAverage.compareTo(a.ratingAverage));
@@ -672,21 +751,25 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
           ),
         ),
         const SizedBox(height: 8),
+        if (_isRouting) ...[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 8),
+        ],
         if (widget.isLoading && visibleTrails.isEmpty)
           const _BestMatchesLoading()
         else if (visibleTrails.isEmpty)
           _EmptyState(
             message: _filterMode != _TrailFilterMode.state || _region == null
-                ? 'No trails are available yet. Check again later.'
+                ? (_filterMode == _TrailFilterMode.nearest && location != null
+                      ? 'No driving routes found within ${_nearestRadiusKm.toInt()} km. Try a larger distance, select All, or retry Nearest.'
+                      : 'No trails are available yet. Check again later.')
                 : 'No trails match ${_region!.state}, ${_region!.country}. Try another state.',
           )
         else
           for (final trail in visibleTrails) ...[
             _BestMatchTrailCard(
               trail: trail,
-              nearbyDistanceKm: location == null
-                  ? null
-                  : _distanceFromTrail(trail, location),
+              nearbyDistanceKm: _roadDistancesKm[trail.trailId],
               onTap: () => widget.onOpenTrail(trail),
               onEditTrail: widget.onEditTrailByAdmin == null
                   ? null
@@ -699,28 +782,6 @@ class _BestMatchesSectionState extends State<_BestMatchesSection> {
           ],
       ],
     );
-  }
-
-  double _distanceFromTrail(Trail trail, SosTriggerLocation location) {
-    if (!trail.latitude.isFinite ||
-        !trail.longitude.isFinite ||
-        trail.latitude < -90 ||
-        trail.latitude > 90 ||
-        trail.longitude < -180 ||
-        trail.longitude > 180) {
-      return double.infinity;
-    }
-    const earthRadiusKm = 6371.0;
-    double radians(double degrees) => degrees * math.pi / 180;
-    final latitudeDelta = radians(trail.latitude - location.latitude);
-    final longitudeDelta = radians(trail.longitude - location.longitude);
-    final value =
-        math.sin(latitudeDelta / 2) * math.sin(latitudeDelta / 2) +
-        math.cos(radians(location.latitude)) *
-            math.cos(radians(trail.latitude)) *
-            math.sin(longitudeDelta / 2) *
-            math.sin(longitudeDelta / 2);
-    return earthRadiusKm * 2 * math.asin(math.sqrt(value.clamp(0.0, 1.0)));
   }
 }
 
@@ -842,9 +903,8 @@ class _BestMatchTrailCard extends StatelessWidget {
                               nearbyDistanceKm!.isFinite)
                             _TrailMeta(
                               icon: Icons.near_me_rounded,
-                              label: nearbyDistanceKm! < 1
-                                  ? '${(nearbyDistanceKm! * 1000).round()} m from you'
-                                  : '${nearbyDistanceKm!.toStringAsFixed(1)} km from you',
+                              label:
+                                  '${nearbyDistanceKm!.toStringAsFixed(1)} km from you',
                             ),
                           if (trail.hasCommunityDifficulty)
                             _TrailMeta(
@@ -1345,7 +1405,7 @@ class _PreparationReminderPage extends StatelessWidget {
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
-                                  '${plannedHike.preparationPercent}% ready',
+                                  'Gear checklist ${plannedHike.checklistCompleted}/${plannedHike.checklistTotal}',
                                   style: Theme.of(context).textTheme.titleLarge
                                       ?.copyWith(
                                         color: _HomeColors.textFor(context),
@@ -1398,7 +1458,9 @@ class _PreparationReminderPage extends StatelessWidget {
                   _SectionTitle(label: 'Needs Attention'),
                   const SizedBox(height: 8),
                   if (missingItems.isEmpty)
-                    const _EmptyState(message: 'Everything looks ready.')
+                    const _EmptyState(
+                      message: 'No outstanding preparation items.',
+                    )
                   else
                     for (final item in missingItems) ...[
                       _ChecklistInsightRow(
@@ -2648,22 +2710,57 @@ class _StatusRow extends StatelessWidget {
 class _MyUpcomingHikesSection extends StatelessWidget {
   const _MyUpcomingHikesSection({
     required this.hikes,
+    required this.trails,
+    required this.isVisible,
+    this.plannedHike,
     required this.phoneNumber,
     this.onTapHike,
   });
 
   final List<UpcomingHike> hikes;
+  final List<Trail> trails;
+  final bool isVisible;
+  final PlannedHike? plannedHike;
   final String phoneNumber;
   final void Function(UpcomingHike)? onTapHike;
 
   @override
   Widget build(BuildContext context) {
+    final sorted =
+        hikes.where((hike) => hike.isUpcomingAt(DateTime.now())).toList()
+          ..sort((a, b) => a.departureTime.compareTo(b.departureTime));
+    if (sorted.isEmpty) return const SizedBox.shrink();
+    final next = sorted.first;
+    final plan = plannedHike?.upcomingHikeId == next.id ? plannedHike : null;
+    final trail =
+        plan?.trail ??
+        trails.where((trail) => trail.trailId == next.trailId).firstOrNull;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SectionTitle(label: 'My Upcoming Hike${hikes.length == 1 ? '' : 's'}'),
-        const SizedBox(height: 8),
-        for (final hike in hikes) ...[
+        NextHikeBriefing(
+          key: ValueKey(next.id),
+          hike: next,
+          phoneNumber: phoneNumber,
+          plannedHike: plan,
+          trail: trail,
+          isVisible: isVisible,
+          onReview: onTapHike != null
+              ? () => onTapHike!(next)
+              : plan == null
+              ? null
+              : () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => _PreparationReminderPage(plannedHike: plan),
+                  ),
+                ),
+        ),
+        if (sorted.length > 1) ...[
+          const SizedBox(height: 20),
+          const _SectionTitle(label: 'More upcoming hikes'),
+          const SizedBox(height: 8),
+        ],
+        for (final hike in sorted.skip(1)) ...[
           GestureDetector(
             onTap: onTapHike != null ? () => onTapHike!(hike) : null,
             child: _InsetGroup(

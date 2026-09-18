@@ -28,6 +28,64 @@ class _DelayedMfaService extends MultiFactorAuthService {
 }
 
 void main() {
+  testWidgets('verification overlay fills the screen as the keyboard closes', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(430, 932);
+    tester.view.padding = FakeViewPadding(top: 59, bottom: 34);
+    addTearDown(tester.view.reset);
+    final service = _DelayedMfaService();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SecurityVerificationPage(
+          continuation: MfaContinuation(
+            token: 'f' * 43,
+            phoneNumber: '+60123456789',
+            methods: const ['totp'],
+            enrollmentRequired: false,
+            isNewAccount: false,
+            expiresAt: DateTime(2030),
+          ),
+          service: service,
+        ),
+      ),
+    );
+    await tester.tap(find.text('Use Authenticator'));
+    await tester.pump();
+    tester.view.viewInsets = FakeViewPadding(bottom: 320);
+    await tester.pump();
+    final input = find
+        .descendant(
+          of: find.byType(VerificationCodeInput),
+          matching: find.byType(TextField),
+        )
+        .first;
+    await tester.enterText(input, '123456');
+    await tester.pump();
+    await tester.pump();
+
+    final barrier = find.descendant(
+      of: find.byType(HikerCircleLoadingToastOverlay),
+      matching: find.byType(AbsorbPointer),
+    );
+    const screen = Rect.fromLTWH(0, 0, 430, 932);
+    expect(tester.getRect(barrier), screen);
+    expect(tester.testTextInput.isVisible, isFalse);
+
+    tester.view.viewInsets = FakeViewPadding();
+    await tester.pump();
+    expect(tester.getRect(barrier), screen);
+    final card = tester.getRect(
+      find.byKey(const Key('hiker-circle-loading-toast')),
+    );
+    expect(card.center, screen.center);
+    expect(tester.takeException(), isNull);
+    service.verifyTotp.completeError(StateError('Test verification failed'));
+    await tester.pumpAndSettle();
+    expect(find.byType(HikerCircleLoadingToastOverlay), findsNothing);
+  });
+
   testWidgets('new registration cannot continue without binding a method', (
     tester,
   ) async {

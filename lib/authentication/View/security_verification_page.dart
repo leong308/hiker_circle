@@ -49,6 +49,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
   }
 
   void _beginBusy(String message) {
+    FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _busyMessage = message;
@@ -149,10 +150,13 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
     final passkeyIsRelevant =
         _isEnrollment || widget.continuation.methods.contains('passkey');
     return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
+      // Keep the loading barrier full-screen while the keyboard dismisses.
+      resizeToAvoidBottomInset: !_busy,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          SafeArea(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
               child: Center(
                 child: ConstrainedBox(
@@ -289,21 +293,21 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
                 ),
               ),
             ),
-            if (_busy)
-              HikerCircleLoadingToastOverlay(
-                message: _busyMessage,
-                detail: 'Keeping your account secure. This may take a moment.',
-                timeout: const Duration(seconds: 30),
-                onTimeout: () {
-                  if (!mounted || !_busy) return;
-                  setState(() {
-                    _busy = false;
-                    _error = 'The security check timed out. Please try again.';
-                  });
-                },
-              ),
-          ],
-        ),
+          ),
+          if (_busy)
+            HikerCircleLoadingToastOverlay(
+              message: _busyMessage,
+              detail: 'Keeping your account secure. This may take a moment.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (!mounted || !_busy) return;
+                setState(() {
+                  _busy = false;
+                  _error = 'The security check timed out. Please try again.';
+                });
+              },
+            ),
+        ],
       ),
     );
   }

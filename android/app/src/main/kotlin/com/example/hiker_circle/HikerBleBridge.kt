@@ -310,6 +310,7 @@ class HikerBleBridge(
     }
 
     override fun onCancel(arguments: Any?) {
+        ButtonDebugTrace.stop()
         eventSink = null
     }
 
@@ -319,6 +320,7 @@ class HikerBleBridge(
     }
 
     fun onActivityPaused() {
+        ButtonDebugTrace.stop()
         isActivityResumed = false
     }
 
@@ -609,6 +611,7 @@ class HikerBleBridge(
     }
 
     fun dispose() {
+        ButtonDebugTrace.stop()
         stopTeamLocationExchange()
         stopPairedButtonSetupScan()
         stopSosTestAdvertiser()
@@ -670,6 +673,14 @@ class HikerBleBridge(
 
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "setButtonDebugCapture" -> {
+                if (call.argument<Boolean>("enabled") == true) {
+                    ButtonDebugTrace.start { event -> eventSink?.success(event) }
+                } else {
+                    ButtonDebugTrace.stop()
+                }
+                result.success(null)
+            }
             "isSupported" -> result.success(isBleSupported())
             "openBluetoothSettings" -> {
                 runCatching {
@@ -1264,7 +1275,7 @@ class HikerBleBridge(
             val characteristic = service?.getCharacteristic(
                 HikerBleProtocol.PAIRED_BUTTON_TEST_CONTROL_CHARACTERISTIC_UUID,
             )
-            if (characteristic == null || !gatt.readCharacteristic(characteristic)) {
+            if (characteristic == null || !ButtonDebugTrace.read(gatt, characteristic)) {
                 if (recoverTestArmFromStaleGattCache(gatt, "missing test characteristic")) {
                     return
                 }
@@ -1282,6 +1293,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "read_response", gatt, characteristic, if (status == BluetoothGatt.GATT_SUCCESS) (characteristic.value ?: byteArrayOf()) else byteArrayOf(), "GATT $status")
             handleTestArmChallenge(gatt, characteristic, characteristic.value, status)
         }
 
@@ -1291,6 +1303,7 @@ class HikerBleBridge(
             value: ByteArray,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "read_response", gatt, characteristic, if (status == BluetoothGatt.GATT_SUCCESS) (value) else byteArrayOf(), "GATT $status")
             handleTestArmChallenge(gatt, characteristic, value, status)
         }
 
@@ -1299,6 +1312,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "write_complete", gatt, characteristic, byteArrayOf(), "GATT $status")
             if (gatt !== testArmGatt ||
                 characteristic.uuid != HikerBleProtocol.PAIRED_BUTTON_TEST_CONTROL_CHARACTERISTIC_UUID
             ) return
@@ -1614,6 +1628,7 @@ class HikerBleBridge(
     }
 
     private fun handleTeamScanResult(result: ScanResult) {
+        ButtonDebugTrace.advertisement(result)
         val packet = HikerBleProtocol.decodeTeamLocation(result)
         if (packet != null) {
             emitTeamLocation(packet)
@@ -1671,7 +1686,7 @@ class HikerBleBridge(
                     closeTeamGatt(gatt)
                     return
                 }
-                gatt.readCharacteristic(characteristic)
+                ButtonDebugTrace.read(gatt, characteristic)
             }
 
             override fun onCharacteristicRead(
@@ -1679,6 +1694,7 @@ class HikerBleBridge(
                 characteristic: BluetoothGattCharacteristic,
                 status: Int,
             ) {
+            ButtonDebugTrace.gatt("RX", "read_response", gatt, characteristic, if (status == BluetoothGatt.GATT_SUCCESS) (characteristic.value ?: byteArrayOf()) else byteArrayOf(), "GATT $status")
                 if (status == BluetoothGatt.GATT_SUCCESS &&
                     characteristic.uuid == HikerBleProtocol.TEAM_LOCATION_CHARACTERISTIC_UUID
                 ) {
@@ -1833,6 +1849,7 @@ class HikerBleBridge(
     }
 
     private fun emitPairedButtonSetupDevice(result: ScanResult) {
+        ButtonDebugTrace.advertisement(result)
         val record = result.scanRecord
         val advertisedSetupService = record?.serviceUuids?.any {
             it.uuid == HikerBleProtocol.PAIRED_BUTTON_SETUP_SERVICE_UUID
@@ -1969,7 +1986,7 @@ class HikerBleBridge(
             }
             characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             characteristic.value = payload
-            if (!gatt.writeCharacteristic(characteristic)) {
+            if (!startGattWrite(gatt, characteristic, characteristic.value)) {
                 finishLocationHandoff(
                     success = false,
                     errorCode = "paired_button_location_write_failed",
@@ -1983,6 +2000,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "write_complete", gatt, characteristic, byteArrayOf(), "GATT $status")
             if (gatt !== locationGatt) return
             if (characteristic.uuid == HikerBleProtocol.SOS_LOCATION_CHARACTERISTIC_UUID) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -2217,7 +2235,7 @@ class HikerBleBridge(
                 recoverFromIncompleteLogService(gatt)
                 return
             }
-            if (!gatt.readCharacteristic(challenge)) {
+            if (!ButtonDebugTrace.read(gatt, challenge)) {
                 finishLogDownload(
                     success = false,
                     errorCode = "paired_button_log_challenge_failed",
@@ -2232,6 +2250,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "read_response", gatt, characteristic, if (status == BluetoothGatt.GATT_SUCCESS) (characteristic.value ?: byteArrayOf()) else byteArrayOf(), "GATT $status")
             handleLogCharacteristicRead(
                 gatt = gatt,
                 characteristic = characteristic,
@@ -2246,6 +2265,7 @@ class HikerBleBridge(
             value: ByteArray,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "read_response", gatt, characteristic, if (status == BluetoothGatt.GATT_SUCCESS) (value) else byteArrayOf(), "GATT $status")
             handleLogCharacteristicRead(
                 gatt = gatt,
                 characteristic = characteristic,
@@ -2353,6 +2373,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "write_complete", gatt, characteristic, byteArrayOf(), "GATT $status")
             if (gatt !== logGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 if (recoverLogDownloadFromStaleGattCache(gatt, status, "write")) {
@@ -2372,7 +2393,7 @@ class HikerBleBridge(
                     writeLogPageChunk(gatt, 0, 0)
                 HikerBleProtocol.PAIRED_BUTTON_LOG_PAGE_CHARACTERISTIC_UUID -> {
                     val dataCharacteristic = logDataCharacteristic ?: return
-                    if (!gatt.readCharacteristic(dataCharacteristic)) {
+                    if (!ButtonDebugTrace.read(gatt, dataCharacteristic)) {
                         finishLogDownload(
                             success = false,
                             errorCode = "paired_button_log_read_failed",
@@ -2551,19 +2572,24 @@ class HikerBleBridge(
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray,
     ): Boolean {
+        ButtonDebugTrace.gatt("TX", "write_request", gatt, characteristic, value)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return gatt.writeCharacteristic(
+            val status = gatt.writeCharacteristic(
                 characteristic,
                 value,
                 BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-            ) == BluetoothStatusCodes.SUCCESS
+            )
+            ButtonDebugTrace.gatt("LOCAL", "write_queued", gatt, characteristic, status = "Android status $status")
+            return status == BluetoothStatusCodes.SUCCESS
         }
         @Suppress("DEPRECATION")
         characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         @Suppress("DEPRECATION")
         characteristic.value = value
         @Suppress("DEPRECATION")
-        return gatt.writeCharacteristic(characteristic)
+        val accepted = gatt.writeCharacteristic(characteristic)
+        ButtonDebugTrace.gatt("LOCAL", "write_queued", gatt, characteristic, status = accepted.toString())
+        return accepted
     }
 
     private fun resetLogPageBuffer() {
@@ -2809,6 +2835,9 @@ class HikerBleBridge(
             val descriptor = statusCharacteristic.getDescriptor(CLIENT_CONFIG_DESCRIPTOR)
             if (descriptor != null) {
                 descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                ButtonDebugTrace.packet("TX", "descriptor_write", gatt.device.address,
+                    descriptor.uuid.toString(), BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE,
+                    message = "Enable pairing status notifications (CCCD)")
                 if (!gatt.writeDescriptor(descriptor)) {
                     finishPairing(
                         success = false,
@@ -2830,6 +2859,8 @@ class HikerBleBridge(
             descriptor: BluetoothGattDescriptor,
             status: Int,
         ) {
+            ButtonDebugTrace.packet("RX", "descriptor_write_complete", gatt.device.address,
+                descriptor.uuid.toString(), status = "GATT $status")
             if (gatt !== pairingGatt) return
             if (descriptor.characteristic.uuid ==
                 HikerBleProtocol.PAIRED_BUTTON_STATUS_CHARACTERISTIC_UUID
@@ -2850,6 +2881,7 @@ class HikerBleBridge(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
+            ButtonDebugTrace.gatt("RX", "notification", gatt, characteristic, characteristic.value ?: byteArrayOf(), "received")
             if (gatt !== pairingGatt) return
             if (characteristic.uuid == HikerBleProtocol.PAIRED_BUTTON_STATUS_CHARACTERISTIC_UUID) {
                 handlePairingStatus(characteristic.value)
@@ -2862,6 +2894,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "read_response", gatt, characteristic, if (status == BluetoothGatt.GATT_SUCCESS) (characteristic.value ?: byteArrayOf()) else byteArrayOf(), "GATT $status")
             if (gatt !== pairingGatt) return
             if (status == BluetoothGatt.GATT_SUCCESS &&
                 characteristic.uuid == HikerBleProtocol.PAIRED_BUTTON_STATUS_CHARACTERISTIC_UUID
@@ -2875,6 +2908,7 @@ class HikerBleBridge(
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            ButtonDebugTrace.gatt("RX", "write_complete", gatt, characteristic, byteArrayOf(), "GATT $status")
             if (gatt !== pairingGatt ||
                 characteristic.uuid != HikerBleProtocol.PAIRED_BUTTON_PAIR_REQUEST_CHARACTERISTIC_UUID
             ) {
@@ -2919,7 +2953,7 @@ class HikerBleBridge(
             attempt.deviceId,
             attempt.pairingSecret,
         )
-        if (!gatt.writeCharacteristic(characteristic)) {
+        if (!startGattWrite(gatt, characteristic, characteristic.value)) {
             finishPairing(
                 success = false,
                 errorCode = "paired_button_pair_write_failed",
@@ -3178,6 +3212,7 @@ class HikerBleBridge(
     }
 
     private fun emitStatus(status: String, message: String? = null) {
+        ButtonDebugTrace.packet("LOCAL", "status", status = status, message = message ?: "")
         emitEvent(
             mapOf(
                 "type" to "status",

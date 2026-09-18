@@ -297,6 +297,7 @@ class Trail {
     required this.hazards,
     this.routeEncodedPolyline,
     this.routeCheckpointsHash,
+    this.routeGeometryMetadata = const <String, dynamic>{},
     this.dataSource = '',
     this.dataSourceUrl = '',
     this.osmRelationId = '',
@@ -367,6 +368,9 @@ class Trail {
       routeCheckpointsHash: _trailNullableStringFrom(
         data['routeCheckpointsHash'],
       ),
+      routeGeometryMetadata: data['routeGeometryMetadata'] is Map
+          ? Map<String, dynamic>.from(data['routeGeometryMetadata'] as Map)
+          : const <String, dynamic>{},
       dataSource: _trailStringFrom(data['dataSource']),
       dataSourceUrl: _trailStringFrom(data['dataSourceUrl']),
       osmRelationId: _trailStringFrom(data['osmRelationId']),
@@ -413,6 +417,7 @@ class Trail {
   final List<TrailHazard> hazards;
   final String? routeEncodedPolyline;
   final String? routeCheckpointsHash;
+  final Map<String, dynamic> routeGeometryMetadata;
   final String dataSource;
   final String dataSourceUrl;
   final String osmRelationId;
@@ -426,6 +431,10 @@ class Trail {
 
   int get difficultyRatingCount =>
       easyDifficultyVotes + moderateDifficultyVotes + hardDifficultyVotes;
+
+  String get difficultyDisplayLabel => hasCommunityDifficulty
+      ? '${difficulty[0].toUpperCase()}${difficulty.substring(1).toLowerCase()}'
+      : 'Difficulty not rated';
 
   bool get hasCommunityDifficulty =>
       difficultyRatingCount > 0 && difficulty.trim().isNotEmpty;
@@ -479,6 +488,7 @@ class Trail {
           .toList(),
       'weather': weather.toFirestore(),
       'hazards': hazards.map((hazard) => hazard.toFirestore()).toList(),
+      'routeGeometryMetadata': routeGeometryMetadata,
       if (routeEncodedPolyline != null)
         'routeEncodedPolyline': routeEncodedPolyline,
       if (routeCheckpointsHash != null)
@@ -573,6 +583,7 @@ class Trail {
     List<TrailHazard>? hazards,
     String? routeEncodedPolyline,
     String? routeCheckpointsHash,
+    Map<String, dynamic>? routeGeometryMetadata,
     String? dataSource,
     String? dataSourceUrl,
     String? osmRelationId,
@@ -617,6 +628,12 @@ class Trail {
       hazards: hazards ?? this.hazards,
       routeEncodedPolyline: routeEncodedPolyline ?? this.routeEncodedPolyline,
       routeCheckpointsHash: routeCheckpointsHash ?? this.routeCheckpointsHash,
+      routeGeometryMetadata:
+          routeGeometryMetadata ??
+          (routeEncodedPolyline != null &&
+                  routeEncodedPolyline != this.routeEncodedPolyline
+              ? const <String, dynamic>{}
+              : this.routeGeometryMetadata),
       dataSource: dataSource ?? this.dataSource,
       dataSourceUrl: dataSourceUrl ?? this.dataSourceUrl,
       osmRelationId: osmRelationId ?? this.osmRelationId,

@@ -246,29 +246,38 @@ void main() {
     );
   });
 
-  test('automatically downloads once then reuses the SQLite scan', () async {
-    var requestCount = 0;
-    final client = MockClient((request) async {
-      requestCount++;
-      return http.Response(
-        jsonEncode({'type': 'FeatureCollection', 'features': const []}),
-        200,
+  test(
+    'refreshes older threshold scans once then reuses the SQLite scan',
+    () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount++;
+        return http.Response(
+          jsonEncode({'type': 'FeatureCollection', 'features': const []}),
+          200,
+        );
+      });
+      final service = StaticHazardDatasetService(
+        database: database,
+        client: client,
+        accessToken: 'test-token',
+        enableExtendedHazards: false,
       );
-    });
-    final service = StaticHazardDatasetService(
-      database: database,
-      client: client,
-      accessToken: 'test-token',
-      enableExtendedHazards: false,
-    );
 
-    expect(await service.ensureForTrail(_trail()), isEmpty);
-    expect(requestCount, 2);
-    expect(await database.loadStaticHazardScanTime('trail-1'), isNotNull);
+      await database.saveLocalPreference(
+        ownerPhoneNumber: '',
+        key: 'static_hazard_scan:v3:trail-1',
+        value: {'scannedAt': DateTime.now().toUtc().toIso8601String()},
+      );
+      expect(await database.loadStaticHazardScanTime('trail-1'), isNull);
+      expect(await service.ensureForTrail(_trail()), isEmpty);
+      expect(requestCount, 2);
+      expect(await database.loadStaticHazardScanTime('trail-1'), isNotNull);
 
-    expect(await service.ensureForTrail(_trail()), isEmpty);
-    expect(requestCount, 2);
-  });
+      expect(await service.ensureForTrail(_trail()), isEmpty);
+      expect(requestCount, 2);
+    },
+  );
 }
 
 Trail _trail() {

@@ -823,31 +823,16 @@ void _drawHazardGlyph(
         stroke,
       );
     case StaticHazardMarkerKind.steepTerrain:
-      final slope = ui.Path()
-        ..moveTo(x(0.06), y(0.84))
-        ..lineTo(x(0.48), y(0.20))
-        ..lineTo(x(0.94), y(0.84));
-      canvas.drawPath(slope, stroke);
-      canvas.drawLine(
-        ui.Offset(x(0.19), y(0.68)),
-        ui.Offset(x(0.42), y(0.33)),
-        stroke,
-      );
-      canvas.drawLine(
-        ui.Offset(x(0.42), y(0.33)),
-        ui.Offset(x(0.31), y(0.38)),
-        stroke,
-      );
-      canvas.drawLine(
-        ui.Offset(x(0.58), y(0.34)),
-        ui.Offset(x(0.81), y(0.69)),
-        stroke,
-      );
-      canvas.drawLine(
-        ui.Offset(x(0.81), y(0.69)),
-        ui.Offset(x(0.79), y(0.56)),
-        stroke,
-      );
+      // A solid terrain silhouette stays legible at small map-pin sizes.
+      // Two clear peaks replace the overlapping slope arrows.
+      final terrain = ui.Path()
+        ..moveTo(x(0.06), y(0.88))
+        ..lineTo(x(0.32), y(0.38))
+        ..lineTo(x(0.46), y(0.61))
+        ..lineTo(x(0.65), y(0.17))
+        ..lineTo(x(0.96), y(0.88))
+        ..close();
+      canvas.drawPath(terrain, fill);
     case StaticHazardMarkerKind.rope:
       final rope = ui.Path()
         ..moveTo(x(0.18), y(0.12))

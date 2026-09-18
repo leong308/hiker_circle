@@ -214,6 +214,20 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hiker_circle/home_widgets")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "update") {
+                    result.notImplemented()
+                } else {
+                    try {
+                        HikeHomeWidgetProvider.publish(this, call.arguments as String)
+                        result.success(null)
+                    } catch (error: Exception) {
+                        result.error("invalid_widget_snapshot", error.message, null)
+                    }
+                }
+            }
+
         deepLinkChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             DEEP_LINK_CHANNEL,

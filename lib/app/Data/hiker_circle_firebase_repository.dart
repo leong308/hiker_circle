@@ -11,6 +11,8 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/models/hiker_level.dart';
 import '../../core/services/open_meteo_service.dart';
+import '../../core/services/trail_geometry_storage.dart';
+import '../../core/services/hiking_route_service.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../me/Model/hike_history_models.dart';
 import '../../sos/Model/sos_models.dart';
@@ -19,6 +21,7 @@ import '../../trail/Model/trail_models.dart';
 import '../Model/app_session.dart';
 import '../Model/preferred_time_zone.dart';
 import 'firebase_bootstrap.dart';
+import 'hike_completion_request.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
 
@@ -2611,6 +2614,19 @@ class HikerCircleFirebaseRepository {
         );
   }
 
+  Future<void> cancelUpcomingHike({required String hikeId}) async {
+    _throwIfFirebaseUnavailable();
+    try {
+      await _resolvedFunctions.httpsCallable('cancelUpcomingHike').call<void>({
+        'hikeId': hikeId,
+      });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to cancel this hike. Please try again.',
+      );
+    }
+  }
+
   Future<String> scheduleUpcomingHike({
     required AppSession session,
     required HikeSessionDraft draft,
@@ -3456,10 +3472,14 @@ class HikerCircleFirebaseRepository {
       summary: summary,
     );
     try {
-      final response = await _resolvedFunctions
-          .httpsCallable('completeActiveHikeSession')
-          .call<Map<String, dynamic>>(payload)
-          .timeout(_firebaseWriteTimeout);
+      final response = await waitForHikeCompletion(
+        _resolvedFunctions
+            .httpsCallable(
+              'completeActiveHikeSession',
+              options: HttpsCallableOptions(timeout: hikeCompletionTimeout),
+            )
+            .call<Map<String, dynamic>>(payload),
+      );
       return parseActiveHikeCloudCompletionResult(
         response.data,
         requestedSessionId: activeHike.sessionId,
@@ -3597,6 +3617,54 @@ class HikerCircleFirebaseRepository {
     } catch (_) {
       return const [];
     }
+  }
+
+  /// A locally ended hike remains shareable while completion is queued. Retry
+  /// the durable completion before publishing, preserving the original end time.
+  Future<void> createEndedHikePost({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    required HikeSummaryReport summary,
+    required ActiveHikeEndResult endResult,
+    required String caption,
+    List<CommunityPostImageUpload> images = const [],
+  }) async {
+    var completion = endResult;
+    if (completion.status != 'abandoned' && !completion.completed) {
+      completion = await endHikeSession(
+        session: session,
+        activeHike: activeHike,
+        summary: summary,
+      );
+    }
+    if (completion.status == 'abandoned') {
+      throw const HikerCircleFirebaseRepositoryException(
+        'This session was marked abandoned and cannot be posted as a completed hike.',
+      );
+    }
+    if (!completion.completed) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Your hike is saved on this phone, but its completion has not synced yet. '
+        'Tap Post to Community again to retry server confirmation. '
+        'Your caption and photos are still here.',
+      );
+    }
+    final cloudHike = completion.sessionId == activeHike.sessionId
+        ? activeHike
+        : activeHike.copyWith(sessionId: completion.sessionId);
+    final cloudSummary = completion.sessionId == summary.sessionId
+        ? summary
+        : HikeSummaryReport.fromActiveHike(
+            activeHike: cloudHike,
+            endedAt: summary.endedAt,
+          );
+    await createCompletedHikePost(
+      session: session,
+      activeHike: cloudHike,
+      summary: cloudSummary,
+      caption: caption,
+      images: images,
+    );
   }
 
   Future<void> createCompletedHikePost({
@@ -3925,13 +3993,13 @@ class HikerCircleFirebaseRepository {
       ..remove('difficulty')
       ..remove('difficultyVoteCounts')
       ..remove('difficultyRatingCount');
-    await _trails.doc(trail.trailId).set({
+    await _saveTrailWithGeometry(trail, {
       ...trailData,
       'updatedByAdminId': _userIdFor(session),
       'updatedByAdminPhoneNumber': session.phoneNumber,
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
-    }, SetOptions(merge: true));
+    });
   }
 
   Future<void> createTrailByAdmin({
@@ -3943,7 +4011,7 @@ class HikerCircleFirebaseRepository {
         ? _newTrailId(trail.name)
         : trail.trailId;
     final trailToSave = trail.copyWith(trailId: trailId);
-    await _trails.doc(trailId).set({
+    await _saveTrailWithGeometry(trailToSave, {
       ...trailToSave.toFirestore(),
       'ratingAverage': 0,
       'ratingCount': 0,
@@ -3956,7 +4024,90 @@ class HikerCircleFirebaseRepository {
       'createdAtLocal': DateTime.now().toUtc().toIso8601String(),
       'updatedAt': FieldValue.serverTimestamp(),
       'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
-    }, SetOptions(merge: true));
+    });
+  }
+
+  /// Commit the main route and full coordinates together, or neither.
+  Future<void> _saveTrailWithGeometry(
+    Trail trail,
+    Map<String, dynamic> trailData,
+  ) async {
+    final encoded = trail.routeEncodedPolyline?.trim() ?? '';
+    if (encoded.isEmpty ||
+        !HikingRouteService.savedRouteMatchesCheckpoints(trail)) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Fetch a route for the current checkpoints before saving.',
+      );
+    }
+    late TrailGeometryStorage geometry;
+    try {
+      geometry = TrailGeometryStorage.fromPolyline(encoded);
+    } catch (_) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The route geometry is invalid or too large. Refetch the route before saving.',
+      );
+    }
+    final reference = _trails.doc(trail.trailId);
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final existing = await transaction.get(reference);
+      final previous = existing.data();
+      final previousMetadata = previous?['routeGeometryMetadata'];
+      final priorPath = previousMetadata is Map
+          ? previousMetadata['geometryDocument']
+          : null;
+      // Imported geometry can contain higher precision and per-point altitude.
+      // Preserve it on unrelated edits instead of replacing it with decoded XY.
+      final reusable =
+          previous?['routeEncodedPolyline'] == encoded &&
+          previousMetadata is Map &&
+          previousMetadata['geometrySha256'] == geometry.checksum &&
+          priorPath is String &&
+          (priorPath.startsWith('${reference.path}/routeGeometry/') ||
+              priorPath.contains(
+                '/documents/${reference.path}/routeGeometry/',
+              ));
+      final now = DateTime.now().toUtc().toIso8601String();
+      final geometryReference = reference
+          .collection('routeGeometry')
+          .doc(geometry.checksum);
+      Map<String, dynamic> metadata;
+      if (reusable) {
+        final relativePath = priorPath.contains('/documents/')
+            ? priorPath.split('/documents/').last
+            : priorPath;
+        final stored = await transaction.get(
+          _resolvedFirestore.doc(relativePath),
+        );
+        if (stored.exists) {
+          metadata = Map<String, dynamic>.from(previousMetadata);
+        } else {
+          metadata = geometry.metadata(geometryReference.path, now);
+          transaction.set(geometryReference, geometry.document(now));
+        }
+      } else {
+        metadata = geometry.metadata(geometryReference.path, now);
+        transaction.set(geometryReference, geometry.document(now));
+      }
+      transaction.set(reference, {
+        ...trailData,
+        'dataSource': 'Stored route coordinates',
+        'routeProvider': 'stored-polyline',
+        // Native saves must not restore obsolete references from a cached trail.
+        for (final field in const [
+          'dataSourceUrl',
+          'routeReferenceName',
+          'routeReferenceUrl',
+          'routeReferenceNote',
+          'routeVerifiedAtLocal',
+          'osmRelationId',
+        ])
+          field: FieldValue.delete(),
+        'routeCheckpointsHash': HikingRouteService.checkpointsHash(
+          trail.checkpoints,
+        ),
+        'routeGeometryMetadata': metadata,
+      }, SetOptions(merge: true));
+    });
   }
 
   String newTrailIdForName(String name) => _newTrailId(name);
@@ -4785,13 +4936,7 @@ class HikerCircleFirebaseRepository {
   }
 
   bool _shouldRenderUpcomingHike(UpcomingHike hike) {
-    if (hike.isDeleted) {
-      return false;
-    }
-    final hiddenAt = hike.departureTime.toUtc().add(
-      const Duration(minutes: 15),
-    );
-    return hiddenAt.isAfter(DateTime.now().toUtc());
+    return hike.isUpcomingAt(DateTime.now());
   }
 
   bool _shouldRenderGroupChat(GroupChat chat) {
@@ -5299,6 +5444,9 @@ class HikerCircleFirebaseRepository {
       dataSource: _stringFrom(data['dataSource']),
       dataSourceUrl: _stringFrom(data['dataSourceUrl']),
       osmRelationId: _stringFrom(data['osmRelationId']),
+      routeGeometryMetadata: data['routeGeometryMetadata'] is Map
+          ? Map<String, dynamic>.from(data['routeGeometryMetadata'] as Map)
+          : const <String, dynamic>{},
       routeProvider: _stringFrom(data['routeProvider']),
       routeActivity: _stringFrom(data['routeActivity']),
       routeShape: _stringFrom(data['routeShape']),

@@ -1,3 +1,4 @@
+import '../../core/services/hiking_route_service.dart';
 import 'dart:convert';
 
 import '../../trail/Model/trail_models.dart';
@@ -8,7 +9,8 @@ import '../Model/hike_session_models.dart';
 class PlannedHikeStateResolver {
   const PlannedHikeStateResolver._();
 
-  static const Duration visibleAfterDepartureGrace = Duration(minutes: 10);
+  static const Duration visibleAfterDepartureGrace =
+      UpcomingHike.visibleAfterDepartureGrace;
   static const Duration weatherFreshness = Duration(hours: 4);
 
   static List<UpcomingHike> mergeUpcomingHikes({
@@ -16,13 +18,13 @@ class PlannedHikeStateResolver {
     required Iterable<UpcomingHike> cached,
     required bool retainUnconfirmedCachedHikes,
     Set<String> consumedHikeIds = const {},
+    DateTime? now,
   }) {
-    final remoteHikes = remote
-        .where((hike) => !hike.isDeleted && !consumedHikeIds.contains(hike.id))
-        .toList();
-    final cachedHikes = cached
-        .where((hike) => !hike.isDeleted && !consumedHikeIds.contains(hike.id))
-        .toList();
+    final currentTime = now ?? DateTime.now();
+    bool eligible(UpcomingHike hike) =>
+        hike.isUpcomingAt(currentTime) && !consumedHikeIds.contains(hike.id);
+    final remoteHikes = remote.where(eligible).toList();
+    final cachedHikes = cached.where(eligible).toList();
     final draftCandidates =
         cachedHikes.where((hike) => hike.draft != null).toList()
           ..sort((left, right) {
@@ -43,7 +45,7 @@ class PlannedHikeStateResolver {
     final scheduleKeys = <String>{};
 
     void add(UpcomingHike hike) {
-      if (hike.isDeleted || consumedHikeIds.contains(hike.id)) return;
+      if (!eligible(hike)) return;
       final scheduleKey = _scheduleKey(hike);
       if (!ids.add(hike.id) || !scheduleKeys.add(scheduleKey)) return;
       final localDraft = localDraftBySchedule[scheduleKey];
@@ -74,16 +76,7 @@ class PlannedHikeStateResolver {
   }) {
     final currentTime = (now ?? DateTime.now()).toUtc();
     final eligible =
-        hikes
-            .where(
-              (hike) =>
-                  !hike.isDeleted &&
-                  hike.departureTime
-                      .toUtc()
-                      .add(visibleAfterDepartureGrace)
-                      .isAfter(currentTime),
-            )
-            .toList()
+        hikes.where((hike) => hike.isUpcomingAt(currentTime)).toList()
           ..sort((a, b) => a.departureTime.compareTo(b.departureTime));
     return eligible.isEmpty ? null : eligible.first;
   }
@@ -130,7 +123,7 @@ class PlannedHikeStateResolver {
       hasKnownBatteryLevel: battery != null,
       liveLocationConfigured: upcomingHike.draft?.shareLiveLocation == true,
       completedChecklistItems: completed,
-    );
+    ).withGearProgress();
   }
 
   static UpcomingHike provisionalFromConfirmedDraft({
@@ -189,6 +182,18 @@ class PlannedHikeStateResolver {
   static Trail _resolvedTrail(UpcomingHike hike, Trail? liveTrail) {
     final savedTrail = hike.draft?.trail;
     var trail = savedTrail ?? liveTrail ?? _fallbackTrail(hike);
+    final custom = hike.draft?.customCheckpoints;
+    if (custom != null &&
+        HikingRouteService.checkpointsHash(custom) !=
+            HikingRouteService.checkpointsHash(trail.checkpoints)) {
+      trail = trail.copyWith(
+        checkpoints: custom,
+        routeEncodedPolyline: '',
+        routeCheckpointsHash: '',
+        routeGeometryMetadata: const {},
+      );
+    }
+
     trail = trail.copyWith(
       trailId: hike.trailId.trim().isEmpty ? trail.trailId : hike.trailId,
       name: hike.trailName.trim().isEmpty ? trail.name : hike.trailName,
@@ -210,6 +215,10 @@ class PlannedHikeStateResolver {
     if (liveTrail == null) return trail;
     return trail.copyWith(
       weather: liveTrail.weather,
+      difficulty: liveTrail.difficulty,
+      easyDifficultyVotes: liveTrail.easyDifficultyVotes,
+      moderateDifficultyVotes: liveTrail.moderateDifficultyVotes,
+      hardDifficultyVotes: liveTrail.hardDifficultyVotes,
       hazards: liveTrail.hazards,
       ratingAverage: liveTrail.ratingAverage,
       elevationGainMeters: liveTrail.elevationGainMeters,

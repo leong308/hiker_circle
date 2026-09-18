@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 
 import '../../app/Data/local_session_database.dart';
 import '../../trail/Model/trail_models.dart';
@@ -109,10 +112,10 @@ class HikingRouteService {
         ? sorted.sublist(1, sorted.length - 1)
         : <TrailCheckpoint>[];
 
-    if (sorted.length >= 3) {
+    if (sorted.length >= 2) {
       try {
         final optimized = await _mapboxOptimizationService
-            .optimizeWalkingRoute(sorted)
+            .walkingRouteInOrder(sorted)
             .timeout(const Duration(seconds: 30));
         if (optimized.distanceMeters <= 0 ||
             optimized.encodedPolyline.isEmpty) {
@@ -137,7 +140,7 @@ class HikingRouteService {
           elevationGainMeters: elevation,
           minElevationMeters: topo?.minimumElevationMeters,
           maxElevationMeters: topo?.maximumElevationMeters,
-          sourceLabel: 'Mapbox optimized walking route',
+          sourceLabel: 'Mapbox walking route (checkpoint order)',
         );
       } on MapboxOptimizationException {
         // Fall through to the existing hiking-route providers.
@@ -268,6 +271,24 @@ class HikingRouteService {
 
   static String checkpointsHash(List<TrailCheckpoint> checkpoints) {
     final sorted = [...checkpoints]..sort((a, b) => a.order.compareTo(b.order));
+    final canonical = sorted
+        .map(
+          (c) =>
+              '${c.latitude.toStringAsFixed(6)},${c.longitude.toStringAsFixed(6)}',
+        )
+        .join(';');
+    return 'sha256:${sha256.convert(utf8.encode(canonical))}';
+  }
+
+  static bool savedRouteMatchesCheckpoints(Trail trail) {
+    final saved = trail.routeCheckpointsHash?.trim() ?? '';
+    return saved.isEmpty ||
+        saved == checkpointsHash(trail.checkpoints) ||
+        saved == _legacyCheckpointsHash(trail.checkpoints);
+  }
+
+  static String _legacyCheckpointsHash(List<TrailCheckpoint> checkpoints) {
+    final sorted = [...checkpoints]..sort((a, b) => a.order.compareTo(b.order));
     final buffer = StringBuffer();
     for (final cp in sorted) {
       buffer.write('${cp.name}|${cp.latitude}|${cp.longitude}|${cp.order};');
@@ -280,9 +301,8 @@ class HikingRouteService {
   ) async {
     final savedPolyline = trail.routeEncodedPolyline?.trim() ?? '';
     final currentHash = checkpointsHash(trail.checkpoints);
-    final savedHash = trail.routeCheckpointsHash?.trim() ?? '';
     if (_isUsablePolyline(savedPolyline) &&
-        (savedHash.isEmpty || savedHash == currentHash)) {
+        savedRouteMatchesCheckpoints(trail)) {
       return HikingRouteResult(
         distanceMeters: (trail.distanceKm * 1000).round(),
         duration: Duration(minutes: trail.estimatedDurationMinutes),

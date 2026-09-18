@@ -45,6 +45,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   private let methodChannel: FlutterMethodChannel
   private let eventChannel: FlutterEventChannel
   private var eventSink: FlutterEventSink?
+  private var buttonDebugCapture = false
   private lazy var centralManager = CBCentralManager(
     delegate: self,
     queue: .main,
@@ -177,12 +178,16 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   }
 
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    buttonDebugCapture = false
     eventSink = nil
     return nil
   }
 
   private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "setButtonDebugCapture":
+      buttonDebugCapture = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
+      result(nil)
     case "isSupported":
       _ = centralManager
       result(true)
@@ -410,6 +415,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
   }
 
   @objc private func applicationDidEnterBackground() {
+    buttonDebugCapture = false
     isApplicationActive = false
     startScanIfReady()
   }
@@ -1134,7 +1140,43 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     ])
   }
 
+  private func debugPacket(_ direction: String, _ operation: String,
+    device: String = "", characteristic: String = "", bytes: Data = Data(),
+    status: String = "", message: String = "") {
+    guard buttonDebugCapture else { return }
+    var safe = bytes
+    let redacted = characteristic.lowercased().hasPrefix("7e2a1d38")
+    if redacted && safe.count > 10 {
+      safe.replaceSubrange(10..<safe.count, with: repeatElement(UInt8(0), count: safe.count - 10))
+    }
+    eventSink?([
+      "type": "buttonDebug", "timestampMillis": Int64(Date().timeIntervalSince1970 * 1000),
+      "direction": direction, "operation": operation, "deviceId": device,
+      "characteristic": characteristic, "bytes": FlutterStandardTypedData(bytes: safe),
+      "status": status, "message": redacted ? "\(message) Pairing secret redacted before capture." : message,
+    ])
+  }
+
+  private func debugWrite(_ peripheral: CBPeripheral, _ value: Data, for characteristic: CBCharacteristic) {
+    debugPacket("TX", "write_request", device: peripheral.identifier.uuidString,
+      characteristic: characteristic.uuid.uuidString, bytes: value, status: "requested")
+    peripheral.writeValue(value, for: characteristic, type: .withResponse)
+  }
+
+  private func debugRead(_ peripheral: CBPeripheral, for characteristic: CBCharacteristic) {
+    debugPacket("TX", "read_request", device: peripheral.identifier.uuidString,
+      characteristic: characteristic.uuid.uuidString)
+    peripheral.readValue(for: characteristic)
+  }
+
+  private func debugNotify(_ peripheral: CBPeripheral, _ enabled: Bool, for characteristic: CBCharacteristic) {
+    debugPacket("TX", "notification_subscription", device: peripheral.identifier.uuidString,
+      characteristic: characteristic.uuid.uuidString, status: enabled ? "enable" : "disable")
+    peripheral.setNotifyValue(enabled, for: characteristic)
+  }
+
   private func emitStatus(_ status: String, message: String? = nil) {
+    debugPacket("LOCAL", "status", status: status, message: message ?? "")
     var event: [String: Any] = [
       "type": "status",
       "status": status,
@@ -1926,7 +1968,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       )
       return
     }
-    peripheral.writeValue(Data([UInt8(page)]), for: characteristic, type: .withResponse)
+    debugWrite(peripheral, Data([UInt8(page)]), for: characteristic)
   }
 
   private func finishLogDownload(
@@ -1977,10 +2019,31 @@ extension HikerBleBridge: CBCentralManagerDelegate {
     advertisementData: [String: Any],
     rssi RSSI: NSNumber
   ) {
+    if buttonDebugCapture {
+      if advertisementData[CBAdvertisementDataManufacturerDataKey] == nil,
+         let services = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID],
+         services.contains(where: { $0.uuidString.lowercased().hasPrefix("7e2a1d") }) {
+        debugPacket("RX", "service_advertisement", device: peripheral.identifier.uuidString,
+          message: "Services=\(services); RSSI=\(RSSI) dBm; no manufacturer payload")
+      }
+      if let data = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+         data.count >= 2, data[0] == 0xe5, data[1] == 0x02 {
+        debugPacket("RX", "advertisement", device: peripheral.identifier.uuidString,
+          characteristic: "manufacturer:0x02E5", bytes: Data(data.dropFirst(2)),
+          message: "RSSI=\(RSSI) dBm; company ID excluded from payload")
+      }
+      if let services = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
+        for (uuid, data) in services where uuid.uuidString.lowercased().hasPrefix("7e2a1d") {
+          debugPacket("RX", "service_advertisement", device: peripheral.identifier.uuidString,
+            characteristic: uuid.uuidString, bytes: data, message: "RSSI=\(RSSI) dBm")
+        }
+      }
+    }
     handleAdvertisement(peripheral: peripheral, advertisementData: advertisementData, rssi: RSSI)
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    debugPacket("LOCAL", "connected", device: peripheral.identifier.uuidString)
     if testArmPeripheral?.identifier == peripheral.identifier {
       peripheral.discoverServices([
         HikerBleProtocol.pairedButtonMaintenanceServiceUUID,
@@ -2020,6 +2083,8 @@ extension HikerBleBridge: CBCentralManagerDelegate {
     didFailToConnect peripheral: CBPeripheral,
     error: Error?
   ) {
+    debugPacket("LOCAL", "connect_failed", device: peripheral.identifier.uuidString,
+      status: error?.localizedDescription ?? "failed")
     if testArmPeripheral?.identifier == peripheral.identifier {
       finishPairedButtonTestArm(
         success: false,
@@ -2051,6 +2116,8 @@ extension HikerBleBridge: CBCentralManagerDelegate {
     didDisconnectPeripheral peripheral: CBPeripheral,
     error: Error?
   ) {
+    debugPacket("LOCAL", "disconnected", device: peripheral.identifier.uuidString,
+      status: error?.localizedDescription ?? "success")
     if testArmPeripheral?.identifier == peripheral.identifier {
       finishPairedButtonTestArm(
         success: false,
@@ -2080,6 +2147,9 @@ extension HikerBleBridge: CBCentralManagerDelegate {
 
 extension HikerBleBridge: CBPeripheralDelegate {
   func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+    debugPacket("LOCAL", "services_discovered", device: peripheral.identifier.uuidString,
+      status: error?.localizedDescription ?? "success",
+      message: "Services=\(peripheral.services?.map { $0.uuid.uuidString } ?? [])")
     guard error == nil, let services = peripheral.services else {
       if testArmPeripheral?.identifier == peripheral.identifier {
         finishPairedButtonTestArm(
@@ -2132,6 +2202,9 @@ extension HikerBleBridge: CBPeripheralDelegate {
     didDiscoverCharacteristicsFor service: CBService,
     error: Error?
   ) {
+    debugPacket("LOCAL", "characteristics_discovered", device: peripheral.identifier.uuidString,
+      characteristic: service.uuid.uuidString, status: error?.localizedDescription ?? "success",
+      message: "Characteristics=\(service.characteristics?.map { $0.uuid.uuidString } ?? [])")
     guard error == nil, let characteristics = service.characteristics else {
       if testArmPeripheral?.identifier == peripheral.identifier {
         finishPairedButtonTestArm(
@@ -2179,10 +2252,10 @@ extension HikerBleBridge: CBPeripheralDelegate {
           )
           return
         }
-        peripheral.writeValue(payload, for: characteristic, type: .withResponse)
+        debugWrite(peripheral, payload, for: characteristic)
       } else if characteristic.uuid == HikerBleProtocol.sosHelpCharacteristicUUID ||
           characteristic.uuid == HikerBleProtocol.teamLocationCharacteristicUUID {
-        peripheral.readValue(for: characteristic)
+        debugRead(peripheral, for: characteristic)
       }
     }
     if testArmPeripheral?.identifier == peripheral.identifier {
@@ -2194,7 +2267,7 @@ extension HikerBleBridge: CBPeripheralDelegate {
         )
         return
       }
-      peripheral.readValue(for: testControlCharacteristic)
+      debugRead(peripheral, for: testControlCharacteristic)
     } else if logPeripheral?.identifier == peripheral.identifier {
       guard let challenge = logChallengeCharacteristic,
             logAuthCharacteristic != nil,
@@ -2207,7 +2280,7 @@ extension HikerBleBridge: CBPeripheralDelegate {
         )
         return
       }
-      peripheral.readValue(for: challenge)
+      debugRead(peripheral, for: challenge)
     } else if pairingPeripheral?.identifier == peripheral.identifier {
       guard pairingRequestCharacteristic != nil,
             let statusCharacteristic = pairingStatusCharacteristic else {
@@ -2218,7 +2291,7 @@ extension HikerBleBridge: CBPeripheralDelegate {
         )
         return
       }
-      peripheral.setNotifyValue(true, for: statusCharacteristic)
+      debugNotify(peripheral, true, for: statusCharacteristic)
     }
   }
 
@@ -2227,6 +2300,9 @@ extension HikerBleBridge: CBPeripheralDelegate {
     didUpdateNotificationStateFor characteristic: CBCharacteristic,
     error: Error?
   ) {
+    debugPacket("RX", "notification_subscription_complete", device: peripheral.identifier.uuidString,
+      characteristic: characteristic.uuid.uuidString, status: error?.localizedDescription ?? "success",
+      message: "isNotifying=\(characteristic.isNotifying)")
     guard pairingPeripheral?.identifier == peripheral.identifier,
           characteristic.uuid == HikerBleProtocol.pairedButtonStatusCharacteristicUUID else {
       return
@@ -2264,7 +2340,7 @@ extension HikerBleBridge: CBPeripheralDelegate {
     // characteristic to require an encrypted, MITM-authenticated BLE link
     // before accepting the write. iOS exposes no public bond-state API that
     // can independently prove that requirement here.
-    peripheral.writeValue(value, for: requestCharacteristic, type: .withResponse)
+    debugWrite(peripheral, value, for: requestCharacteristic)
   }
 
   func peripheral(
@@ -2272,6 +2348,10 @@ extension HikerBleBridge: CBPeripheralDelegate {
     didUpdateValueFor characteristic: CBCharacteristic,
     error: Error?
   ) {
+    debugPacket("RX", "read_or_notification", device: peripheral.identifier.uuidString,
+      characteristic: characteristic.uuid.uuidString,
+      bytes: error == nil ? (characteristic.value ?? Data()) : Data(),
+      status: error?.localizedDescription ?? "success")
     if testArmPeripheral?.identifier == peripheral.identifier,
        characteristic.uuid == HikerBleProtocol.pairedButtonTestControlCharacteristicUUID {
       guard error == nil,
@@ -2291,7 +2371,7 @@ extension HikerBleBridge: CBPeripheralDelegate {
         )
         return
       }
-      peripheral.writeValue(request, for: characteristic, type: .withResponse)
+      debugWrite(peripheral, request, for: characteristic)
       return
     }
     if logPeripheral?.identifier == peripheral.identifier {
@@ -2315,7 +2395,7 @@ extension HikerBleBridge: CBPeripheralDelegate {
           finishLogDownload(success: false, errorCode: "paired_button_log_payload_too_long", errorMessage: "This BLE connection cannot carry the authenticated log request.")
           return
         }
-        peripheral.writeValue(auth, for: authCharacteristic, type: .withResponse)
+        debugWrite(peripheral, auth, for: authCharacteristic)
         return
       }
       if characteristic.uuid == HikerBleProtocol.pairedButtonLogDataCharacteristicUUID {
@@ -2364,6 +2444,8 @@ extension HikerBleBridge: CBPeripheralDelegate {
     didWriteValueFor characteristic: CBCharacteristic,
     error: Error?
   ) {
+    debugPacket("RX", "write_complete", device: peripheral.identifier.uuidString,
+      characteristic: characteristic.uuid.uuidString, status: error?.localizedDescription ?? "success")
     if testArmPeripheral?.identifier == peripheral.identifier,
        characteristic.uuid == HikerBleProtocol.pairedButtonTestControlCharacteristicUUID {
       if let error {
@@ -2386,7 +2468,7 @@ extension HikerBleBridge: CBPeripheralDelegate {
         writeLogPage(0, peripheral: peripheral)
       } else if characteristic.uuid == HikerBleProtocol.pairedButtonLogPageCharacteristicUUID,
                 let dataCharacteristic = logDataCharacteristic {
-        peripheral.readValue(for: dataCharacteristic)
+        debugRead(peripheral, for: dataCharacteristic)
       }
       return
     }
@@ -2456,6 +2538,8 @@ extension HikerBleBridge: CBPeripheralManagerDelegate {
     _ peripheral: CBPeripheralManager,
     didReceiveRead request: CBATTRequest
   ) {
+    debugPacket("RX", "server_read_request", device: request.central.identifier.uuidString,
+      characteristic: request.characteristic.uuid.uuidString, message: "offset=\(request.offset)")
     let data: Data?
     if request.characteristic.uuid == HikerBleProtocol.sosHelpCharacteristicUUID {
       data = latestSosHelpPacket
@@ -2466,14 +2550,18 @@ extension HikerBleBridge: CBPeripheralManagerDelegate {
     }
 
     guard let data else {
+      debugPacket("TX", "server_read_response", characteristic: request.characteristic.uuid.uuidString, status: "attributeNotFound")
       peripheral.respond(to: request, withResult: .attributeNotFound)
       return
     }
     guard request.offset <= data.count else {
+      debugPacket("TX", "server_read_response", characteristic: request.characteristic.uuid.uuidString, status: "invalidOffset")
       peripheral.respond(to: request, withResult: .invalidOffset)
       return
     }
     request.value = data.subdata(in: request.offset..<data.count)
+    debugPacket("TX", "server_read_response", device: request.central.identifier.uuidString,
+      characteristic: request.characteristic.uuid.uuidString, bytes: request.value ?? Data(), status: "success")
     peripheral.respond(to: request, withResult: .success)
   }
 }

@@ -17,6 +17,56 @@ class RoutePreviewCameraFrame {
   final double distanceMeters;
 }
 
+/// Holds a stable heading through small bends, then eases significant turns.
+/// The target is compared with the last accepted direction so gradual, real
+/// bends still accumulate and eventually trigger a turn.
+class RoutePreviewHeadingFilter {
+  double? _heading;
+  double? _target;
+  double? _distance;
+  Duration? _time;
+
+  void reset() {
+    _heading = null;
+    _target = null;
+    _distance = null;
+    _time = null;
+  }
+
+  double update({
+    required double bearing,
+    required double distanceMeters,
+    required Duration elapsed,
+  }) {
+    if (!bearing.isFinite) return _heading ?? 0;
+    final normalized = (bearing % 360 + 360) % 360;
+    if (_heading == null ||
+        (_distance != null && distanceMeters < _distance! - 1)) {
+      _heading = normalized;
+      _target = normalized;
+      _time = elapsed;
+    }
+    _distance = distanceMeters;
+    // Ignore GPS wiggles and minor left/right deviations on straight trails.
+    if (_angleDelta(_target!, normalized).abs() >= 15) {
+      _target = normalized;
+    }
+    final seconds = ((elapsed - _time!).inMicroseconds / 1000000).clamp(
+      0.0,
+      .25,
+    );
+    _time = elapsed;
+    final delta = _angleDelta(_heading!, _target!);
+    final eased = delta * (1 - math.exp(-seconds / .65));
+    final step = eased.clamp(-60 * seconds, 60 * seconds);
+    _heading = (_heading! + step + 360) % 360;
+    return _heading!;
+  }
+
+  static double _angleDelta(double from, double to) =>
+      (to - from + 540) % 360 - 180;
+}
+
 class RoutePreviewCameraTuning {
   const RoutePreviewCameraTuning({
     required this.pitch,
@@ -88,6 +138,7 @@ RoutePreviewCameraFrame? routePreviewCameraFrame({
   required List<double> cumulativeDistances,
   required double progress,
   double lookAheadMeters = 35,
+  double headingSampleMeters = 0,
 }) {
   if (points.length < 2 || cumulativeDistances.length != points.length) {
     return null;
@@ -115,13 +166,22 @@ RoutePreviewCameraFrame? routePreviewCameraFrame({
   final totalDistance = cumulativeDistances.last;
   final safeLookAhead = math.max(8.0, lookAheadMeters);
 
-  mapbox.Point? headingFrom = center;
+  // Coarsen only the direction samples, retaining the exact route position.
+  // Sampling by metres avoids dependence on how dense the imported GPX is.
+  final headingDistance = headingSampleMeters > 0
+      ? (centerDistance / headingSampleMeters).floor() * headingSampleMeters
+      : centerDistance;
+  mapbox.Point? headingFrom = _pointAtDistance(
+    points,
+    cumulativeDistances,
+    headingDistance,
+  );
   mapbox.Point? headingTo;
   if (centerDistance < totalDistance - 0.5) {
     headingTo = _pointAtDistance(
       points,
       cumulativeDistances,
-      math.min(totalDistance, centerDistance + safeLookAhead),
+      math.min(totalDistance, headingDistance + safeLookAhead),
     );
   } else {
     headingFrom = _pointAtDistance(
@@ -132,6 +192,16 @@ RoutePreviewCameraFrame? routePreviewCameraFrame({
     headingTo = center;
   }
   if (headingFrom == null || headingTo == null) return null;
+  // An out-and-back lookahead can land on the same coordinate across a
+  // hairpin. Use the outgoing local segment instead of a false north bearing.
+  if (distanceMeters(headingFrom, headingTo) < 1) {
+    headingTo = _pointAtDistance(
+      points,
+      cumulativeDistances,
+      math.min(totalDistance, headingDistance + 8),
+    );
+    if (headingTo == null) return null;
+  }
 
   return RoutePreviewCameraFrame(
     center: center,
