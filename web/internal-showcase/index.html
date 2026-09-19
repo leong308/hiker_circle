@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#143f34">
-  <meta name="description" content="A short, visual introduction to HikerCircle for internal presentations.">
+  <meta name="description" content="A visual tour of HikerCircle features for internal presentations.">
   <title>App showcase · HikerCircle internal</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
   <link rel="stylesheet" href="/internal/app-showcase/showcase.css">
@@ -27,13 +27,15 @@
     </section>
 
     <section class="showcase" id="highlights" aria-labelledby="showcase-title">
-      <div class="section-heading"><div><p class="eyebrow">A SHORT LOOK INSIDE</p><h2 id="showcase-title">See the experience.</h2></div><p>Choose a theme or move through the highlights.</p></div>
-      <nav id="chapter-nav" class="chapter-nav" aria-label="Showcase themes"></nav>
+      <div class="section-heading"><div><p class="eyebrow">A LOOK INSIDE</p><h2 id="showcase-title">See the experience.</h2></div><p>Choose a chapter, then a feature.</p></div>
+      <nav id="chapter-nav" class="chapter-nav" aria-label="Showcase chapters"></nav>
+      <nav id="feature-nav" class="feature-nav" aria-label="Features in this chapter"></nav>
       <div class="stage" id="stage" tabindex="0" aria-label="Feature highlight; use left and right arrow keys to navigate">
         <div class="stage-media">
           <div class="media-glow" aria-hidden="true"></div>
           <button id="open-image" class="phone-frame" type="button" aria-label="View screenshot full size"><img id="stage-image" alt="" loading="eager"></button>
           <video id="stage-video" controls playsinline preload="none" hidden></video>
+          <div id="media-request" class="media-request" hidden><span>SCREEN TO ADD</span><strong id="request-title"></strong><code id="request-file"></code></div>
           <p id="media-error" class="media-error" hidden>Media is unavailable. Try another highlight.</p>
           <button id="play-recording" class="play-recording" type="button" hidden><span aria-hidden="true">▶</span> Watch recording</button>
         </div>
@@ -42,12 +44,12 @@
           <h3 id="stage-title" aria-live="polite">Loading the showcase…</h3>
           <p id="stage-description"></p>
           <span id="stage-source" class="source-label"></span>
+          <details id="media-brief" class="media-brief"><summary id="media-brief-label">Capture instructions</summary><p id="media-brief-text"></p><code id="media-brief-files"></code></details>
           <div class="stage-spacer"></div>
-          <div id="slide-dots" class="slide-dots" role="group" aria-label="Choose a highlight"></div>
           <div class="stage-controls"><button id="previous" type="button" aria-label="Previous highlight">←</button><button id="next" type="button" aria-label="Next highlight">→</button></div>
         </div>
       </div>
-      <p class="showcase-note">Media includes earlier app captures and clearly marked previews or staged examples. The interface may evolve.</p>
+      <p class="showcase-note">Earlier app media, previews, and staged examples are labelled. Capture instructions appear wherever a screen is missing or needs replacing.</p>
       <p id="load-error" class="load-error" hidden>The showcase could not load. Please refresh this page.</p>
       <noscript><p class="load-error">Enable JavaScript to view the feature highlights.</p></noscript>
     </section>

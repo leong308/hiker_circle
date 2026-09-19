@@ -1,6 +1,6 @@
 # HikerCircle internal showcase — media handoff list
 
-Prepared 19 September 2026. This is the short, filename-first companion to the [detailed capture guide](capture-guide.md). The [internal showcase](https://hiker-circle.web.app/internal/app-showcase/) presents 13 selected highlights. Its underlying catalog tracks 48 flows: 22 need their first visual, 4 use rendered previews, 21 have earlier app captures, and 1 is a historical archive item. No new phone captures are claimed here.
+Prepared 19 September 2026. This is the short, filename-first companion to the [detailed capture guide](capture-guide.md). The [internal showcase](https://hiker-circle.web.app/internal/app-showcase/) presents its 48 catalogued flows one at a time across 10 chapters: 22 have no visual, 4 use rendered previews, 21 have earlier app captures, and 1 is a historical archive item. The route-preview screenshot is also withheld on the page because it shows a different screen, so that flow needs replacement media. No new phone captures are claimed here.
 
 ## How to hand off media
 
@@ -36,6 +36,8 @@ Prepared 19 September 2026. This is the short, filename-first companion to the [
 | App · Feedback with context | `feedback.png` | `feedback.mp4` | Annotation and review with harmless demo text; do not submit. |
 | Admin · Trail & community quality | `admin-trails-moderation.png`, `admin-review-queue.png` | — | Seeded draft and moderation queue; no live edits. |
 | Admin · Support & diagnostics | `admin-feedback.png`, `admin-diagnostics.png` | — | Sanitized inbox and button debugging; no raw secrets. |
+
+**Also needed now:** `route-preview.png` and ideally `route-preview.mp4`. The older image only shows trail details, not the route preview, so the presentation deliberately does not display it. Capture checkpoint selection and first-person playback on the current route map.
 
 ## Replace rendered previews with actual phone captures (4 flows)
 

@@ -3,30 +3,53 @@
 
   const $ = (selector) => document.querySelector(selector);
   const base = '/internal/app-showcase/';
-  const chapters = [
-    { title: 'Explore', start: 0 },
-    { title: 'Prepare', start: 3 },
-    { title: 'Stay safer', start: 6 },
-    { title: 'Connect & reflect', start: 10 },
+  const chapterSpecs = [
+    { id: 'access', label: 'Join & set up' },
+    { id: 'discover', label: 'Explore trails' },
+    { id: 'prepare', label: 'Prepare a hike' },
+    { id: 'hike', label: 'On the trail' },
+    { id: 'safety', label: 'Safety', extras: ['native-widgets'] },
+    { id: 'circle', label: 'Your circle' },
+    { id: 'reflect', label: 'After the hike' },
+    { id: 'settings', label: 'Your app' },
+    { id: 'admin', label: 'Operations' },
+    { id: 'archive', label: 'Archive', only: ['original-sos'] },
   ];
-  const highlights = [
-    { id: 'trail-discovery', chapter: 0, title: 'Find a trail', copy: 'Browse routes and find one that fits the day.' },
-    { id: 'trail-detail', chapter: 0, title: 'Know the route', copy: 'See the trail, its distance and what lies ahead.' },
-    { id: 'trail-forecast', chapter: 0, title: 'Choose the right moment', copy: 'Compare weather before setting out.' },
-    { id: 'create-hike', chapter: 1, title: 'Plan your way', copy: 'Start a solo hike or bring a team together.' },
-    { id: 'required-gear', chapter: 1, title: 'Pack with confidence', copy: 'Check the essentials for the route, one at a time.' },
-    { id: 'team-launch', chapter: 1, title: 'Leave together', copy: 'See when everyone is ready to start.' },
-    { id: 'active-tracking', chapter: 2, title: 'Stay on course', copy: 'Follow the route and keep the team in view.' },
-    { id: 'sos-center', chapter: 2, title: 'Safety close at hand', copy: 'Find emergency options when they matter.' },
-    { id: 'physical-button', chapter: 2, title: 'Another way to signal', copy: 'Pair a supported physical SOS button.' },
-    { id: 'native-widgets', chapter: 2, title: 'Updates beyond the app', copy: 'See hike information from the phone’s home screen.' },
-    { id: 'find-hikers', chapter: 3, title: 'Meet your circle', copy: 'Discover other hikers and their public profiles.' },
-    { id: 'hike-history', chapter: 3, title: 'Look back on the trail', copy: 'Revisit completed hikes and the memories they hold.' },
-    { id: 'achievements', chapter: 3, title: 'See your progress', copy: 'Follow milestones and keep exploring.' },
-  ];
+  const presentationCopy = {
+    'login-security': { title: 'Protect your account', copy: 'Review extra ways to secure sign-in.' },
+    'trail-discovery': { title: 'Find a trail', copy: 'Browse routes and find one that fits the day.' },
+    'trail-detail': { title: 'Know the route', copy: 'See the trail, its distance and what lies ahead.' },
+    'route-preview': { title: 'Preview the path', copy: 'See the route and its checkpoints before departure.' },
+    'trail-forecast': { title: 'Choose the right moment', copy: 'Compare weather before setting out.' },
+    'weather-map': { title: 'Weather across the area', copy: 'See rain, wind and temperature over the map.' },
+    'create-hike': { title: 'Plan your way', copy: 'Start a solo hike or bring a team together.' },
+    'hike-safety-settings': { title: 'Set up safety', copy: 'Choose the safety options for this hike.' },
+    'required-gear': { title: 'Pack with confidence', copy: 'Check the essentials for the route, one at a time.' },
+    'team-launch': { title: 'Leave together', copy: 'See when everyone is ready to start.' },
+    'active-tracking': { title: 'Stay on course', copy: 'Follow the route and keep the team in view.' },
+    'active-weather-sharing': { title: 'Weather & live sharing', copy: 'Check conditions and choose when to share your position.' },
+    'sos-center': { title: 'Safety close at hand', copy: 'Find emergency options when they matter.' },
+    'sos-queue-notes': { title: 'Understand alert status', copy: 'See what happened after an alert was started.' },
+    'physical-button': { title: 'Another way to signal', copy: 'Pair a supported physical SOS button.' },
+    'button-test-logs': { title: 'Check your button', copy: 'Test it safely and review its event history.' },
+    'native-widgets': { title: 'Updates beyond the app', copy: 'See hike information from the phone’s home screen.' },
+    'find-hikers': { title: 'Meet your circle', copy: 'Discover other hikers and their public profiles.' },
+    'hike-history': { title: 'Look back on the trail', copy: 'Revisit completed hikes and the memories they hold.' },
+    'achievements': { title: 'See your progress', copy: 'Follow milestones and keep exploring.' },
+    'admin-diagnostics': { title: 'Support & diagnostics', copy: 'Investigate feedback and button issues.' },
+  };
+  // Only suppress media that describes a different screen. Partial or staged references stay visible with a brief.
+  const mediaReview = {
+    'route-preview': { imagePath: '/site-assets/screens/trail-detail.jpeg', suppress: true, label: 'Replace mismatched screenshot' },
+    'first-aid-gear': { imagePath: '/site-assets/screens/first-aid.jpeg', label: 'Add the gear checklist' },
+    'finish-rating': { imagePath: '/site-assets/screens/route-rating.jpeg', label: 'Add the completion summary' },
+    'duress-demo': { imagePath: '/site-assets/evolution/03-safety-device-20260907.jpg', label: 'Replace staged demonstration' },
+    'native-widgets': { imagePath: '/site-assets/evolution/03-active-safety-surfaces-iphone.png', label: 'Replace staged demonstration' },
+  };
 
   let slides = [];
   let active = 0;
+  let activeChapter = -1;
   let touchStart = null;
   let toastTimer;
   const video = $('#stage-video');
@@ -42,15 +65,30 @@
     return button;
   }
 
-  function renderNavigation() {
-    $('#chapter-nav').replaceChildren(...chapters.map((chapter) =>
-      makeButton(chapter.title, 'chapter-button', () => select(chapter.start))));
-    $('#slide-dots').replaceChildren(...slides.map((slide, index) => {
-      const button = makeButton('', 'slide-dot', () => select(index));
-      button.setAttribute('aria-label', `Show ${slide.title}`);
-      button.title = slide.title;
+  function chapterSlides(index) { return slides.filter((slide) => slide.chapter === index); }
+  function reviewFor(slide) {
+    const review = mediaReview[slide.item.id];
+    return review?.imagePath === slide.item.image ? review : null;
+  }
+  function usableImage(slide) { return reviewFor(slide)?.suppress ? '' : slide.item.image || ''; }
+  function usableVideo(slide) { return slide.item.video || ''; }
+
+  function renderChapterNav() {
+    $('#chapter-nav').replaceChildren(...chapterSpecs.map((chapter, index) => {
+      const button = makeButton(chapter.label, 'chapter-button', () => {
+        const first = slides.findIndex((slide) => slide.chapter === index);
+        if (first >= 0) select(first);
+      });
+      button.setAttribute('aria-label', `${chapter.label}, ${chapterSlides(index).length} features`);
       return button;
     }));
+  }
+
+  function renderFeatureNav(chapterIndex) {
+    const nav = $('#feature-nav');
+    nav.replaceChildren(...slides.map((slide, index) => ({ slide, index }))
+      .filter(({ slide }) => slide.chapter === chapterIndex)
+      .map(({ slide, index }) => makeButton(slide.title, 'feature-button', () => select(index))));
   }
 
   function stopVideo() {
@@ -58,7 +96,12 @@
     video.removeAttribute('src');
     video.load();
     video.hidden = true;
-    imageButton.hidden = false;
+  }
+
+  function captureFiles(item) {
+    const still = item.captureFile || `${item.id}.png`;
+    const recording = /\brecord\b/i.test(item.capture || '') ? still.replace(/\.(png|jpe?g)$/i, '.mp4') : '';
+    return recording ? `${still}  ·  ${recording}` : still;
   }
 
   function select(index, syncUrl = true) {
@@ -66,25 +109,50 @@
     active = index;
     const slide = slides[index];
     const item = slide.item;
+    const imageSrc = usableImage(slide);
+    const videoSrc = usableVideo(slide);
+    const review = reviewFor(slide);
+    const captureNeeded = !imageSrc && !videoSrc;
+    const staged = /staged/i.test(item.notes || '');
+    const needsBrief = captureNeeded || item.source === 'preview' || staged || Boolean(review);
     stopVideo();
-    $('#media-error').textContent = item.image ? 'Media is unavailable. Try another highlight.' : 'A screen capture has not been added yet.';
-    $('#media-error').hidden = Boolean(item.image);
-    imageButton.hidden = !item.image;
+    $('#media-error').hidden = true;
+    $('#media-request').hidden = !captureNeeded;
+    $('#request-title').textContent = review?.suppress ? 'A route preview capture is needed' : 'A capture is needed for this feature';
+    $('#request-file').textContent = captureFiles(item);
+    imageButton.hidden = !imageSrc;
     image.alt = `${slide.title} in HikerCircle`;
-    if (item.image) image.src = item.image;
+    if (imageSrc) image.src = imageSrc;
     else image.removeAttribute('src');
-    $('#play-recording').hidden = !item.video;
-    $('#stage-chapter').textContent = chapters[slide.chapter]?.title || 'More features';
-    $('#stage-count').textContent = `${String(index + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
+    $('#play-recording').hidden = !videoSrc;
+    $('#stage-chapter').textContent = chapterSpecs[slide.chapter].label;
+    const inChapter = chapterSlides(slide.chapter);
+    $('#stage-count').textContent = `${String(inChapter.indexOf(slide) + 1).padStart(2, '0')} / ${String(inChapter.length).padStart(2, '0')}`;
     $('#stage-title').textContent = slide.title;
     $('#stage-description').textContent = slide.copy;
-    $('#stage-source').textContent = !item.image ? 'Capture pending' : item.source === 'preview' ? 'Interface preview' : item.chapter === 'archive' ? 'Staged / earlier capture' : '';
+    $('#stage-source').textContent = captureNeeded ? 'Capture needed' : item.source === 'preview' ? 'Interface preview' : staged ? 'Staged / earlier capture' : 'Earlier app capture';
+    const brief = $('#media-brief');
+    $('#media-brief-label').textContent = review?.label || (captureNeeded ? 'What to capture' : item.source === 'preview' ? 'Replace this preview' : 'Capture / refresh instructions');
+    $('#media-brief-text').textContent = item.capture || 'Capture this feature with a controlled demo account.';
+    $('#media-brief-files').textContent = captureFiles(item);
+    brief.open = needsBrief;
     $('#previous').disabled = index === 0;
     $('#next').disabled = index === slides.length - 1;
     $('#chapter-nav').querySelectorAll('button').forEach((button, chapterIndex) =>
       button.setAttribute('aria-pressed', String(slide.chapter === chapterIndex)));
-    $('#slide-dots').querySelectorAll('button').forEach((button, dotIndex) =>
-      button.setAttribute('aria-current', dotIndex === index ? 'true' : 'false'));
+    if (activeChapter !== slide.chapter) {
+      renderFeatureNav(slide.chapter);
+      activeChapter = slide.chapter;
+    }
+    $('#feature-nav').querySelectorAll('button').forEach((button, featureIndex) =>
+      button.setAttribute('aria-current', inChapter[featureIndex] === slide ? 'true' : 'false'));
+    const featureNav = $('#feature-nav');
+    const selectedButton = featureNav.querySelector('[aria-current="true"]');
+    if (selectedButton) {
+      const delta = selectedButton.getBoundingClientRect().left - featureNav.getBoundingClientRect().left
+        - (featureNav.clientWidth - selectedButton.clientWidth) / 2;
+      featureNav.scrollBy({ left: delta, behavior: 'smooth' });
+    }
     if (syncUrl) {
       const url = new URL(location.href);
       url.searchParams.set('feature', item.id);
@@ -97,20 +165,22 @@
   $('#next').addEventListener('click', () => navigate(1));
 
   image.addEventListener('error', () => {
-    if (!slides[active]?.item.image) return;
+    if (!usableImage(slides[active])) return;
     imageButton.hidden = true;
     $('#media-error').hidden = false;
   });
   video.addEventListener('error', () => {
     if (video.hidden) return;
     stopVideo();
+    imageButton.hidden = !usableImage(slides[active]);
     $('#media-error').hidden = false;
   });
   $('#play-recording').addEventListener('click', async () => {
-    const item = slides[active]?.item;
-    if (!item?.video) return;
-    video.poster = item.image;
-    video.src = item.video;
+    const slide = slides[active];
+    const src = slide && usableVideo(slide);
+    if (!src) return;
+    video.poster = usableImage(slide);
+    video.src = src;
     imageButton.hidden = true;
     video.hidden = false;
     $('#play-recording').hidden = true;
@@ -119,7 +189,9 @@
 
   const viewer = $('#image-viewer');
   imageButton.addEventListener('click', () => {
-    $('#full-image').src = slides[active].item.image;
+    const slide = slides[active];
+    if (!slide || !usableImage(slide)) return;
+    $('#full-image').src = usableImage(slide);
     $('#full-image').alt = image.alt;
     viewer.showModal();
     $('#close-image').focus();
@@ -132,12 +204,12 @@
     if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(-1); }
     if (event.key === 'ArrowRight') { event.preventDefault(); navigate(1); }
   });
-  $('.stage-media').addEventListener('touchstart', (event) => {
+  $('#stage').addEventListener('touchstart', (event) => {
     if (!video.hidden) return;
     const touch = event.changedTouches[0];
     touchStart = { x: touch.clientX, y: touch.clientY };
   }, { passive: true });
-  $('.stage-media').addEventListener('touchend', (event) => {
+  $('#stage').addEventListener('touchend', (event) => {
     if (!touchStart || !video.hidden) return;
     const touch = event.changedTouches[0];
     const dx = touch.clientX - touchStart.x;
@@ -162,19 +234,23 @@
   fetch(`${base}catalog.json`, { cache: 'no-store' })
     .then((response) => { if (!response.ok) throw new Error('Catalog unavailable'); return response.json(); })
     .then((catalog) => {
-      slides = highlights.map((highlight) => {
-        const item = catalog.items.find((entry) => entry.id === highlight.id);
-        if (!item?.image) throw new Error(`Missing showcase media: ${highlight.id}`);
-        return { ...highlight, item };
+      slides = chapterSpecs.flatMap((chapter, chapterIndex) => {
+        const items = chapter.only
+          ? chapter.only.map((id) => catalog.items.find((item) => item.id === id)).filter(Boolean)
+          : [...catalog.items.filter((item) => item.chapter === chapter.id),
+              ...(chapter.extras || []).map((id) => catalog.items.find((item) => item.id === id)).filter(Boolean)];
+        return items.map((item) => ({ item, chapter: chapterIndex,
+          title: presentationCopy[item.id]?.title || item.title,
+          copy: presentationCopy[item.id]?.copy || item.description }));
       });
-      const requested = new URL(location.href).searchParams.get('feature');
-      if (requested && !slides.some((slide) => slide.id === requested)) {
-        const item = catalog.items.find((entry) => entry.id === requested);
-        if (item) slides.push({ id: item.id, chapter: 4, title: item.title, copy: item.description, item });
+      if (slides.length !== catalog.items.length || new Set(slides.map((slide) => slide.item.id)).size !== catalog.items.length) {
+        throw new Error('Showcase chapter inventory does not match catalog');
       }
-      renderNavigation();
-      const index = slides.findIndex((slide) => slide.id === requested);
-      select(index < 0 ? 0 : index, false);
+      renderChapterNav();
+      const requested = new URL(location.href).searchParams.get('feature');
+      const index = slides.findIndex((slide) => slide.item.id === requested);
+      const defaultIndex = slides.findIndex((slide) => slide.item.id === 'trail-discovery');
+      select(index < 0 ? defaultIndex : index, false);
     })
     .catch(() => {
       $('#stage').hidden = true;

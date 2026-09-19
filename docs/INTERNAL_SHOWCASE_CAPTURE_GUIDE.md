@@ -4,11 +4,11 @@ Prepared 18 September 2026.
 
 Showcase URL: https://hiker-circle.web.app/internal/app-showcase/
 
-This page lives on the existing website. It is unlisted, omitted from public navigation and marked noindex. It does not require sign-in; anyone with the URL can view it. The page is a short, media-led presentation of 13 selected highlights. The full feature inventory and capture briefs remain in `web/internal-showcase/catalog.json` and this guide. No new phone captures are claimed by the presentation.
+This page lives on the existing website. It is unlisted, omitted from public navigation and marked noindex. It does not require sign-in; anyone with the URL can view it. The page presents the catalog one feature at a time, grouped by chapter, with a short description and media or an in-place capture brief. The full inventory and detailed capture instructions remain in `web/internal-showcase/catalog.json` and this guide. No new phone captures are claimed by the presentation.
 
 ## What is already wired
 
-The catalog contains **48 flows** in **10 chapters**. **22 flows reuse existing website screenshots or recordings**, **4 have rendered interface previews**, and **22 flows still need their first capture**. The manager-facing page shows 13 highlights rather than the entire inventory. The catalog remains authoritative for wiring new media. Preview images are clearly labelled and still benefit from a current phone recording.
+The catalog contains **48 flows** in **10 chapters**. **22 flows reuse existing website screenshots or recordings**, **4 have rendered interface previews**, and **22 flows still need their first capture**. The manager-facing page makes all 48 available without showing a large grid at once. The unrelated route-preview screenshot is deliberately suppressed, adding one replacement to the capture priority. Other partial or staged media is labelled, and missing or provisional media gets a capture brief on the page. The catalog remains authoritative for wiring new media.
 
 Existing media was matched against the image descriptions in `web/index.html` and the milestone metadata in `web/site/app.js`. Existing September 7–8 recordings are earlier captures, not newly obtained phone footage. Older milestone dates describe the product story; they are not necessarily the media capture date. Original/staged material is labelled in each catalog item's `notes`.
 
