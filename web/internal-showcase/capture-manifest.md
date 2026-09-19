@@ -1,6 +1,6 @@
 # HikerCircle internal showcase — media handoff list
 
-Prepared 19 September 2026. This is the short, filename-first companion to the [detailed capture guide](capture-guide.md). The [internal showcase](https://hiker-circle.web.app/internal/app-showcase/) currently has 48 flows: 22 need their first visual, 4 use rendered previews, 21 have earlier app captures, and 1 is a historical archive item. No new phone captures are claimed here.
+Prepared 19 September 2026. This is the short, filename-first companion to the [detailed capture guide](capture-guide.md). The [internal showcase](https://hiker-circle.web.app/internal/app-showcase/) presents 13 selected highlights. Its underlying catalog tracks 48 flows: 22 need their first visual, 4 use rendered previews, 21 have earlier app captures, and 1 is a historical archive item. No new phone captures are claimed here.
 
 ## How to hand off media
 

@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-18",
+  "updated": "2026-09-19",
   "chapters": [
     {
       "id": "access",
@@ -142,7 +142,7 @@
         "Open a trail"
       ],
       "source": "device",
-      "image": "/site-assets/evolution/02-companion-device-20260907.jpg",
+      "image": "/site-assets/screens/plan-home.jpeg",
       "video": "/site-assets/evolution/02-companion-device-20260907.mp4",
       "capture": "Capture the current Home trail list, then record 15–20 seconds selecting a filter and opening a trail.",
       "captureFile": "trail-discovery.png",

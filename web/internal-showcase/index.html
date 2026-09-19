@@ -6,67 +6,55 @@
   <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#143f34">
-  <meta name="description" content="HikerCircle internal app showcase: screens, short walkthroughs, and capture checklist.">
+  <meta name="description" content="A short, visual introduction to HikerCircle for internal presentations.">
   <title>App showcase · HikerCircle internal</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
   <link rel="stylesheet" href="/internal/app-showcase/showcase.css">
   <script src="/internal/app-showcase/showcase.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#library">Skip to feature library</a>
+  <a class="skip-link" href="#highlights">Skip to the showcase</a>
   <header class="masthead">
     <a class="brand" href="/" aria-label="HikerCircle website"><img src="/privacy-assets/app-icon.png" alt="" width="34" height="34"><span>HikerCircle</span></a>
-    <div class="masthead-right"><span class="internal-label"><span aria-hidden="true"></span> Internal showcase</span><button class="text-button" id="copy-link" type="button">Copy page link <span aria-hidden="true">↗</span></button></div>
+    <div class="masthead-right"><span class="internal-label"><span aria-hidden="true"></span> Internal showcase</span><button class="text-button" id="copy-link" type="button">Copy link ↗</button></div>
   </header>
 
   <main>
     <section class="intro" aria-labelledby="page-title">
-      <div class="intro-copy">
-        <p class="eyebrow">THE APP, AT A GLANCE</p>
-        <h1 id="page-title">One circle.<br>Every step of <br><em>the journey.</em></h1>
-        <p class="intro-description">A closer look at HikerCircle. Explore the screens and follow the flows, from the first plan to the final check-in.</p>
-        <div class="intro-actions"><button class="button primary" id="start-tour" type="button" disabled>Start guided tour <span aria-hidden="true">→</span></button><a class="button secondary" href="#library">Browse features <span aria-hidden="true">↓</span></a></div>
-        <p class="access-note">An unlisted page for internal presentations. Anyone with this link can view it.</p>
-      </div>
-      <div class="hero-visual" aria-label="App preview">
-        <div class="orbit orbit-one" aria-hidden="true"></div><div class="orbit orbit-two" aria-hidden="true"></div>
-        <span class="visual-label">FROM PLAN TO PATH</span>
-        <div class="hero-phone hero-phone-back"><img src="/site-assets/screens/trail-detail.jpeg" alt="Trail detail screen in HikerCircle" width="1170" height="2532" decoding="async"></div>
-        <div class="hero-phone hero-phone-front"><img src="/site-assets/screens/plan-home.jpeg" alt="HikerCircle home and hike planning screen" width="1170" height="2532" fetchpriority="high"></div>
-        <div class="visual-caption"><span class="caption-mark" aria-hidden="true">↗</span><span><strong>Discover. Prepare. Go together.</strong><small>Existing app captures · interfaces may evolve</small></span></div>
-      </div>
+      <p class="eyebrow">HIKERCIRCLE AT A GLANCE</p>
+      <h1 id="page-title">The hike, <em>connected.</em></h1>
+      <p>Discover a route. Prepare together. Stay safer outside. Relive the day.</p>
     </section>
 
-    <div class="overview-strip" aria-label="Showcase overview"><p><strong id="feature-count">—</strong><span>feature walkthroughs</span></p><p><strong id="media-count">—</strong><span>with visual references</span></p><p><strong id="missing-count">—</strong><span>awaiting first capture</span></p><p class="overview-date"><span>CATALOG REVIEW</span><strong id="catalog-date">—</strong></p></div>
-
-    <section class="library" id="library" aria-labelledby="library-title">
-      <aside class="chapter-rail">
-        <p class="eyebrow">EXPLORE BY CHAPTER</p><nav id="chapters" aria-label="Feature chapters"></nav>
-        <a class="rail-link" href="#capture-list">What to capture next <span aria-hidden="true">↗</span></a>
-      </aside>
-      <div class="library-content">
-        <div class="section-heading"><div><p class="eyebrow">A WALK THROUGH HIKERCIRCLE</p><h2 id="library-title">The feature library.</h2></div><p>Brief descriptions.<br>Full screens. Clear flows.</p></div>
-        <div class="toolbar"><label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">Search features</span><input id="search" type="search" placeholder="Search a feature or flow…" autocomplete="off"></label><label class="filter-label"><span class="sr-only">Filter by media availability</span><select id="media-filter"><option value="all">All features</option><option value="visual">With visuals</option><option value="video">With recordings</option><option value="needed">No visual yet</option></select></label></div>
-        <p class="results-summary" id="results-summary" role="status" aria-live="polite">Loading the feature library…</p>
-        <div id="gallery" class="gallery"></div>
-        <div class="empty-state" id="empty-state" hidden><h3>No matching features.</h3><p>Try another word or clear the filters.</p><button type="button" id="reset-filters" class="button secondary">Reset filters</button></div>
-        <p class="load-error" id="load-error" hidden>The library could not load. Refresh this page or <a href="/internal/app-showcase/capture-guide.md">open the capture guide</a>.</p>
-        <noscript><p>Enable JavaScript to explore the gallery. The <a href="/internal/app-showcase/capture-guide.md">complete capture guide</a> is also available as a document.</p></noscript>
+    <section class="showcase" id="highlights" aria-labelledby="showcase-title">
+      <div class="section-heading"><div><p class="eyebrow">A SHORT LOOK INSIDE</p><h2 id="showcase-title">See the experience.</h2></div><p>Choose a theme or move through the highlights.</p></div>
+      <nav id="chapter-nav" class="chapter-nav" aria-label="Showcase themes"></nav>
+      <div class="stage" id="stage" tabindex="0" aria-label="Feature highlight; use left and right arrow keys to navigate">
+        <div class="stage-media">
+          <div class="media-glow" aria-hidden="true"></div>
+          <button id="open-image" class="phone-frame" type="button" aria-label="View screenshot full size"><img id="stage-image" alt="" loading="eager"></button>
+          <video id="stage-video" controls playsinline preload="none" hidden></video>
+          <p id="media-error" class="media-error" hidden>Media is unavailable. Try another highlight.</p>
+          <button id="play-recording" class="play-recording" type="button" hidden><span aria-hidden="true">▶</span> Watch recording</button>
+        </div>
+        <div class="stage-copy">
+          <div class="stage-topline"><span id="stage-chapter"></span><span id="stage-count"></span></div>
+          <h3 id="stage-title" aria-live="polite">Loading the showcase…</h3>
+          <p id="stage-description"></p>
+          <span id="stage-source" class="source-label"></span>
+          <div class="stage-spacer"></div>
+          <div id="slide-dots" class="slide-dots" role="group" aria-label="Choose a highlight"></div>
+          <div class="stage-controls"><button id="previous" type="button" aria-label="Previous highlight">←</button><button id="next" type="button" aria-label="Next highlight">→</button></div>
+        </div>
       </div>
-    </section>
-
-    <section class="capture-section" id="capture-list" aria-labelledby="capture-title">
-      <div class="capture-intro"><p class="eyebrow">FINISH THE PICTURE</p><h2 id="capture-title">A ready-to-use<br>capture checklist.</h2><p>The current library combines existing app media and clearly labelled interface previews. These shots will bring every flow up to date.</p><a class="button primary" href="/internal/app-showcase/capture-manifest.md" download="HikerCircle-media-list.md">Download media list <span aria-hidden="true">↓</span></a><p class="capture-format">Portrait PNG or JPG · MP4 recordings · Demo data</p><a class="capture-guide-link" href="/internal/app-showcase/capture-guide.md" download="HikerCircle-capture-guide.md">Detailed capture and safety guide ↗</a></div>
-      <div class="capture-details"><div class="capture-how"><span>01</span><p><strong>Keep the app in focus.</strong> Capture the full screen, with readable text and no notification banners.</p></div><div class="capture-how"><span>02</span><p><strong>Show one short flow.</strong> Record 10–25 seconds, pausing briefly on each important screen.</p></div><div class="capture-how"><span>03</span><p><strong>Use a demo account.</strong> Hide personal details and live share links. Show SOS with an isolated demo; never send a real alert for a capture.</p></div><details id="capture-details"><summary><span>View the complete shot list</span><span id="capture-total"></span></summary><div id="capture-items"></div></details></div>
+      <p class="showcase-note">Media includes earlier app captures and clearly marked previews or staged examples. The interface may evolve.</p>
+      <p id="load-error" class="load-error" hidden>The showcase could not load. Please refresh this page.</p>
+      <noscript><p class="load-error">Enable JavaScript to view the feature highlights.</p></noscript>
     </section>
   </main>
 
-  <footer><a class="brand" href="/">HikerCircle</a><p>Internal presentation reference · Unlisted and excluded from search indexing</p><a href="#page-title">Back to top ↑</a></footer>
+  <footer><a class="brand" href="/">HikerCircle</a><a href="/internal/app-showcase/capture-manifest.md" download="HikerCircle-media-list.md">Media handoff list ↗</a><span>Unlisted presentation page · Anyone with the link can view it</span></footer>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-
-  <dialog id="viewer" aria-labelledby="viewer-title" aria-describedby="viewer-description">
-    <div class="viewer-bar"><span id="viewer-position"></span><button id="close-viewer" class="icon-button" type="button" aria-label="Close walkthrough">✕</button></div>
-    <div class="viewer-layout"><div class="viewer-media-panel"><div class="media-tabs" id="media-tabs" role="group" aria-label="Choose media"></div><div id="viewer-media"></div></div><div class="viewer-copy"><p class="eyebrow" id="viewer-chapter"></p><h2 id="viewer-title"></h2><p id="viewer-description"></p><p class="media-source" id="viewer-source"></p><div class="flow-heading"><h3>The flow</h3><span id="flow-position" aria-live="polite"></span></div><ol id="viewer-flow"></ol><div class="step-controls"><button id="previous-step" type="button" aria-label="Previous step">←</button><div class="step-progress" id="step-progress" role="group" aria-label="Flow steps"></div><button id="next-step" type="button" aria-label="Next step">→</button></div><p class="viewer-note" id="viewer-note"></p><details class="viewer-capture"><summary>Capture / refresh this feature</summary><p id="viewer-capture-text"></p><code id="viewer-capture-file"></code></details><div class="viewer-share"><button id="copy-feature-link" class="text-button" type="button">Copy this walkthrough link ↗</button></div><div class="viewer-nav"><button id="previous-feature" type="button" class="button secondary">← Previous</button><button id="next-feature" type="button" class="button secondary">Next →</button></div></div></div>
-  </dialog>
+  <dialog id="image-viewer" aria-label="Full-size app screenshot"><button id="close-image" type="button" aria-label="Close full-size screenshot">✕</button><img id="full-image" alt=""></dialog>
 </body>
 </html>
