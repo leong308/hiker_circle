@@ -2,6 +2,8 @@
 
 Prepared 18 September 2026.
 
+For a shorter checklist of exact screenshot and recording filenames, see [the media handoff list](capture-manifest.md). This document gives the full shot briefs and safety constraints.
+
 Showcase URL: https://hiker-circle.web.app/internal/app-showcase/
 
 This page lives on the existing website. It is unlisted, omitted from public navigation and marked noindex. It does not require sign-in; anyone with the URL can view it. Phone capture was stopped at the owner’s request; no fresh phone screenshots or recordings are included. The showcase catalog is `web/internal-showcase/catalog.json`; the page presents the app by user journey, with short descriptions, ordered flow steps, existing media and visible capture requests.

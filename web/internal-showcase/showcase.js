@@ -7,6 +7,7 @@
   let chapter = 'all';
   let filtered = [];
   let current = null;
+  let stepIndex = 0;
   let returnFocus = null;
   let toastTimer;
 
@@ -20,11 +21,11 @@
   const hasMedia = (item) => Boolean(item.image || item.video);
   const sourceLabel = (item) => item.source === 'preview' ? 'Interface preview' : item.source === 'needed' ? 'Capture needed' : item.chapter === 'archive' ? 'Archive / staged' : /staged demonstration/i.test(item.notes || '') ? 'Staged demo' : 'Existing app capture';
 
-  function flowArtwork(item) {
+  function flowArtwork(item, selected = -1, label = 'FLOW WALKTHROUGH · SCREEN CAPTURE PENDING') {
     const art = element('div', 'flow-art');
-    art.append(element('span', '', 'FUNCTIONALITY FLOW'));
+    art.append(element('span', '', label));
     const list = element('ol');
-    item.flow.forEach((step) => list.append(element('li', '', step)));
+    item.flow.forEach((step, index) => list.append(element('li', index === selected ? 'active' : '', step)));
     art.append(list);
     return art;
   }
@@ -73,7 +74,7 @@
         img.alt = `${item.title} — ${sourceLabel(item).toLocaleLowerCase()}`;
         img.loading = 'lazy';
         img.decoding = 'async';
-        img.addEventListener('error', () => img.replaceWith(flowArtwork(item)), { once: true });
+        img.addEventListener('error', () => img.replaceWith(flowArtwork(item, -1, 'VISUAL UNAVAILABLE · EXPLORE THE FLOW')), { once: true });
         visual.append(img);
       } else {
         visual.append(flowArtwork(item));
@@ -107,6 +108,9 @@
       video.playsInline = true;
       video.preload = 'none';
       video.setAttribute('aria-label', `${item.title} screen recording`);
+      video.addEventListener('error', () => {
+        container.replaceChildren(flowArtwork(item, stepIndex, 'RECORDING UNAVAILABLE · EXPLORE THE FLOW'));
+      }, { once: true });
       video.append(element('p', '', 'Your browser does not support this recording.'));
       container.append(video);
     } else if (media.type === 'image') {
@@ -117,11 +121,40 @@
         container.replaceChildren(flowArtwork(item), element('p', 'load-error', 'Image unavailable. The feature flow is shown instead.'));
       }, { once: true });
       container.append(image);
-    } else container.append(flowArtwork(item));
+    } else container.append(flowArtwork(item, stepIndex));
   }
 
-  function openFeature(item, trigger) {
+  function featureUrl(id) {
+    const url = new URL(location.href);
+    url.searchParams.set('feature', id);
+    return url;
+  }
+
+  function setStep(index) {
+    if (!current) return;
+    stepIndex = Math.max(0, Math.min(index, current.flow.length - 1));
+    $('#flow-position').textContent = `Step ${stepIndex + 1} of ${current.flow.length}`;
+    $('#viewer-flow').querySelectorAll('button').forEach((button, i) => {
+      button.setAttribute('aria-current', i === stepIndex ? 'step' : 'false');
+    });
+    $('#step-progress').querySelectorAll('button').forEach((button, i) => {
+      button.setAttribute('aria-current', i === stepIndex ? 'step' : 'false');
+    });
+    $('#previous-step').disabled = stepIndex === 0;
+    $('#next-step').disabled = stepIndex === current.flow.length - 1;
+    if (!current.image && !current.video && !(current.images || []).length) {
+      $('#viewer-media').replaceChildren(flowArtwork(current, stepIndex));
+    }
+  }
+
+  function openFeature(item, trigger, updateUrl = true) {
+    if (updateUrl) {
+      const url = featureUrl(item.id);
+      if (viewer.open) history.replaceState(history.state, '', url);
+      else history.pushState({ ...history.state, showcaseFeature: true }, '', url);
+    }
     current = item;
+    stepIndex = 0;
     if (!viewer.open) returnFocus = trigger || document.activeElement;
     const index = filtered.findIndex((entry) => entry.id === item.id);
     $('#viewer-position').textContent = `${String(index + 1).padStart(2, '0')} / ${String(filtered.length).padStart(2, '0')} · FEATURE WALKTHROUGH`;
@@ -129,7 +162,22 @@
     $('#viewer-title').textContent = item.title;
     $('#viewer-description').textContent = item.description;
     $('#viewer-source').textContent = sourceLabel(item);
-    $('#viewer-flow').replaceChildren(...item.flow.map((step) => element('li', '', step)));
+    $('#viewer-flow').replaceChildren(...item.flow.map((step, index) => {
+      const row = element('li');
+      const button = element('button', 'flow-step', step);
+      button.type = 'button';
+      button.addEventListener('click', () => setStep(index));
+      row.append(button);
+      return row;
+    }));
+    const progress = $('#step-progress');
+    progress.replaceChildren(...item.flow.map((_, index) => {
+      const button = element('button', '', String(index + 1));
+      button.type = 'button';
+      button.setAttribute('aria-label', `Go to step ${index + 1}`);
+      button.addEventListener('click', () => setStep(index));
+      return button;
+    }));
     $('#viewer-note').textContent = item.notes || '';
     $('#viewer-note').hidden = !item.notes;
     $('#viewer-capture-text').textContent = item.capture;
@@ -153,6 +201,7 @@
       $('#media-tabs').append(button);
     });
     setMedia(item, media[0]);
+    setStep(0);
     if (!viewer.open) {
       viewer.showModal();
       document.body.classList.add('viewer-open');
@@ -166,13 +215,26 @@
     const next = filtered[index + offset];
     if (next) openFeature(next);
   }
+  $('#previous-step').addEventListener('click', () => setStep(stepIndex - 1));
+  $('#next-step').addEventListener('click', () => setStep(stepIndex + 1));
   $('#previous-feature').addEventListener('click', () => navigate(-1));
   $('#next-feature').addEventListener('click', () => navigate(1));
-  $('#close-viewer').addEventListener('click', () => viewer.close());
+  function closeFeature() {
+    if (history.state?.showcaseFeature) {
+      history.back();
+    } else {
+      const url = new URL(location.href);
+      url.searchParams.delete('feature');
+      history.replaceState(history.state, '', url);
+      viewer.close();
+    }
+  }
+  $('#close-viewer').addEventListener('click', closeFeature);
+  viewer.addEventListener('cancel', (event) => { event.preventDefault(); closeFeature(); });
   viewer.addEventListener('click', (event) => {
     if (event.target !== viewer) return;
     const rect = viewer.getBoundingClientRect();
-    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) viewer.close();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeFeature();
   });
   viewer.addEventListener('close', () => {
     $('#viewer-media').querySelector('video')?.pause();
@@ -181,9 +243,24 @@
     if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
   });
   viewer.addEventListener('keydown', (event) => {
-    if (event.target.closest('video, button, summary')) return;
+    if (event.target.closest('video, input, button, summary')) return;
     if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(-1); }
     if (event.key === 'ArrowRight') { event.preventDefault(); navigate(1); }
+  });
+  window.addEventListener('popstate', () => {
+    if (!catalog) return;
+    const id = new URL(location.href).searchParams.get('feature');
+    const item = catalog.items.find((entry) => entry.id === id);
+    if (item) {
+      if (!filtered.some((entry) => entry.id === id)) {
+        chapter = 'all';
+        $('#search').value = '';
+        $('#media-filter').value = 'all';
+        renderChapters();
+        renderGallery();
+      }
+      openFeature(item, null, false);
+    } else if (viewer.open) viewer.close();
   });
 
   function renderChecklist() {
@@ -203,15 +280,17 @@
     $('#toast').hidden = false;
     toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 5000);
   }
-  $('#copy-link').addEventListener('click', async () => {
-    const url = `${location.origin}${base}`;
+  async function copyLink(url, message) {
     try {
       await navigator.clipboard.writeText(url);
-      toast('Showcase link copied. Share with your internal audience.');
+      toast(message);
     } catch {
       toast(`Copy this link from your address bar: ${url}`);
     }
-  });
+  }
+  $('#copy-link').addEventListener('click', () => copyLink(`${location.origin}${base}`, 'Showcase link copied. Share with your internal audience.'));
+  $('#copy-feature-link').addEventListener('click', () => current && copyLink(featureUrl(current.id).href, 'Walkthrough link copied.'));
+  $('#start-tour').addEventListener('click', () => catalog && openFeature(catalog.items[0], $('#start-tour')));
   $('#search').addEventListener('input', () => catalog && renderGallery());
   $('#media-filter').addEventListener('change', () => catalog && renderGallery());
   $('#reset-filters').addEventListener('click', () => {
@@ -234,9 +313,14 @@
       $('#feature-count').textContent = catalog.items.length;
       $('#media-count').textContent = catalog.items.filter(hasMedia).length;
       $('#missing-count').textContent = catalog.items.filter((item) => !hasMedia(item)).length;
+      $('#catalog-date').textContent = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${catalog.updated}T00:00:00`));
+      $('#start-tour').disabled = false;
       renderChapters();
       renderGallery();
       renderChecklist();
+      const initialId = new URL(location.href).searchParams.get('feature');
+      const initial = catalog.items.find((item) => item.id === initialId);
+      if (initial) openFeature(initial, null, false);
     })
     .catch(() => {
       $('#load-error').hidden = false;
