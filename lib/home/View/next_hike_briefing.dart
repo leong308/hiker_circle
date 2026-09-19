@@ -4,10 +4,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Data/hike_briefing_weather_service.dart';
+import '../Data/home_screen_widget_service.dart';
 import '../Model/hike_session_models.dart';
 import '../Model/hike_weather_briefing.dart';
 
-/// The nearest scheduled hike; countdown is local, weather is at the trail.
+/// A scheduled hike briefing; countdown is local, weather is at the trail.
 class NextHikeBriefing extends StatefulWidget {
   const NextHikeBriefing({
     super.key,
@@ -18,6 +19,7 @@ class NextHikeBriefing extends StatefulWidget {
     this.onReview,
     this.isVisible = true,
     this.weatherService,
+    this.isNextHike = true,
   });
   final UpcomingHike hike;
   final String phoneNumber;
@@ -26,6 +28,7 @@ class NextHikeBriefing extends StatefulWidget {
   final VoidCallback? onReview;
   final bool isVisible;
   final HikeBriefingWeatherService? weatherService;
+  final bool isNextHike;
 
   @override
   State<NextHikeBriefing> createState() => _NextHikeBriefingState();
@@ -43,8 +46,7 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
   HikeBriefingWeatherService get _service =>
       widget.weatherService ?? HikeBriefingWeatherService.shared;
   bool get _beyondForecast =>
-      widget.hike.departureTime.toUtc().difference(DateTime.now().toUtc()) >=
-      const Duration(days: 7);
+      HikeBriefingWeatherService.isBeyondForecast(widget.hike.departureTime);
 
   @override
   void initState() {
@@ -126,6 +128,9 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
         _failed = false;
         _retryAt = DateTime.now().add(HikeBriefingWeatherService.freshness);
       });
+      unawaited(
+        HomeScreenWidgetService.shared.acceptForecast(widget.hike, weather),
+      );
     } catch (_) {
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -169,13 +174,15 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
             children: [
               Icon(Icons.hiking_rounded, size: 18, color: scheme.primary),
               const SizedBox(width: 6),
-              Text(
-                'NEXT HIKE',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: scheme.primary,
-                  letterSpacing: 1,
+              Expanded(
+                child: Text(
+                  widget.isNextHike ? 'NEXT HIKE' : 'UPCOMING HIKE',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.primary,
+                    letterSpacing: 1,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -313,11 +320,7 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
         : 'Forecast does not cover this hike yet';
     return _BriefingAction(
       title: 'Hike weather',
-      onTap: available
-          ? () => _showForecast(context, briefing!, weather!)
-          : !_loading && !_beyondForecast
-          ? () => _load(force: true)
-          : null,
+      onTap: () => _showForecast(context, weather),
       leading: DecoratedBox(
         decoration: BoxDecoration(
           shape: BoxShape.circle,
@@ -361,11 +364,7 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
     );
   }
 
-  void _showForecast(
-    BuildContext context,
-    HikeWeatherBriefing briefing,
-    TrailWeather weather,
-  ) {
+  void _showForecast(BuildContext context, TrailWeather? weather) {
     final hikeId = widget.hike.id;
     showModalBottomSheet<void>(
       context: context,

@@ -20,70 +20,99 @@ class SessionRepository {
   SessionRepository({
     LocalSessionDatabase? localSessionDatabase,
     FirebaseUserRepository? firebaseUserRepository,
+    Duration cloudTimeout = const Duration(seconds: 8),
   }) : _localSessionDatabase = localSessionDatabase ?? LocalSessionDatabase(),
+       _cloudTimeout = cloudTimeout,
        _firebaseUserRepository =
            firebaseUserRepository ?? FirebaseUserRepository();
 
   final LocalSessionDatabase _localSessionDatabase;
   final FirebaseUserRepository _firebaseUserRepository;
 
+  final Duration _cloudTimeout;
+  final _changes = StreamController<AppSession?>.broadcast();
+  Stream<AppSession?> get changes => _changes.stream;
   AppSession? _session;
+  int _generation = 0;
+  Future<void> _localWrites = Future<void>.value();
+  Future<void> _signOutFuture = Future<void>.value();
+
+  void _publishSession(AppSession? session) {
+    _session = session;
+    _changes.add(session);
+  }
+
+  Future<void> _persistIfCurrent(int generation, AppSession? session) {
+    final operation = _localWrites.then((_) async {
+      if (generation != _generation) return;
+      if (session == null) {
+        await _localSessionDatabase.clearUserSessionOnly();
+      } else {
+        await _localSessionDatabase.saveSession(session);
+      }
+    });
+    _localWrites = operation.catchError((_) {});
+    return operation;
+  }
 
   AppSession? get currentSession => _session;
 
   bool get isSignedIn => _session != null;
 
   Future<void> loadSavedSession() async {
-    AppSession? boundSession;
+    final generation = ++_generation;
     try {
-      final savedSession = await _localSessionDatabase.loadSession();
-      if (savedSession == null) {
-        await _firebaseUserRepository.signOut();
-        _session = null;
+      final saved = await _localSessionDatabase.loadSession();
+      if (generation != _generation) return;
+      if (saved == null) {
+        _publishSession(null);
+        unawaited(
+          _ignoreSignOutFailure(
+            _firebaseUserRepository.signOut().timeout(_cloudTimeout),
+          ),
+        );
         return;
       }
-      final appInstanceId = savedSession.appInstanceId.isEmpty
+      final instanceId = saved.appInstanceId.isEmpty
           ? await _localSessionDatabase.loadOrCreateAppInstanceId()
-          : savedSession.appInstanceId;
-      boundSession = savedSession.copyWith(appInstanceId: appInstanceId);
-      // Make the locally authenticated session available immediately. A cold
-      // start without connectivity must not erase the user's account or their
-      // in-progress hike merely because cloud revalidation cannot run.
-      _session = boundSession;
-      final refreshedSession = await _firebaseUserRepository
-          .refreshBoundSession(boundSession);
-      final cachedSession = await _withCachedProfilePhoto(
-        refreshedSession,
-        previousSession: savedSession,
-      );
-      await _localSessionDatabase.saveSession(cachedSession);
-      _session = cachedSession;
-    } on FirebaseUserRepositoryException catch (error) {
-      if (error.requiresSignIn) {
-        await _firebaseUserRepository.signOut();
-        await _localSessionDatabase.clearUserSessionOnly();
-        _session = null;
-        return;
-      }
-      // Transient Firebase/network failures retain the locally saved session.
-      // The next foreground/reconnect refresh will revalidate it.
-      _session = boundSession;
-      if (boundSession != null) {
-        try {
-          await _localSessionDatabase.saveSession(boundSession);
-        } catch (_) {
-          // The original cached row is still the best available source.
-        }
-      }
+          : saved.appInstanceId;
+      if (generation != _generation) return;
+      final bound = saved.copyWith(appInstanceId: instanceId);
+      _publishSession(bound);
+      // Restoring the local session is sufficient to leave the startup screen.
+      // Cloud validation continues independently with a bounded deadline.
+      unawaited(_refreshSavedSession(bound, generation));
     } catch (_) {
-      // Local corruption or an unexpected startup error must not delete an
-      // active hike. Leave the recoverable session untouched on disk.
-      _session = boundSession;
+      // Never delete an active hike because local startup data could not load.
+      if (generation == _generation) _publishSession(null);
+    }
+  }
+
+  Future<void> _refreshSavedSession(AppSession saved, int generation) async {
+    try {
+      final refreshed = await _firebaseUserRepository
+          .refreshBoundSession(saved)
+          .timeout(_cloudTimeout);
+      if (generation != _generation) return;
+      final cached = await _withCachedProfilePhoto(
+        refreshed,
+        previousSession: saved,
+      ).timeout(_cloudTimeout, onTimeout: () => refreshed);
+      if (generation != _generation) return;
+      await _persistIfCurrent(generation, cached);
+      if (generation == _generation) _publishSession(cached);
+    } on FirebaseUserRepositoryException catch (error) {
+      if (generation == _generation && error.requiresSignIn) await signOut();
+    } catch (_) {
+      // A transient cloud/profile failure retains the locally restored session.
     }
   }
 
   Future<void> signIn(AppSession session) async {
+    await _signOutFuture;
+    final generation = ++_generation;
     try {
+      await _localWrites;
       final existingSession = await _localSessionDatabase.loadSession();
       if (existingSession != null &&
           existingSession.phoneNumber != session.phoneNumber) {
@@ -93,17 +122,21 @@ class SessionRepository {
       }
       final appInstanceId = await _localSessionDatabase
           .loadOrCreateAppInstanceId();
-      final registeredSession = await _firebaseUserRepository
-          .registerOrLoadUser(session.copyWith(appInstanceId: appInstanceId));
-      final cachedSession = await _withCachedProfilePhoto(
-        registeredSession,
+      final registered = await _firebaseUserRepository
+          .registerOrLoadUser(session.copyWith(appInstanceId: appInstanceId))
+          .timeout(_cloudTimeout);
+      if (generation != _generation) return;
+      final cached = await _withCachedProfilePhoto(
+        registered,
         previousSession: existingSession,
-      );
-      await _localSessionDatabase.saveSession(cachedSession);
-      _session = cachedSession;
+      ).timeout(_cloudTimeout, onTimeout: () => registered);
+      if (generation != _generation) return;
+      await _persistIfCurrent(generation, cached);
+      if (generation == _generation) _publishSession(cached);
     } on SessionRepositoryException {
       rethrow;
     } on FirebaseUserRepositoryException catch (error) {
+      if (generation == _generation && error.requiresSignIn) await signOut();
       throw SessionRepositoryException(error.message);
     } catch (_) {
       throw const SessionRepositoryException(
@@ -114,36 +147,51 @@ class SessionRepository {
 
   Future<void> refreshCurrentSession() async {
     final session = _session;
-    if (session == null) {
-      return;
-    }
+    final generation = _generation;
+    if (session == null) return;
     try {
-      final refreshedSession = await _firebaseUserRepository
-          .refreshBoundSession(session);
-      final cachedSession = await _withCachedProfilePhoto(
-        refreshedSession,
+      final refreshed = await _firebaseUserRepository
+          .refreshBoundSession(session)
+          .timeout(_cloudTimeout);
+      if (generation != _generation) return;
+      final cached = await _withCachedProfilePhoto(
+        refreshed,
         previousSession: session,
-      );
-      await _localSessionDatabase.saveSession(cachedSession);
-      _session = cachedSession;
+      ).timeout(_cloudTimeout, onTimeout: () => refreshed);
+      if (generation != _generation) return;
+      await _persistIfCurrent(generation, cached);
+      if (generation == _generation) _publishSession(cached);
     } on FirebaseUserRepositoryException catch (error) {
+      if (generation == _generation && error.requiresSignIn) await signOut();
       throw SessionRepositoryException(error.message);
+    } on TimeoutException {
+      throw const SessionRepositoryException(
+        'Profile refresh timed out. Please try again.',
+      );
     }
   }
 
-  void signOut() {
-    _session = null;
-    unawaited(_ignoreSignOutFailure(_firebaseUserRepository.signOut()));
-    unawaited(
-      _ignoreSignOutFailure(_localSessionDatabase.clearUserSessionOnly()),
-    );
+  Future<void> signOut() {
+    final generation = ++_generation;
+    _publishSession(null);
+    // Queue local deletion behind an in-flight save; a later sign-in waits for
+    // this cleanup so neither a late refresh nor deletion can revive/erase it.
+    final localCleanup = _persistIfCurrent(generation, null);
+    final cleanup = Future.wait<void>([
+      _ignoreSignOutFailure(localCleanup),
+      _ignoreSignOutFailure(
+        _firebaseUserRepository.signOut().timeout(_cloudTimeout),
+      ),
+    ]).then((_) {});
+    _signOutFuture = cleanup;
+    return cleanup;
   }
 
   Future<void> _ignoreSignOutFailure(Future<void> operation) async {
     try {
       await operation;
     } catch (_) {
-      // Local UI state is already signed out. Cleanup can be retried later.
+      // In-memory authentication is already cleared.
     }
   }
 
@@ -198,12 +246,14 @@ class SessionRepository {
         return null;
       }
       final builder = BytesBuilder(copy: false);
-      await for (final chunk in response.stream) {
-        if (builder.length + chunk.length > maxBytes) {
-          return null;
+      await (() async {
+        await for (final chunk in response.stream) {
+          if (builder.length + chunk.length > maxBytes) {
+            throw const FormatException('Profile image is too large.');
+          }
+          builder.add(chunk);
         }
-        builder.add(chunk);
-      }
+      })().timeout(_cloudTimeout);
       final bytes = builder.takeBytes();
       return _hasSupportedImageSignature(bytes) ? bytes : null;
     } catch (_) {

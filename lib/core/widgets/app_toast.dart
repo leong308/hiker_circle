@@ -11,7 +11,7 @@ abstract final class HikerCircleToast {
     reverseDuration: Duration(milliseconds: 280),
   );
 
-  static void show(
+  static ScaffoldFeatureController<SnackBar, SnackBarClosedReason> show(
     BuildContext context,
     String message, {
     HikerCircleToastTone tone = HikerCircleToastTone.info,
@@ -27,7 +27,7 @@ abstract final class HikerCircleToast {
         MediaQuery.accessibleNavigationOf(context);
 
     messenger.clearSnackBars();
-    messenger.showSnackBar(
+    return messenger.showSnackBar(
       _HikerCircleToastSnackBar(
         message: message,
         tone: tone,

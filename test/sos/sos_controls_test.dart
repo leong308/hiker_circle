@@ -15,6 +15,16 @@ import 'package:hiker_circle/sos/Model/sos_models.dart';
 import 'package:hiker_circle/sos/View/sos_page.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const locationChannel = MethodChannel('hiker_circle/sos_device_alerts');
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(locationChannel, (_) async => null);
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(locationChannel, null);
+  });
   final now = DateTime.utc(2026, 8, 18, 14);
   final session = AppSession(phoneNumber: '+60111111111', signedInAt: now);
 

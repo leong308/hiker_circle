@@ -10,16 +10,26 @@ import '../Model/live_location_models.dart';
 import 'live_location_repository.dart';
 
 class LiveLocationSharingService extends ChangeNotifier {
-  LiveLocationSharingService._();
+  LiveLocationSharingService({
+    LiveLocationRepository Function(FirebaseBootstrapResult)? repositoryFactory,
+  }) : _repositoryFactory =
+           repositoryFactory ??
+           ((bootstrap) =>
+               LiveLocationRepository(firebaseBootstrapResult: bootstrap));
+
+  final LiveLocationRepository Function(FirebaseBootstrapResult)
+  _repositoryFactory;
 
   static final LiveLocationSharingService instance =
-      LiveLocationSharingService._();
+      LiveLocationSharingService();
 
   final SosDeviceAlertService _deviceService = const SosDeviceAlertService();
 
   LiveLocationRepository? _repository;
   String? _phoneNumber;
   Timer? _publishTimer;
+  Duration _publishInterval = LocationSnapshotService.liveSnapshotInterval;
+  Duration _snapshotInterval = LocationSnapshotService.liveSnapshotInterval;
   LiveLocationShare? _share;
   bool _isActive = false;
   bool _isBusy = false;
@@ -28,6 +38,7 @@ class LiveLocationSharingService extends ChangeNotifier {
   bool _isPublishing = false;
   String? _errorMessage;
   bool _autoShareOnHikeStart = false;
+  int _manualStopRevision = 0;
   int _configurationGeneration = 0;
   Future<void>? _loadFuture;
   Future<void>? _publishFuture;
@@ -40,13 +51,20 @@ class LiveLocationSharingService extends ChangeNotifier {
   bool get autoShareOnHikeStart => _autoShareOnHikeStart;
   String? get errorMessage => _errorMessage;
 
+  /// Changes synchronously when the user requests a stop. This stays monotonic
+  /// across account/configuration resets so listeners can persist hike opt-outs.
+  int get manualStopRevision => _manualStopRevision;
+
   Map<String, Object?> get debugSnapshot => {
     'storageType': 'In-memory live-location sharing session',
     'persistence': 'Process lifetime; cloud share is stored separately',
     'repositoryConfigured': _repository != null,
     'configuredPhoneNumber': _phoneNumber,
     'publishTimerActive': _publishTimer?.isActive == true,
+    'publishIntervalSeconds': _publishInterval.inSeconds,
+    'snapshotIntervalSeconds': _snapshotInterval.inSeconds,
     'isActive': _isActive,
+    'manualStopRevision': _manualStopRevision,
     'isBusy': _isBusy,
     'isPreferenceBusy': _isPreferenceBusy,
     'autoShareOnHikeStart': _autoShareOnHikeStart,
@@ -122,7 +140,7 @@ class LiveLocationSharingService extends ChangeNotifier {
         _share = existingShare;
         _isActive = true;
         await LocationSnapshotService.instance.start(
-          interval: LocationSnapshotService.liveSnapshotInterval,
+          interval: _snapshotInterval,
         );
         if (!_isCurrentConfiguration(generation, repository, phoneNumber)) {
           _deactivateBestEffort(
@@ -207,9 +225,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await LocationSnapshotService.instance.start(
-        interval: LocationSnapshotService.liveSnapshotInterval,
-      );
+      await LocationSnapshotService.instance.start(interval: _snapshotInterval);
       final location = await LocationSnapshotService.instance.refresh();
       if (!_isCurrentConfiguration(generation, repository, phoneNumber)) {
         return;
@@ -251,44 +267,59 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
-  Future<void> deactivate() async {
+  Future<void> deactivate({bool manual = true}) async {
+    if (manual) _manualStopRevision += 1;
     final repository = _repository;
     final phoneNumber = _phoneNumber;
-    if (repository == null || phoneNumber == null || _isBusy) {
+    if (repository == null || phoneNumber == null) {
+      if (manual) notifyListeners();
       return;
     }
-
-    final generation = _configurationGeneration;
-    _isBusy = true;
-    _errorMessage = null;
+    final previousShare = _share;
+    final generation = ++_configurationGeneration;
     _publishTimer?.cancel();
     _publishTimer = null;
+    _loadFuture = null;
+    _publishFuture = null;
+    _isPublishing = false;
+    _isActive = false;
+    _share = previousShare?.copyWith(isActive: false);
+    _isBusy = true;
+    _errorMessage = null;
     notifyListeners();
-
     try {
-      await _publishFuture;
-      await repository.deactivate(phoneNumber: phoneNumber, share: _share);
-      if (!_isCurrentConfiguration(generation, repository, phoneNumber)) {
-        return;
-      }
-      _isActive = false;
-      _share = _share?.copyWith(isActive: false);
-    } on LiveLocationRepositoryException catch (error) {
+      // Repository persists the stop before contacting the cloud. In-flight
+      // location refreshes have already been invalidated by the generation.
+      await repository.deactivate(
+        phoneNumber: phoneNumber,
+        share: previousShare,
+      );
+    } on LiveLocationStopPersistenceException {
       if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
-        _errorMessage = error.message;
+        _errorMessage =
+            'Sharing paused on this phone, but the stop could not be saved. Try stopping again before closing the app.';
       }
     } catch (_) {
       if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
-        _errorMessage = 'Unable to stop live location sharing.';
+        _errorMessage =
+            'Sharing stopped on this phone. Cloud deactivation is pending and will retry when connected.';
       }
     } finally {
       if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
         _isBusy = false;
-        if (_isActive) {
-          _startPublishTimer();
-        }
         notifyListeners();
       }
+    }
+  }
+
+  Future<void> retryPendingStop() async {
+    final repository = _repository;
+    final phoneNumber = _phoneNumber;
+    if (repository == null || phoneNumber == null) return;
+    try {
+      await repository.retryPendingStop(phoneNumber);
+    } catch (_) {
+      // The durable stop remains pending; local publication stays disabled.
     }
   }
 
@@ -340,13 +371,7 @@ class LiveLocationSharingService extends ChangeNotifier {
         return;
       }
       if (!share.expiresAt.isAfter(DateTime.now().toUtc())) {
-        await repository.deactivate(phoneNumber: phoneNumber, share: share);
-        if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
-          _isActive = false;
-          _publishTimer?.cancel();
-          _publishTimer = null;
-          _share = share.copyWith(isActive: false);
-        }
+        await deactivate(manual: false);
         return;
       }
 
@@ -389,7 +414,10 @@ class LiveLocationSharingService extends ChangeNotifier {
 
     final share = _share;
     final repository = _repository;
-    if (share == null || repository == null || _phoneNumber != phoneNumber) {
+    if (!_isActive ||
+        share == null ||
+        repository == null ||
+        _phoneNumber != phoneNumber) {
       return;
     }
 
@@ -424,7 +452,6 @@ class LiveLocationSharingService extends ChangeNotifier {
     final repository = _repository;
     final phoneNumber = _phoneNumber;
     final share = _share;
-    final publishFuture = _publishFuture;
     final shouldDeactivate =
         _isActive && repository != null && phoneNumber != null;
     _configurationGeneration += 1;
@@ -442,13 +469,14 @@ class LiveLocationSharingService extends ChangeNotifier {
     _loadFuture = null;
     _errorMessage = null;
     _autoShareOnHikeStart = false;
+    _publishInterval = LocationSnapshotService.liveSnapshotInterval;
+    _snapshotInterval = LocationSnapshotService.liveSnapshotInterval;
     notifyListeners();
     if (shouldDeactivate) {
       _deactivateBestEffort(
         repository: repository,
         phoneNumber: phoneNumber,
         share: share,
-        publishFuture: publishFuture,
       );
     }
   }
@@ -464,7 +492,6 @@ class LiveLocationSharingService extends ChangeNotifier {
     final previousRepository = _repository;
     final previousPhoneNumber = _phoneNumber;
     final previousShare = _share;
-    final previousPublishFuture = _publishFuture;
     final previousWasActive = _isActive;
     _configurationGeneration += 1;
     _publishTimer?.cancel();
@@ -486,14 +513,11 @@ class LiveLocationSharingService extends ChangeNotifier {
         repository: previousRepository,
         phoneNumber: previousPhoneNumber,
         share: previousShare,
-        publishFuture: previousPublishFuture,
       );
     }
 
     _phoneNumber = phoneNumber;
-    _repository = LiveLocationRepository(
-      firebaseBootstrapResult: firebaseBootstrapResult,
-    );
+    _repository = _repositoryFactory(firebaseBootstrapResult);
   }
 
   bool _isCurrentConfiguration(
@@ -510,11 +534,9 @@ class LiveLocationSharingService extends ChangeNotifier {
     required LiveLocationRepository repository,
     required String phoneNumber,
     required LiveLocationShare? share,
-    Future<void>? publishFuture,
   }) {
     unawaited(() async {
       try {
-        await publishFuture;
         await repository.deactivate(phoneNumber: phoneNumber, share: share);
       } catch (_) {
         // Account/session cleanup is best effort and must not escape its zone.
@@ -522,13 +544,33 @@ class LiveLocationSharingService extends ChangeNotifier {
     }());
   }
 
+  void setPublishInterval(Duration? interval) {
+    final snapshotInterval = interval == null
+        ? LocationSnapshotService.liveSnapshotInterval
+        : const Duration(seconds: 5);
+    if (_snapshotInterval != snapshotInterval) {
+      _snapshotInterval = snapshotInterval;
+      if (_isActive) {
+        unawaited(
+          LocationSnapshotService.instance
+              .start(interval: _snapshotInterval)
+              .catchError((_) {}),
+        );
+      }
+    }
+    final requested = interval ?? LocationSnapshotService.liveSnapshotInterval;
+    final normalized = requested < const Duration(seconds: 5)
+        ? const Duration(seconds: 5)
+        : requested;
+    if (_publishInterval == normalized) return;
+    _publishInterval = normalized;
+    if (_isActive) _startPublishTimer();
+  }
+
   void _startPublishTimer() {
     _publishTimer?.cancel();
-    _publishTimer = Timer.periodic(
-      LocationSnapshotService.liveSnapshotInterval,
-      (_) {
-        unawaited(publishLatest());
-      },
-    );
+    _publishTimer = Timer.periodic(_publishInterval, (_) {
+      unawaited(publishLatest());
+    });
   }
 }

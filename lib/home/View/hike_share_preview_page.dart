@@ -502,8 +502,8 @@ class _PostPreviewCard extends StatelessWidget {
                 _MetricDivider(color: _ShareColors.separatorFor(context)),
                 Expanded(
                   child: _PreviewMetric(
-                    value: '${report.checkIns}',
-                    label: 'Check-ins',
+                    value: '${report.routePointCount}',
+                    label: 'GPS points',
                   ),
                 ),
               ],
@@ -826,7 +826,7 @@ String defaultHikeShareCaption(HikeSummaryReport report) {
   return 'Completed ${report.trailName} — '
       '${report.distanceKm.toStringAsFixed(2)} km in '
       '${_formatDuration(report.duration)}. '
-      '${report.checkIns} check-ins along the way.';
+      '${report.routePointCount} GPS points recorded along the way.';
 }
 
 String buildExternalHikeShareText({

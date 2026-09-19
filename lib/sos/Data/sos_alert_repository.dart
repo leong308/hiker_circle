@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
@@ -53,6 +54,13 @@ class SosAlertSubmission {
 
 class SosAlertRepository {
   static const int _maxImmediateSendAttempts = 1;
+  static final Map<String, int> _noteRevisions = {};
+  static const _customNoteModes = [
+    SosAlertMode.manual,
+    SosAlertMode.duress,
+    SosAlertMode.medical,
+  ];
+
   static const int _maxRecentSosAlertReferences = 30;
 
   SosAlertRepository({
@@ -91,47 +99,134 @@ class SosAlertRepository {
   Future<Map<SosAlertMode, String>> loadCustomWhatsAppNotes({
     required AppSession session,
   }) async {
+    await flushPendingCustomWhatsAppNotes(session: session);
     final local = <SosAlertMode, String>{};
-    for (final mode in const [
-      SosAlertMode.manual,
-      SosAlertMode.duress,
-      SosAlertMode.medical,
-    ]) {
+    final revisions = <SosAlertMode, int>{};
+    for (final mode in _customNoteModes) {
+      revisions[mode] =
+          _noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0;
       final value = await _localDatabase.loadLocalPreference(
         ownerPhoneNumber: session.phoneNumber,
         key: 'sos_whatsapp_note_${mode.firestoreValue}',
       );
       if (value is String) local[mode] = value;
     }
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return local;
-    }
+    if (!_firebaseBootstrapResult.isAvailable) return local;
     try {
-      final snapshot = await _userDocumentFor(
+      final notes = await fetchCloudCustomNotes(
         session,
-      ).get().timeout(_cloudWriteTimeout);
-      final data = snapshot.data();
-      final notes = data?['sosWhatsappNotes'];
-      if (notes is! Map) return local;
-      for (final mode in const [
-        SosAlertMode.manual,
-        SosAlertMode.duress,
-        SosAlertMode.medical,
-      ]) {
+      ).timeout(_cloudWriteTimeout);
+      final dirty = await _localDatabase.loadDirtyLocalPreferences(
+        ownerPhoneNumber: session.phoneNumber,
+      );
+      for (final mode in _customNoteModes) {
+        final key = 'sos_whatsapp_note_${mode.firestoreValue}';
+        if (dirty.containsKey(key) ||
+            revisions[mode] !=
+                (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0)) {
+          final latest = await _localDatabase.loadLocalPreference(
+            ownerPhoneNumber: session.phoneNumber,
+            key: key,
+          );
+          if (latest is String) local[mode] = latest;
+          continue;
+        }
         final value = notes[mode.firestoreValue];
         if (value is! String) continue;
         final bounded = _boundedCustomWhatsAppNote(value);
-        local[mode] = bounded;
-        await _localDatabase.saveLocalPreference(
+        final saved = await _localDatabase.saveLocalPreferenceIfClean(
           ownerPhoneNumber: session.phoneNumber,
-          key: 'sos_whatsapp_note_${mode.firestoreValue}',
+          key: key,
           value: bounded,
         );
+        if (saved) {
+          local[mode] = bounded;
+        } else {
+          final latest = await _localDatabase.loadLocalPreference(
+            ownerPhoneNumber: session.phoneNumber,
+            key: key,
+          );
+          if (latest is String) local[mode] = latest;
+        }
       }
     } catch (_) {
-      return local;
+      // Local safety instructions remain available when cloud reads fail.
     }
     return local;
+  }
+
+  Future<void> flushPendingCustomWhatsAppNotes({
+    required AppSession session,
+  }) async {
+    if (!_firebaseBootstrapResult.isAvailable) return;
+    final dirty = await _localDatabase.loadDirtyLocalPreferences(
+      ownerPhoneNumber: session.phoneNumber,
+    );
+    for (final mode in _customNoteModes) {
+      final key = 'sos_whatsapp_note_${mode.firestoreValue}';
+      final note = dirty[key];
+      if (note is! String) continue;
+      try {
+        await _pushCustomNote(session, mode, note);
+      } catch (_) {
+        // Keep this mode dirty; another independent mode may still sync.
+      }
+    }
+  }
+
+  @protected
+  Future<Map<String, dynamic>> fetchCloudCustomNotes(AppSession session) async {
+    final data = (await _userDocumentFor(session).get()).data();
+    final notes = data?['sosWhatsappNotes'];
+    return notes is Map ? Map<String, dynamic>.from(notes) : {};
+  }
+
+  @protected
+  Future<void> pushCloudCustomNote(
+    AppSession session,
+    SosAlertMode mode,
+    String note,
+  ) async {
+    await _userDocumentFor(session).set({
+      'sosWhatsappNotes': {mode.firestoreValue: note},
+      'sosWhatsappNotesUpdatedAt': FieldValue.serverTimestamp(),
+      'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
+          .toUtc()
+          .toIso8601String(),
+      'phoneNumber': session.phoneNumber,
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _pushCustomNote(
+    AppSession session,
+    SosAlertMode mode,
+    String note,
+  ) async {
+    final revision = _noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0;
+    final key = 'sos_whatsapp_note_${mode.firestoreValue}';
+    final pending = await _localDatabase.loadLocalPreference(
+      ownerPhoneNumber: session.phoneNumber,
+      key: key,
+    );
+    if (pending != note ||
+        revision !=
+            (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0)) {
+      return;
+    }
+    await pushCloudCustomNote(session, mode, note).timeout(_cloudWriteTimeout);
+    final latest = await _localDatabase.loadLocalPreference(
+      ownerPhoneNumber: session.phoneNumber,
+      key: key,
+    );
+    if (latest == note &&
+        revision ==
+            (_noteRevisions['${session.phoneNumber}:${mode.name}'] ?? 0)) {
+      await _localDatabase.markLocalPreferenceSynced(
+        ownerPhoneNumber: session.phoneNumber,
+        key: key,
+        expectedValue: note,
+      );
+    }
   }
 
   Future<void> saveCustomWhatsAppNote({
@@ -156,6 +251,8 @@ class SosAlertRepository {
     }
 
     final preferenceKey = 'sos_whatsapp_note_${mode.firestoreValue}';
+    final revisionKey = '${session.phoneNumber}:${mode.name}';
+    _noteRevisions[revisionKey] = (_noteRevisions[revisionKey] ?? 0) + 1;
     await _localDatabase.saveLocalPreference(
       ownerPhoneNumber: session.phoneNumber,
       key: preferenceKey,
@@ -163,25 +260,10 @@ class SosAlertRepository {
       isDirty: true,
     );
     if (!_firebaseBootstrapResult.isAvailable) return;
-
     try {
-      await _userDocumentFor(session)
-          .set({
-            'sosWhatsappNotes': {mode.firestoreValue: normalizedNote},
-            'sosWhatsappNotesUpdatedAt': FieldValue.serverTimestamp(),
-            'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
-                .toUtc()
-                .toIso8601String(),
-            'phoneNumber': session.phoneNumber,
-          }, SetOptions(merge: true))
-          .timeout(_cloudWriteTimeout);
-      await _localDatabase.saveLocalPreference(
-        ownerPhoneNumber: session.phoneNumber,
-        key: preferenceKey,
-        value: normalizedNote,
-      );
+      await _pushCustomNote(session, mode, normalizedNote);
     } catch (_) {
-      // The locally saved safety note remains usable and dirty for a later sync.
+      // Persisted dirty notes are replayed on load and reconnection.
     }
   }
 

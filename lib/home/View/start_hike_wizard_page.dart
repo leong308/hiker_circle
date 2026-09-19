@@ -1297,12 +1297,6 @@ class _TimingStep extends StatelessWidget {
   final ValueChanged<bool> onStartNowChanged;
   final ValueChanged<HikeSessionDraft> onChanged;
 
-  static const List<Duration> _checkInOptions = [
-    Duration(minutes: 15),
-    Duration(minutes: 30),
-    Duration(minutes: 45),
-    Duration(hours: 1),
-  ];
   static const List<Duration> _recordingOptions = [
     Duration(seconds: 5),
     Duration(seconds: 15),
@@ -1412,7 +1406,8 @@ class _TimingStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return _StepCard(
       title: 'Timing and Tracking',
-      subtitle: 'Check-ins ask for confirmation; GPS recording runs quietly.',
+      subtitle:
+          'GPS stays on this phone every 5 seconds. Choose how often to upload the saved route.',
       children: [
         _ChoiceTile(
           selected: startNow,
@@ -1481,34 +1476,12 @@ class _TimingStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         DropdownButtonFormField<Duration>(
-          initialValue: _checkInOptions.contains(draft.safetyCheckInInterval)
-              ? draft.safetyCheckInInterval
-              : _checkInOptions[1],
-          decoration: const InputDecoration(
-            labelText: 'Safety Check-In Interval',
-            prefixIcon: Icon(Icons.verified_user_rounded),
-          ),
-          items: [
-            for (final duration in _checkInOptions)
-              DropdownMenuItem<Duration>(
-                value: duration,
-                child: Text('Every ${_durationLabel(duration)}'),
-              ),
-          ],
-          onChanged: (duration) {
-            if (duration != null) {
-              onChanged(draft.copyWith(safetyCheckInInterval: duration));
-            }
-          },
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<Duration>(
           initialValue:
               _recordingOptions.contains(draft.locationRecordingInterval)
               ? draft.locationRecordingInterval
               : HikeSessionDraft.defaultLocationRecordingInterval,
           decoration: const InputDecoration(
-            labelText: 'Location Recording Interval',
+            labelText: 'Cloud Upload Interval',
             prefixIcon: Icon(Icons.my_location_rounded),
           ),
           items: [

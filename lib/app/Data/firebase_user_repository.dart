@@ -207,7 +207,6 @@ class FirebaseUserRepository {
       final expectedUserId = documentIdForPhoneNumber(session.phoneNumber);
       final user = _resolvedFirebaseAuth.currentUser;
       if (user == null || user.uid != expectedUserId) {
-        await _resolvedFirebaseAuth.signOut();
         throw const FirebaseUserRepositoryException(
           'Your secure login has expired. Verify WhatsApp and your security method again.',
           requiresSignIn: true,
@@ -219,10 +218,17 @@ class FirebaseUserRepository {
       // retired saved-device token issuer, which would both bypass MFA and
       // reject every legitimate post-MFA login.
       final token = await user.getIdTokenResult();
+      if (_resolvedFirebaseAuth.currentUser?.uid != expectedUserId) {
+        throw const FirebaseUserRepositoryException(
+          'The signed-in account changed while credentials were checked.',
+          requiresSignIn: true,
+        );
+      }
       final claims = token.claims ?? const <String, dynamic>{};
       if (claims['mfa'] != true ||
           claims['phoneNumber'] != session.phoneNumber) {
-        await _resolvedFirebaseAuth.signOut();
+        // The session owner decides whether this result still applies. A late
+        // refresh must never sign out a newer Firebase login here.
         throw const FirebaseUserRepositoryException(
           'This login was not completed with both required verification steps. Sign in again.',
           requiresSignIn: true,

@@ -53,11 +53,12 @@ void main() {
       '',
       '_',
       PolylineCodec.encode([LatLng(5, 100)]),
-      PolylineCodec.encode([LatLng(91, 100), LatLng(92, 101)]),
+      // External malformed geometry cannot be produced by the validated encoder.
+      '_mljP_gjaR_ibE_ibE', // (91, 100), (92, 101)
     ]) {
       expect(
         () => TrailGeometryStorage.fromPolyline(encoded),
-        throwsA(anything),
+        throwsA(isA<FormatException>()),
       );
     }
   });

@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
@@ -8,6 +11,7 @@ import '../../app/Data/local_session_database.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/static_hazard_dataset_service.dart';
 import '../../trail/Model/trail_models.dart';
+import 'community_hazard_marker.dart';
 import 'loading_toast.dart';
 import '../services/weather_map_service.dart';
 import 'weather_map_overlay.dart';
@@ -62,9 +66,11 @@ class RoutePreviewMap extends StatefulWidget {
     this.localDatabase,
     this.departureTime,
     this.onAnimationProgress,
+    this.onReportHazard,
   });
 
   final ValueChanged<RouteCheckpointProgress>? onAnimationProgress;
+  final VoidCallback? onReportHazard;
   final DateTime? departureTime;
   final Trail trail;
   final HikingRouteResult? route;
@@ -155,6 +161,13 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   List<LocalTrailHazardMatch> _staticHazards = const [];
   final Map<String, LocalTrailHazardMatch> _hazardsByAnnotationId = {};
   int _hazardLoadGeneration = 0;
+  StreamSubscription<User?>? _hazardAuthSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _communityHazardSubscription;
+  int _communityHazardGeneration = 0;
+  List<CommunityHazardCluster> _communityHazards = const [];
+  final Map<String, CommunityHazardCluster> _communityHazardsByAnnotationId =
+      {};
   var _styleIndex = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
@@ -217,6 +230,20 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _fpvTelemetry = ValueNotifier(_telemetryAt(distanceMeters: 0));
     _syncRouteAnimationDuration();
     unawaited(_loadStaticHazards());
+    if (Firebase.apps.isNotEmpty) {
+      _hazardAuthSubscription = FirebaseAuth.instance.authStateChanges().listen(
+        (_) => _watchCommunityHazards(),
+        onError: (Object error) {
+          if (!mounted) return;
+          _communityHazardGeneration++;
+          _communityHazardSubscription?.cancel();
+          _communityHazardSubscription = null;
+          _applyCommunityHazards(const []);
+          debugPrint('Community caution authentication unavailable: $error');
+        },
+      );
+      _watchCommunityHazards();
+    }
   }
 
   Duration get _estimatedHikeDuration {
@@ -282,6 +309,50 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   LocalSessionDatabase get _localDatabase =>
       widget.localDatabase ?? _fallbackLocalDatabase;
+
+  void _watchCommunityHazards() {
+    if (!mounted) return;
+    final generation = ++_communityHazardGeneration;
+    _communityHazardSubscription?.cancel();
+    _communityHazardSubscription = null;
+    _applyCommunityHazards(const []);
+    if (Firebase.apps.isEmpty || widget.recordedTrackPoints != null) return;
+    final ownerUid = FirebaseAuth.instance.currentUser?.uid;
+    final trailId = widget.trail.trailId;
+    if (ownerUid == null || trailId.isEmpty) return;
+    _communityHazardSubscription = FirebaseFirestore.instance
+        .collection('hazardReports')
+        .where('trailId', isEqualTo: trailId)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (!mounted ||
+                generation != _communityHazardGeneration ||
+                widget.trail.trailId != trailId ||
+                FirebaseAuth.instance.currentUser?.uid != ownerUid) {
+              return;
+            }
+            final reports = snapshot.docs
+                .map((doc) => CommunityHazard.fromMap(doc.id, doc.data()))
+                .whereType<CommunityHazard>();
+            _applyCommunityHazards(clusterCommunityHazards(reports));
+          },
+          onError: (Object error) {
+            if (!mounted || generation != _communityHazardGeneration) return;
+            _applyCommunityHazards(const []);
+            debugPrint('Community cautions unavailable: $error');
+          },
+        );
+  }
+
+  void _applyCommunityHazards(List<CommunityHazardCluster> hazards) {
+    if (!mounted) return;
+    _communityHazards = hazards;
+    _communityHazardsByAnnotationId.clear();
+    _routeRendered = false;
+    _renderGeneration++;
+    unawaited(_renderRouteIfReady());
+  }
 
   Future<void> _loadStaticHazards() async {
     final generation = ++_hazardLoadGeneration;
@@ -529,6 +600,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   @override
   void dispose() {
     _hazardLoadGeneration++;
+    _communityHazardGeneration++;
+    _hazardAuthSubscription?.cancel();
+    _communityHazardSubscription?.cancel();
     _pointTapEvents?.cancel();
     _pauseTimer?.cancel();
     _loopPauseTimer?.cancel();
@@ -645,6 +719,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   void didUpdateWidget(covariant RoutePreviewMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.trail.trailId != widget.trail.trailId ||
+        (oldWidget.recordedTrackPoints == null) !=
+            (widget.recordedTrackPoints == null)) {
+      _watchCommunityHazards();
+    }
+    if (oldWidget.trail.trailId != widget.trail.trailId ||
         oldWidget.localDatabase != widget.localDatabase ||
         (oldWidget.recordedTrackPoints == null) !=
             (widget.recordedTrackPoints == null) ||
@@ -673,6 +752,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         _pointTapEvents?.cancel();
         _pointTapEvents = null;
         _hazardsByAnnotationId.clear();
+        _communityHazardsByAnnotationId.clear();
         _annotationManagersFuture = null;
       }
     }
@@ -712,6 +792,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
+      _communityHazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _animatedPolyline = null;
       _cometLayers.clear();
@@ -746,8 +827,14 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   }
 
   void _onPointAnnotationTapped(mapbox.PointAnnotation annotation) {
+    if (!mounted) return;
+    final cluster = _communityHazardsByAnnotationId[annotation.id];
+    if (cluster != null) {
+      unawaited(showCommunityHazardDetails(context, cluster));
+      return;
+    }
     final match = _hazardsByAnnotationId[annotation.id];
-    if (match == null || !mounted) return;
+    if (match == null) return;
     unawaited(showStaticHazardDetails(context, match));
   }
 
@@ -772,6 +859,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
+      _communityHazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -807,6 +895,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
+      _communityHazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -912,6 +1001,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _animatedPolyline = null;
       _checkpointCircleAnnotations = [];
       _hazardsByAnnotationId.clear();
+      _communityHazardsByAnnotationId.clear();
       _lastAnimatedIndex = 0;
       await _polylineManager!.deleteAll();
       await _circleManager!.deleteAll();
@@ -1053,6 +1143,36 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         final annotation = hazardAnnotations[index];
         if (annotation != null && index < _staticHazards.length) {
           _hazardsByAnnotationId[annotation.id] = _staticHazards[index];
+        }
+      }
+
+      final communityHazards = List<CommunityHazardCluster>.of(
+        _communityHazards,
+      );
+      if (communityHazards.isNotEmpty) {
+        final images = await Future.wait(
+          communityHazards.map(
+            (cluster) => communityHazardMarkerImage(cluster.count),
+          ),
+        );
+        if (!_isCurrentMap(map, mapGeneration) ||
+            generation != _renderGeneration) {
+          return;
+        }
+        final annotations = await _pointManager!.createMulti([
+          for (var index = 0; index < communityHazards.length; index++)
+            communityHazardAnnotation(communityHazards[index], images[index]),
+        ]);
+        if (!_isCurrentMap(map, mapGeneration) ||
+            generation != _renderGeneration) {
+          return;
+        }
+        for (var index = 0; index < annotations.length; index++) {
+          final annotation = annotations[index];
+          if (annotation != null && index < communityHazards.length) {
+            _communityHazardsByAnnotationId[annotation.id] =
+                communityHazards[index];
+          }
         }
       }
 
@@ -1788,6 +1908,20 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             child: Padding(
               padding: const EdgeInsets.all(10),
               child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
+            ),
+          ),
+        if (widget.onReportHazard != null &&
+            widget.previewMode == RoutePreviewMode.normal)
+          Positioned(
+            right: 14,
+            bottom: 4,
+            child: FloatingActionButton.small(
+              heroTag: null,
+              tooltip: 'Report a caution',
+              backgroundColor: const Color(0xFFFFC857),
+              foregroundColor: const Color(0xFF342500),
+              onPressed: widget.onReportHazard,
+              child: const Icon(Icons.add_alert_rounded),
             ),
           ),
         if (isPreparingMap)

@@ -122,6 +122,9 @@ class PlannedHikeStateResolver {
       phoneBatteryLevel: battery ?? 0,
       hasKnownBatteryLevel: battery != null,
       liveLocationConfigured: upcomingHike.draft?.shareLiveLocation == true,
+      locationRecordingInterval:
+          upcomingHike.draft?.locationRecordingInterval ??
+          HikeSessionDraft.defaultLocationRecordingInterval,
       completedChecklistItems: completed,
     ).withGearProgress();
   }

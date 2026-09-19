@@ -404,30 +404,29 @@ service cloud.firestore {
     }
 
     match /live_location_shares/{shareId} {
-      allow read: if (
+      // Knowing an opaque share link permits one document, never enumeration.
+      allow get: if (
         resource.data.isActive == true
         && resource.data.expiresAt is timestamp
         && resource.data.expiresAt > request.time
-      ) || (
-        signedIn() && resource.data.ownerUserId == request.auth.uid
-      ) || admin();
-      allow create: if signedIn()
-        && request.resource.data.ownerUserId == request.auth.uid
-        && request.resource.data.phoneNumber == phoneNumber()
-        && request.resource.data.shareId == shareId
-        && request.resource.data.expiresAt is timestamp
-        && request.resource.data.expiresAt > request.time
-        && request.resource.data.expiresAt <= request.time + duration.value(24, 'h');
+      ) || (signedIn() && resource.data.ownerUserId == request.auth.uid) || admin();
+      allow list: if (signedIn() && resource.data.ownerUserId == request.auth.uid) || admin();
+      // Activation and expiry come from the authenticated server callable.
+      allow create: if false;
       allow update: if signedIn()
         && resource.data.ownerUserId == request.auth.uid
         && request.resource.data.ownerUserId == resource.data.ownerUserId
         && request.resource.data.phoneNumber == resource.data.phoneNumber
         && request.resource.data.shareId == resource.data.shareId
         && request.resource.data.expiresAt is timestamp
-        && request.resource.data.expiresAt <= request.time + duration.value(24, 'h');
-      allow delete: if admin() || (
-        signedIn() && resource.data.ownerUserId == request.auth.uid
-      );
+        && (
+          (resource.data.isActive == true && request.resource.data.isActive == true
+            && resource.data.expiresAt > request.time
+            && request.resource.data.expiresAt == resource.data.expiresAt)
+          || (request.resource.data.isActive == false
+            && request.resource.data.expiresAt <= resource.data.expiresAt)
+        );
+      allow delete: if admin() || (signedIn() && resource.data.ownerUserId == request.auth.uid);
     }
 
     match /trails/{trailId} {
@@ -456,10 +455,7 @@ service cloud.firestore {
 
     match /localLocationPoints/{pointId} {
       allow read: if ownHike(resource.data) || admin();
-      allow create, update: if validLocationPointIdentity(
-        pointId,
-        request.resource.data
-      );
+      allow create, update: if false;
       allow delete: if validLocationPointIdentity(pointId, resource.data);
     }
 

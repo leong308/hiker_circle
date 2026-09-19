@@ -94,7 +94,9 @@ class HikingRouteService {
   final LocalSessionDatabase? _localDatabase;
 
   Future<HikingRouteResult> findHikingRouteForTrail(Trail trail) async {
-    if (trail.checkpoints.length < 2 || trail.checkpoints.length > 12) {
+    if (trail.checkpoints.length < 2 ||
+        trail.checkpoints.length > 12 ||
+        trail.checkpoints.any((point) => !point.hasValidCoordinate)) {
       throw const HikingRouteServiceException(
         'A route requires between 2 and 12 checkpoints.',
       );
@@ -124,6 +126,9 @@ class HikingRouteService {
           );
         }
         final decoded = PolylineCodec.decode(optimized.encodedPolyline);
+        if (decoded.length < 2) {
+          throw const FormatException('Route has too few points.');
+        }
         final topo = await _elevationProfile(
           decoded.map((point) => [point.longitude, point.latitude]).toList(),
         );
@@ -142,6 +147,8 @@ class HikingRouteService {
           maxElevationMeters: topo?.maximumElevationMeters,
           sourceLabel: 'Mapbox walking route (checkpoint order)',
         );
+      } on FormatException {
+        // Malformed provider geometry must not prevent another provider trying.
       } on MapboxOptimizationException {
         // Fall through to the existing hiking-route providers.
       } on TimeoutException {
@@ -162,6 +169,7 @@ class HikingRouteService {
 
       double elevation = ors.ascentMeters;
       final coords = ors.coordinates;
+      _validateProviderRoute(ors.distanceMeters, coords);
       final topo = await _elevationProfile(coords);
       if (elevation <= 0) elevation = topo?.elevationGainMeters ?? 0;
 
@@ -182,6 +190,8 @@ class HikingRouteService {
         maxElevationMeters: topo?.maximumElevationMeters,
         sourceLabel: 'ORS foot-hiking',
       );
+    } on FormatException {
+      // Invalid geometry is an unavailable provider response.
     } on OpenRouteServiceException {
       // fall through to Geoapify
     } on TimeoutException {
@@ -201,6 +211,7 @@ class HikingRouteService {
 
       double elevation = geoapify.elevationGainMeters ?? 0;
       final coords = geoapify.coordinates;
+      _validateProviderRoute(geoapify.distanceMeters, coords);
       final topo = await _elevationProfile(coords);
       if (elevation <= 0) elevation = topo?.elevationGainMeters ?? 0;
 
@@ -221,6 +232,8 @@ class HikingRouteService {
         maxElevationMeters: topo?.maximumElevationMeters,
         sourceLabel: 'Geoapify hiking route',
       );
+    } on FormatException {
+      // Continue to Google if provider geometry cannot be decoded safely.
     } on GeoapifyException {
       // fall through to Google
     } on TimeoutException {
@@ -238,6 +251,9 @@ class HikingRouteService {
       }
 
       final decoded = PolylineCodec.decode(googleRoute.encodedPolyline);
+      if (decoded.length < 2) {
+        throw const FormatException('Route has too few points.');
+      }
       final topo = await _elevationProfile(
         decoded.map((point) => [point.longitude, point.latitude]).toList(),
       );
@@ -261,10 +277,36 @@ class HikingRouteService {
       throw const HikingRouteServiceException(
         'Route providers are responding slowly. The route will be retried.',
       );
+    } on FormatException {
+      throw const HikingRouteServiceException(
+        'Route providers returned invalid geometry. Please retry.',
+      );
     } on GoogleRoutesServiceException catch (googleError) {
       throw HikingRouteServiceException(
         'No route found. ORS: unavailable. Geoapify: unavailable. '
         'Google: ${googleError.message}',
+      );
+    }
+  }
+
+  void _validateProviderRoute(
+    int distanceMeters,
+    List<List<double>> coordinates,
+  ) {
+    if (distanceMeters <= 0 ||
+        coordinates.length < 2 ||
+        coordinates.any(
+          (point) =>
+              point.length < 2 ||
+              !point[0].isFinite ||
+              !point[1].isFinite ||
+              point[0] < -180 ||
+              point[0] > 180 ||
+              point[1] < -90 ||
+              point[1] > 90,
+        )) {
+      throw const FormatException(
+        'Route provider returned invalid coordinates.',
       );
     }
   }
@@ -341,7 +383,9 @@ class HikingRouteService {
       }
     }
 
-    if (trail.checkpoints.length < 2 || trail.checkpoints.length > 12) {
+    if (trail.checkpoints.length < 2 ||
+        trail.checkpoints.length > 12 ||
+        trail.checkpoints.any((point) => !point.hasValidCoordinate)) {
       throw const HikingRouteServiceException(
         'A route requires between 2 and 12 checkpoints.',
       );
@@ -426,6 +470,14 @@ abstract final class PolylineCodec {
     final buffer = StringBuffer();
 
     for (final point in points) {
+      if (!point.latitude.isFinite ||
+          !point.longitude.isFinite ||
+          point.latitude < -90 ||
+          point.latitude > 90 ||
+          point.longitude < -180 ||
+          point.longitude > 180) {
+        throw const FormatException('Polyline coordinate is out of range.');
+      }
       final latitude = (point.latitude * 100000).round();
       final longitude = (point.longitude * 100000).round();
       buffer
@@ -439,40 +491,48 @@ abstract final class PolylineCodec {
   }
 
   static List<LatLng> decode(String encoded) {
+    if (encoded.length > 2000000) {
+      throw const FormatException('Polyline is too large.');
+    }
     final points = <LatLng>[];
     var index = 0;
-    var previousLatitude = 0;
-    var previousLongitude = 0;
-
-    while (index < encoded.length) {
+    var latitude = 0;
+    var longitude = 0;
+    int readDelta() {
       var shift = 0;
       var result = 0;
-      int byte;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
+      while (true) {
+        if (index >= encoded.length || shift > 30) {
+          throw const FormatException(
+            'Polyline contains a truncated coordinate.',
+          );
+        }
+        final byte = encoded.codeUnitAt(index++) - 63;
+        if (byte < 0 || byte > 63) {
+          throw const FormatException(
+            'Polyline contains an invalid character.',
+          );
+        }
         result |= (byte & 0x1f) << shift;
+        if (byte < 0x20) {
+          return (result & 1) != 0 ? ~(result >> 1) : result >> 1;
+        }
         shift += 5;
-      } while (byte >= 0x20);
-
-      final deltaLatitude = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
-      previousLatitude += deltaLatitude;
-
-      shift = 0;
-      result = 0;
-      do {
-        byte = encoded.codeUnitAt(index++) - 63;
-        result |= (byte & 0x1f) << shift;
-        shift += 5;
-      } while (byte >= 0x20);
-
-      final deltaLongitude = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
-      previousLongitude += deltaLongitude;
-
-      points.add(
-        LatLng(previousLatitude / 100000.0, previousLongitude / 100000.0),
-      );
+      }
     }
 
+    while (index < encoded.length) {
+      latitude += readDelta();
+      longitude += readDelta();
+      final point = LatLng(latitude / 100000.0, longitude / 100000.0);
+      if (point.latitude < -90 ||
+          point.latitude > 90 ||
+          point.longitude < -180 ||
+          point.longitude > 180) {
+        throw const FormatException('Polyline coordinate is out of range.');
+      }
+      points.add(point);
+    }
     return points;
   }
 

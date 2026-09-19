@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
@@ -16,19 +19,54 @@ class EmergencyContactsRepositoryException implements Exception {
   String toString() => message;
 }
 
+class EmergencyContactsChange {
+  EmergencyContactsChange(this.phoneNumber, List<EmergencyContact> contacts)
+    : contacts = List.unmodifiable(contacts);
+
+  final String phoneNumber;
+  final List<EmergencyContact> contacts;
+}
+
 class EmergencyContactsRepository {
   const EmergencyContactsRepository({
     FirebaseFirestore? firestore,
     LocalSessionDatabase? localDatabase,
+    Duration cloudTimeout = const Duration(seconds: 5),
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
        _localDatabase = localDatabase,
+       _cloudTimeout = cloudTimeout,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   static final LocalSessionDatabase _defaultLocalDatabase =
       LocalSessionDatabase();
   static const int maxContacts = 3;
+  static const pendingPreferenceKey = 'pending_emergency_contacts';
+  static final _changes = StreamController<EmergencyContactsChange>.broadcast();
+  static Stream<EmergencyContactsChange> get changes => _changes.stream;
+  static final Map<String, int> _revisions = {};
+  static final Map<String, Future<void>> _localWrites = {};
+  final Duration _cloudTimeout;
+
+  Future<T> _withLocalLock<T>(String owner, Future<T> Function() action) async {
+    final previous = _localWrites[owner] ?? Future<void>.value();
+    final done = Completer<void>();
+    _localWrites[owner] = done.future;
+    await previous;
+    try {
+      return await action();
+    } finally {
+      done.complete();
+      if (identical(_localWrites[owner], done.future)) {
+        _localWrites.remove(owner);
+      }
+    }
+  }
+
+  void _emit(String phone, List<EmergencyContact> contacts) {
+    _changes.add(EmergencyContactsChange(phone, contacts));
+  }
 
   final FirebaseFirestore? _firestore;
   final LocalSessionDatabase? _localDatabase;
@@ -70,53 +108,112 @@ class EmergencyContactsRepository {
   Future<List<EmergencyContact>> loadEmergencyContacts({
     required AppSession session,
   }) async {
-    final localContacts = await loadCachedEmergencyContacts(session: session);
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return localContacts;
-    }
-
-    try {
-      final snapshot = await _userDocumentFor(session).get();
-      final data = snapshot.data();
-      final rawContacts = data?['sos_contacts'];
-      if (rawContacts is! Iterable) {
-        return localContacts;
-      }
-
-      final contacts = <EmergencyContact>[];
-      for (final rawContact in rawContacts) {
-        if (rawContact is Map) {
-          final parsed = EmergencyContact.fromFirestore(
-            Map<String, dynamic>.from(rawContact),
-          );
-          final normalized = _validatedContact(parsed);
-          if (normalized != null &&
-              !contacts.any(
-                (contact) => contact.phoneNumber == normalized.phoneNumber,
-              ) &&
-              contacts.length < maxContacts) {
-            contacts.add(normalized);
-          }
-        }
-      }
-
-      if (contacts.isNotEmpty) {
+    final owner = session.phoneNumber;
+    final revision = _revisions[owner] ?? 0;
+    final pending = await _resolvedLocalDatabase.loadLocalPreference(
+      ownerPhoneNumber: owner,
+      key: pendingPreferenceKey,
+    );
+    if (pending is Map && pending['contacts'] is List) {
+      final contacts = _parseContacts(pending['contacts']);
+      await _withLocalLock(owner, () async {
+        if ((_revisions[owner] ?? 0) != revision) return;
         await _resolvedLocalDatabase.saveEmergencyContacts(
-          phoneNumber: session.phoneNumber,
+          phoneNumber: owner,
           contacts: contacts,
         );
-        return contacts;
+      });
+      if (_firebaseBootstrapResult.isAvailable) {
+        try {
+          await _pushPending(session, pending, contacts);
+        } catch (_) {
+          // Unsynced local changes, including deletion of every contact, win.
+        }
       }
-
-      return localContacts;
-    } on FirebaseException catch (error) {
-      if (localContacts.isNotEmpty) {
-        return localContacts;
-      }
-      throw EmergencyContactsRepositoryException(
-        'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
-      );
+      return loadCachedEmergencyContacts(session: session);
     }
+    final localContacts = await loadCachedEmergencyContacts(session: session);
+    if (!_firebaseBootstrapResult.isAvailable) return localContacts;
+    try {
+      final contacts = await fetchCloudContacts(session).timeout(_cloudTimeout);
+      if (contacts == null) return localContacts;
+      return await _withLocalLock(owner, () async {
+        if ((_revisions[owner] ?? 0) != revision) {
+          return loadCachedEmergencyContacts(session: session);
+        }
+        await _resolvedLocalDatabase.saveEmergencyContacts(
+          phoneNumber: owner,
+          contacts: contacts,
+        );
+        _emit(owner, contacts);
+        return contacts;
+      });
+    } catch (_) {
+      return loadCachedEmergencyContacts(session: session);
+    }
+  }
+
+  List<EmergencyContact> _parseContacts(Object? rawContacts) {
+    final contacts = <EmergencyContact>[];
+    if (rawContacts is! Iterable) return contacts;
+    for (final raw in rawContacts.whereType<Map>()) {
+      final contact = _validatedContact(
+        EmergencyContact.fromFirestore(Map<String, dynamic>.from(raw)),
+      );
+      if (contact != null &&
+          contacts.length < maxContacts &&
+          !contacts.any((saved) => saved.phoneNumber == contact.phoneNumber)) {
+        contacts.add(contact);
+      }
+    }
+    return contacts;
+  }
+
+  @protected
+  Future<List<EmergencyContact>?> fetchCloudContacts(AppSession session) async {
+    final data = (await _userDocumentFor(session).get()).data();
+    final raw = data?['sos_contacts'];
+    return raw is Iterable ? _parseContacts(raw) : null;
+  }
+
+  @protected
+  Future<void> pushCloudContacts(
+    AppSession session,
+    List<EmergencyContact> contacts,
+  ) async {
+    await _userDocumentFor(session).set({
+      'sos_contacts': contacts.map((contact) => contact.toFirestore()).toList(),
+      'sosContactsCount': contacts.length,
+      'sosContactsUpdatedAt': FieldValue.serverTimestamp(),
+      'sosContactsUpdatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+      'phoneNumber': session.phoneNumber,
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _pushPending(
+    AppSession session,
+    Map pending,
+    List<EmergencyContact> contacts,
+  ) async {
+    final current = await _resolvedLocalDatabase.loadLocalPreference(
+      ownerPhoneNumber: session.phoneNumber,
+      key: pendingPreferenceKey,
+    );
+    if (current is! Map || current['revision'] != pending['revision']) return;
+    await pushCloudContacts(session, contacts).timeout(_cloudTimeout);
+    await _withLocalLock(session.phoneNumber, () async {
+      final latest = await _resolvedLocalDatabase.loadLocalPreference(
+        ownerPhoneNumber: session.phoneNumber,
+        key: pendingPreferenceKey,
+      );
+      if (latest is Map && latest['revision'] == pending['revision']) {
+        await _resolvedLocalDatabase.saveLocalPreference(
+          ownerPhoneNumber: session.phoneNumber,
+          key: pendingPreferenceKey,
+          value: null,
+        );
+      }
+    });
   }
 
   Future<void> saveEmergencyContacts({
@@ -145,30 +242,33 @@ class EmergencyContactsRepository {
       }
       normalizedContacts.add(normalized);
     }
-    await _resolvedLocalDatabase.saveEmergencyContacts(
-      phoneNumber: session.phoneNumber,
-      contacts: normalizedContacts,
-    );
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return;
-    }
-
+    final owner = session.phoneNumber;
+    final revision = (_revisions[owner] ?? 0) + 1;
+    _revisions[owner] = revision;
+    final pending = <String, Object?>{
+      'revision': '${DateTime.now().microsecondsSinceEpoch}:$revision',
+      'contacts': normalizedContacts
+          .map((contact) => contact.toFirestore())
+          .toList(),
+    };
+    await _withLocalLock(owner, () async {
+      await _resolvedLocalDatabase.saveLocalPreference(
+        ownerPhoneNumber: owner,
+        key: pendingPreferenceKey,
+        value: pending,
+      );
+      await _resolvedLocalDatabase.saveEmergencyContacts(
+        phoneNumber: owner,
+        contacts: normalizedContacts,
+      );
+      _emit(owner, normalizedContacts);
+    });
+    if (!_firebaseBootstrapResult.isAvailable) return;
     try {
-      final now = DateTime.now().toUtc();
-      final userDocument = _userDocumentFor(session);
-
-      await userDocument.set({
-        'sos_contacts': normalizedContacts
-            .map((contact) => contact.toFirestore())
-            .toList(),
-        'sosContactsCount': normalizedContacts.length,
-        'sosContactsUpdatedAt': FieldValue.serverTimestamp(),
-        'sosContactsUpdatedAtLocal': now.toIso8601String(),
-        'phoneNumber': session.phoneNumber,
-      }, SetOptions(merge: true));
-    } on FirebaseException catch (error) {
-      throw EmergencyContactsRepositoryException(
-        'Saved on this phone, but cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}',
+      await _pushPending(session, pending, normalizedContacts);
+    } catch (_) {
+      throw const EmergencyContactsRepositoryException(
+        'Saved on this phone. Cloud sync is pending and will retry when connected.',
       );
     }
   }

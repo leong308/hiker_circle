@@ -16,6 +16,9 @@ class AppViewModel extends ChangeNotifier {
        _firebaseAuth = firebaseAvailable
            ? (firebaseAuth ?? FirebaseAuth.instance)
            : null {
+    _sessionSubscription = _sessionRepository.changes.listen((_) {
+      if (!_isDisposed && !_isInitializing) notifyListeners();
+    });
     final auth = _firebaseAuth;
     _hasObservedAuthenticatedFirebaseUser = auth?.currentUser != null;
     _firebaseAuthSubscription = auth?.authStateChanges().listen(
@@ -30,6 +33,7 @@ class AppViewModel extends ChangeNotifier {
   final SessionRepository _sessionRepository;
   final FirebaseAuth? _firebaseAuth;
   StreamSubscription<User?>? _firebaseAuthSubscription;
+  StreamSubscription<AppSession?>? _sessionSubscription;
   bool _isInitializing = true;
   bool _hasObservedAuthenticatedFirebaseUser = false;
   bool _isDisposed = false;
@@ -68,7 +72,7 @@ class AppViewModel extends ChangeNotifier {
 
   void signOut() {
     unawaited(HomeScreenWidgetService.shared.clear());
-    _sessionRepository.signOut();
+    unawaited(_sessionRepository.signOut());
     if (_isDisposed) return;
     notifyListeners();
   }
@@ -85,13 +89,14 @@ class AppViewModel extends ChangeNotifier {
       return;
     }
     unawaited(HomeScreenWidgetService.shared.clear());
-    _sessionRepository.signOut();
+    unawaited(_sessionRepository.signOut());
     notifyListeners();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
+    unawaited(_sessionSubscription?.cancel());
     final subscription = _firebaseAuthSubscription;
     if (subscription != null) {
       unawaited(subscription.cancel());

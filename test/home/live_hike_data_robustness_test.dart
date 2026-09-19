@@ -7,6 +7,7 @@ import 'package:hiker_circle/home/View/active_tracking_map_view.dart';
 import 'package:hiker_circle/home/View/gear_checklist_page.dart';
 import 'package:hiker_circle/home/View/home_dashboard_page.dart';
 import 'package:hiker_circle/home/View/start_hike_wizard_page.dart';
+import 'package:hiker_circle/home/View/trail_gear_checklist.dart';
 import 'package:hiker_circle/trail/Model/trail_models.dart';
 
 void main() {
@@ -329,18 +330,12 @@ void main() {
       MaterialApp(home: GearChecklistPage(plannedHike: plan)),
     );
 
-    expect(
-      find.text(
-        'Progress: 0 / ${GearChecklistPage.checklistItemCount} Completed',
-      ),
-      findsOneWidget,
+    expect(find.text('0/${plan.gearPlan.items.length}'), findsOneWidget);
+    final packingTiles = tester.widgetList<GearPackingTile>(
+      find.byType(GearPackingTile),
     );
-    expect(
-      tester
-          .widgetList<Checkbox>(find.byType(Checkbox))
-          .every((checkbox) => checkbox.value == false),
-      isTrue,
-    );
+    expect(packingTiles, isNotEmpty);
+    expect(packingTiles.every((tile) => !tile.packed), isTrue);
     expect(find.text('Offline map downloaded'), findsNothing);
   });
 

@@ -28,9 +28,8 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.SetOptions
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.functions.FirebaseFunctions
 import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
@@ -51,8 +50,11 @@ import java.util.Locale
  */
 class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListener {
     companion object {
+        @Volatile var flutterUiForeground = false
+
         const val ACTION_START = "com.leongziqi.hikercircle.safety.START"
         const val ACTION_STOP = "com.leongziqi.hikercircle.safety.STOP"
+        const val ACTION_REMAP_SESSION = "com.leongziqi.hikercircle.safety.REMAP_SESSION"
         const val ACTION_CANCEL_ALERT = "com.leongziqi.hikercircle.safety.CANCEL_ALERT"
         const val ACTION_ACKNOWLEDGE_ALERT =
             "com.leongziqi.hikercircle.safety.ACKNOWLEDGE_ALERT"
@@ -76,13 +78,17 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         private const val KEY_LAST_LATITUDE = "last_latitude"
         private const val KEY_LAST_LONGITUDE = "last_longitude"
         private const val KEY_LAST_ACCURACY = "last_accuracy"
+        private const val KEY_LAST_CAPTURED_AT = "last_captured_at"
+        private const val KEY_OWNER_UID = "owner_uid"
+        private const val KEY_UPLOAD_INTERVAL = "location_upload_interval"
 
         private const val ACTIVE_CHANNEL_ID = "hiker_circle_hike_safety_active"
         private const val ALERT_CHANNEL_ID = "hiker_circle_hike_safety_alerts"
         private const val ACTIVE_NOTIFICATION_ID = 4212
         private const val ALERT_NOTIFICATION_ID = 4213
         private const val SENSOR_PERIOD_MICROS = 100_000
-        private const val LOCATION_INTERVAL_MILLIS = 30_000L
+        private const val LOCATION_INTERVAL_MILLIS = 5_000L
+        private const val LOCATION_MAX_AGE_MILLIS = 30_000L
         private const val STILLNESS_VERIFY_MILLIS = 10_000L
         private const val WARNING_RESPONSE_MILLIS = 15_000L
         private const val FALL_VERIFY_LIMIT_MILLIS = 60_000L
@@ -97,6 +103,8 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 putExtra(KEY_RESPONSE_MILLIS, config.responseMillis)
                 putExtra(KEY_SENSITIVITY, config.sensitivity)
                 putExtra(KEY_FALL_DETECTION_ENABLED, config.fallDetectionEnabled)
+                putExtra(KEY_OWNER_UID, config.ownerUid)
+                putExtra(KEY_UPLOAD_INTERVAL, config.locationUploadIntervalMillis)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -116,6 +124,20 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         fun isConfigured(context: Context): Boolean =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KEY_ENABLED, false)
+
+        fun remapSession(context: Context, oldSessionId: String, newSessionId: String, ownerUid: String) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (prefs.getString(KEY_SESSION_ID, null) != oldSessionId || prefs.getString(KEY_OWNER_UID, null) != ownerUid) return
+            check(prefs.edit().putString(KEY_SESSION_ID, newSessionId).commit()) { "Unable to remap the active native hike." }
+            if (isConfigured(context)) runCatching {
+                context.startService(Intent(context, HikeSafetyMonitorService::class.java).apply {
+                    action = ACTION_REMAP_SESSION
+                    putExtra("oldSessionId", oldSessionId)
+                    putExtra("newSessionId", newSessionId)
+                    putExtra(KEY_OWNER_UID, ownerUid)
+                })
+            }
+        }
 
         fun restartIfConfigured(context: Context) {
             if (!isConfigured(context)) return
@@ -177,6 +199,8 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         val responseMillis: Long,
         val sensitivity: Double,
         val fallDetectionEnabled: Boolean,
+        val ownerUid: String,
+        val locationUploadIntervalMillis: Long,
     )
 
     private enum class DetectionState {
@@ -214,11 +238,17 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     private var pendingSpeechMessage: String? = null
     private lateinit var physicalAlarm: NativeSosAlarmController
     private var wasDeviceLockedDuringWarning = false
-    private var lastFirebasePublishAtMillis = 0L
+    private var latestLocation: Location? = null
+    private val locationSamples by lazy { NativeLocationSampleBuffer(this) }
+    private var lastSampleAtElapsed = 0L
+    private var lastUploadAttemptElapsed = SystemClock.elapsedRealtime()
+    private var uploadingLocations = false
 
     private val ticker = object : Runnable {
         override fun run() {
             if (!monitoring) return
+            sampleLocationIfDue()
+            uploadBufferedLocationsIfDue()
             evaluateTimers()
             handler.postDelayed(this, 1_000L)
         }
@@ -236,6 +266,14 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_REMAP_SESSION -> {
+                val current = config
+                if (current != null && current.sessionId == intent.getStringExtra("oldSessionId") && current.ownerUid == intent.getStringExtra(KEY_OWNER_UID)) {
+                    val remapped = intent.getStringExtra("newSessionId").orEmpty()
+                    if (remapped.isNotBlank()) config = current.copy(sessionId = remapped)
+                }
+                if (monitoring) return START_STICKY
+            }
             ACTION_STOP -> {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(KEY_ENABLED, false)
@@ -262,9 +300,33 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             stopSelf()
             return START_NOT_STICKY
         }
+        val previous = config
         config = restored
         persistConfig(restored)
-        startForeground(ACTIVE_NOTIFICATION_ID, activeNotification("Safety monitoring active"))
+        if (previous?.sessionId != restored.sessionId) {
+            latestLocation = null
+            referenceLocation = null
+            lastSampleAtElapsed = 0L
+            lastUploadAttemptElapsed = SystemClock.elapsedRealtime()
+        }
+        val locationGranted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!locationGranted) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        try {
+            startForeground(ACTIVE_NOTIFICATION_ID, activeNotification("Safety monitoring active"))
+        } catch (error: RuntimeException) {
+            android.util.Log.w("HikeSafetyMonitor", "Foreground location monitor could not start", error)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (monitoring && previous?.fallDetectionEnabled != restored.fallDetectionEnabled) {
+            sensorManager.unregisterListener(this)
+            if (restored.fallDetectionEnabled) registerSensors()
+            else cancelAlert("Fall detection disabled")
+        }
         startMonitoring()
         return START_STICKY
     }
@@ -312,6 +374,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             } else {
                 prefs.getBoolean(KEY_FALL_DETECTION_ENABLED, true)
             },
+            ownerUid = intent?.getStringExtra(KEY_OWNER_UID) ?: prefs.getString(KEY_OWNER_UID, "").orEmpty(),
+            locationUploadIntervalMillis = (if (intent?.hasExtra(KEY_UPLOAD_INTERVAL) == true) {
+                intent.getLongExtra(KEY_UPLOAD_INTERVAL, 60_000L)
+            } else prefs.getLong(KEY_UPLOAD_INTERVAL, 60_000L)).coerceIn(5_000L, 86_400_000L),
         )
     }
 
@@ -326,9 +392,13 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             .putLong(KEY_RESPONSE_MILLIS, value.responseMillis)
             .putFloat(KEY_SENSITIVITY, value.sensitivity.toFloat())
             .putBoolean(KEY_FALL_DETECTION_ENABLED, value.fallDetectionEnabled)
+            .putString(KEY_OWNER_UID, value.ownerUid)
+            .putLong(KEY_UPLOAD_INTERVAL, value.locationUploadIntervalMillis)
         if (existingSession != value.sessionId) {
             editor.putLong(KEY_LAST_MOTION_WALL, System.currentTimeMillis())
             clearPendingEvent(editor)
+            editor.remove(KEY_LAST_LATITUDE).remove(KEY_LAST_LONGITUDE)
+                .remove(KEY_LAST_ACCURACY).remove(KEY_LAST_CAPTURED_AT)
         }
         editor.apply()
     }
@@ -345,7 +415,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         if (config?.fallDetectionEnabled == true) registerSensors()
         registerLocationUpdates()
         handler.removeCallbacks(ticker)
-        if (config?.fallDetectionEnabled == true) handler.post(ticker)
+        handler.post(ticker)
     }
 
     private fun stopMonitoring() {
@@ -509,15 +579,18 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     override fun onLocationChanged(location: Location) {
-        if (!location.latitude.isFinite() || !location.longitude.isFinite()) return
+        if (!isFreshLocation(location)) return
         val accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else 50.0
         if (!accuracy.isFinite() || accuracy < 0 || accuracy > 500) return
+        val existing = latestLocation
+        if (existing != null && location.time < existing.time) return
+        latestLocation = Location(location)
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putString(KEY_LAST_LATITUDE, location.latitude.toString())
             .putString(KEY_LAST_LONGITUDE, location.longitude.toString())
             .putString(KEY_LAST_ACCURACY, accuracy.toString())
+            .putLong(KEY_LAST_CAPTURED_AT, location.time)
             .apply()
-        publishLocationTelemetry(location, accuracy)
         val reference = referenceLocation
         if (reference == null) {
             referenceLocation = Location(location)
@@ -541,38 +614,99 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         }
     }
 
-    private fun publishLocationTelemetry(location: Location, accuracy: Double) {
+    private fun isFreshLocation(location: Location): Boolean {
+        val age = System.currentTimeMillis() - location.time
+        return location.latitude.isFinite() && location.latitude in -90.0..90.0 &&
+            location.longitude.isFinite() && location.longitude in -180.0..180.0 &&
+            location.hasAccuracy() && location.accuracy.isFinite() &&
+            location.accuracy in 0f..500f && location.time > 0L &&
+            age in -5_000L..LOCATION_MAX_AGE_MILLIS
+    }
+
+    private fun sampleLocationIfDue() {
+        // The resumed Flutter isolate owns foreground sampling; avoid two clocks
+        // recording nearly identical positions at different milliseconds.
+        if (flutterUiForeground) return
         val settings = config ?: return
-        val nowMillis = System.currentTimeMillis()
-        if (nowMillis - lastFirebasePublishAtMillis < LOCATION_INTERVAL_MILLIS) return
-        lastFirebasePublishAtMillis = nowMillis
-        val capturedAtMillis = if (location.time > 0L) location.time else nowMillis
-        val capturedAt = java.time.Instant.ofEpochMilli(capturedAtMillis).toString()
-        val now = java.time.Instant.ofEpochMilli(nowMillis).toString()
-        val latestLocation = mapOf(
-            "latitude" to location.latitude,
-            "longitude" to location.longitude,
-            "accuracyMeters" to accuracy,
-            "capturedAtLocal" to capturedAt,
-            "source" to "android_native_background_location",
-        )
-        FirebaseFirestore.getInstance()
-            .collection("hikeSessions")
-            .document(settings.sessionId)
-            .set(
-                mapOf(
-                    "monitoringHeartbeatAt" to FieldValue.serverTimestamp(),
-                    "monitoringHeartbeatAtLocal" to now,
-                    "monitoringLifecycleState" to "android_native_monitoring",
-                    "monitoringExpected" to true,
-                    "latestLocation" to latestLocation,
-                    "latestLocationUpdatedAt" to FieldValue.serverTimestamp(),
-                    "latestLocationUpdatedAtLocal" to capturedAt,
-                    "updatedAt" to FieldValue.serverTimestamp(),
-                    "updatedAtLocal" to now,
-                ),
-                SetOptions.merge(),
-            )
+        val elapsed = SystemClock.elapsedRealtime()
+        if (elapsed - lastSampleAtElapsed < LOCATION_INTERVAL_MILLIS) return
+        val location = latestLocation?.takeIf(::isFreshLocation) ?: return
+        if (settings.ownerUid.isBlank()) return
+        if (FirebaseAuth.getInstance().currentUser?.uid != settings.ownerUid) return
+        val sampledAt = System.currentTimeMillis()
+        runCatching {
+            locationSamples.append(settings.sessionId, settings.ownerUid, sampledAt, location)
+        }.onSuccess { lastSampleAtElapsed = elapsed }
+            .onFailure { android.util.Log.e("HikeSafetyMonitor", "Unable to persist GPS sample", it) }
+    }
+
+    private fun uploadBufferedLocationsIfDue() {
+        val settings = config ?: return
+        if (flutterUiForeground || uploadingLocations) return
+        if (FirebaseAuth.getInstance().currentUser?.uid != settings.ownerUid) return
+        val elapsed = SystemClock.elapsedRealtime()
+        if (elapsed - lastUploadAttemptElapsed < settings.locationUploadIntervalMillis) return
+        lastUploadAttemptElapsed = elapsed
+        val sessions = runCatching { locationSamples.pendingSessions(settings.ownerUid, forCloud = true) }
+            .getOrElse { return }
+            .sortedBy { if (it == settings.sessionId) 0 else 1 }
+        uploadNextLocationBatch(settings, sessions)
+    }
+
+    private fun uploadNextLocationBatch(settings: SafetyConfig, pendingSessions: List<String>) {
+        val uploadSessionId = pendingSessions.firstOrNull() ?: return
+        if (uploadingLocations || flutterUiForeground ||
+            FirebaseAuth.getInstance().currentUser?.uid != settings.ownerUid) return
+        val samples = runCatching {
+            locationSamples.pending(uploadSessionId, settings.ownerUid, 200, forCloud = true)
+        }.getOrElse {
+            android.util.Log.e("HikeSafetyMonitor", "Unable to read buffered GPS samples", it)
+            return
+        }
+        if (samples.isEmpty()) {
+            uploadNextLocationBatch(settings, pendingSessions.drop(1))
+            return
+        }
+        uploadingLocations = true
+        val points = samples.map { sample ->
+            buildMap<String, Any> {
+                put("recordedAtMillis", sample.getValue("sampledAtMillis"))
+                put("fixCapturedAtMillis", sample.getValue("capturedAtMillis"))
+                put("latitude", sample.getValue("latitude"))
+                put("longitude", sample.getValue("longitude"))
+                put("accuracyMeters", sample.getValue("accuracyMeters"))
+                sample["altitudeMeters"]?.let { put("altitudeMeters", it) }
+                put("pointType", "gps")
+            }
+        }
+        runCatching {
+            FirebaseFunctions.getInstance("us-central1")
+                .getHttpsCallable("recordHikeLocationBatch")
+                .call(mapOf("sessionId" to uploadSessionId, "points" to points))
+                .addOnCompleteListener { task ->
+                    uploadingLocations = false
+                    if (task.isSuccessful) {
+                        val payload = task.result?.data as? Map<*, *>
+                        val acknowledged = (payload?.get("committedRecordedAtMillis") as? List<*>)
+                            ?.mapNotNull { (it as? Number)?.toLong() }?.toSet().orEmpty()
+                        val ids = samples.filter { (it["sampledAtMillis"] as Number).toLong() in acknowledged }
+                            .map { it["sampleId"] as String }
+                        val retained = runCatching { locationSamples.acknowledge(uploadSessionId, settings.ownerUid, ids, cloud = true) }
+                            .onFailure { android.util.Log.e("HikeSafetyMonitor", "Unable to retain cloud GPS acknowledgement", it) }
+                        // A single scheduled flush may need several bounded batches after an outage.
+                        if (monitoring && config?.ownerUid == settings.ownerUid) {
+                            val next = if (retained.isSuccess && ids.size == samples.size && samples.size == 200) pendingSessions else pendingSessions.drop(1)
+                            uploadNextLocationBatch(settings, next)
+                        }
+                    } else {
+                        android.util.Log.w("HikeSafetyMonitor", "GPS batch retained for retry", task.exception)
+                        if (monitoring) uploadNextLocationBatch(settings, pendingSessions.drop(1))
+                    }
+                }
+        }.onFailure {
+            uploadingLocations = false
+            android.util.Log.w("HikeSafetyMonitor", "GPS batch retained for retry", it)
+        }
     }
 
     private fun evaluateTimers() {
@@ -832,6 +966,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                             ?.toDoubleOrNull(),
                         "accuracyMeters" to prefs.getString(KEY_LAST_ACCURACY, null)
                             ?.toDoubleOrNull(),
+                        "capturedAtMillis" to prefs.getLong(KEY_LAST_CAPTURED_AT, 0L),
                     ),
                     object : MethodChannel.Result {
                         override fun success(result: Any?) {

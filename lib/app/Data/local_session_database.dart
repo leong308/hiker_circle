@@ -637,6 +637,10 @@ class LocalSessionDatabase {
     required String oldSessionId,
     required String newSessionId,
   }) async {
+    await database.rawDelete(
+      '''DELETE FROM local_location_points WHERE session_id = ? AND owner_phone_number = ? AND sample_key IS NOT NULL AND sample_key IN (SELECT sample_key FROM local_location_points WHERE session_id = ? AND owner_phone_number = ?)''',
+      [oldSessionId, ownerPhoneNumber, newSessionId, ownerPhoneNumber],
+    );
     await database.update(
       'local_location_points',
       {'session_id': newSessionId},
@@ -684,6 +688,25 @@ class LocalSessionDatabase {
       if (activeHike.sessionId.isEmpty) {
         throw const FormatException('Active hike session ID is missing.');
       }
+      final pendingEnds = await database.query(
+        'pending_hike_ends',
+        where: 'owner_phone_number = ?',
+        whereArgs: [phoneNumber],
+      );
+      final stopWasSaved = pendingEnds.any((row) {
+        if (row['session_id'] == activeHike.sessionId) return true;
+        final pending = LocalPendingHikeEnd.fromRow(row).activeHike;
+        // An interrupted cloud retry may already have remapped the active
+        // snapshot while the pending request keeps its original identity.
+        return pending != null &&
+            pending.trail.trailId == activeHike.trail.trailId &&
+            pending.startedAt.millisecondsSinceEpoch ==
+                activeHike.startedAt.millisecondsSinceEpoch;
+      });
+      if (stopWasSaved) {
+        await clearActiveHikeSession(phoneNumber: phoneNumber);
+        return null;
+      }
       final queuedUpdates = Sqflite.firstIntValue(
         await database.rawQuery(
           '''
@@ -724,6 +747,17 @@ class LocalSessionDatabase {
         where: 'owner_phone_number = ?',
         whereArgs: [phoneNumber],
       );
+      final pendingEnds = await transaction.query(
+        'pending_hike_ends',
+        columns: ['session_id'],
+        where: 'owner_phone_number = ?',
+        whereArgs: [phoneNumber],
+        limit: 1,
+      );
+      // Pending requests retain their original idempotency ID even when their
+      // samples have moved to a canonical cloud ID. Keep route evidence until
+      // the owner's pending completions are fully acknowledged.
+      if (pendingEnds.isNotEmpty) return;
       for (final sessionId in sessionIds) {
         await _deleteCompletedHikeTelemetry(
           transaction,
@@ -1395,6 +1429,90 @@ class LocalSessionDatabase {
     );
     if (rows.isEmpty) return null;
     return jsonDecode(rows.first['value_json'] as String? ?? 'null');
+  }
+
+  Future<bool> clearLocalPreferenceIfValue({
+    required String ownerPhoneNumber,
+    required String key,
+    required Object? expectedValue,
+  }) async {
+    final database = await _openDatabase();
+    final deleted = await database.delete(
+      'local_preferences',
+      where: 'owner_phone_number = ? AND preference_key = ? AND value_json = ?',
+      whereArgs: [
+        ownerPhoneNumber.trim(),
+        key.trim(),
+        jsonEncode(expectedValue),
+      ],
+    );
+    return deleted > 0;
+  }
+
+  Future<bool> saveLocalPreferenceIfClean({
+    required String ownerPhoneNumber,
+    required String key,
+    required Object? value,
+  }) async {
+    final database = await _openDatabase();
+    return database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'local_preferences',
+        columns: ['is_dirty'],
+        where: 'owner_phone_number = ? AND preference_key = ?',
+        whereArgs: [ownerPhoneNumber.trim(), key.trim()],
+      );
+      if (rows.isNotEmpty && rows.first['is_dirty'] == 1) return false;
+      await transaction.insert('local_preferences', {
+        'owner_phone_number': ownerPhoneNumber.trim(),
+        'preference_key': key.trim(),
+        'value_json': jsonEncode(value),
+        'is_dirty': 0,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      return true;
+    });
+  }
+
+  Future<Map<String, Object?>> loadDirtyLocalPreferences({
+    required String ownerPhoneNumber,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'local_preferences',
+      columns: ['preference_key', 'value_json'],
+      where: 'owner_phone_number = ? AND is_dirty = 1',
+      whereArgs: [ownerPhoneNumber.trim()],
+    );
+    final result = <String, Object?>{};
+    for (final row in rows) {
+      try {
+        result[row['preference_key'] as String] = jsonDecode(
+          row['value_json'] as String,
+        );
+      } on FormatException {
+        continue;
+      }
+    }
+    return result;
+  }
+
+  Future<void> markLocalPreferenceSynced({
+    required String ownerPhoneNumber,
+    required String key,
+    required Object? expectedValue,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'local_preferences',
+      {'is_dirty': 0},
+      where: 'owner_phone_number = ? AND preference_key = ? AND value_json = ?',
+      whereArgs: [
+        ownerPhoneNumber.trim(),
+        key.trim(),
+        jsonEncode(expectedValue),
+      ],
+    );
   }
 
   Future<void> upsertOfflineMapRegion(LocalOfflineMapRegion region) async {
@@ -2118,7 +2236,7 @@ class LocalSessionDatabase {
 
     final opening = openDatabase(
       databasePath,
-      version: 27,
+      version: 28,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2135,6 +2253,9 @@ class LocalSessionDatabase {
           )
         ''');
         await _createSafetyTables(database);
+        await database.execute(
+          'CREATE UNIQUE INDEX IF NOT EXISTS location_sample_identity ON local_location_points(owner_phone_number, session_id, sample_key)',
+        );
         await _createDeviceBindingTables(database);
         await _createEmergencyContactsTable(database);
         await _createRouteCacheTable(database);
@@ -2400,6 +2521,24 @@ class LocalSessionDatabase {
         if (oldVersion < 27) {
           await _createButtonDebugTables(database);
         }
+        if (oldVersion < 28) {
+          await _createSafetyTables(database);
+          await _addColumnIfMissing(
+            database,
+            tableName: 'local_location_points',
+            columnName: 'sample_key',
+            definition: 'TEXT',
+          );
+          await _addColumnIfMissing(
+            database,
+            tableName: 'local_location_points',
+            columnName: 'fix_captured_at',
+            definition: 'TEXT',
+          );
+          await database.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS location_sample_identity ON local_location_points(owner_phone_number, session_id, sample_key)',
+          );
+        }
       },
     );
     _openingDatabase = opening;
@@ -2442,6 +2581,7 @@ class LocalSessionDatabase {
     required String pointType,
     bool isSynced = false,
     DateTime? recordedAt,
+    DateTime? fixCapturedAt,
   }) async {
     final normalizedSessionId = sessionId.trim();
     if (normalizedSessionId.isEmpty) {
@@ -2451,6 +2591,10 @@ class LocalSessionDatabase {
       throw ArgumentError('Location coordinates are outside valid GPS bounds.');
     }
     final database = await _openDatabase();
+    final sampledAt = DateTime.fromMillisecondsSinceEpoch(
+      (recordedAt ?? DateTime.now()).millisecondsSinceEpoch,
+      isUtc: true,
+    );
     return database.insert('local_location_points', {
       'owner_phone_number': ownerPhoneNumber.trim(),
       'session_id': normalizedSessionId,
@@ -2462,9 +2606,11 @@ class LocalSessionDatabase {
           : null,
       'battery_level': batteryLevel?.clamp(0, 100),
       'point_type': pointType.trim().isEmpty ? 'automatic' : pointType.trim(),
-      'recorded_at': (recordedAt ?? DateTime.now()).toUtc().toIso8601String(),
+      'recorded_at': sampledAt.toIso8601String(),
+      'sample_key': sampledAt.millisecondsSinceEpoch.toString(),
+      'fix_captured_at': fixCapturedAt?.toUtc().toIso8601String(),
       'is_synced': isSynced ? 1 : 0,
-    });
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<int> insertQueuedAlert({
@@ -2629,24 +2775,29 @@ class LocalSessionDatabase {
     });
   }
 
-  Future<int> countUnsentLocationPoints(String sessionId) async {
+  Future<int> countUnsentLocationPoints(
+    String sessionId, {
+    String? ownerPhoneNumber,
+  }) async {
     final database = await _openDatabase();
     final result = await database.rawQuery(
       '''
       SELECT COUNT(*) AS total
       FROM local_location_points
       WHERE session_id = ?
+        ${ownerPhoneNumber != null ? 'AND owner_phone_number = ?' : ''}
         AND is_synced = 0
         AND latitude BETWEEN -90 AND 90
         AND longitude BETWEEN -180 AND 180
       ''',
-      [sessionId],
+      [sessionId, if (ownerPhoneNumber != null) ownerPhoneNumber],
     );
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
   Future<List<LocalLocationPoint>> loadUnsentLocationPoints({
     required String sessionId,
+    String? ownerPhoneNumber,
     int limit = 200,
   }) async {
     final normalizedSessionId = sessionId.trim();
@@ -2656,19 +2807,41 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     final rows = await database.query(
       'local_location_points',
-      where: '''
+      where:
+          '''
         session_id = ?
+        ${ownerPhoneNumber != null ? 'AND owner_phone_number = ?' : ''}
         AND is_synced = 0
         AND latitude BETWEEN -90 AND 90
         AND longitude BETWEEN -180 AND 180
       ''',
-      whereArgs: [normalizedSessionId],
+      whereArgs: [
+        normalizedSessionId,
+        if (ownerPhoneNumber != null) ownerPhoneNumber,
+      ],
       orderBy: 'recorded_at ASC, id ASC',
       limit: limit,
     );
     return rows
         .map(LocalLocationPoint.fromRow)
         .where((point) => point.hasValidCoordinate)
+        .toList();
+  }
+
+  Future<List<LocalLocationPoint>> loadLocationPoints({
+    required String sessionId,
+    required String ownerPhoneNumber,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'local_location_points',
+      where: 'session_id = ? AND owner_phone_number = ?',
+      whereArgs: [sessionId, ownerPhoneNumber],
+      orderBy: 'recorded_at ASC, id ASC',
+    );
+    return rows
+        .map(LocalLocationPoint.fromRow)
+        .where((p) => p.hasValidCoordinate)
         .toList();
   }
 
@@ -2792,6 +2965,8 @@ class LocalSessionDatabase {
         battery_level INTEGER,
         point_type TEXT NOT NULL DEFAULT 'automatic',
         recorded_at TEXT NOT NULL,
+        sample_key TEXT,
+        fix_captured_at TEXT,
         is_synced INTEGER NOT NULL DEFAULT 0
       )
     ''');
@@ -3770,6 +3945,7 @@ class LocalLocationPoint {
     required this.batteryLevel,
     required this.pointType,
     required this.recordedAt,
+    this.fixCapturedAt,
     required this.isSynced,
   });
 
@@ -3798,6 +3974,7 @@ class LocalLocationPoint {
       recordedAt:
           DateTime.tryParse(row['recorded_at'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      fixCapturedAt: DateTime.tryParse(row['fix_captured_at'] as String? ?? ''),
       isSynced: row['is_synced'] == 1,
     );
   }
@@ -3812,6 +3989,7 @@ class LocalLocationPoint {
   final int? batteryLevel;
   final String pointType;
   final DateTime recordedAt;
+  final DateTime? fixCapturedAt;
   final bool isSynced;
 
   bool get hasValidCoordinate => _isValidCoordinate(latitude, longitude);

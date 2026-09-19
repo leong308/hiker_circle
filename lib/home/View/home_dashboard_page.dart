@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../core/services/mapbox_travel_distance_service.dart';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/loading_toast.dart';
@@ -595,6 +596,7 @@ class _BestMatchesSectionState extends State<_BestMatchesSection>
       final location = await snapshots.refresh() ?? snapshots.latestLocation;
       if (!mounted) return;
       if (location == null) {
+        if (Scaffold.maybeOf(context) == null) return;
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
@@ -1783,14 +1785,6 @@ class _ActiveHikeDashboard extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: FilledButton.icon(
-                onPressed: onCheckIn,
-                icon: const Icon(Icons.verified_user_rounded),
-                label: const Text('Check In Now'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
               child: OutlinedButton.icon(
                 onPressed: onPinLocation,
                 icon: const Icon(Icons.add_location_alt_rounded),
@@ -2206,7 +2200,7 @@ class _MonitoringCard extends StatelessWidget {
           ],
           const _HorizontalSeparator(),
           _StatusRow(
-            label: 'Location Recording',
+            label: 'Cloud Upload',
             value: _recordingIntervalLabel(
               activeHike.draft.locationRecordingInterval,
             ),
@@ -2219,7 +2213,7 @@ class _MonitoringCard extends StatelessWidget {
                 : '${activeHike.queuedUpdates} waiting to sync',
           ),
           const _HorizontalSeparator(),
-          _StatusRow(label: 'Check-Ins', value: '${activeHike.checkIns} saved'),
+          const _StatusRow(label: 'Local GPS', value: 'Every 5 seconds'),
         ],
       ),
     );
@@ -2707,7 +2701,7 @@ class _StatusRow extends StatelessWidget {
   }
 }
 
-class _MyUpcomingHikesSection extends StatelessWidget {
+class _MyUpcomingHikesSection extends StatefulWidget {
   const _MyUpcomingHikesSection({
     required this.hikes,
     required this.trails,
@@ -2725,28 +2719,115 @@ class _MyUpcomingHikesSection extends StatelessWidget {
   final void Function(UpcomingHike)? onTapHike;
 
   @override
-  Widget build(BuildContext context) {
-    final sorted =
-        hikes.where((hike) => hike.isUpcomingAt(DateTime.now())).toList()
-          ..sort((a, b) => a.departureTime.compareTo(b.departureTime));
-    if (sorted.isEmpty) return const SizedBox.shrink();
-    final next = sorted.first;
-    final plan = plannedHike?.upcomingHikeId == next.id ? plannedHike : null;
+  State<_MyUpcomingHikesSection> createState() =>
+      _MyUpcomingHikesSectionState();
+}
+
+class _MyUpcomingHikesSectionState extends State<_MyUpcomingHikesSection> {
+  final _controller = ScrollController(keepScrollOffset: false);
+  List<UpcomingHike> _hikes = const [];
+  int _index = 0;
+  double _pageWidth = 0;
+  int _alignmentRevision = 0;
+  bool _alignmentPending = false;
+
+  List<UpcomingHike> _orderedHikes() {
+    final now = DateTime.now();
+    return widget.hikes.where((hike) => hike.isUpcomingAt(now)).toList()
+      ..sort((a, b) {
+        final byTime = a.departureTime.compareTo(b.departureTime);
+        return byTime != 0 ? byTime : a.id.compareTo(b.id);
+      });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _hikes = _orderedHikes();
+    _controller.addListener(_onScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MyUpcomingHikesSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final ordered = _orderedHikes();
+    final changedOrder = !listEquals(
+      _hikes.map((hike) => hike.id).toList(),
+      ordered.map((hike) => hike.id).toList(),
+    );
+    _hikes = ordered;
+    if (changedOrder || (!oldWidget.isVisible && widget.isVisible)) {
+      _index = 0;
+      _alignAfterLayout();
+    }
+  }
+
+  void _alignAfterLayout() {
+    final revision = ++_alignmentRevision;
+    _alignmentPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || revision != _alignmentRevision) return;
+      if (_controller.hasClients) {
+        _controller.jumpTo(_index * _pageWidth);
+      }
+      _alignmentPending = false;
+    });
+  }
+
+  void _onScroll() {
+    if (_alignmentPending || _pageWidth <= 0 || _hikes.isEmpty) return;
+    final page = (_controller.offset / _pageWidth).round().clamp(
+      0,
+      _hikes.length - 1,
+    );
+    if (page != _index) setState(() => _index = page);
+  }
+
+  void _goTo(int index) {
+    if (!_controller.hasClients) return;
+    final target = index * _pageWidth;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.jumpTo(target);
+    } else {
+      unawaited(
+        _controller.animateTo(
+          target,
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Widget _card(UpcomingHike hike, int index) {
+    final plan = widget.plannedHike?.upcomingHikeId == hike.id
+        ? widget.plannedHike
+        : null;
     final trail =
         plan?.trail ??
-        trails.where((trail) => trail.trailId == next.trailId).firstOrNull;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        NextHikeBriefing(
-          key: ValueKey(next.id),
-          hike: next,
-          phoneNumber: phoneNumber,
+        widget.trails
+            .where((trail) => trail.trailId == hike.trailId)
+            .firstOrNull;
+    return ExcludeSemantics(
+      excluding: index != _index,
+      child: ExcludeFocus(
+        excluding: index != _index,
+        child: NextHikeBriefing(
+          key: ValueKey(hike.id),
+          hike: hike,
+          isNextHike: index == 0,
+          phoneNumber: widget.phoneNumber,
           plannedHike: plan,
           trail: trail,
-          isVisible: isVisible,
-          onReview: onTapHike != null
-              ? () => onTapHike!(next)
+          isVisible: widget.isVisible && index == _index,
+          onReview: widget.onTapHike != null
+              ? () => widget.onTapHike!(hike)
               : plan == null
               ? null
               : () => Navigator.of(context).push(
@@ -2755,111 +2836,77 @@ class _MyUpcomingHikesSection extends StatelessWidget {
                   ),
                 ),
         ),
-        if (sorted.length > 1) ...[
-          const SizedBox(height: 20),
-          const _SectionTitle(label: 'More upcoming hikes'),
-          const SizedBox(height: 8),
-        ],
-        for (final hike in sorted.skip(1)) ...[
-          GestureDetector(
-            onTap: onTapHike != null ? () => onTapHike!(hike) : null,
-            child: _InsetGroup(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        const _Glyph(icon: Icons.event_available_rounded),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                hike.trailName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(
-                                      color: _HomeColors.textFor(context),
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 0,
-                                    ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                hike.startPointName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: _HomeColors.secondaryTextFor(
-                                        context,
-                                      ),
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                              ),
-                            ],
-                          ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hikes.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (_pageWidth != constraints.maxWidth) {
+          _pageWidth = constraints.maxWidth;
+          _alignAfterLayout();
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // A horizontal viewport lets the cards keep their natural height,
+            // including large text, while PageScrollPhysics snaps one hike at a time.
+            SingleChildScrollView(
+              key: const ValueKey('upcoming-hike-carousel'),
+              controller: _controller,
+              scrollDirection: Axis.horizontal,
+              reverse: Directionality.of(context) == TextDirection.rtl,
+              physics: const PageScrollPhysics(),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                textDirection: TextDirection.ltr,
+                children: [
+                  for (var i = 0; i < _hikes.length; i++)
+                    SizedBox(
+                      key: ValueKey('upcoming-hike-card-${_hikes[i].id}'),
+                      width: _pageWidth,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _hikes.length > 1 ? 4 : 0,
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: (hike.creatorPhone == phoneNumber)
-                                ? _HomeColors.green.withValues(alpha: 0.12)
-                                : _HomeColors.secondaryTextFor(
-                                    context,
-                                  ).withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            hike.creatorPhone == phoneNumber
-                                ? 'Creator'
-                                : 'Joined',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                        ),
-                      ],
+                        child: _card(_hikes[i], i),
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    _InfoLine(
-                      label: 'Departure',
-                      value:
-                          '${_formatDate(hike.departureTime)} | ${_formatTime(hike.departureTime)}',
-                    ),
-                    _InfoLine(
-                      label: 'Estimated Return',
-                      value: _formatTime(hike.expectedReturnTime),
-                    ),
-                    _InfoLine(
-                      label: 'Trail',
-                      value: [
-                        '${hike.distanceKm.toStringAsFixed(1)} km',
-                        if (hike.difficulty.trim().isNotEmpty) hike.difficulty,
-                        [
-                          hike.area,
-                          hike.state,
-                          hike.country,
-                        ].where((part) => part.trim().isNotEmpty).join(', '),
-                      ].where((part) => part.trim().isNotEmpty).join(' · '),
-                    ),
-                  ],
-                ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(height: 12),
-        ],
-      ],
+            if (_hikes.length > 1) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Previous hike',
+                    onPressed: _index > 0 ? () => _goTo(_index - 1) : null,
+                    icon: const Icon(Icons.chevron_left_rounded),
+                  ),
+                  Expanded(
+                    child: Text(
+                      '${_index + 1} of ${_hikes.length} hikes',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Next upcoming hike',
+                    onPressed: _index < _hikes.length - 1
+                        ? () => _goTo(_index + 1)
+                        : null,
+                    icon: const Icon(Icons.chevron_right_rounded),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

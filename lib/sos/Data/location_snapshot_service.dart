@@ -85,9 +85,15 @@ class LocationSnapshotService with WidgetsBindingObserver {
 
   Future<SosTriggerLocation?> _refreshNow() async {
     try {
-      final location = await _deviceAlertService.getCurrentTriggerLocation(
-        allowLastKnown: true,
-      );
+      final location = await _deviceAlertService
+          .getCurrentTriggerLocation(
+            allowLastKnown: true,
+            requirePrecise: _refreshInterval <= const Duration(seconds: 5),
+          )
+          .timeout(
+            const Duration(seconds: 4),
+            onTimeout: () => _freshLocation(_latestLocation),
+          );
       if (_isValidLocation(location) && _isNewerThanCached(location!)) {
         _latestLocation = location;
       }

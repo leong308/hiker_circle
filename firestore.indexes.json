@@ -4,65 +4,202 @@
       "collectionGroup": "appFeedback",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "uid", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "uid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "trails",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "isVerifiedTrail", "order": "DESCENDING" },
-        { "fieldPath": "ratingAverage", "order": "DESCENDING" }
+        {
+          "fieldPath": "isVerifiedTrail",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "ratingAverage",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "groupChats",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "participantPhones", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "createdAtLocal", "order": "DESCENDING" }
+        {
+          "fieldPath": "participantPhones",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "createdAtLocal",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "communityPosts",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "visibility", "order": "ASCENDING" },
-        { "fieldPath": "createdAtLocal", "order": "DESCENDING" }
+        {
+          "fieldPath": "visibility",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAtLocal",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "hikeSessions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "checkIns", "order": "ASCENDING" },
-        { "fieldPath": "distanceKm", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "checkIns",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "distanceKm",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "hikeSessions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "distanceKm", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "distanceKm",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "hikeSessions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "checkIns", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "checkIns",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "hikeSessions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "hikeType", "order": "ASCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hikeType",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "endedAtLocal",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "userAchievements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isUnlocked",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "awardedAtLocal",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "userAchievements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isUnlocked",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "awardedAtLocal",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "upcomingHikes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "creatorUserId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "departureTimeLocal",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "upcomingHikes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "participantPhones",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "departureTimeLocal",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],

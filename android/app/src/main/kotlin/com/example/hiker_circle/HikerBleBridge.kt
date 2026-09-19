@@ -599,7 +599,9 @@ class HikerBleBridge(
         if (grantResults.isNotEmpty() &&
             grantResults.all { it == PackageManager.PERMISSION_GRANTED }
         ) {
-            action?.invoke()
+            runCatching { action?.invoke() }.onFailure {
+                result?.error("ble_monitor_start_failed", it.message ?: "Unable to start Bluetooth monitoring.", null)
+            }
         } else {
             result?.error(
                 "ble_permission_denied",
@@ -730,12 +732,16 @@ class HikerBleBridge(
                     .putBoolean(BleSosMonitorService.LOST_BUTTON_WARNING_ENABLED, enabled)
                     .putLong(BleSosMonitorService.LOST_BUTTON_THRESHOLD_MILLIS, thresholdMillis)
                     .apply()
-                startSosButtonMonitor()
-                result.success(null)
+                withBlePermissions(result, includeAdvertisePermission = false) {
+                    startSosButtonMonitor()
+                    result.success(null)
+                }
             }
             "restartSosButtonMonitor" -> {
-                startSosButtonMonitor()
-                result.success(null)
+                withBlePermissions(result, includeAdvertisePermission = false) {
+                    startSosButtonMonitor()
+                    result.success(null)
+                }
             }
             "startSosButtonMonitor" -> {
                 withBlePermissions(

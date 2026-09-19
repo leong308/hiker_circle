@@ -151,7 +151,7 @@ void main() {
   );
   testWidgets('far-future departure makes no API request', (tester) async {
     final hike = testHike(
-      departure: DateTime.now().add(const Duration(days: 12)),
+      departure: DateTime.now().add(const Duration(days: 20)),
     );
     final service = TestWeatherService(testForecast(hike.departureTime));
     await tester.pumpWidget(
@@ -174,6 +174,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(service.calls, 0);
     expect(find.textContaining('Forecast available closer'), findsOneWidget);
+    await tester.tap(find.text('Hike weather'));
+    await tester.pumpAndSettle();
+    expect(find.text('Your hiking forecast'), findsOneWidget);
+    expect(find.textContaining('up to 16 days ahead'), findsOneWidget);
+    expect(service.calls, 0);
+  });
+  testWidgets('12-day hike fetches weather and opens while still loading', (
+    tester,
+  ) async {
+    final hike = testHike(
+      departure: DateTime.now().add(const Duration(days: 12)),
+    );
+    final service = TestWeatherService(testForecast(hike.departureTime))
+      ..pending = Completer<TrailWeather>();
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: NextHikeBriefing(
+              hike: hike,
+              phoneNumber: 'me',
+              weatherService: service,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(service.calls, 1);
+    await tester.tap(find.text('Hike weather'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Your hiking forecast'), findsOneWidget);
+    expect(
+      find.text('Loading weather for your scheduled hike…'),
+      findsOneWidget,
+    );
+    service.pending!.complete(service.weather);
+    await tester.pumpAndSettle();
+    expect(find.text('Loading weather for your scheduled hike…'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
   testWidgets(
     'failed weather can be retried and disposing ignores pending response',

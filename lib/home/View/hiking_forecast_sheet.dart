@@ -5,6 +5,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/weather_presentation.dart';
 import '../Data/hike_briefing_weather_service.dart';
+import '../Data/home_screen_widget_service.dart';
 import '../Model/hike_session_models.dart';
 import '../Model/hike_weather_briefing.dart';
 import '../Model/session_weather_forecast.dart';
@@ -13,14 +14,14 @@ class HikingForecastSheet extends StatefulWidget {
   const HikingForecastSheet({
     super.key,
     required this.hike,
-    required this.weather,
+    this.weather,
     required this.service,
     this.elevationGain = 0,
     this.onWeatherChanged,
     this.autoplay = true,
   });
   final UpcomingHike hike;
-  final TrailWeather weather;
+  final TrailWeather? weather;
   final HikeBriefingWeatherService service;
   final int elevationGain;
   final bool autoplay;
@@ -31,7 +32,22 @@ class HikingForecastSheet extends StatefulWidget {
 
 class _ForecastState extends State<HikingForecastSheet>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
-  late TrailWeather _weather = widget.weather;
+  late TrailWeather _weather =
+      widget.weather ??
+      TrailWeather(
+        summary: '',
+        temperatureRange: '',
+        rainProbability: 0,
+        cachedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+        forecastData: {
+          'utc_offset_seconds': widget.hike.departureTime
+              .toLocal()
+              .timeZoneOffset
+              .inSeconds,
+        },
+      );
+  bool get _beyondForecast =>
+      HikeBriefingWeatherService.isBeyondForecast(widget.hike.departureTime);
   bool _loading = false;
   String? _error;
   int _metric = 0;
@@ -69,15 +85,22 @@ class _ForecastState extends State<HikingForecastSheet>
           });
     _scheduleAutoplay();
     final hourly = _weather.forecastData['hourly'];
-    if (_weather.isStale ||
-        hourly is! Map ||
-        !hourly.containsKey('wind_speed_10m')) {
+    if (!_beyondForecast &&
+        (widget.weather == null ||
+            _weather.isStale ||
+            hourly is! Map ||
+            !hourly.containsKey('wind_speed_10m') ||
+            !HikeWeatherBriefing.fromWeather(
+              _weather,
+              widget.hike.departureTime,
+              widget.hike.expectedReturnTime,
+            ).covered)) {
       _refresh();
     }
   }
 
   Future<void> _refresh() async {
-    if (_loading) return;
+    if (_loading || _beyondForecast) return;
     _stopPreview();
     setState(() {
       _loading = true;
@@ -92,12 +115,21 @@ class _ForecastState extends State<HikingForecastSheet>
       if (mounted) {
         setState(() => _weather = updated);
         widget.onWeatherChanged?.call(updated);
+        unawaited(
+          HomeScreenWidgetService.shared.acceptForecast(widget.hike, updated),
+        );
       }
     } catch (_) {
       if (mounted) {
         setState(
           () => _error =
-              'Could not refresh. The last available forecast is shown.',
+              HikeWeatherBriefing.fromWeather(
+                _weather,
+                widget.hike.departureTime,
+                widget.hike.expectedReturnTime,
+              ).hours.isEmpty
+              ? 'Couldn’t load the forecast. Check your connection and try again.'
+              : 'Could not refresh. The last available forecast is shown.',
         );
       }
     } finally {
@@ -202,7 +234,7 @@ class _ForecastState extends State<HikingForecastSheet>
                   else
                     IconButton(
                       tooltip: 'Refresh session forecast',
-                      onPressed: _refresh,
+                      onPressed: _beyondForecast ? null : _refresh,
                       icon: const Icon(Icons.refresh),
                     ),
                   IconButton(
@@ -242,101 +274,119 @@ class _ForecastState extends State<HikingForecastSheet>
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
-                    weatherDetailSection(
-                      context,
-                      Icons.shield_outlined,
-                      'Before you set off',
-                      '${cautions.length} relevant precautions',
-                      [
-                        Text(
-                          'Hiking window · ${_clock(forecast.departure, offset)} departure · includes two-hour weather buffers',
+                    if (session.hours.isEmpty) ...[
+                      const SizedBox(height: 24),
+                      _notice(
+                        _beyondForecast
+                            ? 'Forecasts are available up to ${HikeBriefingWeatherService.forecastDays} days ahead. Check again closer to departure.'
+                            : _loading
+                            ? 'Loading weather for your scheduled hike…'
+                            : _error ??
+                                  'Forecast data does not cover these hike dates yet. Check again closer to departure.',
+                      ),
+                      if (!_beyondForecast && !_loading)
+                        FilledButton.icon(
+                          onPressed: _refresh,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry forecast'),
                         ),
-                        const SizedBox(height: 16),
-                        if (cautions.isEmpty)
-                          const Text(
-                            'No specific advisories identified from the available data. Conditions can change.',
+                    ] else ...[
+                      weatherDetailSection(
+                        context,
+                        Icons.shield_outlined,
+                        'Before you set off',
+                        '${cautions.length} relevant precautions',
+                        [
+                          Text(
+                            'Hiking window · ${_clock(forecast.departure, offset)} departure · includes two-hour weather buffers',
                           ),
-                        for (final caution in cautions)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 16),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  precautionIcon(caution),
-                                  size: 19,
-                                  color: caution.priority >= 3
-                                      ? scheme.error
-                                      : scheme.primary,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        caution.title,
-                                        style: theme.textTheme.titleSmall,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        caution.message,
-                                        style: theme.textTheme.bodyMedium
-                                            ?.copyWith(height: 1.5),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
+                          const SizedBox(height: 16),
+                          if (cautions.isEmpty)
+                            const Text(
+                              'No specific advisories identified from the available data. Conditions can change.',
                             ),
+                          for (final caution in cautions)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    precautionIcon(caution),
+                                    size: 19,
+                                    color: caution.priority >= 3
+                                        ? scheme.error
+                                        : scheme.primary,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          caution.title,
+                                          style: theme.textTheme.titleSmall,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          caution.message,
+                                          style: theme.textTheme.bodyMedium
+                                              ?.copyWith(height: 1.5),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                        initiallyExpanded: cautions.isNotEmpty,
+                        emphasize: true,
+                      ),
+                      const SizedBox(height: 14),
+                      _explorer(forecast),
+                      if (!session.covered)
+                        _notice(
+                          'The forecast does not cover the full session. Summary values are unavailable.',
+                        ),
+                      if (_weather.isStale)
+                        _notice(
+                          'Outdated forecast · refresh before making plans.',
+                        ),
+                      if (_error != null) _notice(_error!),
+                      const SizedBox(height: 20),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 20,
+                        runSpacing: 8,
+                        children: [
+                          _daylight(
+                            Icons.wb_twilight,
+                            'Sunrise',
+                            session.sunrise == null
+                                ? 'Unavailable'
+                                : _clock(session.sunrise!, offset),
                           ),
-                      ],
-                      initiallyExpanded: cautions.isNotEmpty,
-                      emphasize: true,
-                    ),
-                    const SizedBox(height: 14),
-                    _explorer(forecast),
-                    if (!session.covered)
-                      _notice(
-                        'The forecast does not cover the full session. Summary values are unavailable.',
+                          _daylight(
+                            Icons.nights_stay_outlined,
+                            'Sunset',
+                            session.sunset == null
+                                ? 'Unavailable'
+                                : _clock(session.sunset!, offset),
+                          ),
+                        ],
                       ),
-                    if (_weather.isStale)
-                      _notice(
-                        'Outdated forecast · refresh before making plans.',
-                      ),
-                    if (_error != null) _notice(_error!),
-                    const SizedBox(height: 20),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 20,
-                      runSpacing: 8,
-                      children: [
-                        _daylight(
-                          Icons.wb_twilight,
-                          'Sunrise',
-                          session.sunrise == null
-                              ? 'Unavailable'
-                              : _clock(session.sunrise!, offset),
+                      const SizedBox(height: 12),
+                      _conditionsPanel(forecast),
+                      const SizedBox(height: 14),
+                      Text(
+                        'Updated ${_date(_weather.cachedAt, offset)} · Open-Meteo',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
                         ),
-                        _daylight(
-                          Icons.nights_stay_outlined,
-                          'Sunset',
-                          session.sunset == null
-                              ? 'Unavailable'
-                              : _clock(session.sunset!, offset),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _conditionsPanel(forecast),
-                    const SizedBox(height: 14),
-                    Text(
-                      'Updated ${_date(_weather.cachedAt, offset)} · Open-Meteo',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),

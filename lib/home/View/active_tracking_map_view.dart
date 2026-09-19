@@ -2,6 +2,10 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../core/widgets/community_hazard_marker.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/local_session_database.dart';
@@ -71,6 +75,7 @@ class ActiveTrackingMapView extends StatefulWidget {
     this.showLegend = false,
     this.currentPhoneNumber = '',
     this.onStyleChanged,
+    this.onReportHazard,
   });
 
   final ActiveHikeSession activeHike;
@@ -80,6 +85,7 @@ class ActiveTrackingMapView extends StatefulWidget {
   final bool showLegend;
   final String currentPhoneNumber;
   final ValueChanged<int>? onStyleChanged;
+  final VoidCallback? onReportHazard;
 
   @override
   State<ActiveTrackingMapView> createState() => _ActiveTrackingMapViewState();
@@ -100,6 +106,12 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   List<LocalTrailHazardMatch> _staticHazards = const [];
   final Map<String, LocalTrailHazardMatch> _hazardsByAnnotationId = {};
   int _hazardLoadGeneration = 0;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _communityHazardSubscription;
+  StreamSubscription<User?>? _communityHazardAuthSubscription;
+  List<CommunityHazardCluster> _communityHazards = const [];
+  final Map<String, CommunityHazardCluster> _communityHazardsByAnnotationId =
+      {};
   List<Offset?> _weatherScreenPositions = const [];
   Map<String, Offset?> _teamScreenPositions = const {};
   var _weatherProjectionScheduled = false;
@@ -138,6 +150,49 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         ? 0
         : mapPointCoordinatesOrNull(initialCenter)?.latitude ?? 0;
     unawaited(_loadStaticHazards());
+    _watchCommunityHazards();
+    if (Firebase.apps.isNotEmpty) {
+      _communityHazardAuthSubscription = FirebaseAuth.instance
+          .authStateChanges()
+          .listen((_) => _watchCommunityHazards());
+    }
+  }
+
+  void _watchCommunityHazards() {
+    _communityHazardSubscription?.cancel();
+    _communityHazards = const [];
+    _communityHazardsByAnnotationId.clear();
+    _routeRendered = false;
+    unawaited(_renderRouteIfReady());
+    if (Firebase.apps.isEmpty || FirebaseAuth.instance.currentUser == null) {
+      return;
+    }
+    final ownerUid = FirebaseAuth.instance.currentUser!.uid;
+    final trailId = widget.activeHike.trail.trailId;
+    _communityHazardSubscription = FirebaseFirestore.instance
+        .collection('hazardReports')
+        .where('trailId', isEqualTo: trailId)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (!mounted ||
+                widget.activeHike.trail.trailId != trailId ||
+                FirebaseAuth.instance.currentUser?.uid != ownerUid) {
+              return;
+            }
+            final reports = snapshot.docs
+                .map((doc) => CommunityHazard.fromMap(doc.id, doc.data()))
+                .whereType<CommunityHazard>();
+            setState(() {
+              _communityHazards = clusterCommunityHazards(reports);
+              _routeRendered = false;
+            });
+            unawaited(_renderRouteIfReady());
+          },
+          onError: (Object error) {
+            debugPrint('Community cautions unavailable: $error');
+          },
+        );
   }
 
   Future<void> _loadStaticHazards() async {
@@ -178,6 +233,8 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _communityHazardSubscription?.cancel();
+    _communityHazardAuthSubscription?.cancel();
     _hazardLoadGeneration++;
     _pointTapEvents?.cancel();
     _navigationRefocusTimer?.cancel();
@@ -188,6 +245,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     _circleManager = null;
     _pointManager = null;
     _hazardsByAnnotationId.clear();
+    _communityHazardsByAnnotationId.clear();
     _annotationManagersFuture = null;
     super.dispose();
   }
@@ -531,6 +589,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       if (oldWidget.activeHike.trail.trailId !=
           widget.activeHike.trail.trailId) {
         unawaited(_loadStaticHazards());
+        _watchCommunityHazards();
       }
       _teamProjectionGeneration++;
       final previouslyShowedMap = _showsMap;
@@ -547,6 +606,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         _pointTapEvents?.cancel();
         _pointTapEvents = null;
         _hazardsByAnnotationId.clear();
+        _communityHazardsByAnnotationId.clear();
         _annotationManagersFuture = null;
         _weatherScreenPositions = const [];
         _teamScreenPositions = const {};
@@ -574,6 +634,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   }
 
   void _onPointAnnotationTapped(mapbox.PointAnnotation annotation) {
+    final cluster = _communityHazardsByAnnotationId[annotation.id];
+    if (cluster != null && mounted) {
+      unawaited(showCommunityHazardDetails(context, cluster));
+      return;
+    }
     final match = _hazardsByAnnotationId[annotation.id];
     if (match == null || !mounted) return;
     unawaited(showStaticHazardDetails(context, match));
@@ -599,6 +664,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
+      _communityHazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -646,6 +712,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
+      _communityHazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -780,6 +847,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     await circleManager.deleteAll();
     await pointManager.deleteAll();
     _hazardsByAnnotationId.clear();
+    _communityHazardsByAnnotationId.clear();
     if (!_isCurrentMap(map, mapGeneration) ||
         renderGeneration != _renderGeneration) {
       return;
@@ -909,6 +977,28 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
           separateLabel: separateEndpointLabels,
         ),
       ]);
+      created = true;
+    }
+
+    if (_communityHazards.isNotEmpty) {
+      final clusters = List<CommunityHazardCluster>.of(_communityHazards);
+      final images = await Future.wait(
+        clusters.map((c) => communityHazardMarkerImage(c.count)),
+      );
+      if (!_isCurrentMap(map, mapGeneration) ||
+          renderGeneration != _renderGeneration) {
+        return;
+      }
+      final annotations = await pointManager.createMulti([
+        for (var i = 0; i < clusters.length; i++)
+          communityHazardAnnotation(clusters[i], images[i]),
+      ]);
+      for (var i = 0; i < annotations.length; i++) {
+        final annotation = annotations[i];
+        if (annotation != null) {
+          _communityHazardsByAnnotationId[annotation.id] = clusters[i];
+        }
+      }
       created = true;
     }
 
@@ -1176,6 +1266,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
+      _communityHazardsByAnnotationId.clear();
       _annotationManagersFuture = null;
       _weatherScreenPositions = const [];
       _teamScreenPositions = const {};
@@ -1352,6 +1443,19 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
             child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
           ),
         ),
+        if (widget.onReportHazard != null && widget.interactive)
+          Positioned(
+            right: 14,
+            bottom: widget.showLegend ? 84 : 18,
+            child: FloatingActionButton.small(
+              heroTag: null,
+              tooltip: 'Report a caution',
+              backgroundColor: const Color(0xFFFFC857),
+              foregroundColor: const Color(0xFF342500),
+              onPressed: widget.onReportHazard,
+              child: const Icon(Icons.add_alert_rounded),
+            ),
+          ),
         if (widget.showLegend)
           Positioned(
             left: 10,

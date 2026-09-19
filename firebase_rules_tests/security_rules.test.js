@@ -378,7 +378,31 @@ async function run() {
       );
     });
 
-    test('location points require the canonical owned hike session', async () => {
+    test('live links allow anonymous get, deny enumeration and require server activation', async () => {
+      const expiry = new Date(Date.now() + 3600000);
+      const row = { shareId: 'server-share', ownerUserId: OWNER_UID,
+        phoneNumber: OWNER_PHONE, isActive: true, expiresAt: expiry,
+        latestLocation: { latitude: 3.1, longitude: 101.7 } };
+      await environment.withSecurityRulesDisabled(async context => {
+        await context.firestore().doc('live_location_shares/server-share').set(row);
+      });
+      await assertSucceeds(anonymousDb.doc('live_location_shares/server-share').get());
+      await assertFails(anonymousDb.collection('live_location_shares')
+        .where('isActive', '==', true).where('expiresAt', '>', new Date()).get());
+      await assertFails(outsiderDb.collection('live_location_shares')
+        .where('isActive', '==', true).where('expiresAt', '>', new Date()).get());
+      await assertSucceeds(ownerDb.collection('live_location_shares')
+        .where('ownerUserId', '==', OWNER_UID).get());
+      await assertFails(ownerDb.doc('live_location_shares/client-share').set({ ...row, shareId: 'client-share' }));
+      await assertFails(ownerDb.doc('live_location_shares/server-share').update({ expiresAt: new Date(expiry.getTime() + 1) }));
+      await assertSucceeds(ownerDb.doc('live_location_shares/server-share').update({ latestLocation: { latitude: 3.2, longitude: 101.8 } }));
+      await assertSucceeds(ownerDb.doc('live_location_shares/server-share').update({ isActive: false }));
+      await assertFails(anonymousDb.doc('live_location_shares/server-share').get());
+      await assertFails(ownerDb.doc('live_location_shares/server-share').update({ isActive: true }));
+      await assertSucceeds(ownerDb.doc('live_location_shares/server-share').get());
+    });
+
+    test('location samples are callable-only and canonical owner controls cleanup', async () => {
       await assertFails(
         memberDb.doc('localLocationPoints/hike-1_2').set({
           sessionId: 'hike-member',
@@ -397,7 +421,7 @@ async function run() {
           longitude: 101.7,
         }),
       );
-      await assertSucceeds(
+      await assertFails(
         ownerDb.doc('localLocationPoints/hike-1_2').set({
           sessionId: 'hike-1',
           userId: OWNER_UID,
@@ -406,7 +430,7 @@ async function run() {
           longitude: 101.7,
         }),
       );
-      await assertSucceeds(
+      await assertFails(
         ownerDb.doc('localLocationPoints/hike-1_99').set({
           sessionId: 'hike-1',
           userId: OWNER_UID,
@@ -415,6 +439,13 @@ async function run() {
           longitude: 101.8,
         }),
       );
+      await assertFails(ownerDb.doc('localLocationPoints/hike-1_99').delete());
+      await environment.withSecurityRulesDisabled(async context => {
+        await context.firestore().doc('localLocationPoints/hike-1_99').set({
+          sessionId: 'hike-1', userId: OWNER_UID, userPhoneNumber: OWNER_PHONE,
+          recordedAtMillis: 99, latitude: 3.2, longitude: 101.8,
+        });
+      });
       await assertFails(
         adminDb.doc('localLocationPoints/hike-1_99').delete(),
       );

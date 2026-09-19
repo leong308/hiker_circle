@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 import '../Model/hike_session_models.dart';
@@ -19,12 +21,17 @@ class ActiveHikeLiveStatusService {
     );
   }
 
-  Future<void> startOrUpdate(ActiveHikeSession activeHike) async {
+  Future<void> startOrUpdate(
+    ActiveHikeSession activeHike, {
+    String ownerUid = '',
+  }) async {
     try {
-      await _channel.invokeMethod<void>(
-        'startOrUpdateActiveHikeLiveStatus',
-        _activeHikeToPlatformMap(activeHike),
-      );
+      await _channel.invokeMethod<void>('startOrUpdateActiveHikeLiveStatus', {
+        ..._activeHikeToPlatformMap(activeHike),
+        'ownerUid': ownerUid,
+        'locationUploadIntervalMillis':
+            activeHike.draft.locationRecordingInterval.inMilliseconds,
+      });
     } on MissingPluginException {
       // Desktop/web builds do not provide this optional platform surface.
     } on PlatformException {
@@ -33,13 +40,98 @@ class ActiveHikeLiveStatusService {
     }
   }
 
-  Future<void> stop() async {
+  Future<List<Map<String, dynamic>>> getPendingNativeLocationSamples(
+    String sessionId,
+  ) async {
     try {
-      await _channel.invokeMethod<void>('stopActiveHikeLiveStatus');
+      final rows = await _channel.invokeListMethod<dynamic>(
+        'getPendingNativeLocationSamples',
+        {'sessionId': sessionId, 'limit': 500},
+      );
+      return (rows ?? const [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
     } on MissingPluginException {
-      // Optional platform surface.
+      return const [];
     } on PlatformException {
-      // Optional platform surface.
+      return const [];
+    }
+  }
+
+  Future<void> acknowledgeNativeLocationSamples(
+    String sessionId,
+    List<String> sampleIds,
+  ) async {
+    try {
+      await _channel.invokeMethod<dynamic>('acknowledgeNativeLocationSamples', {
+        'sessionId': sessionId,
+        'sampleIds': sampleIds,
+      });
+    } on MissingPluginException {
+      /* Optional platform feature. */
+    } on PlatformException {
+      /* Durable samples will be read again. */
+    }
+  }
+
+  Future<void> markNativeLocationSamplesCloudAcknowledged(
+    String sessionId,
+    List<int> sampledAtMillis,
+  ) async {
+    try {
+      await _channel.invokeMethod<dynamic>(
+        'markNativeLocationSamplesCloudAcknowledged',
+        {'sessionId': sessionId, 'sampledAtMillis': sampledAtMillis},
+      );
+    } on MissingPluginException {
+      /* Optional platform feature. */
+    } on PlatformException {
+      /* Cloud retries remain idempotent. */
+    }
+  }
+
+  Future<List<String>> getNativeLocationBufferSessions() async {
+    try {
+      return await _channel.invokeListMethod<String>(
+            'getNativeLocationBufferSessions',
+          ) ??
+          const [];
+    } on MissingPluginException {
+      return const [];
+    } on PlatformException {
+      return const [];
+    }
+  }
+
+  Future<void> remapNativeLocationSession(
+    String oldSessionId,
+    String newSessionId,
+  ) async {
+    try {
+      await _channel.invokeMethod<dynamic>('remapNativeLocationSession', {
+        'oldSessionId': oldSessionId,
+        'newSessionId': newSessionId,
+      });
+    } on MissingPluginException {
+      /* Optional surface. */
+    } on PlatformException {
+      /* Original samples remain in durable storage. */
+    }
+  }
+
+  Future<bool> stop() async {
+    try {
+      await _channel
+          .invokeMethod<void>('stopActiveHikeLiveStatus')
+          .timeout(const Duration(seconds: 3));
+      return true;
+    } on MissingPluginException {
+      return true;
+    } on PlatformException {
+      return false;
+    } on TimeoutException {
+      return false;
     }
   }
 
@@ -57,15 +149,16 @@ class ActiveHikeLiveStatusService {
     }
   }
 
-  Future<void> acknowledgeSafetyEvent(String eventId) async {
+  Future<bool> acknowledgeSafetyEvent(String eventId) async {
     try {
       await _channel.invokeMethod<void>('acknowledgeSafetyEvent', {
         'eventId': eventId,
       });
+      return true;
     } on MissingPluginException {
-      // Native monitoring is Android-only.
+      return false;
     } on PlatformException {
-      // The persisted event is idempotent and can be acknowledged next time.
+      return false;
     }
   }
 
@@ -79,7 +172,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
-  Future<void> markSafetyEventDispatched(
+  Future<bool> markSafetyEventDispatched(
     String eventId, {
     String? message,
   }) async {
@@ -88,10 +181,11 @@ class ActiveHikeLiveStatusService {
         'eventId': eventId,
         if (message != null) 'message': message,
       });
+      return true;
     } on MissingPluginException {
-      // Native iOS monitoring is optional on other platforms.
+      return false;
     } on PlatformException {
-      // The persisted event remains available for recovery.
+      return false;
     }
   }
 

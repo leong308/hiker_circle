@@ -6,6 +6,40 @@ import 'package:hiker_circle/home/Data/first_aid_video_cache_service.dart';
 import 'package:hiker_circle/home/Model/first_aid_video.dart';
 
 void main() {
+  test('cached tutorial opens with no initialized Firebase app', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'first_aid_no_firebase_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    const video = FirstAidVideo(
+      title: 'Offline tutorial',
+      storagePath: 'first_aid/video.mp4',
+      durationLabel: '',
+      attribution: '',
+      license: '',
+      sourceUrl: '',
+      version: 1,
+      expectedBytes: 4,
+    );
+    final file = File(
+      '${directory.path}/first_aid/videos/${video.cacheFileName('topic')}',
+    );
+    await file.parent.create(recursive: true);
+    await file.writeAsBytes([1, 2, 3, 4]);
+    final service = FirstAidVideoCacheService(
+      supportDirectory: () async => directory,
+    );
+    expect(
+      (await service.cache(topicId: 'topic', video: video)).path,
+      file.path,
+    );
+    await file.delete();
+    await expectLater(
+      service.cache(topicId: 'topic', video: video),
+      throwsA(anything),
+    );
+  });
+
   test(
     'only verified KKM media is offered; unmatched topics stay explicit',
     () async {

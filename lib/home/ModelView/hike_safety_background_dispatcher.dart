@@ -55,12 +55,36 @@ Future<void> runHikeSafetyBackgroundDispatcher() async {
     final latitude = (arguments['latitude'] as num?)?.toDouble();
     final longitude = (arguments['longitude'] as num?)?.toDouble();
     final accuracy = (arguments['accuracyMeters'] as num?)?.toDouble();
-    final location = latitude != null && longitude != null
+    final capturedAtMillis = (arguments['capturedAtMillis'] as num?)?.toInt();
+    final capturedAt = capturedAtMillis == null || capturedAtMillis <= 0
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(capturedAtMillis, isUtc: true);
+    final fixAge = capturedAt == null
+        ? null
+        : triggeredAt.difference(capturedAt);
+    final fresh =
+        fixAge != null &&
+        fixAge >= const Duration(seconds: -5) &&
+        fixAge <= const Duration(seconds: 30);
+    final location =
+        fresh &&
+            latitude != null &&
+            longitude != null &&
+            latitude.isFinite &&
+            longitude.isFinite &&
+            latitude >= -90 &&
+            latitude <= 90 &&
+            longitude >= -180 &&
+            longitude <= 180 &&
+            accuracy != null &&
+            accuracy.isFinite &&
+            accuracy >= 0 &&
+            accuracy <= 500
         ? SosTriggerLocation(
             latitude: latitude,
             longitude: longitude,
             accuracyMeters: accuracy,
-            capturedAt: triggeredAt,
+            capturedAt: capturedAt,
           )
         : null;
     final mode = arguments['kind'] == 'fall_stillness'

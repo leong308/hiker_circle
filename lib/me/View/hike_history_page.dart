@@ -18,6 +18,10 @@ import '../../core/widgets/route_preview_map.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_history_models.dart';
+import '../Data/expired_hikes_repository.dart';
+
+typedef ExpiredHikesPageLoader =
+    Future<ExpiredHikesPage> Function(ExpiredHikesCursor? cursor);
 
 typedef HikeHistoryListLoader = Future<List<HikeHistorySummary>> Function();
 typedef HikeHistoryDetailLoader =
@@ -30,6 +34,7 @@ class HikeHistoryPage extends StatefulWidget {
     this.session,
     this.loadHistory,
     this.loadDetail,
+    this.loadExpiredHikes,
     this.enableInteractiveRoute = true,
   });
 
@@ -37,6 +42,7 @@ class HikeHistoryPage extends StatefulWidget {
   final AppSession? session;
   final HikeHistoryListLoader? loadHistory;
   final HikeHistoryDetailLoader? loadDetail;
+  final ExpiredHikesPageLoader? loadExpiredHikes;
   final bool enableInteractiveRoute;
 
   @override
@@ -78,126 +84,399 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _HistoryColors.backgroundFor(context),
-      appBar: AppBar(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
         backgroundColor: _HistoryColors.backgroundFor(context),
-        surfaceTintColor: Colors.transparent,
-        leading: CupertinoButton(
-          padding: EdgeInsets.zero,
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Icon(CupertinoIcons.back, size: 22),
-        ),
-        title: const Text(
-          'Hike history',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
-      ),
-      body: FutureBuilder<List<HikeHistorySummary>>(
-        future: _historyFuture,
-        builder: (context, snapshot) {
-          final isLoading = snapshot.connectionState != ConnectionState.done;
-          if (isLoading && !snapshot.hasData) {
-            return Stack(
-              children: [
-                HikerCircleLoadingToastOverlay(
-                  message: 'Loading your hike history…',
-                  detail: 'Getting your completed hikes and route records.',
-                  dimBackground: false,
-                  timeout: const Duration(seconds: 30),
-                  onTimeout: () {
-                    if (mounted) {
-                      setState(() {
-                        _historyFuture = Future<List<HikeHistorySummary>>.error(
-                          'Timed out loading hike history',
-                        );
-                      });
-                    }
-                  },
-                ),
-              ],
-            );
-          }
-          if (snapshot.hasError) {
-            return _HistoryMessage(
-              icon: Icons.cloud_off_rounded,
-              title: 'Could not load hike history',
-              message: _historyError(snapshot.error),
-              actionLabel: 'Try again',
-              onAction: _refresh,
-            );
-          }
-          final hikes = snapshot.data ?? const [];
-          if (hikes.isEmpty) {
-            return _HistoryMessage(
-              icon: Icons.hiking_rounded,
-              title: 'No completed hikes yet',
-              message:
-                  'Completed hikes will appear here with their recorded route, safety events, and performance details.',
-              actionLabel: 'Refresh',
-              onAction: _refresh,
-            );
-          }
-          final totalDistance = hikes.fold<double>(
-            0,
-            (sum, hike) => sum + hike.distanceKm,
-          );
-          final totalDuration = hikes.fold<Duration>(
-            Duration.zero,
-            (sum, hike) => sum + hike.duration,
-          );
-          final content = RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-              children: [
-                _HistoryOverview(
-                  hikeCount: hikes.length,
-                  totalDistanceKm: totalDistance,
-                  totalDuration: totalDuration,
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  'PAST HIKES',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: _HistoryColors.secondaryFor(context),
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-                const SizedBox(height: 9),
-                for (final hike in hikes) ...[
-                  _HikeHistoryCard(hike: hike, onTap: () => _openDetail(hike)),
-                  const SizedBox(height: 12),
-                ],
-              ],
-            ),
-          );
-          return Stack(
-            children: [
-              content,
-              if (isLoading)
-                HikerCircleLoadingToastOverlay(
-                  message: 'Refreshing your hike history…',
-                  detail: 'Getting the latest completed hike records.',
-                  timeout: const Duration(seconds: 30),
-                  onTimeout: () {
-                    if (mounted) {
-                      setState(() {
-                        _historyFuture = Future<List<HikeHistorySummary>>.error(
-                          'Timed out refreshing hike history',
-                        );
-                      });
-                    }
-                  },
-                ),
+        appBar: AppBar(
+          backgroundColor: _HistoryColors.backgroundFor(context),
+          surfaceTintColor: Colors.transparent,
+          leading: CupertinoButton(
+            padding: EdgeInsets.zero,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Icon(CupertinoIcons.back, size: 22),
+          ),
+          title: const Text(
+            'Hike history',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Completed'),
+              Tab(text: 'Expired'),
             ],
-          );
-        },
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _completedHistory(),
+            _ExpiredHikeHistoryList(
+              loader:
+                  widget.loadExpiredHikes ??
+                  (cursor) =>
+                      ExpiredHikesRepository(
+                        localDatabase: widget.repository.localDatabase,
+                      ).loadPage(
+                        ownerPhoneNumber: widget.session?.phoneNumber ?? '',
+                        cursor: cursor,
+                      ),
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  Widget _completedHistory() => FutureBuilder<List<HikeHistorySummary>>(
+    future: _historyFuture,
+    builder: (context, snapshot) {
+      final isLoading = snapshot.connectionState != ConnectionState.done;
+      if (isLoading && !snapshot.hasData) {
+        return Stack(
+          children: [
+            HikerCircleLoadingToastOverlay(
+              message: 'Loading your hike history…',
+              detail: 'Getting your completed hikes and route records.',
+              dimBackground: false,
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (mounted) {
+                  setState(() {
+                    _historyFuture = Future<List<HikeHistorySummary>>.error(
+                      'Timed out loading hike history',
+                    );
+                  });
+                }
+              },
+            ),
+          ],
+        );
+      }
+      if (snapshot.hasError) {
+        return _HistoryMessage(
+          icon: Icons.cloud_off_rounded,
+          title: 'Could not load hike history',
+          message: _historyError(snapshot.error),
+          actionLabel: 'Try again',
+          onAction: _refresh,
+        );
+      }
+      final hikes = snapshot.data ?? const [];
+      if (hikes.isEmpty) {
+        return _HistoryMessage(
+          icon: Icons.hiking_rounded,
+          title: 'No completed hikes yet',
+          message:
+              'Completed hikes will appear here with their recorded route, safety events, and performance details.',
+          actionLabel: 'Refresh',
+          onAction: _refresh,
+        );
+      }
+      final totalDistance = hikes.fold<double>(
+        0,
+        (sum, hike) => sum + hike.distanceKm,
+      );
+      final totalDuration = hikes.fold<Duration>(
+        Duration.zero,
+        (sum, hike) => sum + hike.duration,
+      );
+      final content = RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: [
+            _HistoryOverview(
+              hikeCount: hikes.length,
+              totalDistanceKm: totalDistance,
+              totalDuration: totalDuration,
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'PAST HIKES',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: _HistoryColors.secondaryFor(context),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const SizedBox(height: 9),
+            for (final hike in hikes) ...[
+              _HikeHistoryCard(hike: hike, onTap: () => _openDetail(hike)),
+              const SizedBox(height: 12),
+            ],
+          ],
+        ),
+      );
+      return Stack(
+        children: [
+          content,
+          if (isLoading)
+            HikerCircleLoadingToastOverlay(
+              message: 'Refreshing your hike history…',
+              detail: 'Getting the latest completed hike records.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: () {
+                if (mounted) {
+                  setState(() {
+                    _historyFuture = Future<List<HikeHistorySummary>>.error(
+                      'Timed out refreshing hike history',
+                    );
+                  });
+                }
+              },
+            ),
+        ],
+      );
+    },
+  );
+}
+
+class _ExpiredHikeHistoryList extends StatefulWidget {
+  const _ExpiredHikeHistoryList({required this.loader});
+  final ExpiredHikesPageLoader loader;
+  @override
+  State<_ExpiredHikeHistoryList> createState() =>
+      _ExpiredHikeHistoryListState();
+}
+
+class _ExpiredHikeHistoryListState extends State<_ExpiredHikeHistoryList> {
+  List<UpcomingHike> _hikes = [];
+  ExpiredHikesCursor? _cursor;
+  bool _isLoading = true;
+  bool _isFromCache = false;
+  Object? _error;
+  int _loadGeneration = 0;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load(refresh: true));
+  }
+
+  Future<void> _load({bool refresh = false}) async {
+    if (!refresh && (_isLoading || _cursor == null)) return;
+    final generation = ++_loadGeneration;
+    final requested = refresh ? null : _cursor;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final page = await widget.loader(requested);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        final byId = <String, UpcomingHike>{
+          if (!refresh)
+            for (final hike in _hikes) hike.id: hike,
+        };
+        for (final hike in page.hikes) {
+          byId[hike.id] = hike;
+        }
+        _hikes = byId.values.toList();
+        final next = page.nextCursor;
+        _cursor =
+            next != null &&
+                next.hikeId == requested?.hikeId &&
+                next.departureTimeLocal == requested?.departureTimeLocal
+            ? null
+            : next;
+        _isFromCache = page.isFromCache;
+      });
+    } catch (error) {
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _error = error);
+      }
+    } finally {
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading && _hikes.isEmpty) {
+      return const HikerCircleLoadingView(
+        message: 'Loading expired plans…',
+        detail: 'Getting your past scheduled hikes.',
+        compact: true,
+      );
+    }
+    if (_error != null && _hikes.isEmpty) {
+      return _HistoryMessage(
+        icon: Icons.cloud_off_rounded,
+        title: 'Could not load expired plans',
+        message: 'Check your connection and try again.',
+        actionLabel: 'Try again',
+        onAction: () => _load(refresh: true),
+      );
+    }
+    if (_hikes.isEmpty) {
+      return _HistoryMessage(
+        icon: Icons.event_available_rounded,
+        title: 'No expired plans',
+        message:
+            'Past scheduled hikes that were never started will appear here.',
+        actionLabel: 'Refresh',
+        onAction: () => _load(refresh: true),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: () => _load(refresh: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            'Past scheduled hikes that were never started.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          if (_isFromCache)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('Saved on this phone · Refresh when connected'),
+            ),
+          const SizedBox(height: 16),
+          for (final hike in _hikes)
+            Card(
+              child: ListTile(
+                key: Key('expired-hike-${hike.id}'),
+                leading: const Icon(Icons.event_busy_rounded),
+                title: Text(
+                  hike.trailName.isEmpty ? 'Scheduled hike' : hike.trailName,
+                ),
+                subtitle: Text(
+                  '${_expiredDate(hike.departureTime)} · ${hike.hikeType == 'team' ? 'Team' : 'Solo'} plan',
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ExpiredHikeDetailPage(hike: hike),
+                  ),
+                ),
+              ),
+            ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'Older plans could not be loaded. Try again when connected.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          if (_cursor != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: OutlinedButton(
+                onPressed: _isLoading ? null : () => _load(),
+                child: Text(_isLoading ? 'Loading…' : 'Load older plans'),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _expiredDate(DateTime value) {
+  final local = value.toLocal();
+  return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year} '
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+class ExpiredHikeDetailPage extends StatelessWidget {
+  const ExpiredHikeDetailPage({super.key, required this.hike});
+  final UpcomingHike hike;
+
+  @override
+  Widget build(BuildContext context) {
+    final draft = hike.draft;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Expired hike plan')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            hike.trailName.isEmpty ? 'Scheduled hike' : hike.trailName,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'This scheduled hike was never started. Its original plan is kept here for reference.',
+          ),
+          const SizedBox(height: 20),
+          _planRow('Planned departure', _expiredDate(hike.departureTime)),
+          _planRow('Expected return', _expiredDate(hike.expectedReturnTime)),
+          _planRow('Hike type', hike.hikeType == 'team' ? 'Team' : 'Solo'),
+          if (hike.creatorName.isNotEmpty)
+            _planRow('Organizer', hike.creatorName),
+          _planRow('Planned participants', '${hike.participantCount}'),
+          if (hike.area.isNotEmpty)
+            _planRow(
+              'Area',
+              [
+                hike.area,
+                hike.state,
+                hike.country,
+              ].where((part) => part.isNotEmpty).join(', '),
+            ),
+          _planRow(
+            'Planned distance',
+            '${hike.distanceKm.toStringAsFixed(1)} km',
+          ),
+          _planRow('Estimated duration', '${hike.durationMinutes} min'),
+          if (hike.difficulty.isNotEmpty)
+            _planRow('Difficulty', hike.difficulty),
+          if (hike.startPointName.isNotEmpty)
+            _planRow('Start', hike.startPointName),
+          if (hike.destinationName.isNotEmpty)
+            _planRow('Destination', hike.destinationName),
+          if (draft != null) ...[
+            const Divider(height: 32),
+            Text(
+              'Planned safety settings',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            _planRow(
+              'Fall detection',
+              draft.fallDetectionEnabled ? 'Enabled' : 'Disabled',
+            ),
+            _planRow(
+              'Live location sharing',
+              draft.shareLiveLocation ? 'Enabled' : 'Disabled',
+            ),
+            _planRow(
+              'Check-in interval',
+              '${draft.safetyCheckInInterval.inMinutes} min',
+            ),
+            const Divider(height: 32),
+            Text(
+              'Planned checkpoints',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            for (final checkpoint in draft.effectiveCheckpoints)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.place_outlined),
+                title: Text(checkpoint.name),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _planRow(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 7),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 2),
+        Text(value),
+      ],
+    ),
+  );
 }
 
 class HikeHistoryDetailPage extends StatefulWidget {

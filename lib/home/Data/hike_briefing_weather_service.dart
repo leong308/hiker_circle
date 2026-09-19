@@ -7,6 +7,11 @@ class HikeBriefingWeatherService {
   HikeBriefingWeatherService({http.Client? client}) : _client = client;
   static final shared = HikeBriefingWeatherService();
   static const freshness = Duration(hours: 4);
+  static const forecastDays = 16;
+
+  static bool isBeyondForecast(DateTime departure, {DateTime? now}) =>
+      departure.toUtc().difference((now ?? DateTime.now()).toUtc()) >=
+      const Duration(days: forecastDays);
   final http.Client? _client;
   final _cache = <String, TrailWeather>{};
   final _pending = <String, Future<TrailWeather>>{};
@@ -66,6 +71,8 @@ class HikeBriefingWeatherService {
             Uri.https('api.open-meteo.com', '/v1/forecast', {
               'latitude': '$latitude',
               'longitude': '$longitude',
+              'current':
+                  'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m',
               'hourly':
                   'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,visibility,uv_index',
               'daily': 'sunrise,sunset',
@@ -75,7 +82,7 @@ class HikeBriefingWeatherService {
               'wind_speed_unit': 'kmh',
               'precipitation_unit': 'mm',
               'past_days': '1',
-              'forecast_days': '7',
+              'forecast_days': '$forecastDays',
             }),
           )
           .timeout(const Duration(seconds: 12));

@@ -2,10 +2,13 @@ import '../../core/services/route_gear_analysis_service.dart';
 import '../Model/route_gear_assessment.dart';
 import 'solo_hike_distance_dialog.dart';
 import 'final_preparation_review_page.dart';
+import '../Model/hike_preparation_sharing.dart';
 import 'hike_start_navigation.dart';
 import '../Model/recorded_hike_map_points.dart';
 import '../Data/hike_briefing_weather_service.dart';
 import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../trail/Model/precaution_check_service.dart';
 import '../../trail/View/precaution_confirmation.dart';
 import 'dart:convert';
@@ -65,6 +68,7 @@ import '../ModelView/fall_stillness_monitor.dart';
 import '../ModelView/stationary_location_policy.dart';
 import 'active_hike_map_page.dart';
 import 'home_dashboard_page.dart';
+import 'hiking_forecast_sheet.dart';
 import 'hike_share_preview_page.dart';
 import 'first_aid_guide_page.dart';
 import 'start_hike_wizard_page.dart';
@@ -162,11 +166,73 @@ class _HikerHomePageState extends State<HikerHomePage>
   bool isFallStillnessLocalAlarmActive = false;
   bool fallStillnessCountdownWasBackgrounded = false;
   Timer? activeHikeRecordingTimer;
+  Timer? _activeHikeUploadTimer;
+  Completer<void>? _activeLocationWrite;
+  final Set<String> _durablyDispatchedNativeSafetyEvents = {};
+  Timer? _pendingHikeRetryTimer;
+  bool _nativeHikeStopPending = false;
+  int _lastManualSharingStopRevision = 0;
+  Duration? _activeHikeUploadInterval;
+  bool _isReconnectSyncRunning = false;
+  Future<void> _hikeNoticeQueue = Future<void>.value();
+  bool _isUploadingHikeLocations = false;
+  StreamSubscription<EmergencyContactsChange>? _contactsChangeSubscription;
   Timer? _precautionTimer;
   bool _checkingPrecautions = false;
   String? _precautionSession;
   DateTime? _precautionCheckedAt;
   final Map<String, int> _spokenPrecautions = {};
+
+  Future<void> _showHikeNotice(
+    String sessionId,
+    String message, {
+    String? title,
+    bool speak = false,
+  }) {
+    _hikeNoticeQueue = _hikeNoticeQueue
+        .then((_) async {
+          if (!mounted ||
+              activeHike?.sessionId != sessionId ||
+              _isEndingActiveHike ||
+              fallStillnessMonitor.isAwaitingResponse ||
+              isFallStillnessLocalAlarmActive ||
+              isSendingFallStillnessSos ||
+              isNativeSafetyDialogVisible) {
+            return;
+          }
+          final duration = speak
+              ? Duration(
+                  seconds: (message.split(RegExp(r'\s+')).length / 2.2)
+                      .ceil()
+                      .clamp(8, 90),
+                )
+              : const Duration(seconds: 5);
+          final toast = HikerCircleToast.show(
+            context,
+            message,
+            title: title,
+            duration: duration,
+          );
+          if (speak) {
+            try {
+              await _sosDeviceAlertService
+                  .speakFallStillnessPrompt(
+                    message: 'Hike precaution. $message',
+                  )
+                  .timeout(duration);
+            } on PlatformException {
+              /* The visible notice remains available. */
+            } on MissingPluginException {
+              /* Optional speech surface. */
+            }
+          }
+          await toast.closed;
+        })
+        .catchError((Object error) {
+          debugPrint('Hike notice unavailable: $error');
+        });
+    return _hikeNoticeQueue;
+  }
 
   Future<void> _checkActivePrecautions() async {
     final hike = activeHike;
@@ -213,14 +279,12 @@ class _HikerHomePageState extends State<HikerHomePage>
           .toList();
       if (fresh.isEmpty) return;
       final message = fresh.map((c) => '${c.title}. ${c.message}').join(' ');
-      HikerCircleToast.show(context, message, title: 'Hike precautions');
-      try {
-        await _sosDeviceAlertService.speakFallStillnessPrompt(
-          message: 'Hike precaution. $message',
-        );
-      } on PlatformException catch (_) {
-        // Visible caution remains available when platform speech is unavailable.
-      } on MissingPluginException catch (_) {}
+      await _showHikeNotice(
+        hike.sessionId,
+        message,
+        title: 'Hike precautions',
+        speak: true,
+      );
       for (final caution in fresh) {
         _spokenPrecautions[caution.id] = caution.priority;
       }
@@ -262,6 +326,8 @@ class _HikerHomePageState extends State<HikerHomePage>
       FallStillnessMonitorStatus.inactive;
   ActiveHikeSession? activeHike;
   Future<void>? _activeHikeRestoreFuture;
+  late final Future<void> _upcomingPlanningRestoreFuture;
+  bool _isOpeningUpcomingWeather = false;
   Future<void> _activeHikePersistenceQueue = Future<void>.value();
   Future<void> _fallStillnessSyncQueue = Future<void>.value();
   late final Future<void> _emergencyContactsLoadFuture;
@@ -295,6 +361,9 @@ class _HikerHomePageState extends State<HikerHomePage>
   @override
   void initState() {
     super.initState();
+    _lastManualSharingStopRevision =
+        LiveLocationSharingService.instance.manualStopRevision;
+    LiveLocationSharingService.instance.addListener(_handleLiveSharingChanged);
     tabs = [
       ...HikerBottomNavBar.standardDestinations,
       if (widget.session.isAdmin)
@@ -307,10 +376,17 @@ class _HikerHomePageState extends State<HikerHomePage>
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
     _listenForFormedTeamChats();
-    unawaited(_restoreCachedUpcomingPlanningState());
+    _upcomingPlanningRestoreFuture = _restoreCachedUpcomingPlanningState();
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    _contactsChangeSubscription = EmergencyContactsRepository.changes.listen((
+      change,
+    ) {
+      if (mounted && change.phoneNumber == widget.session.phoneNumber) {
+        setState(() => emergencyContacts = change.contacts);
+      }
+    });
     _emergencyContactsLoadFuture = _loadEmergencyContacts();
     sosAlertRepository = SosAlertRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
@@ -342,6 +418,30 @@ class _HikerHomePageState extends State<HikerHomePage>
     _precautionTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(_checkActivePrecautions());
     });
+    _pendingHikeRetryTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) return;
+      if (_nativeHikeStopPending && activeHike == null) {
+        unawaited(
+          _activeHikeLiveStatusService.stop().then((stopped) {
+            _nativeHikeStopPending = !stopped;
+          }),
+        );
+      }
+      unawaited(
+        _runReconnectStep(
+          'pending hike completions',
+          () => hikerCircleRepository.flushPendingHikeEnds(
+            session: widget.session,
+          ),
+        ),
+      );
+      unawaited(
+        _runReconnectStep(
+          'pending sharing stop',
+          LiveLocationSharingService.instance.retryPendingStop,
+        ),
+      );
+    });
     unawaited(loadLiveData());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -360,6 +460,22 @@ class _HikerHomePageState extends State<HikerHomePage>
         .snapshots
         .listen(_handleNetworkReachabilityChanged);
     unawaited(NetworkReachabilityService.instance.start());
+  }
+
+  void _handleLiveSharingChanged() {
+    final revision = LiveLocationSharingService.instance.manualStopRevision;
+    if (revision == _lastManualSharingStopRevision) return;
+    _lastManualSharingStopRevision = revision;
+    if (!mounted) return;
+    final hike = activeHike;
+    if (hike == null || !hike.draft.shareLiveLocation) return;
+    final updated = hike.copyWith(
+      draft: hike.draft.copyWith(shareLiveLocation: false),
+    );
+    _liveLocationActivatedForActiveHike = false;
+    setState(() => activeHike = updated);
+    _persistActiveHikeSnapshot(updated);
+    _syncActiveHikeLiveStatus(updated, force: true);
   }
 
   void _listenForFormedTeamChats() {
@@ -729,54 +845,84 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _synchronizeAfterReconnect() async {
-    // Each queue is independent: a failed chat or contact write must not block
-    // critical SOS, hike-end, or GPS recovery work from being attempted.
-    if (emergencyContacts.isNotEmpty) {
-      await _runReconnectStep(
-        'emergency contacts',
-        () => emergencyContactsRepository.saveEmergencyContacts(
-          session: widget.session,
-          contacts: emergencyContacts,
+    if (_isReconnectSyncRunning || !mounted) return;
+    _isReconnectSyncRunning = true;
+    try {
+      await Future.wait<void>([
+        _runReconnectStep('contacts and SOS alerts', () async {
+          await _loadEmergencyContacts();
+          if (!mounted) return;
+          await sosAlertRepository.flushQueuedAlerts(
+            session: widget.session,
+            contacts: emergencyContacts,
+          );
+        }),
+        _runReconnectStep(
+          'pending sharing stop',
+          LiveLocationSharingService.instance.retryPendingStop,
         ),
-      );
+        _runReconnectStep(
+          'SOS message notes',
+          () => sosAlertRepository.flushPendingCustomWhatsAppNotes(
+            session: widget.session,
+          ),
+        ),
+        _runReconnectStep('nearby SOS forwarding', () async {
+          final events = await nearbySosEventRepository.load(
+            ownerPhoneNumber: widget.session.phoneNumber,
+            limit: 50,
+          );
+          final now = DateTime.now().toUtc();
+          for (final event in events.where(
+            (event) => event.ageAt(now) <= const Duration(hours: 1),
+          )) {
+            if (!mounted) return;
+            await hikerCircleRepository.forwardNearbySosIncident(event: event);
+          }
+        }),
+        _runReconnectStep(
+          'chat messages',
+          () => hikerCircleRepository.flushPendingMessages(
+            ownerPhoneNumber: widget.session.phoneNumber,
+          ),
+        ),
+        _runReconnectStep(
+          'offline changes',
+          () => hikerCircleRepository.flushSyncOutbox(session: widget.session),
+        ),
+        _runReconnectStep(
+          'ended hikes',
+          () => hikerCircleRepository.flushPendingHikeEnds(
+            session: widget.session,
+          ),
+        ),
+        _runReconnectStep(
+          'active hike recovery',
+          _recoverActiveHikeAfterReconnect,
+        ),
+      ]);
+    } finally {
+      _isReconnectSyncRunning = false;
     }
-    await _runReconnectStep(
-      'SOS alerts',
-      () => sosAlertRepository.flushQueuedAlerts(
-        session: widget.session,
-        contacts: emergencyContacts,
-      ),
-    );
-    await _runReconnectStep('nearby SOS forwarding', () async {
-      final events = await nearbySosEventRepository.load(
-        ownerPhoneNumber: widget.session.phoneNumber,
-        limit: 50,
-      );
-      final now = DateTime.now().toUtc();
-      for (final event in events.where(
-        (value) => value.ageAt(now) <= const Duration(hours: 1),
-      )) {
-        await hikerCircleRepository.forwardNearbySosIncident(event: event);
-      }
-    });
-    await _runReconnectStep(
-      'chat messages',
-      () => hikerCircleRepository.flushPendingMessages(
-        ownerPhoneNumber: widget.session.phoneNumber,
-      ),
-    );
-    await _runReconnectStep(
-      'offline changes',
-      () => hikerCircleRepository.flushSyncOutbox(session: widget.session),
-    );
-    await _runReconnectStep(
-      'ended hikes',
-      () => hikerCircleRepository.flushPendingHikeEnds(session: widget.session),
-    );
+  }
 
+  Future<void> _recoverActiveHikeAfterReconnect() async {
+    if (!mounted || _isEndingActiveHike) return;
     final currentHike = activeHike;
     if (currentHike != null) {
-      final hike = await _restoreScheduledTeamSourceLink(currentHike);
+      await _drainNativeLocationSamples(currentHike);
+      final hike =
+          await _restoreScheduledTeamSourceLink(
+            activeHike ?? currentHike,
+          ).timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => activeHike ?? currentHike,
+          );
+      if (!mounted ||
+          activeHike?.sessionId != hike.sessionId ||
+          _isEndingActiveHike) {
+        return;
+      }
       ActiveHikeCloudRestoreResult? restoreResult;
       await _runReconnectStep('active hike', () async {
         restoreResult = await hikerCircleRepository
@@ -799,7 +945,7 @@ class _HikerHomePageState extends State<HikerHomePage>
               activeHike: hikeToFlush,
             );
             if (mounted && activeHike?.sessionId == hikeToFlush.sessionId) {
-              final updatedHike = hikeToFlush.copyWith(
+              final updatedHike = activeHike!.copyWith(
                 queuedUpdates: remaining,
               );
               setState(() => activeHike = updatedHike);
@@ -809,10 +955,11 @@ class _HikerHomePageState extends State<HikerHomePage>
         }
       }
     }
-    if (currentHike != null && currentHike.draft.shareLiveLocation) {
+    final latestHike = activeHike;
+    if (latestHike != null && latestHike.draft.shareLiveLocation) {
       await _runReconnectStep(
         'live location sharing',
-        () => _syncLiveLocationForActiveHike(currentHike),
+        () => _syncLiveLocationForActiveHike(latestHike),
       );
     } else if (LiveLocationSharingService.instance.isActive) {
       await _runReconnectStep(
@@ -841,8 +988,13 @@ class _HikerHomePageState extends State<HikerHomePage>
       teamHikeSession: teamSession,
     );
     if (mounted && activeHike?.sessionId == hike.sessionId) {
-      setState(() => activeHike = updatedHike);
-      _persistActiveHikeSnapshot(updatedHike);
+      final merged = activeHike!.copyWith(
+        sourceUpcomingHikeId: sourceUpcomingHikeId,
+        teamHikeSession: teamSession,
+      );
+      setState(() => activeHike = merged);
+      _persistActiveHikeSnapshot(merged);
+      return merged;
     }
     return updatedHike;
   }
@@ -863,7 +1015,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     ActiveHikeSession requestedHike,
     ActiveHikeCloudRestoreResult result,
   ) async {
-    if (!mounted) return null;
+    if (!mounted || _isEndingActiveHike) return null;
     final currentHike = activeHike;
     if (currentHike == null ||
         currentHike.sessionId != requestedHike.sessionId) {
@@ -875,16 +1027,23 @@ class _HikerHomePageState extends State<HikerHomePage>
     final canonicalSessionId = result.sessionId;
     if (canonicalSessionId != oldSessionId) {
       _activeHikeSessionIdRemaps[oldSessionId] = canonicalSessionId;
+      await _drainNativeLocationSamples(currentHike);
+      await _activeHikeLiveStatusService.remapNativeLocationSession(
+        oldSessionId,
+        canonicalSessionId,
+      );
       await _activeHikePersistenceQueue;
       cloudHike = await hikerCircleRepository.localDatabase
           .migrateActiveHikeSessionId(
             ownerPhoneNumber: widget.session.phoneNumber,
-            activeHike: currentHike,
+            activeHike: activeHike ?? currentHike,
             newSessionId: canonicalSessionId,
           );
     }
 
-    if (!mounted || activeHike?.sessionId != oldSessionId) {
+    if (!mounted ||
+        _isEndingActiveHike ||
+        activeHike?.sessionId != oldSessionId) {
       return activeHike?.sessionId == canonicalSessionId ? activeHike : null;
     }
     if (result.terminal) {
@@ -894,14 +1053,11 @@ class _HikerHomePageState extends State<HikerHomePage>
       setState(() => activeHike = null);
       _syncActiveHikeServices(null);
       await _activeHikePersistenceQueue;
-      await hikerCircleRepository.localDatabase.discardHikeTrackingTelemetry(
-        sessionId: canonicalSessionId,
+      unawaited(
+        hikerCircleRepository
+            .flushLocationPoints(session: widget.session, activeHike: cloudHike)
+            .catchError((Object _) => cloudHike.queuedUpdates),
       );
-      if (canonicalSessionId != oldSessionId) {
-        await hikerCircleRepository.localDatabase.discardHikeTrackingTelemetry(
-          sessionId: oldSessionId,
-        );
-      }
       if (mounted) {
         final statusLabel = result.status == 'abandoned'
             ? 'abandoned'
@@ -922,6 +1078,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (!result.ensured) return null;
 
     if (canonicalSessionId != oldSessionId) {
+      cloudHike = activeHike!.copyWith(sessionId: canonicalSessionId);
       setState(() => activeHike = cloudHike);
       _syncActiveHikeServices(cloudHike, forceLiveStatus: true);
     }
@@ -933,7 +1090,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     Future<dynamic> Function() action,
   ) async {
     try {
-      await action();
+      await action().timeout(const Duration(seconds: 15));
     } catch (error) {
       debugPrint('Reconnect $label synchronization will retry: $error');
     }
@@ -1421,7 +1578,11 @@ class _HikerHomePageState extends State<HikerHomePage>
         } else {
           await hikerCircleRepository.localDatabase.saveActiveHikeSession(
             phoneNumber: widget.session.phoneNumber,
-            activeHike: hike,
+            activeHike: _activeHikeSessionIdRemaps.containsKey(hike.sessionId)
+                ? hike.copyWith(
+                    sessionId: _activeHikeSessionIdRemaps[hike.sessionId]!,
+                  )
+                : hike,
           );
         }
       } catch (error) {
@@ -1462,6 +1623,60 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
   }
 
+  Future<void> _openUpcomingWeather() async {
+    if (_isOpeningUpcomingWeather) return;
+    _isOpeningUpcomingWeather = true;
+    try {
+      await _upcomingPlanningRestoreFuture.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {},
+      );
+      if (!mounted) return;
+      var next = PlannedHikeStateResolver.selectNext(myUpcomingHikes);
+      if (next == null) {
+        HikerCircleToast.show(context, 'Loading your upcoming hike…');
+        final hikes = await hikerCircleRepository
+            .loadMyUpcomingHikes(widget.session.phoneNumber)
+            .timeout(const Duration(seconds: 8));
+        if (!mounted) return;
+        next = PlannedHikeStateResolver.selectNext(hikes);
+        if (next != null) {
+          unawaited(HomeScreenWidgetService.shared.update(hikes: hikes));
+        }
+      }
+      if (!mounted) return;
+      if (next == null) {
+        HikerCircleToast.show(
+          context,
+          'No upcoming hike is available. Open your hiking plans to check the schedule.',
+        );
+        return;
+      }
+      final forecastHike = next;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => HikingForecastSheet(
+          hike: forecastHike,
+          service: HikeBriefingWeatherService.shared,
+          elevationGain: plannedHike?.upcomingHikeId == forecastHike.id
+              ? plannedHike!.trail.elevationGainMeters
+              : 0,
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        HikerCircleToast.show(
+          context,
+          'Couldn’t open hike weather. Please try again.',
+        );
+      }
+    } finally {
+      _isOpeningUpcomingWeather = false;
+    }
+  }
+
   Future<void> _handleDeepLink(String link) async {
     final now = DateTime.now();
     final lastHandledAt = _lastHandledDeepLinkAt;
@@ -1477,19 +1692,17 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (uri == null || uri.scheme != 'hikercircle') {
       return;
     }
-    if (uri.host == 'hike') {
-      await _waitForActiveHikeRestore();
-      if (!mounted) {
-        return;
-      }
-    }
     if (uri.host == 'hike' &&
         (uri.path == '/briefing' || uri.path == '/weather')) {
       if (!mounted) return;
       setState(() => selectedTabIndex = 0);
       tabController.animateTo(0);
-      // Open the existing Home briefing. This link never starts a hike or SOS.
+      if (uri.path == '/weather') await _openUpcomingWeather();
       return;
+    }
+    if (uri.host == 'hike') {
+      await _waitForActiveHikeRestore();
+      if (!mounted) return;
     }
     if (uri.host == 'sos' && uri.path == '/manual') {
       requestManualSos();
@@ -1553,7 +1766,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     if (uri.host == 'hike' && uri.path == '/check-in') {
       if (!_deepLinkMatchesActiveHike(uri)) return;
-      _checkInFromLiveStatusAction();
+      _openActiveHikeDetailsFromDeepLink();
       return;
     }
     if (uri.host == 'hike' && uri.path == '/pin') {
@@ -2429,7 +2642,10 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
   }
 
-  Future<int?> _readBatteryLevel() => _sosDeviceAlertService.getBatteryLevel();
+  Future<int?> _readBatteryLevel() => _sosDeviceAlertService
+      .getBatteryLevel()
+      .timeout(const Duration(milliseconds: 700), onTimeout: () => null)
+      .catchError((Object _) => null);
 
   Future<void> _refreshBatteryLevel() async {
     final batteryLevel = await _sosDeviceAlertService.getBatteryLevel();
@@ -2558,6 +2774,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<PlannedHike?> _reviewDraftPreparation(
     HikeSessionDraft draft, {
     bool joiningTeam = false,
+    String? upcomingHikeId,
   }) async {
     final preview = PlannedHikeStateResolver.provisionalFromConfirmedDraft(
       draft: draft,
@@ -2584,10 +2801,21 @@ class _HikerHomePageState extends State<HikerHomePage>
           ),
           onPlanChanged: (_) async {},
           onReady: (value) => reviewed = value,
+          initialContacts: emergencyContacts,
+          loadContacts: _preparationContacts,
+          onEditContacts: openEmergencyContacts,
+          loadBatteryLevel: _readBatteryLevel,
+          loadSharing: upcomingHikeId == null || upcomingHikeId.isEmpty
+              ? null
+              : () => _loadPreparationSharing(upcomingHikeId),
+          saveSharing: upcomingHikeId == null || upcomingHikeId.isEmpty
+              ? null
+              : (choice) => _savePreparationSharing(upcomingHikeId, choice),
           loadRouteAnalysis: (force) => _analyzeGearRoute(plan, force: force),
           loadWeather: () => HikeBriefingWeatherService.shared.fetch(
             plan.trail.latitude,
             plan.trail.longitude,
+            force: true,
           ),
         ),
       ),
@@ -2604,10 +2832,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<bool> _startInstantHikeFromWizard(HikeSessionDraft draft) async {
     final reviewed = await _reviewDraftPreparation(draft);
     if (!mounted || reviewed == null) return false;
-    draft = draft.copyWith(
-      completedChecklistItems: reviewed.completedChecklistItems,
-      trail: draft.trail.copyWith(weather: reviewed.trail.weather),
-    );
+    draft = _applyReviewedPreparation(draft, reviewed);
     final checked = await confirmSoloHikeDistance(
       context,
       draft,
@@ -2854,113 +3079,13 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _recordInitialActiveHikeLocation(ActiveHikeSession hike) async {
-    try {
-      final location =
-          await LocationSnapshotService.instance.refresh() ??
-          LocationSnapshotService.instance.latestLocation;
-      if (location == null || !_isAcceptableTrackingLocation(hike, location)) {
-        return;
-      }
-      final batteryLevel = await _readBatteryLevel();
-
-      final queuedUpdates = await hikerCircleRepository.recordLocationPoint(
-        session: widget.session,
-        activeHike: hike,
-        location: location,
-        pointType: 'session_start',
-        batteryLevel: batteryLevel,
-      );
-      if (!mounted) {
-        return;
-      }
-
-      final latestHike = activeHike;
-      if (latestHike == null || latestHike.sessionId != hike.sessionId) {
-        return;
-      }
-
-      lastActiveHikeLocationRecordedAt = DateTime.now();
-      final updatedHike = _hikeWithRecordedLocation(
-        latestHike,
-        location,
-        queuedUpdates: queuedUpdates,
-        batteryLevel: batteryLevel,
-      );
-      setState(() {
-        activeHike = updatedHike;
-      });
-      _persistActiveHikeSnapshot(updatedHike);
-      _syncActiveHikeLiveStatus(updatedHike, force: true);
-      _syncTeamHikeLocation(updatedHike, location);
-    } catch (_) {
-      // The periodic active-hike recorder will try again at the configured
-      // interval, so startup should never stall on the first GPS point.
-    }
+    if (activeHike?.sessionId != hike.sessionId) return;
+    await _recordActiveHikeLocationTick(force: true);
   }
 
   Future<ActiveHikeSession> checkInActiveHike(
     ActiveHikeSession currentHike,
-  ) async {
-    final refreshedLocation = await LocationSnapshotService.instance.refresh();
-    final location =
-        refreshedLocation != null &&
-            _isAcceptableTrackingLocation(currentHike, refreshedLocation)
-        ? refreshedLocation
-        : null;
-    final checkedInAt = DateTime.now();
-    final batteryLevel = await _readBatteryLevel();
-    final hikeWithBattery = currentHike.copyWith(batteryLevel: batteryLevel);
-    await hikerCircleRepository.recordCheckIn(
-      session: widget.session,
-      activeHike: hikeWithBattery,
-      location: location,
-    );
-    if (location != null) {
-      final queuedUpdates = await hikerCircleRepository.recordLocationPoint(
-        session: widget.session,
-        activeHike: hikeWithBattery,
-        location: location,
-        pointType: 'check_in',
-        batteryLevel: batteryLevel,
-      );
-      await hikerCircleRepository.recordNetworkObservation(
-        session: widget.session,
-        activeHike: hikeWithBattery,
-        location: location,
-        apiRequestSuccess: widget.firebaseBootstrapResult.isAvailable,
-      );
-      final updatedHike =
-          _hikeWithRecordedLocation(
-            hikeWithBattery,
-            location,
-            checkIns: currentHike.checkIns + 1,
-            queuedUpdates: queuedUpdates,
-          ).copyWith(
-            checkInRecords: [
-              ...currentHike.checkInRecords,
-              HikeCheckInRecord(
-                id: 'check_in_${checkedInAt.microsecondsSinceEpoch}',
-                checkedInAt: checkedInAt,
-                coordinate: HikeCoordinate.fromTriggerLocation(location),
-              ),
-            ],
-          );
-      _syncTeamHikeLocation(updatedHike, location);
-      return updatedHike;
-    }
-
-    return hikeWithBattery.copyWith(
-      checkIns: currentHike.checkIns + 1,
-      queuedUpdates: currentHike.queuedUpdates,
-      checkInRecords: [
-        ...currentHike.checkInRecords,
-        HikeCheckInRecord(
-          id: 'check_in_${checkedInAt.microsecondsSinceEpoch}',
-          checkedInAt: checkedInAt,
-        ),
-      ],
-    );
-  }
+  ) async => activeHike ?? currentHike;
 
   Future<PinLocationResult> pinCurrentLocation(
     ActiveHikeSession currentHike,
@@ -3033,8 +3158,10 @@ class _HikerHomePageState extends State<HikerHomePage>
         teamHikeSessionId: currentHike.teamHikeSessionId,
         participantPhoneNumber: phoneNumber,
       );
-      if (mounted) {
-        final updatedHike = _withTeamHikeSessionLink(currentHike, teamSession);
+      if (mounted &&
+          activeHike?.sessionId == currentHike.sessionId &&
+          !_isEndingActiveHike) {
+        final updatedHike = _withTeamHikeSessionLink(activeHike!, teamSession);
         setState(() {
           activeHike = updatedHike;
         });
@@ -3082,43 +3209,6 @@ class _HikerHomePageState extends State<HikerHomePage>
     });
   }
 
-  void _checkInFromLiveStatusAction() {
-    final hike = activeHike;
-    if (hike == null) {
-      _showNoActiveHikeSnackBar();
-      return;
-    }
-
-    setState(() {
-      selectedTabIndex = 0;
-    });
-    tabController.animateTo(0);
-    unawaited(_applyLiveStatusCheckIn(hike));
-  }
-
-  Future<void> _applyLiveStatusCheckIn(ActiveHikeSession hike) async {
-    if (_isCheckInBusy || activeHike?.sessionId != hike.sessionId) return;
-    _isCheckInBusy = true;
-    try {
-      final updatedHike = await checkInActiveHike(hike);
-      if (!mounted || activeHike?.sessionId != hike.sessionId) return;
-      setState(() => activeHike = updatedHike);
-      _syncActiveHikeServices(updatedHike, forceLiveStatus: true);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Check-in saved from live hike status.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } catch (error) {
-      _showActiveHikeActionError('Unable to save check-in', error);
-    } finally {
-      _isCheckInBusy = false;
-    }
-  }
-
   void _pinLocationFromLiveStatusAction() {
     final hike = activeHike;
     if (hike == null) {
@@ -3134,13 +3224,31 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _applyLiveStatusPin(ActiveHikeSession hike) async {
-    if (_isPinLocationBusy || activeHike?.sessionId != hike.sessionId) return;
+    if (_isPinLocationBusy ||
+        _isEndingActiveHike ||
+        activeHike?.sessionId != hike.sessionId) {
+      return;
+    }
     _isPinLocationBusy = true;
     try {
       final result = await pinCurrentLocation(hike);
-      if (!mounted || activeHike?.sessionId != hike.sessionId) return;
-      setState(() => activeHike = result.hike);
-      _syncActiveHikeServices(result.hike, forceLiveStatus: true);
+      if (!mounted ||
+          _isEndingActiveHike ||
+          activeHike?.sessionId != hike.sessionId) {
+        return;
+      }
+      final latest = activeHike!;
+      final pins = <String, HikeManualPin>{
+        for (final pin in latest.manualPinLocations) pin.id: pin,
+        for (final pin in result.hike.manualPinLocations) pin.id: pin,
+      }.values.toList();
+      final updated = latest.copyWith(
+        manualPins: pins.length,
+        manualPinLocations: pins,
+        batteryLevel: result.hike.batteryLevel,
+      );
+      setState(() => activeHike = updated);
+      _syncActiveHikeServices(updated, forceLiveStatus: true);
       final message = switch (result.status) {
         PinLocationStatus.pinned => 'Checkpoint pinned from live hike status.',
         PinLocationStatus.duplicate =>
@@ -3176,13 +3284,31 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _applyActiveHikePin(ActiveHikeSession hike) async {
-    if (_isPinLocationBusy || activeHike?.sessionId != hike.sessionId) return;
+    if (_isPinLocationBusy ||
+        _isEndingActiveHike ||
+        activeHike?.sessionId != hike.sessionId) {
+      return;
+    }
     _isPinLocationBusy = true;
     try {
       final result = await pinCurrentLocation(hike);
-      if (!mounted || activeHike?.sessionId != hike.sessionId) return;
-      setState(() => activeHike = result.hike);
-      _syncActiveHikeServices(result.hike, forceLiveStatus: true);
+      if (!mounted ||
+          _isEndingActiveHike ||
+          activeHike?.sessionId != hike.sessionId) {
+        return;
+      }
+      final latest = activeHike!;
+      final pins = <String, HikeManualPin>{
+        for (final pin in latest.manualPinLocations) pin.id: pin,
+        for (final pin in result.hike.manualPinLocations) pin.id: pin,
+      }.values.toList();
+      final updated = latest.copyWith(
+        manualPins: pins.length,
+        manualPinLocations: pins,
+        batteryLevel: result.hike.batteryLevel,
+      );
+      setState(() => activeHike = updated);
+      _syncActiveHikeServices(updated, forceLiveStatus: true);
     } catch (error) {
       _showActiveHikeActionError('Unable to pin this location', error);
     } finally {
@@ -3269,10 +3395,17 @@ class _HikerHomePageState extends State<HikerHomePage>
           ),
           onPlanChanged: _updatePlannedHike,
           onReady: (value) => reviewedPlan = value,
+          initialContacts: emergencyContacts,
+          loadContacts: _preparationContacts,
+          onEditContacts: openEmergencyContacts,
+          loadBatteryLevel: _readBatteryLevel,
+          loadSharing: () => _loadPreparationSharing(hike.id),
+          saveSharing: (choice) => _savePreparationSharing(hike.id, choice),
           loadRouteAnalysis: (force) => _analyzeGearRoute(plan, force: force),
           loadWeather: () => HikeBriefingWeatherService.shared.fetch(
             plan.trail.latitude,
             plan.trail.longitude,
+            force: true,
           ),
           onCancel: () => _cancelUpcomingHike(hike),
         ),
@@ -3526,10 +3659,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       await _showUpcomingHikeDetails(hike);
       return;
     }
-    draft = draft.copyWith(
-      completedChecklistItems: preparation.completedChecklistItems,
-      trail: draft.trail.copyWith(weather: preparation.trail.weather),
-    );
+    draft = _applyReviewedPreparation(draft, preparation);
     final checked = await confirmSoloHikeDistance(
       context,
       draft,
@@ -3846,12 +3976,13 @@ class _HikerHomePageState extends State<HikerHomePage>
             .map((participant) => participant.buddy)
             .toList(),
       );
-      final reviewed = await _reviewDraftPreparation(draft, joiningTeam: true);
-      if (!mounted || reviewed == null) return;
-      draft = draft.copyWith(
-        completedChecklistItems: reviewed.completedChecklistItems,
-        trail: draft.trail.copyWith(weather: reviewed.trail.weather),
+      final reviewed = await _reviewDraftPreparation(
+        draft,
+        joiningTeam: true,
+        upcomingHikeId: acceptedSession.sourceUpcomingHikeId,
       );
+      if (!mounted || reviewed == null) return;
+      draft = _applyReviewedPreparation(draft, reviewed);
       final launchedSession = await Navigator.of(context).push<TeamHikeSession>(
         MaterialPageRoute<TeamHikeSession>(
           fullscreenDialog: true,
@@ -4040,6 +4171,40 @@ class _HikerHomePageState extends State<HikerHomePage>
         );
     }
   }
+
+  Future<List<EmergencyContact>> _preparationContacts() async {
+    await _emergencyContactsLoadFuture;
+    return List.of(emergencyContacts);
+  }
+
+  Future<HikePreparationSharing?> _loadPreparationSharing(
+    String hikeId,
+  ) async => HikePreparationSharing.fromJson(
+    await hikerCircleRepository.localDatabase.loadLocalPreference(
+      ownerPhoneNumber: widget.session.phoneNumber,
+      key: 'hike_preparation_sharing:$hikeId',
+    ),
+  );
+
+  Future<void> _savePreparationSharing(
+    String hikeId,
+    HikePreparationSharing choice,
+  ) => hikerCircleRepository.localDatabase.saveLocalPreference(
+    ownerPhoneNumber: widget.session.phoneNumber,
+    key: 'hike_preparation_sharing:$hikeId',
+    value: choice.toJson(),
+  );
+
+  HikeSessionDraft _applyReviewedPreparation(
+    HikeSessionDraft draft,
+    PlannedHike plan,
+  ) => plan
+      .applyToDraft(draft)
+      .copyWith(
+        emergencyContactNames: emergencyContacts
+            .map((contact) => contact.name)
+            .toList(),
+      );
 
   Future<void> openEmergencyContacts() async {
     final contacts = await Navigator.of(context).push<List<EmergencyContact>>(
@@ -4557,15 +4722,17 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _performSignOut() async {
-    try {
-      await LiveLocationSharingService.instance.deactivate();
-    } catch (_) {}
-    try {
-      await _bleService.setActiveSosAccount(null);
-    } catch (_) {}
-    try {
-      await hikerCircleRepository.removeFcmToken(session: widget.session);
-    } catch (_) {}
+    Future<void> bounded(Future<void> action) async {
+      try {
+        await action.timeout(const Duration(seconds: 3));
+      } catch (_) {}
+    }
+
+    await Future.wait([
+      bounded(LiveLocationSharingService.instance.deactivate(manual: false)),
+      bounded(_bleService.setActiveSosAccount(null)),
+      bounded(hikerCircleRepository.removeFcmToken(session: widget.session)),
+    ]);
     if (mounted) widget.onSignOut();
   }
 
@@ -4601,7 +4768,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   }
 
   Future<void> _endActiveHikeSession({bool signOutAfter = false}) async {
-    final hikeToEnd = activeHike;
+    var hikeToEnd = activeHike;
     if (hikeToEnd == null || _isEndingActiveHike) {
       return;
     }
@@ -4612,13 +4779,20 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     final endedAt = DateTime.now();
-    final report = HikeSummaryReport.fromActiveHike(
+    var report = HikeSummaryReport.fromActiveHike(
       activeHike: hikeToEnd,
       endedAt: endedAt,
     );
 
     ActiveHikeEndResult endResult;
     try {
+      await _activeLocationWrite?.future;
+      await _drainNativeLocationSamples(hikeToEnd);
+      hikeToEnd = activeHike ?? hikeToEnd;
+      report = HikeSummaryReport.fromActiveHike(
+        activeHike: hikeToEnd,
+        endedAt: endedAt,
+      );
       endResult = await hikerCircleRepository.endHikeSession(
         session: widget.session,
         activeHike: hikeToEnd,
@@ -4653,16 +4827,18 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     await fallStillnessMonitor.stop();
     try {
-      await _sosDeviceAlertService.stopFallStillnessCountdownVibration();
-      await _sosDeviceAlertService.stopSpokenPrompt();
-      await _sosDeviceAlertService.stopManualSosPattern();
+      await Future.wait([
+        _sosDeviceAlertService.stopFallStillnessCountdownVibration(),
+        _sosDeviceAlertService.stopSpokenPrompt(),
+        _sosDeviceAlertService.stopManualSosPattern(),
+      ]).timeout(const Duration(seconds: 2));
     } catch (_) {
       // Native safety outputs are best effort when ending a hike.
     }
     _syncActiveHikeServices(null, stopNativeLiveStatus: false);
     // Completion must not return control to the summary/rating UI while the
     // native persisted monitor can still relaunch or schedule watchdog alerts.
-    await _activeHikeLiveStatusService.stop();
+    _nativeHikeStopPending = !await _activeHikeLiveStatusService.stop();
     await _activeHikePersistenceQueue;
     isFallStillnessLocalAlarmActive = false;
     if (!mounted) {
@@ -4674,6 +4850,15 @@ class _HikerHomePageState extends State<HikerHomePage>
       _isEndingActiveHike = false;
     });
 
+    if (_nativeHikeStopPending) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Hike saved. Stopping background tracking will retry automatically.',
+          ),
+        ),
+      );
+    }
     if (endResult.status == 'abandoned') {
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -5111,6 +5296,12 @@ class _HikerHomePageState extends State<HikerHomePage>
           _sendActiveHikeMonitoringHeartbeat(hike, lifecycleState: 'active'),
         );
         _startActiveHikeLocationRecording(hike);
+        unawaited(
+          _runReconnectStep(
+            'native GPS transfer',
+            () => _drainNativeLocationSamples(hike),
+          ),
+        );
         if (_isActiveHikeLocationRecordDue(hike)) {
           unawaited(_recordActiveHikeLocationTick(force: true));
         }
@@ -5219,7 +5410,6 @@ class _HikerHomePageState extends State<HikerHomePage>
 
     if (event.isDispatchFailed || event.isReadyForFlutterDispatch) {
       if (_lastHandledNativeSafetyEventId == event.eventId) return;
-      _lastHandledNativeSafetyEventId = event.eventId;
       await _emergencyContactsLoadFuture;
       if (!mounted) return;
       final now = DateTime.now().toUtc();
@@ -5235,18 +5425,36 @@ class _HikerHomePageState extends State<HikerHomePage>
             ? 'Native safety countdown ended. Sending prolonged-stillness SOS.'
             : 'Native safety countdown ended. Sending Fall SOS.',
       );
-      await _handleFallStillnessEmergencyReady(snapshot);
+      final accepted =
+          _durablyDispatchedNativeSafetyEvents.contains(event.eventId) ||
+          await _triggerFallStillnessSos(snapshot);
+      if (!accepted) {
+        Future<void>.delayed(
+          const Duration(seconds: 5),
+          _consumePendingNativeSafetyEvent,
+        );
+        return;
+      }
+      _durablyDispatchedNativeSafetyEvents.add(event.eventId);
+      bool acknowledged;
       if (!kIsWeb &&
           defaultTargetPlatform == TargetPlatform.iOS &&
           event.isReadyForFlutterDispatch) {
-        await _activeHikeLiveStatusService.markSafetyEventDispatched(
+        acknowledged = await _activeHikeLiveStatusService.markSafetyEventDispatched(
           event.eventId,
           message:
               'Emergency alert processed. The alarm remains active until an I\'m Safe response.',
         );
       } else {
-        await _activeHikeLiveStatusService.acknowledgeSafetyEvent(
-          event.eventId,
+        acknowledged = await _activeHikeLiveStatusService
+            .acknowledgeSafetyEvent(event.eventId);
+      }
+      if (acknowledged) {
+        _lastHandledNativeSafetyEventId = event.eventId;
+      } else {
+        Future<void>.delayed(
+          const Duration(seconds: 5),
+          _consumePendingNativeSafetyEvent,
         );
       }
       return;
@@ -5311,11 +5519,11 @@ class _HikerHomePageState extends State<HikerHomePage>
     await _triggerFallStillnessSos(snapshot);
   }
 
-  Future<void> _triggerFallStillnessSos(
+  Future<bool> _triggerFallStillnessSos(
     FallStillnessMonitorSnapshot snapshot,
   ) async {
     if (isSendingFallStillnessSos) {
-      return;
+      return false;
     }
 
     isSendingFallStillnessSos = true;
@@ -5353,6 +5561,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         _messageForSosResult(result),
         includeStopAlarmAction: didStartLocalAlarm,
       );
+      return true; // Repository has sent or durably queued the alert.
     } on SosAlertRepositoryException catch (error) {
       _showFallStillnessSnackBar(
         didStartLocalAlarm
@@ -5372,6 +5581,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     } finally {
       isSendingFallStillnessSos = false;
     }
+    return false;
   }
 
   Future<SosTriggerLocation?> _captureTriggerLocation() async {
@@ -5656,6 +5866,12 @@ class _HikerHomePageState extends State<HikerHomePage>
     bool stopNativeLiveStatus = true,
   }) {
     _persistActiveHikeSnapshot(hike);
+    LiveLocationSharingService.instance.setPublishInterval(
+      hike?.draft.locationRecordingInterval,
+    );
+    if (hike == null && _liveLocationActivatedForActiveHike) {
+      unawaited(LiveLocationSharingService.instance.deactivate(manual: false));
+    }
     _syncFallStillnessMonitor(hike);
     _syncTeamHikeSessionWatch(hike);
     unawaited(_syncLiveLocationForActiveHike(hike));
@@ -5687,10 +5903,20 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<void> _performLiveLocationSyncForActiveHike(
     ActiveHikeSession? hike,
   ) async {
+    if (!mounted) return;
+    if (hike != null &&
+        (activeHike?.sessionId != hike.sessionId || _isEndingActiveHike)) {
+      return;
+    }
     final service = LiveLocationSharingService.instance;
+    if (hike == null &&
+        activeHike?.draft.shareLiveLocation == true &&
+        !_isEndingActiveHike) {
+      return;
+    }
     if (hike == null || !hike.draft.shareLiveLocation) {
       if (_liveLocationActivatedForActiveHike) {
-        await service.deactivate();
+        await service.deactivate(manual: false);
         _liveLocationActivatedForActiveHike = false;
       }
       return;
@@ -5700,15 +5926,29 @@ class _HikerHomePageState extends State<HikerHomePage>
       phoneNumber: widget.session.phoneNumber,
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    if (!mounted ||
+        activeHike?.sessionId != hike.sessionId ||
+        activeHike?.draft.shareLiveLocation != true ||
+        _isEndingActiveHike) {
+      return;
+    }
     if (!service.isActive) {
       await service.activate(
         phoneNumber: widget.session.phoneNumber,
         firebaseBootstrapResult: widget.firebaseBootstrapResult,
       );
     }
-    if (activeHike?.sessionId == hike.sessionId && service.isActive) {
+    if (!mounted ||
+        activeHike?.sessionId != hike.sessionId ||
+        activeHike?.draft.shareLiveLocation != true ||
+        _isEndingActiveHike) {
+      if (service.isActive) await service.deactivate(manual: false);
+      return;
+    }
+    if (service.isActive) {
+      final firstActivation = !_liveLocationActivatedForActiveHike;
       _liveLocationActivatedForActiveHike = true;
-      await service.publishLatest();
+      if (firstActivation) await service.publishLatest();
       _syncActiveHikeLiveStatus(hike, force: true);
       final share = service.share;
       if (share == null ||
@@ -5722,7 +5962,8 @@ class _HikerHomePageState extends State<HikerHomePage>
             .notifyEmergencyContactsOfLiveLocation(
               activeHikeSessionId: hike.sessionId,
               shareId: share.id,
-            );
+            )
+            .timeout(const Duration(seconds: 8));
         if (!result.shouldRetry) {
           _liveLocationNotificationCompletedSessionIds.add(hike.sessionId);
         }
@@ -5740,14 +5981,9 @@ class _HikerHomePageState extends State<HikerHomePage>
             : result.uncertainCount > 0
             ? 'Live location is active, but delivery to ${result.uncertainCount} SOS contact(s) could not be confirmed.'
             : 'Live location is active. ${result.sentCount} of ${result.contactCount} SOS contacts were notified; remaining deliveries will retry when connected.';
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(message),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+        unawaited(
+          _showHikeNotice(hike.sessionId, message, title: 'Live sharing'),
+        );
       } on HikerCircleFirebaseRepositoryException catch (error) {
         if (!mounted ||
             activeHike?.sessionId != hike.sessionId ||
@@ -5756,16 +5992,13 @@ class _HikerHomePageState extends State<HikerHomePage>
             )) {
           return;
         }
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(
-                'Hike tracking and the live link are active, but SOS contacts were not notified yet. ${error.message}',
-              ),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+        unawaited(
+          _showHikeNotice(
+            hike.sessionId,
+            'Hike tracking and the live link are active, but SOS contacts were not notified yet. ${error.message}',
+            title: 'Live sharing',
+          ),
+        );
       }
     }
   }
@@ -5878,18 +6111,33 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   void _startActiveHikeLocationRecording(ActiveHikeSession hike) {
     final interval = _effectiveActiveHikeRecordingInterval(hike);
-    final monitorInterval = interval < const Duration(seconds: 30)
-        ? interval
-        : const Duration(seconds: 30);
+    final uploadInterval =
+        hike.draft.locationRecordingInterval < const Duration(seconds: 5)
+        ? const Duration(seconds: 5)
+        : hike.draft.locationRecordingInterval;
+    const monitorInterval = Duration(seconds: 5);
     final isSameRecordingLoop =
         activeHikeRecordingTimer?.isActive == true &&
         activeHikeRecordingSessionId == hike.sessionId &&
-        activeHikeRecordingInterval == interval;
+        activeHikeRecordingInterval == interval &&
+        _activeHikeUploadInterval == uploadInterval;
     if (isSameRecordingLoop) {
       return;
     }
 
     activeHikeRecordingTimer?.cancel();
+    _activeHikeUploadTimer?.cancel();
+    _activeHikeUploadInterval = uploadInterval;
+    _activeHikeUploadTimer = Timer.periodic(
+      uploadInterval,
+      (_) => unawaited(_uploadActiveHikeLocations()),
+    );
+    unawaited(
+      _runReconnectStep(
+        'native GPS transfer',
+        () => _drainNativeLocationSamples(hike),
+      ),
+    );
     activeHikeRecordingSessionId = hike.sessionId;
     activeHikeRecordingInterval = interval;
     stationaryWatchReferenceLocation = null;
@@ -5907,6 +6155,9 @@ class _HikerHomePageState extends State<HikerHomePage>
   void _stopActiveHikeLocationRecording() {
     activeHikeRecordingTimer?.cancel();
     activeHikeRecordingTimer = null;
+    _activeHikeUploadTimer?.cancel();
+    _activeHikeUploadTimer = null;
+    _activeHikeUploadInterval = null;
     activeHikeRecordingSessionId = null;
     activeHikeRecordingInterval = null;
     lastActiveHikeLocationRecordedAt = null;
@@ -5923,19 +6174,98 @@ class _HikerHomePageState extends State<HikerHomePage>
     isRecordingActiveHikeLocation = false;
   }
 
-  Duration _snapshotIntervalForActiveHike(Duration recordingInterval) {
-    if (LiveLocationSharingService.instance.isActive) {
-      return LocationSnapshotService.liveSnapshotInterval;
-    }
-    return recordingInterval;
+  Duration _snapshotIntervalForActiveHike(Duration recordingInterval) =>
+      const Duration(seconds: 5);
+
+  Duration _effectiveActiveHikeRecordingInterval(ActiveHikeSession hike) =>
+      _minimumActiveHikeRecordingInterval;
+
+  Future<void> _drainNativeLocationSamples(ActiveHikeSession hike) async {
+    await hikerCircleRepository.drainNativeLocationSamples(
+      session: widget.session,
+      sessionId: hike.sessionId,
+    );
+    final latest = activeHike;
+    if (latest == null || latest.sessionId != hike.sessionId) return;
+    final merged = await hikerCircleRepository.mergeStoredRoute(
+      session: widget.session,
+      activeHike: latest,
+    );
+    if (!mounted || activeHike?.sessionId != hike.sessionId) return;
+    // Only replace route fields; pins, battery and team updates may have changed.
+    final current = activeHike!;
+    final route = <int, HikeCoordinate>{
+      for (final p in merged.routePoints)
+        p.capturedAt.millisecondsSinceEpoch: p,
+      for (final p in current.routePoints)
+        p.capturedAt.millisecondsSinceEpoch: p,
+    }.values.toList()..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
+    final updated = current.copyWith(
+      routePoints: route,
+      latestLocation: route.isEmpty ? current.latestLocation : route.last,
+    );
+    setState(() => activeHike = updated);
+    _persistActiveHikeSnapshot(updated);
   }
 
-  Duration _effectiveActiveHikeRecordingInterval(ActiveHikeSession hike) {
-    final configured = hike.draft.locationRecordingInterval;
-    if (configured < _minimumActiveHikeRecordingInterval) {
-      return _minimumActiveHikeRecordingInterval;
+  Future<void> _uploadActiveHikeLocations() async {
+    final hike = activeHike;
+    if (hike == null ||
+        _isUploadingHikeLocations ||
+        _isEndingActiveHike ||
+        !mounted) {
+      return;
     }
-    return configured;
+    _isUploadingHikeLocations = true;
+    try {
+      await _drainNativeLocationSamples(hike);
+      final restored = await hikerCircleRepository
+          .ensureActiveHikeSessionInCloud(
+            session: widget.session,
+            activeHike: hike,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (!mounted ||
+          activeHike?.sessionId != hike.sessionId ||
+          _isEndingActiveHike) {
+        return;
+      }
+      final cloudHike = await _applyActiveHikeCloudRestoreResult(
+        activeHike!,
+        restored,
+      );
+      if (cloudHike == null || !restored.ensured) return;
+      final remaining = await hikerCircleRepository.flushLocationPoints(
+        session: widget.session,
+        activeHike: cloudHike,
+      );
+      final last = cloudHike.latestLocation;
+      if (last != null &&
+          activeHike?.sessionId == cloudHike.sessionId &&
+          !_isEndingActiveHike) {
+        _syncTeamHikeLocation(
+          cloudHike,
+          SosTriggerLocation(
+            latitude: last.latitude,
+            longitude: last.longitude,
+            accuracyMeters: last.accuracyMeters,
+            capturedAt: last.capturedAt,
+          ),
+        );
+        unawaited(_syncLiveLocationForActiveHike(cloudHike));
+      }
+      if (mounted &&
+          activeHike?.sessionId == cloudHike.sessionId &&
+          !_isEndingActiveHike) {
+        final updated = activeHike!.copyWith(queuedUpdates: remaining);
+        setState(() => activeHike = updated);
+        _persistActiveHikeSnapshot(updated);
+      }
+    } catch (error) {
+      debugPrint('Location batch retained for retry: $error');
+    } finally {
+      _isUploadingHikeLocations = false;
+    }
   }
 
   bool _isActiveHikeLocationRecordDue(ActiveHikeSession hike) {
@@ -5969,7 +6299,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (capturedAt == null) return false;
     final now = DateTime.now().toUtc();
     if (capturedAt.isAfter(now.add(const Duration(minutes: 2))) ||
-        now.difference(capturedAt) > const Duration(minutes: 2)) {
+        now.difference(capturedAt) > const Duration(seconds: 30)) {
       return false;
     }
 
@@ -6146,7 +6476,10 @@ class _HikerHomePageState extends State<HikerHomePage>
 
   Future<void> _recordActiveHikeLocationTick({bool force = false}) async {
     final hike = activeHike;
-    if (hike == null || isRecordingActiveHikeLocation) {
+    if (hike == null ||
+        isRecordingActiveHikeLocation ||
+        _isEndingActiveHike ||
+        _appLifecycleState != AppLifecycleState.resumed) {
       return;
     }
 
@@ -6156,11 +6489,19 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     isRecordingActiveHikeLocation = true;
+    final writeCompletion = Completer<void>();
+    _activeLocationWrite = writeCompletion;
     final sessionId = hike.sessionId;
     var didRecordLocation = false;
     try {
-      final location = await LocationSnapshotService.instance.refresh();
-      if (location == null) {
+      final location = await LocationSnapshotService.instance.refresh().timeout(
+        const Duration(seconds: 4),
+        onTimeout: () => LocationSnapshotService.instance.latestLocation,
+      );
+      if (location == null ||
+          !mounted ||
+          _isEndingActiveHike ||
+          activeHike?.sessionId != sessionId) {
         return;
       }
       final coordinate = HikeCoordinate.fromTriggerLocation(location);
@@ -6182,6 +6523,11 @@ class _HikerHomePageState extends State<HikerHomePage>
       }
 
       final batteryLevel = await _readBatteryLevel();
+      if (!mounted ||
+          _isEndingActiveHike ||
+          activeHike?.sessionId != sessionId) {
+        return;
+      }
 
       final queuedUpdates = await hikerCircleRepository.recordLocationPoint(
         session: widget.session,
@@ -6190,7 +6536,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         pointType: 'tracking',
         batteryLevel: batteryLevel,
       );
-      if (!mounted) {
+      if (!mounted || _isEndingActiveHike) {
         return;
       }
 
@@ -6208,12 +6554,14 @@ class _HikerHomePageState extends State<HikerHomePage>
         final terminalSessionId = canonicalSessionId ?? sessionId;
         if (_terminalCloudHikeSessionIds.contains(sessionId) ||
             _terminalCloudHikeSessionIds.contains(terminalSessionId)) {
-          await hikerCircleRepository.localDatabase
-              .discardHikeTrackingTelemetry(sessionId: terminalSessionId);
-          if (terminalSessionId != sessionId) {
-            await hikerCircleRepository.localDatabase
-                .discardHikeTrackingTelemetry(sessionId: sessionId);
-          }
+          unawaited(
+            hikerCircleRepository
+                .flushLocationPoints(
+                  session: widget.session,
+                  activeHike: hike.copyWith(sessionId: terminalSessionId),
+                )
+                .catchError((Object _) => hike.queuedUpdates),
+          );
         }
         _activeHikeSessionIdRemaps.remove(sessionId);
         return;
@@ -6230,7 +6578,6 @@ class _HikerHomePageState extends State<HikerHomePage>
       });
       _persistActiveHikeSnapshot(updatedHike);
       _syncActiveHikeLiveStatus(updatedHike, force: true);
-      _syncTeamHikeLocation(updatedHike, location);
       didRecordLocation = true;
     } catch (error) {
       debugPrint('Unable to record the active hike location tick: $error');
@@ -6239,6 +6586,10 @@ class _HikerHomePageState extends State<HikerHomePage>
         lastActiveHikeLocationRecordedAt = DateTime.now();
       }
       isRecordingActiveHikeLocation = false;
+      writeCompletion.complete();
+      if (identical(_activeLocationWrite, writeCompletion)) {
+        _activeLocationWrite = null;
+      }
     }
   }
 
@@ -6304,7 +6655,14 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     lastActiveHikeLiveStatusSentAt = now;
-    unawaited(_activeHikeLiveStatusService.startOrUpdate(hike));
+    unawaited(
+      _activeHikeLiveStatusService.startOrUpdate(
+        hike,
+        ownerUid: widget.firebaseBootstrapResult.isAvailable
+            ? FirebaseAuth.instance.currentUser?.uid ?? ''
+            : '',
+      ),
+    );
   }
 
   void _syncTeamHikeLocation(
@@ -6412,6 +6770,11 @@ class _HikerHomePageState extends State<HikerHomePage>
   @override
   void dispose() {
     _gearRouteService.dispose();
+    LiveLocationSharingService.instance.removeListener(
+      _handleLiveSharingChanged,
+    );
+    _contactsChangeSubscription?.cancel();
+    _pendingHikeRetryTimer?.cancel();
     _upcomingHikeExpiryTimer?.cancel();
     _precautionTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -6492,21 +6855,11 @@ class _HikerHomePageState extends State<HikerHomePage>
           if (_isEndingActiveHike)
             HikerCircleLoadingToastOverlay(
               message: 'Ending your hike…',
-              detail: 'Saving your route, check-ins, and safety summary.',
+              detail: 'Saving your route and safety summary.',
               timeout: const Duration(seconds: 30),
               onTimeout: () {
-                if (!mounted || !_isEndingActiveHike) return;
-                setState(() => _isEndingActiveHike = false);
-                ScaffoldMessenger.of(context)
-                  ..hideCurrentSnackBar()
-                  ..showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Ending the hike timed out. Tracking remains active; try again.',
-                      ),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
+                // Do not unlock a second completion while the first save is running.
+                debugPrint('Hike completion is still saving locally.');
               },
             ),
         ],
@@ -8911,8 +9264,8 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                           children: [
                             Expanded(
                               child: _SummaryMetric(
-                                label: 'Check-ins',
-                                value: '${report.checkIns}',
+                                label: 'Local GPS',
+                                value: 'Every 5 sec',
                               ),
                             ),
                             const _SummaryDivider(),
@@ -8981,53 +9334,58 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 18),
-                  Text(
-                    'CHECK-INS',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: _SummaryColors.secondaryTextFor(context),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
+                  if (widget.activeHike.checkInRecords.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      'CHECK-INS',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: _SummaryColors.secondaryTextFor(context),
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  _SummaryCard(
-                    child: widget.activeHike.checkInRecords.isEmpty
-                        ? const _SummaryEmptyEvents(
-                            message: 'No check-ins recorded.',
-                          )
-                        : Column(
-                            children: [
-                              for (
-                                var index = 0;
-                                index < widget.activeHike.checkInRecords.length;
-                                index++
-                              ) ...[
-                                if (index > 0)
-                                  Divider(
-                                    height: 1,
-                                    color: _SummaryColors.separatorFor(context),
+                    const SizedBox(height: 8),
+                    _SummaryCard(
+                      child: widget.activeHike.checkInRecords.isEmpty
+                          ? const _SummaryEmptyEvents(
+                              message: 'No check-ins recorded.',
+                            )
+                          : Column(
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index <
+                                      widget.activeHike.checkInRecords.length;
+                                  index++
+                                ) ...[
+                                  if (index > 0)
+                                    Divider(
+                                      height: 1,
+                                      color: _SummaryColors.separatorFor(
+                                        context,
+                                      ),
+                                    ),
+                                  _SummaryEventRow(
+                                    icon: Icons.location_on_rounded,
+                                    label: 'Check-in ${index + 1}',
+                                    subtitle: _coordinateLabel(
+                                      widget
+                                          .activeHike
+                                          .checkInRecords[index]
+                                          .coordinate,
+                                    ),
+                                    time: formatTime(
+                                      widget
+                                          .activeHike
+                                          .checkInRecords[index]
+                                          .checkedInAt,
+                                    ),
                                   ),
-                                _SummaryEventRow(
-                                  icon: Icons.location_on_rounded,
-                                  label: 'Check-in ${index + 1}',
-                                  subtitle: _coordinateLabel(
-                                    widget
-                                        .activeHike
-                                        .checkInRecords[index]
-                                        .coordinate,
-                                  ),
-                                  time: formatTime(
-                                    widget
-                                        .activeHike
-                                        .checkInRecords[index]
-                                        .checkedInAt,
-                                  ),
-                                ),
+                                ],
                               ],
-                            ],
-                          ),
-                  ),
+                            ),
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   Text(
                     'PINS',
@@ -9902,6 +10260,7 @@ class _ActiveHikeHomePageState extends State<ActiveHikeHomePage> {
               showLegend: false,
               currentPhoneNumber: widget.currentPhoneNumber,
               onStyleChanged: widget.onMapStyleChanged,
+              onReportHazard: widget.onReportHazard,
             ),
           ),
         ),
@@ -10401,87 +10760,47 @@ class _ActiveHikeBottomBar extends StatelessWidget {
     this.onOpenTeamTools,
     this.bottomInset = 0,
   });
-
   final VoidCallback onEndHike;
-  final VoidCallback onCheckIn;
+  final VoidCallback
+  onCheckIn; // Retained constructor compatibility for saved screens.
   final VoidCallback onPinLocation;
   final VoidCallback onReportHazard;
   final VoidCallback? onOpenTeamTools;
   final double bottomInset;
-
   @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-      ),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(18, 12, 18, bottomInset + 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: onCheckIn,
-                    icon: const Icon(
-                      Icons.check_circle_outline_rounded,
-                      size: 18,
-                    ),
-                    label: const Text('Check In'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  flex: 2,
-                  child: OutlinedButton.icon(
-                    onPressed: onPinLocation,
-                    icon: const Icon(Icons.push_pin_rounded, size: 18),
-                    label: const Text('Pin Location'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: OutlinedButton.icon(
-                    onPressed: onReportHazard,
-                    icon: const Icon(Icons.warning_amber_rounded, size: 18),
-                    label: const Text('Report Hazard'),
-                  ),
-                ),
-                if (onOpenTeamTools != null) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: onOpenTeamTools,
-                      icon: const Icon(Icons.groups_2_outlined, size: 18),
-                      label: const Text('Team Tools'),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFFE11D48),
-                side: const BorderSide(color: Color(0xFFE11D48)),
-              ),
-              onPressed: onEndHike,
-              icon: const Icon(Icons.stop_circle_rounded, size: 18),
-              label: const Text('End Hike Session'),
-            ),
-          ],
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(14, 10, 14, bottomInset + 10),
+    child: Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: onPinLocation,
+            icon: const Icon(Icons.push_pin_rounded),
+            label: const Text('Pin'),
+          ),
         ),
-      ),
-    );
-  }
+        if (onOpenTeamTools != null) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Team tools',
+            onPressed: onOpenTeamTools,
+            icon: const Icon(Icons.groups_outlined),
+          ),
+        ],
+        const SizedBox(width: 8),
+        Expanded(
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: onEndHike,
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: const Text('End hike'),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 bool _sameTeamPhone(String first, String second) {

@@ -22,6 +22,7 @@ struct HikeWidgetData: Decodable {
   var sharingReady: Bool?
   var battery: Int?
   var weather: HikeWidgetWeather?
+  var weatherStatus: String?
 }
 
 struct HikeWidgetWeather: Decodable {
@@ -194,8 +195,13 @@ struct HikeHomeWidgetView: View {
       }.font(.caption2).foregroundStyle(.secondary)
     } else {
       Spacer(minLength: 0)
-      Text("Open app for forecast").font(.subheadline.bold())
-      Text("Weather for your scheduled hiking window.").font(.caption2).foregroundStyle(.secondary)
+      Text(hike.weatherStatus == "beyondRange" || hike.weatherStatus == "incomplete"
+        ? "Forecast available closer to departure"
+        : hike.weatherStatus == "unavailable" ? "Forecast unavailable" : "Open app to refresh forecast")
+        .font(.subheadline.bold())
+      Text(hike.weatherStatus == "beyondRange" ? "Forecasts cover up to 16 days ahead."
+        : hike.weatherStatus == "unavailable" ? "Tap to retry in HikerCircle."
+        : "Weather for your scheduled hiking window.").font(.caption2).foregroundStyle(.secondary)
       Spacer(minLength: 0)
     }
   }

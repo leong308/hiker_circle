@@ -74,15 +74,19 @@ void main() {
     );
     await tester.pump();
 
+    final scheme = Theme.of(
+      tester.element(find.byType(GearChecklistPage)),
+    ).colorScheme;
+    expect(scheme.brightness, Brightness.dark);
     expect(
       tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
-      const Color(0xFF0C120F),
+      scheme.surfaceContainerLow,
     );
     expect(
-      tester.widget<Text>(find.text('Gear Checklist')).style?.color,
-      const Color(0xFFEAF4EE),
+      tester.widget<Text>(find.text('Gear checklist')).style?.color,
+      scheme.onSurface,
     );
-    expect(_decoratedColors(tester), contains(const Color(0xFF141C17)));
+    expect(_decoratedColors(tester), contains(scheme.surface));
   });
 }
 

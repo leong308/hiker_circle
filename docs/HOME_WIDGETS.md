@@ -1,6 +1,6 @@
 # Home screen widgets
 
-Updated: 17 September 2026.
+Updated: 18 September 2026.
 
 This document covers both the **phone Home Screen widgets** and the cards inside HikerCircle. The initial implementation added only in-app cards; that did not register anything in the phone’s widget picker. The native implementation now adds **Next Hike**, **Hike Weather**, and **Upcoming Hikes** alongside the existing SOS widgets.
 
@@ -61,7 +61,9 @@ On iOS, the small Next Hike countdown uses a live numeric hours/minutes/seconds 
 6. `ios/ManualSOS/HikeHomeWidgets.swift` defines both WidgetKit configurations and a shared timeline provider. `ManualSOSBundle.swift` registers them alongside SOS. Both support small and medium families. The provider selects the first unexpired schedule, supplies entries every 15 minutes for four hours plus exact departure, return and expiry entries, then requests a new timeline. Actual reload scheduling is controlled by iOS.
 7. On Android, `MainActivity` sends the snapshot to `HikeHomeWidgetProvider.publish`, which stores it in private `home_widgets` SharedPreferences and updates both registered providers. Provider XML requests 30-minute updates; countdown uses the platform Chronometer. Widgets re-read persistent snapshots after process restart.
 8. `AppViewModel` clears native snapshots at sign-out, Firebase-auth session loss, before a new account signs in, and when startup finds no signed-in session. Revision guards prevent an old forecast request from repopulating cleared data.
-9. `hikercircle://hike/briefing` and `hikercircle://hike/weather` select Home through the existing authenticated deep-link handler. They perform no start-session or SOS action.
+9. `hikercircle://hike/briefing` selects Home. `hikercircle://hike/weather` selects Home and opens the next scheduled hike's forecast sheet, restoring cached schedules first and loading account-owned schedules when needed. They perform no start-session or SOS action.
+
+Successful in-app forecast loads and manual refreshes also republish the matching native widget snapshot. The snapshot distinguishes a pending forecast, provider failure and dates beyond the forecast range; native views no longer ask users to repeatedly open the app for dates the provider cannot cover.
 
 Native weather uses the last forecast published by the app; the widget extension does not make background weather requests. Its cached timestamp remains visible and data becomes explicitly outdated after four hours. Open HikerCircle to refresh. OS scheduling does not guarantee an immediate widget reload. Future cancellation/rescheduling from another device becomes visible after the app syncs those changes.
 
@@ -94,8 +96,8 @@ The rest of this document describes the in-app Home cards. Those remain availabl
 
 | State | Visible content, in order |
 |---|---|
-| No active session and no resolved plan | Plan Your Hike header → Create Hike / Find a Hike → next-hike briefing when an eligible scheduled hike exists → any remaining upcoming hikes → Hiking Trails |
-| Resolved upcoming plan | Hike Plan Ready header → Create Hike / Find a Hike → next-hike briefing with preparation values → remaining upcoming hikes → Hiking Trails → recent hazards for the planned trail |
+| No active session and no resolved plan | Plan Your Hike header → Create Hike / Find a Hike → upcoming-hike carousel when an eligible schedule exists → Hiking Trails |
+| Resolved upcoming plan | Hike Plan Ready header → Create Hike / Find a Hike → upcoming-hike carousel with preparation values → Hiking Trails → recent hazards for the planned trail |
 | Active session | Active hike header and elapsed time → GPS / safety health strip → live tracking map → hiking actions. Planning cards are replaced by this screen. |
 
 `HomeDashboardPage` uses a scrollable column, an 18 px horizontal margin, a maximum width of 640 px and space for bottom navigation. Shared header typography comes from `PageHeaderStyle`.
@@ -112,7 +114,7 @@ The rest of this document describes the in-app Home cards. Those remain availabl
 | Gear progress | Compact completed/total gear count; full checklist in the preparation sheet | Only shown for the `PlannedHike` matching the scheduled hike ID. This is **gear checklist completion**, not an overall safety score | `PlannedHike`; `GearChecklistCatalog`; `next_hike_briefing.dart` |
 | Preparation sheet | Editable gear checklist, emergency contacts and phone battery; route details expand on demand | Saved checklist updates local planning and phone widgets. Manage contacts opens the SOS tab without triggering SOS | `final_preparation_review_page.dart`; `hiker_home_page.dart` |
 | Weather for your hike | One-line temperature and peak chance summary, with stale/unavailable state | Tap the weather strip for hourly forecast, update timestamp and daylight guidance; refresh retries the forecast | `next_hike_briefing.dart`, `hike_weather_briefing.dart`, `hike_briefing_weather_service.dart` |
-| More upcoming hikes | Every remaining eligible schedule after the featured hike | Existing compact cards open their respective details. The featured schedule is not repeated | `home_dashboard_page.dart`: `_MyUpcomingHikesSection` |
+| Upcoming-hike carousel | Full briefing cards ordered by departure, nearest first | Swipe horizontally or use arrows; later hikes are to the right. Each card opens its own weather and preparation details. A page count appears for multiple hikes | `home_dashboard_page.dart`: `_MyUpcomingHikesSection` |
 | Hiking Trails filters | All, Nearest radius, Malaysian state | Nearest defaults to 50 km; the user can change radius. State opens the region selector | `home_dashboard_page.dart`: `_BestMatchesSection` |
 | Hiking Trail cards | Trail name/image, route length, routed distance from user where available, difficulty and typical duration | Opens trail details. Admin add/edit/delete actions appear only when the corresponding callbacks are supplied | `home_dashboard_page.dart`: `_BestMatchesHeader`, trail card helpers |
 | Loading / empty discovery | Loading, unavailable trails, or no filter matches | Reflects actual loading/filter/location state | `home_dashboard_page.dart`: `_BestMatchesSection`, `_EmptyState` |
@@ -126,7 +128,7 @@ All paths in the table without a prefix are under `lib/home/View/`, except the m
 1. The parent loads scheduled hikes from the repository and local session database.
 2. `PlannedHikeStateResolver` merges eligible cached and remote schedules, handles consumed/deleted schedules, and selects the next schedule. The current preparation branch also uses the parent's existing eligibility rules.
 3. `_MyUpcomingHikesSection` defensively excludes expired/deleted schedules using `UpcomingHike.isUpcomingAt(now)` and sorts by departure. `UpcomingHike` currently has a 15-minute visibility grace after departure. The parent separately stops exposing a preparation plan after its current 10-minute cutoff; the card can then show a schedule without preparation statuses.
-4. The nearest schedule becomes `NextHikeBriefing`; remaining schedules retain compact cards. The preparation object is used only when `upcomingHikeId` matches the featured schedule.
+4. Every eligible schedule gets a `NextHikeBriefing` in a horizontal carousel, sorted by departure time (ID breaks equal-time ties). The nearest is selected initially, when returning to Home, and when schedule order changes. Ordinary refreshes preserve the selected page. Only the selected card loads weather/runs its countdown; the preparation object is used only when `upcomingHikeId` matches that card. Cards retain their natural height for large text, and a single hike omits the pagination controls.
 5. The parent supplies current gear progress, emergency-contact selection, phone battery and sharing configuration. The new widget does not create another Firebase preparation record or change any start-session rules.
 6. Review preparation uses `_showUpcomingHikeDetails` and `FinalPreparationReviewPage`. That sheet retains the existing host/joined restrictions and solo/team readiness/start behavior. Merely opening the briefing or its weather details never starts tracking.
 
@@ -160,12 +162,12 @@ Parameters:
 
 | Parameter | Value |
 |---|---|
-| `hourly` | `temperature_2m,precipitation_probability` |
+| `hourly` | Temperature, apparent temperature, humidity, rain probability, precipitation, weather code, wind speed/gusts, visibility and UV index |
 | `daily` | `sunrise,sunset` |
 | `timezone` | `auto` |
 | `timeformat` | `unixtime` |
 | `temperature_unit` | `celsius` |
-| `forecast_days` | `7` |
+| `forecast_days` | `16` |
 
 - No additional API key is needed by this integration; the widget credits Open-Meteo.
 - A shared in-memory cache reuses forecasts for four hours, keyed by coordinates rounded to four decimal places. Up to 12 locations are retained.
@@ -175,7 +177,8 @@ Parameters:
 - An existing trail forecast can seed the card only if it contains structured hourly data and timezone offset. A summary-only cache is insufficient to describe a future hike.
 - Automatic refresh/countdown work is skipped while Home is hidden or the app is backgrounded. It resumes when visible/foreground. There are no per-minute API requests when a fresh result is available.
 - Changing hike ID, coordinates or scheduled window invalidates the card's result. Generation checks ignore responses belonging to an old hike or a disposed card.
-- Departures at least seven days away do not trigger requests; the card says that weather is available closer to departure. The actual returned timestamps, rather than this preliminary cutoff, determine forecast coverage.
+- Departures at least sixteen days away do not trigger requests; the card and native widget explain that weather is available closer to departure. The actual returned timestamps, rather than this preliminary cutoff, determine forecast coverage. The request uses Open-Meteo's [supported 16-day range](https://open-meteo.com/en/docs).
+- The weather card always opens the forecast sheet, including during loading, after a failure and outside the supported date range. The sheet shows a loading state, a retry action or an explicit range explanation instead of silently disabling the tap.
 - This new forecast cache is **memory only**. It does not write Firebase, alter the existing saved trail weather, or promise offline availability after restarting the app.
 
 ### Calculating the hiking-window values

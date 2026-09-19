@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/app/Data/firebase_bootstrap.dart';
@@ -8,6 +9,16 @@ import 'package:hiker_circle/sos/Model/nearby_sos_event.dart';
 import 'package:hiker_circle/sos/View/sos_page.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const locationChannel = MethodChannel('hiker_circle/sos_device_alerts');
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(locationChannel, (_) async => null);
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(locationChannel, null);
+  });
   testWidgets('shows active nearby SOS first and archives older events', (
     tester,
   ) async {

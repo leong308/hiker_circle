@@ -8,22 +8,25 @@ import 'package:path_provider/path_provider.dart';
 import '../Model/first_aid_video.dart';
 
 class FirstAidVideoCacheService {
-  FirstAidVideoCacheService({FirebaseStorage? storage})
-    : _storage = storage ?? FirebaseStorage.instance;
+  FirstAidVideoCacheService({
+    FirebaseStorage? storage,
+    Future<Directory> Function()? supportDirectory,
+  }) : _storage = storage,
+       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
 
   static final FirstAidVideoCacheService instance = FirstAidVideoCacheService();
 
-  final FirebaseStorage _storage;
+  final FirebaseStorage? _storage;
+  final Future<Directory> Function() _supportDirectory;
   final Map<String, Future<File>> _downloads = <String, Future<File>>{};
 
   Future<File> cache({required String topicId, required FirstAidVideo video}) {
-    final key = '${video.storagePath}#${video.version}';
+    final key = '$topicId#${video.storagePath}#${video.version}';
     return _downloads.putIfAbsent(key, () async {
       try {
         return await _cache(topicId: topicId, video: video);
-      } catch (_) {
+      } finally {
         _downloads.remove(key);
-        rethrow;
       }
     });
   }
@@ -52,10 +55,15 @@ class FirstAidVideoCacheService {
     if (await partial.exists()) await partial.delete();
 
     try {
-      await _storage
+      final task = (_storage ?? FirebaseStorage.instance)
           .ref(video.storagePath)
-          .writeToFile(partial)
-          .timeout(const Duration(minutes: 4));
+          .writeToFile(partial);
+      try {
+        await task.timeout(const Duration(minutes: 4));
+      } on TimeoutException {
+        await task.cancel();
+        rethrow;
+      }
       if (!await isFirstAidVideoCacheValid(partial, video)) {
         throw const FileSystemException(
           'The downloaded tutorial is incomplete.',
@@ -76,7 +84,7 @@ class FirstAidVideoCacheService {
     required String topicId,
     required FirstAidVideo video,
   }) async {
-    final support = await getApplicationSupportDirectory();
+    final support = await _supportDirectory();
     return File(
       '${support.path}${Platform.pathSeparator}first_aid${Platform.pathSeparator}videos${Platform.pathSeparator}${video.cacheFileName(topicId)}',
     );
@@ -86,7 +94,7 @@ class FirstAidVideoCacheService {
     required String topicId,
     required String keep,
   }) async {
-    final support = await getApplicationSupportDirectory();
+    final support = await _supportDirectory();
     final directory = Directory(
       '${support.path}${Platform.pathSeparator}first_aid${Platform.pathSeparator}videos',
     );

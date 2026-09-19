@@ -24,6 +24,8 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
+import android.provider.ContactsContract
+import com.google.firebase.auth.FirebaseAuth
 import io.flutter.FlutterInjector
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -42,6 +44,7 @@ class MainActivity : FlutterActivity() {
         const val QR_SCANNER_CAMERA_REQUEST_CODE = 8475
         private const val LOCATION_REQUEST_CODE = 8473
         private const val POST_NOTIFICATIONS_REQUEST_CODE = 8474
+        private const val CONTACTS_REQUEST_CODE = 8476
         private const val LOCATION_TIMEOUT_MILLIS = 6000L
         private const val ALARM_ASSET = "assets/audios/sos_alarm.mp3"
         private const val MEDICAL_ALARM_ASSET = "assets/audios/med_alarm.mp3"
@@ -62,6 +65,8 @@ class MainActivity : FlutterActivity() {
     private var torchPatternIndex = 0
     private var locationManager: LocationManager? = null
     private var pendingLocationResult: MethodChannel.Result? = null
+    private var pendingContactsResult: MethodChannel.Result? = null
+    private val nativeLocationSamples by lazy { NativeLocationSampleBuffer(this) }
     private var pendingLocationListener: LocationListener? = null
     private var pendingAllowLastKnownLocation = false
     private var pendingRequirePreciseLocation = false
@@ -207,6 +212,7 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "getBatteryLevel" -> getBatteryLevel(result)
+                    "getDeviceContacts" -> getDeviceContacts(result)
                     "getOutputVolumeStatus" -> getOutputVolumeStatus(call, result)
                     "getCurrentTriggerLocation" -> getCurrentTriggerLocation(call, result)
                     "shareText" -> shareText(call, result)
@@ -248,6 +254,59 @@ class MainActivity : FlutterActivity() {
             ACTIVE_HIKE_LIVE_STATUS_CHANNEL,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
+                "remapNativeLocationSession" -> {
+                    runCatching {
+                        val oldSessionId = call.argument<String>("oldSessionId").orEmpty()
+                        val newSessionId = call.argument<String>("newSessionId").orEmpty()
+                        val owner = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                        val count = nativeLocationSamples.remapSession(oldSessionId, newSessionId, owner)
+                        HikeSafetyMonitorService.remapSession(this, oldSessionId, newSessionId, owner)
+                        count
+                    }.onSuccess(result::success).onFailure {
+                        result.error("native_location_buffer_remap_failed", it.message, null)
+                    }
+                }
+                "getNativeLocationBufferSessions" -> {
+                    runCatching { nativeLocationSamples.pendingSessions(FirebaseAuth.getInstance().currentUser?.uid.orEmpty()) }
+                        .onSuccess(result::success).onFailure {
+                            result.error("native_location_buffer_read_failed", it.message, null)
+                        }
+                }
+                "getPendingNativeLocationSamples" -> {
+                    runCatching {
+                        nativeLocationSamples.pending(
+                            call.argument<String>("sessionId").orEmpty(),
+                            FirebaseAuth.getInstance().currentUser?.uid.orEmpty(),
+                            call.argument<Number>("limit")?.toInt() ?: 500,
+                        )
+                    }.onSuccess(result::success).onFailure {
+                        result.error("native_location_buffer_read_failed", it.message, null)
+                    }
+                }
+                "acknowledgeNativeLocationSamples", "acknowledgeNativeCloudLocationSamples" -> {
+                    runCatching {
+                        nativeLocationSamples.acknowledge(
+                            call.argument<String>("sessionId").orEmpty(),
+                            FirebaseAuth.getInstance().currentUser?.uid.orEmpty(),
+                            call.argument<List<String>>("sampleIds") ?: emptyList(),
+                            cloud = call.method == "acknowledgeNativeCloudLocationSamples",
+                        )
+                    }.onSuccess(result::success).onFailure {
+                        result.error("native_location_buffer_ack_failed", it.message, null)
+                    }
+                }
+                "markNativeLocationSamplesCloudAcknowledged" -> {
+                    runCatching {
+                        val sessionId = call.argument<String>("sessionId").orEmpty()
+                        nativeLocationSamples.acknowledge(
+                            sessionId, FirebaseAuth.getInstance().currentUser?.uid.orEmpty(),
+                            (call.argument<List<Number>>("sampledAtMillis") ?: emptyList()).map { "$sessionId:${it.toLong()}" },
+                            cloud = true,
+                        )
+                    }.onSuccess(result::success).onFailure {
+                        result.error("native_location_buffer_ack_failed", it.message, null)
+                    }
+                }
                 "startOrUpdateActiveHikeLiveStatus" -> {
                     val status = ActiveHikeLiveStatus.from(call.arguments)
                     if (status == null) {
@@ -258,7 +317,7 @@ class MainActivity : FlutterActivity() {
                         )
                     } else {
                         startOrUpdateActiveHikeLiveStatus(status)
-                        if (status.fallDetectionEnabled || status.shareLiveLocation) {
+                        runCatching {
                             HikeSafetyMonitorService.startOrUpdate(
                                 this,
                                 HikeSafetyMonitorService.SafetyConfig(
@@ -269,10 +328,13 @@ class MainActivity : FlutterActivity() {
                                     sensitivity = status.sensorSensitivity,
                                     fallDetectionEnabled =
                                         status.fallDetectionEnabled,
+                                    ownerUid = call.argument<String>("ownerUid").orEmpty(),
+                                    locationUploadIntervalMillis = call.argument<Number>("locationUploadIntervalMillis")?.toLong() ?: 60_000L,
                                 ),
                             )
-                        } else {
-                            HikeSafetyMonitorService.stop(this)
+                        }.onFailure {
+                            result.error("native_location_monitor_start_failed", it.message, null)
+                            return@setMethodCallHandler
                         }
                         result.success(null)
                     }
@@ -364,10 +426,12 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        HikeSafetyMonitorService.flutterUiForeground = true
         hikerBleBridge?.onActivityResumed()
     }
 
     override fun onPause() {
+        HikeSafetyMonitorService.flutterUiForeground = false
         hikerBleBridge?.onActivityPaused()
         super.onPause()
     }
@@ -378,6 +442,18 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == CONTACTS_REQUEST_CODE) {
+            val result = pendingContactsResult
+            pendingContactsResult = null
+            if (result != null) {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                    readDeviceContacts(result)
+                } else {
+                    result.error("contacts_permission_denied", "Allow Contacts access in Settings to import a phone contact.", null)
+                }
+            }
+            return
+        }
         if (requestCode == POST_NOTIFICATIONS_REQUEST_CODE) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 pendingActiveHikeLiveStatus?.let { status ->
@@ -434,6 +510,8 @@ class MainActivity : FlutterActivity() {
         hikerBleBridge?.dispose()
         hikerBleBridge = null
         completePendingLocation(null)
+        pendingContactsResult?.error("contacts_request_cancelled", "The Contacts request was closed.", null)
+        pendingContactsResult = null
         super.onDestroy()
     }
 
@@ -546,14 +624,6 @@ class MainActivity : FlutterActivity() {
                 pendingIntent = pendingActivityIntent(
                     activeHikeDeepLink("active", status.sessionId),
                     6101,
-                ),
-            )
-            .addLiveStatusAction(
-                icon = android.R.drawable.ic_menu_mylocation,
-                title = "Check in",
-                pendingIntent = pendingActivityIntent(
-                    activeHikeDeepLink("check-in", status.sessionId),
-                    6102,
                 ),
             )
             .build()
@@ -783,6 +853,51 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun getDeviceContacts(result: MethodChannel.Result) {
+        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
+            readDeviceContacts(result)
+            return
+        }
+        if (pendingContactsResult != null) {
+            result.error("contacts_request_in_progress", "A Contacts permission request is already open.", null)
+            return
+        }
+        pendingContactsResult = result
+        requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), CONTACTS_REQUEST_CODE)
+    }
+
+    private fun readDeviceContacts(result: MethodChannel.Result) {
+        Thread {
+            val loaded = runCatching {
+                val contacts = linkedMapOf<String, Pair<String, MutableSet<String>>>()
+                contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                        ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    null, null, ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " COLLATE LOCALIZED ASC",
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getString(0)
+                        val name = cursor.getString(1).orEmpty().trim()
+                        val number = cursor.getString(2).orEmpty().trim()
+                        if (name.isNotEmpty() && number.isNotEmpty()) {
+                            contacts.getOrPut(id) { name to linkedSetOf() }.second.add(number)
+                        }
+                    }
+                }
+                contacts.map { (id, value) ->
+                    mapOf("id" to id, "fullName" to value.first, "phoneNumbers" to value.second.toList())
+                }
+            }
+            runOnUiThread {
+                loaded.onSuccess(result::success).onFailure {
+                    result.error("contacts_read_failed", it.message ?: "Unable to load phone contacts.", null)
+                }
+            }
+        }.start()
+    }
+
     private fun getCurrentTriggerLocation(
         call: io.flutter.plugin.common.MethodCall,
         result: MethodChannel.Result,
@@ -993,6 +1108,7 @@ class MainActivity : FlutterActivity() {
         val startedAtMillis: Long,
         val expectedReturnAtMillis: Long,
         val checkIns: Int,
+        val routePointCount: Int,
         val manualPins: Int,
         val queuedUpdates: Int,
         val batteryLevel: Int,
@@ -1003,7 +1119,7 @@ class MainActivity : FlutterActivity() {
         val longestRestMillis: Long,
     ) {
         val summary: String
-            get() = "Check-ins $checkIns | Pins $manualPins | $queuedUpdates queued"
+            get() = "GPS $routePointCount | Pins $manualPins | $queuedUpdates queued"
 
         companion object {
             fun from(arguments: Any?): ActiveHikeLiveStatus? {
@@ -1016,6 +1132,7 @@ class MainActivity : FlutterActivity() {
                     expectedReturnAtMillis = (data["expectedReturnAtMillis"] as? Number)
                         ?.toLong() ?: 0L,
                     checkIns = (data["checkIns"] as? Number)?.toInt() ?: 0,
+                    routePointCount = (data["routePointCount"] as? Number)?.toInt() ?: 0,
                     manualPins = (data["manualPins"] as? Number)?.toInt() ?: 0,
                     queuedUpdates = (data["queuedUpdates"] as? Number)?.toInt() ?: 0,
                     batteryLevel = (data["batteryLevel"] as? Number)?.toInt() ?: 0,

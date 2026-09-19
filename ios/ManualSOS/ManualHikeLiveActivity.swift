@@ -73,12 +73,6 @@ struct ManualHikeLiveActivity: Widget {
               url: deepLink("active", sessionId: context.attributes.sessionId),
               background: Color.white.opacity(0.18)
             )
-
-            liveLink(
-              title: "Check In",
-              url: deepLink("check-in", sessionId: context.attributes.sessionId),
-              background: HikeLiveColors.green
-            )
           }
         }
       } compactLeading: {
@@ -86,7 +80,7 @@ struct ManualHikeLiveActivity: Widget {
           .font(.caption2.bold())
           .foregroundStyle(HikeLiveColors.green)
       } compactTrailing: {
-        Text("\(context.state.checkIns)")
+        Text(String(format: "%.1f km", context.state.distanceKm))
           .font(.caption.bold())
           .foregroundStyle(.white)
       } minimal: {
@@ -132,7 +126,6 @@ private struct HikeLiveActivityLockScreenView: View {
 
       HStack(spacing: 8) {
         metricTile(label: "Distance", value: String(format: "%.2f km", context.state.distanceKm))
-        metricTile(label: "Check-ins", value: "\(context.state.checkIns)")
         metricTile(label: "Pins", value: "\(context.state.manualPins)")
         metricTile(label: "Battery", value: "\(context.state.batteryLevel)%")
       }
@@ -148,12 +141,6 @@ private struct HikeLiveActivityLockScreenView: View {
           title: "View",
           url: deepLink("active", sessionId: context.attributes.sessionId),
           background: Color.white.opacity(0.18)
-        )
-
-        liveLink(
-          title: "Check In",
-          url: deepLink("check-in", sessionId: context.attributes.sessionId),
-          background: HikeLiveColors.green
         )
       }
     }

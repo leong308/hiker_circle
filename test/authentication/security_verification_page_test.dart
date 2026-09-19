@@ -28,6 +28,41 @@ class _DelayedMfaService extends MultiFactorAuthService {
 }
 
 void main() {
+  testWidgets('unfinished existing registration resumes factor enrollment', (
+    tester,
+  ) async {
+    final service = _DelayedMfaService();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SecurityVerificationPage(
+          continuation: MfaContinuation(
+            token: 'r' * 43,
+            phoneNumber: '+60123456789',
+            methods: const [],
+            enrollmentRequired: true,
+            isNewAccount: false,
+            expiresAt: DateTime(2030),
+          ),
+          service: service,
+        ),
+      ),
+    );
+    expect(find.text('Protect your account'), findsOneWidget);
+    await tester.tap(find.text('Set up Authenticator'));
+    await tester.pump();
+    service.beginTotp.complete(
+      TotpEnrollment(
+        challengeId: 'resumed',
+        secret: 'ABC123',
+        otpauthUri: 'otpauth://totp/HikerCircle:test?secret=ABC123',
+        expiresAt: DateTime(2030),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(VerificationCodeInput), findsOneWidget);
+    expect(find.text('Use Authenticator'), findsNothing);
+  });
+
   testWidgets('verification overlay fills the screen as the keyboard closes', (
     tester,
   ) async {

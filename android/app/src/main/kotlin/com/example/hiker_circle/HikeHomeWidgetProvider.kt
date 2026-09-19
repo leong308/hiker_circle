@@ -63,8 +63,17 @@ open class HikeHomeWidgetProvider(private val weatherMode: Boolean = false) : Ap
                     val status = if (now - updated >= 14400) "Outdated" else "Updated"
                     views.setTextViewText(R.id.hike_widget_footer, "$status ${formatTime(updated)} · Open-Meteo")
                 } else {
-                    views.setTextViewText(R.id.hike_widget_main, "Open app for forecast")
-                    views.setTextViewText(R.id.hike_widget_detail, "Weather for your scheduled hiking window.")
+                    val weatherStatus = hike.optString("weatherStatus")
+                    views.setTextViewText(R.id.hike_widget_main, when (weatherStatus) {
+                        "beyondRange", "incomplete" -> "Forecast available closer to departure"
+                        "unavailable" -> "Forecast unavailable"
+                        else -> "Open app to refresh forecast"
+                    })
+                    views.setTextViewText(R.id.hike_widget_detail, when (weatherStatus) {
+                        "beyondRange" -> "Forecasts cover up to 16 days ahead."
+                        "unavailable" -> "Tap to retry in HikerCircle."
+                        else -> "Weather for your scheduled hiking window."
+                    })
                     views.setTextViewText(R.id.hike_widget_footer, "Tap to view hike weather →")
                 }
             } else {
@@ -138,7 +147,7 @@ class UpcomingHikesWidgetProvider : AppWidgetProvider() {
         }
     }
     private fun open(context: Context, uri: Uri, requestCode: Int): PendingIntent {
-        val intent = Intent(Intent.ACTION_VIEW, uri).setPackage(context.packageName)
+        val intent = Intent(context, MainActivity::class.java).setAction(Intent.ACTION_VIEW).setData(uri)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }

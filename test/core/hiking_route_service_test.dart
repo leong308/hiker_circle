@@ -1,9 +1,35 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/core/services/hiking_route_service.dart';
+import 'package:hiker_circle/core/services/mapbox_optimization_service.dart';
+import 'package:hiker_circle/core/services/open_route_service.dart';
 import 'package:hiker_circle/core/services/open_topo_data_service.dart';
 import 'package:hiker_circle/trail/Model/trail_models.dart';
 
 void main() {
+  test('malformed polyline yields FormatException instead of range error', () {
+    for (final encoded in ['_', '?', '~~~~~~~~~~~~?', '!???']) {
+      expect(() => PolylineCodec.decode(encoded), throwsFormatException);
+    }
+  });
+  test(
+    'malformed Mapbox geometry falls through to the next provider',
+    () async {
+      final service = HikingRouteService(
+        mapboxOptimizationService: _BadMapbox(),
+        openRouteService: _GoodOrs(),
+        openTopoDataService: _NoTopo(),
+      );
+      final trail = Trail.fromPersistence({
+        'checkpoints': [
+          {'name': 'Start', 'latitude': 3.0, 'longitude': 101.0, 'order': 1},
+          {'name': 'End', 'latitude': 3.01, 'longitude': 101.01, 'order': 2},
+        ],
+      });
+      final result = await service.findHikingRouteForTrail(trail);
+      expect(result.sourceLabel, 'ORS foot-hiking');
+      expect(PolylineCodec.decode(result.encodedPolyline), hasLength(2));
+    },
+  );
   test(
     'uses a valid route stored with the trail without waiting for network',
     () async {
@@ -114,4 +140,41 @@ void main() {
       isFalse,
     );
   });
+}
+
+class _BadMapbox extends MapboxOptimizationService {
+  @override
+  Future<MapboxOptimizationResult> walkingRouteInOrder(
+    List<TrailCheckpoint> checkpoints,
+  ) async => const MapboxOptimizationResult(
+    distanceMeters: 100,
+    durationSeconds: 100,
+    encodedPolyline: '_',
+  );
+}
+
+class _GoodOrs extends OpenRouteService {
+  @override
+  Future<OpenRouteResult> computeFootHikingRoute({
+    required double startLatitude,
+    required double startLongitude,
+    required double endLatitude,
+    required double endLongitude,
+    List<TrailCheckpoint> waypoints = const [],
+  }) async => const OpenRouteResult(
+    distanceMeters: 1500,
+    durationSeconds: 1500,
+    ascentMeters: 10,
+    coordinates: [
+      [101, 3],
+      [101.01, 3.01],
+    ],
+  );
+}
+
+class _NoTopo extends OpenTopoDataService {
+  @override
+  Future<OpenTopoDataResult> getElevations({
+    required List<List<double>> coordinates,
+  }) async => const OpenTopoDataResult(elevations: []);
 }

@@ -8,7 +8,8 @@ import Contacts
 import UserNotifications
 import WidgetKit
 import FirebaseCore
-import FirebaseFirestore
+import FirebaseAuth
+import FirebaseFunctions
 #if canImport(ActivityKit)
 import ActivityKit
 #endif
@@ -397,6 +398,49 @@ import ActivityKit
       }
 
       switch call.method {
+      case "remapNativeLocationSession":
+        let arguments = call.arguments as? [String: Any]
+        let oldSession = arguments?["oldSessionId"] as? String ?? ""
+        let newSession = arguments?["newSessionId"] as? String ?? ""
+        let owner = Auth.auth().currentUser?.uid ?? ""
+        do {
+          let moved = try NativeLocationSampleBuffer.shared.remapSession(oldSessionId: oldSession, newSessionId: newSession, ownerUid: owner)
+          self.iosHikeSafetyMonitor.remapSession(oldSession: oldSession, newSession: newSession, owner: owner)
+          result(moved)
+        } catch {
+          result(FlutterError(code: "native_location_buffer_remap_failed", message: error.localizedDescription, details: nil))
+        }
+      case "getNativeLocationBufferSessions":
+        do {
+          result(try NativeLocationSampleBuffer.shared.pendingSessions(ownerUid: Auth.auth().currentUser?.uid ?? ""))
+        } catch {
+          result(FlutterError(code: "native_location_buffer_read_failed", message: error.localizedDescription, details: nil))
+        }
+      case "getPendingNativeLocationSamples":
+        let arguments = call.arguments as? [String: Any]
+        do {
+          result(try NativeLocationSampleBuffer.shared.pending(
+            sessionId: arguments?["sessionId"] as? String ?? "",
+            ownerUid: Auth.auth().currentUser?.uid ?? "",
+            limit: (arguments?["limit"] as? NSNumber)?.intValue ?? 500
+          ))
+        } catch {
+          result(FlutterError(code: "native_location_buffer_read_failed", message: error.localizedDescription, details: nil))
+        }
+      case "acknowledgeNativeLocationSamples", "markNativeLocationSamplesCloudAcknowledged":
+        let arguments = call.arguments as? [String: Any]
+        let sessionId = arguments?["sessionId"] as? String ?? ""
+        let cloud = call.method == "markNativeLocationSamplesCloudAcknowledged"
+        let ids = cloud
+          ? ((arguments?["sampledAtMillis"] as? [NSNumber]) ?? []).map { "\(sessionId):\($0.int64Value)" }
+          : arguments?["sampleIds"] as? [String] ?? []
+        do {
+          result(try NativeLocationSampleBuffer.shared.acknowledge(
+            sessionId: sessionId, ownerUid: Auth.auth().currentUser?.uid ?? "", sampleIds: ids, cloud: cloud
+          ))
+        } catch {
+          result(FlutterError(code: "native_location_buffer_ack_failed", message: error.localizedDescription, details: nil))
+        }
       case "startOrUpdateActiveHikeLiveStatus":
         guard let status = ManualHikeLiveStatus(arguments: call.arguments) else {
           result(FlutterError(
@@ -1085,7 +1129,8 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private static let defaultsPrefix = "ios_hike_safety_"
   private static let warningDuration: TimeInterval = 15
   private static let watchdogDuration: TimeInterval = 120
-  private static let firebasePublishInterval: TimeInterval = 30
+  private static let locationSampleInterval: TimeInterval = 5
+  private static let locationMaximumAge: TimeInterval = 30
 
   private enum Phase: String {
     case monitoring
@@ -1114,6 +1159,11 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private var sensitivity = 5.0
   private var fallDetectionEnabled = true
   private var shareLiveLocation = false
+  private var ownerUid = ""
+  private var locationUploadInterval: TimeInterval = 60
+  private var lastLocationSampleAt: Date?
+  private var lastLocationUploadAt = Date()
+  private var uploadingLocations = false
   // FlutterFire configures Firestore settings after the native application
   // delegate returns. A persisted monitor may resume before that happens, so
   // native telemetry must stay dormant until Flutter has restored the active
@@ -1125,7 +1175,6 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private var latestAccelerationMagnitude = 0.0
   private var latestRotationMagnitude = 0.0
   private var latestMotionCapturedAt = Date()
-  private var lastFirebasePublishAt: Date?
   private var lastWatchdogRefreshAt: Date?
   private var eventId: String?
   private var eventKind = "prolonged_stillness"
@@ -1171,10 +1220,6 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       (data["fallDetectionEnabled"] as? Bool) == true
     let incomingShareLiveLocation =
       (data["shareLiveLocation"] as? Bool) == true
-    guard incomingFallDetectionEnabled || incomingShareLiveLocation else {
-      stop()
-      return
-    }
     let previousSessionId = defaults.string(forKey: key("session_id"))
     sessionId = incomingSessionId
     trailName = (data["trailName"] as? String)?.trimmingCharacters(
@@ -1187,12 +1232,19 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     sensitivity = min(10, max(1, Self.doubleValue(data["sensorSensitivity"], fallback: 5)))
     fallDetectionEnabled = incomingFallDetectionEnabled
     shareLiveLocation = incomingShareLiveLocation
+    ownerUid = data["ownerUid"] as? String ?? ""
+    locationUploadInterval = min(86400, max(5,
+      Self.doubleValue(data["locationUploadIntervalMillis"], fallback: 60000) / 1000))
     firebaseTelemetryReady = true
 
     if previousSessionId != incomingSessionId {
       phase = .monitoring
       lastMotionAt = Date()
       clearEventState()
+      latestLocation = nil
+      referenceLocation = nil
+      lastLocationSampleAt = nil
+      lastLocationUploadAt = Date()
     } else {
       restoreState()
     }
@@ -1203,18 +1255,19 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     defaults.set(sensitivity, forKey: key("sensitivity"))
     defaults.set(fallDetectionEnabled, forKey: key("fall_detection_enabled"))
     defaults.set(shareLiveLocation, forKey: key("share_live_location"))
+    defaults.set(ownerUid, forKey: key("owner_uid"))
+    defaults.set(locationUploadInterval, forKey: key("location_upload_interval"))
     persistMotionClock()
     startLocationUpdates()
+    startTimer()
     if fallDetectionEnabled {
       startMotionUpdates()
-      startTimer()
       refreshTerminationWatchdog(force: true)
     } else {
       motionManager.stopDeviceMotionUpdates()
-      timer?.cancel()
-      timer = nil
       clearEventState()
       phase = .monitoring
+      UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.watchdogNotificationIdentifier])
     }
     publishTelemetry(force: true)
     if fallDetectionEnabled && phase == .warning {
@@ -1237,15 +1290,13 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       forKey: key("fall_detection_enabled")
     ) == nil || defaults.bool(forKey: key("fall_detection_enabled"))
     shareLiveLocation = defaults.bool(forKey: key("share_live_location"))
-    guard fallDetectionEnabled || shareLiveLocation else {
-      stop()
-      return
-    }
+    ownerUid = defaults.string(forKey: key("owner_uid")) ?? ""
+    locationUploadInterval = max(5, defaults.double(forKey: key("location_upload_interval")))
     restoreState()
     startLocationUpdates()
+    startTimer()
     if fallDetectionEnabled {
       startMotionUpdates()
-      startTimer()
       refreshTerminationWatchdog(force: true)
     }
     publishTelemetry(force: true)
@@ -1285,8 +1336,17 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     sessionId = ""
     fallDetectionEnabled = false
     shareLiveLocation = false
+    latestLocation = nil
+    referenceLocation = nil
+    lastLocationSampleAt = nil
     firebaseTelemetryReady = false
     monitoringReset()
+  }
+
+  func remapSession(oldSession: String, newSession: String, owner: String) {
+    guard sessionId == oldSession, ownerUid == owner, !newSession.isEmpty else { return }
+    sessionId = newSession
+    defaults.set(newSession, forKey: key("session_id"))
   }
 
   func handleAppWillTerminate() {
@@ -1434,9 +1494,10 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   }
 
   private func evaluateState() {
-    guard isActive, fallDetectionEnabled else { return }
-    refreshTerminationWatchdog()
+    guard isActive else { return }
     publishTelemetry()
+    guard fallDetectionEnabled else { return }
+    refreshTerminationWatchdog()
     switch phase {
     case .monitoring:
       if Date().timeIntervalSince(lastMotionAt) >= longestRestDuration {
@@ -1476,6 +1537,11 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   }
 
   func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    guard isActive else {
+      manager.stopUpdatingLocation()
+      manager.allowsBackgroundLocationUpdates = false
+      return
+    }
     let status = CLLocationManager.authorizationStatus()
     manager.allowsBackgroundLocationUpdates = status == .authorizedAlways
     if status == .authorizedAlways || status == .authorizedWhenInUse {
@@ -1487,9 +1553,8 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     _ manager: CLLocationManager,
     didUpdateLocations locations: [CLLocation]
   ) {
-    guard let location = locations.last,
-          location.horizontalAccuracy >= 0,
-          location.horizontalAccuracy <= 500 else { return }
+    guard isActive, let location = locations.last, isFreshLocation(location) else { return }
+    if let latestLocation, location.timestamp < latestLocation.timestamp { return }
     latestLocation = location
     if let referenceLocation {
       let threshold = max(
@@ -1513,49 +1578,98 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     publishTelemetry()
   }
 
+  private func isFreshLocation(_ location: CLLocation) -> Bool {
+    let age = Date().timeIntervalSince(location.timestamp)
+    return CLLocationCoordinate2DIsValid(location.coordinate)
+      && location.coordinate.latitude.isFinite && location.coordinate.longitude.isFinite
+      && location.horizontalAccuracy.isFinite && location.horizontalAccuracy >= 0
+      && location.horizontalAccuracy <= 500 && age >= -5 && age <= Self.locationMaximumAge
+  }
+
   private func publishTelemetry(force: Bool = false) {
-    guard isActive, firebaseTelemetryReady, FirebaseApp.app() != nil else {
-      return
-    }
+    guard isActive else { return }
     let now = Date()
-    if !force, let lastFirebasePublishAt,
-       now.timeIntervalSince(lastFirebasePublishAt) < Self.firebasePublishInterval {
+    if FirebaseApp.app() != nil, Auth.auth().currentUser?.uid == ownerUid,
+       UIApplication.shared.applicationState != .active,
+       let location = latestLocation, isFreshLocation(location), !ownerUid.isEmpty,
+       lastLocationSampleAt == nil || now.timeIntervalSince(lastLocationSampleAt!) >= Self.locationSampleInterval {
+      do {
+        try NativeLocationSampleBuffer.shared.append(sessionId: sessionId, ownerUid: ownerUid,
+          sampledAt: Int64(now.timeIntervalSince1970 * 1000), location: location)
+        lastLocationSampleAt = now
+      } catch {
+        NSLog("HikerCircle could not persist a GPS sample: %@", error.localizedDescription)
+      }
+    }
+    guard firebaseTelemetryReady, FirebaseApp.app() != nil,
+          UIApplication.shared.applicationState != .active, !uploadingLocations,
+          Auth.auth().currentUser?.uid == ownerUid,
+          now.timeIntervalSince(lastLocationUploadAt) >= locationUploadInterval else { return }
+    lastLocationUploadAt = now
+    do {
+      let sessions = try NativeLocationSampleBuffer.shared.pendingSessions(ownerUid: ownerUid, forCloud: true)
+        .sorted { ($0 == sessionId ? 0 : 1) < ($1 == sessionId ? 0 : 1) }
+      uploadNextLocationBatch(sessions: sessions, owner: ownerUid)
+    } catch {
+      NSLog("HikerCircle could not read buffered GPS sessions: %@", error.localizedDescription)
+    }
+  }
+
+  private func uploadNextLocationBatch(sessions: [String], owner: String) {
+    guard let session = sessions.first, !uploadingLocations, isActive,
+          UIApplication.shared.applicationState != .active,
+          Auth.auth().currentUser?.uid == owner else { return }
+    let samples: [[String: Any]]
+    do {
+      samples = try NativeLocationSampleBuffer.shared.pending(sessionId: session, ownerUid: owner,
+        limit: 200, forCloud: true)
+    } catch {
+      NSLog("HikerCircle could not read the GPS retry queue: %@", error.localizedDescription)
       return
     }
-    lastFirebasePublishAt = now
-    var data: [String: Any] = [
-      "monitoringHeartbeatAt": FieldValue.serverTimestamp(),
-      "monitoringHeartbeatAtLocal": ISO8601DateFormatter().string(from: now),
-      "monitoringLifecycleState": "ios_native_monitoring",
-      "monitoringExpected": true,
-      "latestMotion": [
-        "source": "ios_native_core_motion",
-        "accelerationMagnitude": latestAccelerationMagnitude,
-        "rotationRateMagnitude": latestRotationMagnitude,
-        "capturedAtLocal": ISO8601DateFormatter().string(from: latestMotionCapturedAt),
-      ],
-      "latestMotionUpdatedAt": FieldValue.serverTimestamp(),
-      "latestMotionUpdatedAtLocal": ISO8601DateFormatter().string(from: latestMotionCapturedAt),
-      "updatedAt": FieldValue.serverTimestamp(),
-      "updatedAtLocal": ISO8601DateFormatter().string(from: now),
-    ]
-    if let location = latestLocation {
-      data["latestLocation"] = [
-        "latitude": location.coordinate.latitude,
-        "longitude": location.coordinate.longitude,
-        "accuracyMeters": max(0, location.horizontalAccuracy),
-        "capturedAtLocal": ISO8601DateFormatter().string(from: location.timestamp),
-        "source": "ios_native_background_location",
-      ]
-      data["latestLocationUpdatedAt"] = FieldValue.serverTimestamp()
-      data["latestLocationUpdatedAtLocal"] = ISO8601DateFormatter().string(
-        from: location.timestamp
-      )
+    guard !samples.isEmpty else {
+      uploadNextLocationBatch(sessions: Array(sessions.dropFirst()), owner: owner)
+      return
     }
-    Firestore.firestore().collection("hikeSessions").document(sessionId).setData(
-      data,
-      merge: true
-    )
+    let points: [[String: Any]] = samples.map { sample in
+      var point: [String: Any] = [
+        "recordedAtMillis": sample["sampledAtMillis"]!,
+        "fixCapturedAtMillis": sample["capturedAtMillis"]!,
+        "latitude": sample["latitude"]!, "longitude": sample["longitude"]!,
+        "accuracyMeters": sample["accuracyMeters"]!, "pointType": "gps",
+      ]
+      if let altitude = sample["altitudeMeters"] { point["altitudeMeters"] = altitude }
+      return point
+    }
+    uploadingLocations = true
+    Functions.functions(region: "us-central1").httpsCallable("recordHikeLocationBatch")
+      .call(["sessionId": session, "points": points]) { [weak self] result, error in
+        DispatchQueue.main.async {
+          guard let self else { return }
+          self.uploadingLocations = false
+          guard error == nil, let payload = result?.data as? [String: Any],
+                let timestamps = payload["committedRecordedAtMillis"] as? [NSNumber] else {
+            NSLog("HikerCircle GPS batch retained for retry: %@", error?.localizedDescription ?? "Missing server acknowledgement")
+            self.uploadNextLocationBatch(sessions: Array(sessions.dropFirst()), owner: owner)
+            return
+          }
+          let acknowledged = Set(timestamps.map(\.int64Value))
+          let ids = samples.compactMap { sample -> String? in
+            guard let sampledAt = sample["sampledAtMillis"] as? Int64,
+                  acknowledged.contains(sampledAt) else { return nil }
+            return sample["sampleId"] as? String
+          }
+          do {
+            try NativeLocationSampleBuffer.shared.acknowledge(sessionId: session, ownerUid: owner,
+              sampleIds: ids, cloud: true)
+            let remaining = ids.count == samples.count && samples.count == 200
+              ? sessions : Array(sessions.dropFirst())
+            self.uploadNextLocationBatch(sessions: remaining, owner: owner)
+          } catch {
+            NSLog("HikerCircle could not retain GPS acknowledgements: %@", error.localizedDescription)
+          }
+        }
+      }
   }
 
   private func refreshTerminationWatchdog(force: Bool = false) {

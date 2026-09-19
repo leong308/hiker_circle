@@ -71,6 +71,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   }
 
   Future<void> _close() async {
+    if (viewModel.isSaving) return;
     if (!widget.onboardingRequired) {
       Navigator.of(context).pop(viewModel.contacts);
       return;
@@ -247,7 +248,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
   Widget build(BuildContext context) {
     final isBusy = viewModel.isSaving || _isCompletingOnboarding;
     return PopScope(
-      canPop: !widget.onboardingRequired,
+      canPop: !widget.onboardingRequired && !isBusy,
       child: Scaffold(
         backgroundColor: _ContactsColors.backgroundFor(context),
         body: SafeArea(

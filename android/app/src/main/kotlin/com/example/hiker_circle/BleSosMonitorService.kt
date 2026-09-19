@@ -66,7 +66,7 @@ class BleSosMonitorService : Service() {
         // Notification-channel alert behavior is immutable after first creation.
         // Version the ID when changing sound/vibration defaults so upgrades receive them.
         private const val SOS_DETECTED_CHANNEL_ID = "hiker_circle_ble_sos_detected_v2"
-        private const val SOS_DETECTED_NOTIFICATION_ID = 4213
+        private const val SOS_DETECTED_NOTIFICATION_ID = 4216
         private const val REGISTRY_ERROR_CHANNEL_ID = "hiker_circle_ble_registry_error"
         private const val REGISTRY_ERROR_NOTIFICATION_ID = 4214
         private const val HELP_GATT_CONNECT_DEBOUNCE_MILLIS = 3000L
@@ -179,7 +179,19 @@ class BleSosMonitorService : Service() {
         getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
             .edit().putBoolean(MONITOR_ENABLED, true).apply()
 
-        startForeground(NOTIFICATION_ID, notification())
+        if (!hasScanPermission() || !hasConnectPermission()) {
+            updateMonitorHealth(state = "permission_missing", failure = "Bluetooth permission is missing")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        try {
+            startForeground(NOTIFICATION_ID, notification())
+        } catch (error: RuntimeException) {
+            // Permissions may change between the Activity check and service start.
+            updateMonitorHealth(state = "start_failed", failure = error.message)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         updateMonitorHealth(state = "starting")
         // A setup scan/GATT pairing session can leave some Android Bluetooth
         // stacks with a registered callback that no longer receives results.

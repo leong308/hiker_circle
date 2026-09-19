@@ -116,13 +116,24 @@ void main() {
           calls++;
           expect(request.url.queryParameters['latitude'], '5.4');
           expect(request.url.queryParameters['longitude'], '100.2');
-          expect(request.url.queryParameters['forecast_days'], '7');
+          expect(request.url.queryParameters['forecast_days'], '16');
           expect(request.url.queryParameters['past_days'], '1');
           expect(request.url.queryParameters['wind_speed_unit'], 'kmh');
-          expect(request.url.queryParameters['hourly'], contains('wind_gusts_10m'));
+          expect(
+            request.url.queryParameters['hourly'],
+            contains('wind_gusts_10m'),
+          );
           expect(request.url.queryParameters['hourly'], contains('uv_index'));
           expect(request.url.queryParameters['timezone'], 'auto');
           expect(request.url.queryParameters['timeformat'], 'unixtime');
+          expect(
+            request.url.queryParameters['current'],
+            contains('temperature_2m'),
+          );
+          expect(
+            request.url.queryParameters['current'],
+            contains('precipitation'),
+          );
           return http.Response(jsonEncode(forecastData()), 200);
         }),
       );

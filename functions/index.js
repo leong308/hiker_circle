@@ -608,6 +608,12 @@ const achievementSeedDefinitions = Object.freeze({
   },
 });
 
+function isIncompleteRegistration(user) {
+  return Boolean(user && !user.passwordHash && user.requiresOnboarding === true
+    && user.profileSetupCompleted !== true && user.accountDisabled !== true
+    && user.status !== 'disabled');
+}
+
 function userDocumentIdForPhone(phoneNumber) {
   return String(phoneNumber || '').replace(/\//g, '_');
 }
@@ -924,7 +930,8 @@ exports.sendGreenApiLoginCode = onCall(
     if (intent === 'sign_in' && !accountSnapshot.exists) {
       throw new HttpsError('not-found', 'No account was found for this phone number.');
     }
-    if (intent === 'sign_up' && accountSnapshot.exists) {
+    if (intent === 'sign_up' && accountSnapshot.exists
+      && !isIncompleteRegistration(accountSnapshot.data())) {
       throw new HttpsError(
         'already-exists',
         'This phone number already has an account. Log in instead.'
@@ -1952,11 +1959,19 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
   }
 );
 
+exports.activateLiveLocationShare = onCall({}, async (request) => {
+  const { uid, phoneNumber } = authenticatedPhoneFor(request, 'Sign in to share your location.');
+  return require('./live_location_share').activateLiveLocationShare(admin.firestore(), {
+    uid, phoneNumber, location: request.data,
+  }, HttpsError, () => admin.firestore.FieldValue.serverTimestamp(),
+  millis => admin.firestore.Timestamp.fromMillis(millis));
+});
+
 // Native iOS/Android hike monitors keep hikeSessions.latestLocation fresh
 // while Flutter is suspended. Mirror that authenticated telemetry into the
 // public, expiring share rather than relying on a background Dart timer.
 exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
-  'hikeSessions/{sessionId}',
+  { document: 'hikeSessions/{sessionId}', retry: true },
   async (event) => {
     const before = event.data?.before.data() || {};
     const after = event.data?.after.data() || {};
@@ -1983,11 +1998,18 @@ exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
       .collection('live_location_shares')
       .doc(shareId);
     await admin.firestore().runTransaction(async (transaction) => {
-      const shareSnapshot = await transaction.get(shareReference);
+      const [shareSnapshot, currentHikeSnapshot] = await Promise.all([
+        transaction.get(shareReference),
+        transaction.get(admin.firestore().collection('hikeSessions').doc(event.params.sessionId)),
+      ]);
       const share = shareSnapshot.data() || {};
-      const expiresAtMillis = dateMillis(share.expiresAtLocal || share.expiresAt);
+      const currentHike = currentHikeSnapshot.data() || {};
+      const expiresAtMillis = dateMillis(share.expiresAt);
       if (
         !shareSnapshot.exists
+        || currentHike.status !== 'active'
+        || currentHike.shareLiveLocation !== true
+        || currentHike.liveLocationShareId !== shareId
         || String(share.ownerUserId || '') !== String(after.userId || '')
         || share.isActive !== true
         || !Number.isFinite(expiresAtMillis)
@@ -1995,6 +2017,10 @@ exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
       ) {
         return;
       }
+      const sourceMillis = require('./live_location_share').locationVersion(location);
+      const currentMillis = require('./live_location_share').locationVersion(share.latestLocation);
+      if (!Number.isFinite(sourceMillis)
+          || (Number.isFinite(currentMillis) && sourceMillis <= currentMillis)) return;
       const nowIso = new Date().toISOString();
       transaction.set(
         shareReference,
@@ -2087,13 +2113,13 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
       transaction.set(
         otherRef,
         {
-          [`buddyRequestsIncoming.${ownerKey}`]: {
+          buddyRequestsIncoming: { [ownerKey]: {
             phoneNumber: ownerPhone,
             displayName,
             handle: `@hiker${ownerKey.slice(-4)}`,
             ...(photoURL ? { photoURL } : {}),
             createdAtLocal: nowIso,
-          },
+          } },
           buddyRequestsUpdatedAt:
             admin.firestore.FieldValue.serverTimestamp(),
         },
@@ -2102,10 +2128,10 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
       transaction.set(
         ownerRef,
         {
-          [`buddyRequestsOutgoing.${otherKey}`]: {
+          buddyRequestsOutgoing: { [otherKey]: {
             phoneNumber: otherPhone,
             createdAtLocal: nowIso,
-          },
+          } },
           buddyRequestsUpdatedAt:
             admin.firestore.FieldValue.serverTimestamp(),
         },
@@ -2132,8 +2158,9 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
     if (!ownerSnapshot.exists || !otherSnapshot.exists) {
       throw new HttpsError('not-found', 'This buddy request no longer exists.');
     }
-    const incoming = ownerSnapshot.data()?.buddyRequestsIncoming;
-    if (!incoming || typeof incoming !== 'object' || !incoming[otherKey]) {
+    const ownerData = ownerSnapshot.data() || {};
+    const incoming = ownerData.buddyRequestsIncoming;
+    if (!incoming?.[otherKey] && !ownerData[`buddyRequestsIncoming.${otherKey}`]) {
       throw new HttpsError(
         'failed-precondition',
         'This buddy request has already been handled.'
@@ -2159,11 +2186,37 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
       otherUpdate.buddiesUpdatedAt =
         admin.firestore.FieldValue.serverTimestamp();
     }
-    transaction.set(ownerRef, ownerUpdate, { merge: true });
-    transaction.set(otherRef, otherUpdate, { merge: true });
+    transaction.update(ownerRef, ownerUpdate);
+    transaction.update(otherRef, otherUpdate);
+    transaction.update(ownerRef, new FieldPath(`buddyRequestsIncoming.${otherKey}`), FieldValue.delete());
+    transaction.update(otherRef, new FieldPath(`buddyRequestsOutgoing.${ownerKey}`), FieldValue.delete());
   });
   return { status: action === 'accept' ? 'accepted' : 'declined' };
 });
+
+// Repair legacy dotted set keys as accounts are next used. Transactional reads
+// ensure an accepted/deleted request cannot be recreated from an old event.
+exports.repairLegacyBuddyRequests = onDocumentUpdated(
+  { document: 'users/{userId}', retry: true },
+  async event => {
+    const after = event.data.after.data() || {};
+    if (!Object.keys(after).some(key => /^buddyRequests(Incoming|Outgoing)\.[0-9]+$/.test(key))) return;
+    await admin.firestore().runTransaction(async tx => {
+      const snapshot = await tx.get(event.data.after.ref);
+      if (!snapshot.exists) return;
+      const current = snapshot.data() || {};
+      for (const [key, value] of Object.entries(current)) {
+        const match = /^(buddyRequestsIncoming|buddyRequestsOutgoing)\.([0-9]+)$/.exec(key);
+        if (!match) continue;
+        const [, map, phoneKey] = match;
+        if (value && typeof value === 'object' && !current[map]?.[phoneKey]) {
+          tx.set(snapshot.ref, { [map]: { [phoneKey]: value } }, { merge: true });
+        }
+        tx.update(snapshot.ref, new FieldPath(key), FieldValue.delete());
+      }
+    });
+  }
+);
 
 // Public discovery uses a server allow-list so private participant, safety,
 // and route-planning fields never cross the trust boundary. Full documents
@@ -2530,9 +2583,11 @@ async function publicHikerDetails(db, userId) {
     await Promise.all([
       db.collection('users').doc(userId).get(),
       db.collection('userAchievements').where('userId', '==', userId)
-        .limit(50).get(),
+        .where('isUnlocked', '==', true).orderBy('awardedAtLocal', 'desc')
+        .limit(12).get(),
       db.collection('hikeSessions').where('userId', '==', userId)
-        .limit(100).get(),
+        .where('status', '==', 'completed').orderBy('endedAtLocal', 'desc')
+        .limit(5).get(),
     ]);
   const publicProfile = userDocument.exists
     ? publicProfileFromUserDocument(userDocument)
@@ -2560,7 +2615,7 @@ async function publicHikerDetails(db, userId) {
     .map((hike) => ({
       trailName: String(hike.trailName || 'Hike').slice(0, 160),
       endedAtLocal: String(hike.endedAtLocal || ''),
-      recordedDistanceKm: boundedNumber(hike.recordedDistanceKm, 0, 1000, 0),
+      recordedDistanceKm: boundedNumber(hike.distanceKm, 0, 1000, 0),
       durationSeconds: Math.round(boundedNumber(hike.durationSeconds, 0, 604800, 0)),
       hikeType: String(hike.hikeType || 'solo') === 'team' ? 'team' : 'solo',
     }));
@@ -3265,20 +3320,25 @@ exports.loadAchievementLeaderboard = onCall({}, async (request) => {
   const start = period === 'year'
     ? new Date(Date.UTC(now.getUTCFullYear(), 0, 1))
     : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const snapshot = await admin.firestore()
-    .collection('userAchievements')
-    .where('isUnlocked', '==', true)
-    .limit(5000)
-    .get();
   const pointsByUser = new Map();
-  for (const document of snapshot.docs) {
-    const row = document.data() || {};
-    const awardedAt = dateMillis(row.awardedAt || row.awardedAtLocal);
-    if (!Number.isFinite(awardedAt) || awardedAt < start.getTime()) continue;
-    const userId = String(row.userId || '').trim();
-    if (!userId) continue;
-    const points = Math.max(0, Number(row.pointsAwarded || 0));
-    pointsByUser.set(userId, (pointsByUser.get(userId) || 0) + points);
+  const query = admin.firestore().collection('userAchievements')
+    .where('isUnlocked', '==', true)
+    .where('awardedAtLocal', '>=', start.toISOString())
+    .orderBy('awardedAtLocal').orderBy(admin.firestore.FieldPath.documentId());
+  let cursor = null;
+  while (true) {
+    const page = await (cursor ? query.startAfter(cursor) : query).limit(500).get();
+    for (const document of page.docs) {
+      const row = document.data() || {};
+      const awardedAt = dateMillis(row.awardedAt || row.awardedAtLocal);
+      if (!Number.isFinite(awardedAt) || awardedAt < start.getTime()) continue;
+      const userId = String(row.userId || '').trim();
+      if (!userId) continue;
+      const points = Math.max(0, Number(row.pointsAwarded || 0));
+      pointsByUser.set(userId, (pointsByUser.get(userId) || 0) + points);
+    }
+    if (page.size < 500) break;
+    cursor = page.docs.at(-1);
   }
   const ranked = [...pointsByUser.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -3699,7 +3759,7 @@ function sanitizedTeamDraft(rawDraft, trailData, buddies, options = {}) {
       boundedNumber(draft.safetyCheckInIntervalSeconds, 60, 86400, 1800)
     ),
     locationRecordingIntervalSeconds: Math.round(
-      boundedNumber(draft.locationRecordingIntervalSeconds, 5, 60, 30)
+      boundedNumber(draft.locationRecordingIntervalSeconds, 5, 3600, 30)
     ),
     emergencyContactNames: Array.isArray(draft.emergencyContactNames)
       ? draft.emergencyContactNames
@@ -4659,6 +4719,22 @@ exports.startActiveHikeSession = onCall(
       const user = userSnapshot.data() || {};
       if (user.accountDisabled === true || user.status === 'disabled') {
         throw new HttpsError('permission-denied', 'Your account is unavailable.');
+      }
+      // Existing canonical starts remain retryable after their scheduled source
+      // expires or a team progresses to a terminal state.
+      if (existingSession.exists) {
+        const existing = existingSession.data() || {};
+        if (existing.userId !== uid || existing.userPhoneNumber !== phoneNumber) {
+          throw new HttpsError('permission-denied', 'This hike belongs to another user.');
+        }
+        if (existing.trailId === trailId
+            && String(existing.sourceUpcomingHikeId || '') === sourceUpcomingHikeId
+            && String(existing.teamHikeSessionId || '') === teamHikeSessionId) {
+          if (['completed', 'abandoned'].includes(String(existing.status || ''))) {
+            throw new HttpsError('failed-precondition', 'This hike has already ended.');
+          }
+          return { sessionId, created: false };
+        }
       }
       let sourceUpcoming = null;
       if (upcomingReference) {
@@ -5763,23 +5839,6 @@ exports.completeActiveHikeSession = onCall(
       };
     });
 
-    if (teamHikeSessionId && result.terminal === true) {
-      await updateTeamParticipantForHike(
-        {
-          teamHikeSessionId,
-          userId: uid,
-          userPhoneNumber: phoneNumber,
-        },
-        'ended'
-      );
-    }
-    if (result.status === 'completed') {
-      await applyCompletedHikeAchievements({
-        userId: uid,
-        sessionId,
-        trailId,
-      });
-    }
     return result;
   }
 );
@@ -5881,6 +5940,31 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
 // Hike history is served through owner-authorized callables instead of broad
 // client queries. This keeps session IDs, route telemetry, and safety records
 // private even if another account learns a document ID.
+exports.listExpiredScheduledHikes = onCall({}, async (request) => {
+  const { uid, phoneNumber } = authenticatedPhoneFor(request, 'Sign in to view scheduled hike history.');
+  const limit = Math.round(boundedNumber(request.data?.limit, 1, 200, 100));
+  const { Filter } = require('firebase-admin/firestore');
+  let query = admin.firestore().collection('upcomingHikes')
+    .where(Filter.or(Filter.where('creatorUserId', '==', uid),
+      Filter.where('participantPhones', 'array-contains', phoneNumber)))
+    .where('departureTimeLocal', '<=', new Date().toISOString())
+    .orderBy('departureTimeLocal', 'desc').orderBy(admin.firestore.FieldPath.documentId(), 'desc');
+  const cursor = request.data?.cursor;
+  if (cursor != null) {
+    if (!validFirestoreDocumentId(cursor.hikeId) || !Number.isFinite(dateMillis(cursor.departureTimeLocal))) {
+      throw new HttpsError('invalid-argument', 'The history cursor is invalid.');
+    }
+    query = query.startAfter(String(cursor.departureTimeLocal), String(cursor.hikeId));
+  }
+  const snapshot = await query.limit(limit + 1).get();
+  const rows = snapshot.docs.slice(0, limit);
+  const last = rows.at(-1);
+  return { ownerPhoneNumber: phoneNumber, hikes: rows.map(document => ({ ...sanitizedPlainValue(document.data()), hikeId: document.id })),
+    nextCursor: snapshot.size > limit && last ? {
+      departureTimeLocal: String(last.data().departureTimeLocal), hikeId: last.id,
+    } : null };
+});
+
 exports.listMyHikeHistory = onCall({}, async (request) => {
   const { uid } = authenticatedPhoneFor(
     request,
@@ -5891,7 +5975,9 @@ exports.listMyHikeHistory = onCall({}, async (request) => {
   const snapshot = await admin.firestore()
     .collection('hikeSessions')
     .where('userId', '==', uid)
-    .limit(500)
+    .where('status', '==', 'completed')
+    .orderBy('endedAtLocal', 'desc')
+    .limit(limit)
     .get();
   const hikes = snapshot.docs
     .filter((document) => String(document.data()?.status || '') === 'completed')
@@ -6005,6 +6091,17 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
       memberTracks,
     }),
   };
+});
+
+exports.recordHikeLocationBatch = onCall({ timeoutSeconds: 60 }, async (request) => {
+  const { uid, phoneNumber } = authenticatedPhoneFor(request, 'Sign in to synchronize hike locations.');
+  const sessionId = String(request.data?.sessionId || '').trim();
+  if (!validFirestoreDocumentId(sessionId)) {
+    throw new HttpsError('invalid-argument', 'The hike session is invalid.');
+  }
+  return require('./location_batch').recordLocationBatch(admin.firestore(), {
+    sessionId, uid, phoneNumber, points: request.data?.points,
+  }, HttpsError, () => admin.firestore.FieldValue.serverTimestamp());
 });
 
 exports.recordActiveHikeCheckIn = onCall(
@@ -7522,23 +7619,26 @@ async function persistEnrolledFactor({
   if (existingFactors.some((document) => document.id === factorId)) {
     throw new HttpsError('already-exists', 'This security method is already bound.');
   }
-  const nextMethods = [...new Set([...factorMethods(existingFactors), factor.type])].sort();
+  let nextMethods;
   const nowIso = new Date().toISOString();
   await db.runTransaction(async (transaction) => {
     const reads = await Promise.all([
       transaction.get(factorReference),
       transaction.get(userReference),
+      transaction.get(userReference.collection('authFactors')),
       ...(context.sessionReference
         ? [transaction.get(context.sessionReference)]
         : []),
     ]);
     const currentFactor = reads[0];
     const currentUser = reads[1];
+    const freshFactors = reads[2].docs.filter(document => document.data()?.enabled !== false);
+    nextMethods = [...new Set([...factorMethods(freshFactors), factor.type])].sort();
     if (currentFactor.exists && currentFactor.data()?.enabled !== false) {
       throw new HttpsError('already-exists', 'This security method is already bound.');
     }
     if (context.sessionReference) {
-      const sessionSnapshot = reads[2];
+      const sessionSnapshot = reads[3];
       const session = sessionSnapshot.data() || {};
       if (
         !sessionSnapshot.exists
@@ -7565,7 +7665,7 @@ async function persistEnrolledFactor({
       phoneNumber: context.phoneNumber,
       firebaseUid: context.userId,
       mfaRequired: true,
-      mfaFactorCount: existingFactors.length + 1,
+      mfaFactorCount: freshFactors.length + 1,
       mfaMethods: nextMethods,
       mfaUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       mfaUpdatedAtLocal: nowIso,
@@ -8054,28 +8154,8 @@ exports.removeMfaFactor = onCall({}, async (request) => {
       'For your safety, sign in again before removing a security method.'
     );
   }
-  const factors = await factorDocumentsForUser(userId);
-  const target = factors.find((document) => document.id === factorId);
-  if (!target) throw new HttpsError('not-found', 'This security method no longer exists.');
-  if (factors.length <= 1) {
-    throw new HttpsError(
-      'failed-precondition',
-      'At least one Authenticator or passkey method must remain bound.'
-    );
-  }
-  const remaining = factors.filter((document) => document.id !== factorId);
-  const nowIso = new Date().toISOString();
-  const batch = admin.firestore().batch();
-  batch.delete(target.ref);
-  batch.set(admin.firestore().collection('users').doc(userId), {
-    mfaRequired: true,
-    mfaFactorCount: remaining.length,
-    mfaMethods: factorMethods(remaining),
-    mfaUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    mfaUpdatedAtLocal: nowIso,
-  }, { merge: true });
-  await batch.commit();
-  return { removed: true, factorCount: remaining.length, methods: factorMethods(remaining) };
+  return require('./mfa_factor_removal').removeMfaFactor(admin.firestore(), userId, factorId,
+    HttpsError, () => admin.firestore.FieldValue.serverTimestamp());
 });
 
 exports.cleanExpiredMfaArtifacts = onSchedule(
@@ -8216,7 +8296,8 @@ exports.verifyGreenApiLoginCode = onCall(
     if (verification.intent === 'sign_in' && !userSnapshot.exists) {
       throw new HttpsError('not-found', 'This account no longer exists.');
     }
-    if (verification.intent === 'sign_up' && userSnapshot.exists) {
+    if (verification.intent === 'sign_up' && userSnapshot.exists
+      && !isIncompleteRegistration(userSnapshot.data())) {
       throw new HttpsError(
         'already-exists',
         'This phone number already has an account. Log in instead.'
@@ -8248,7 +8329,7 @@ exports.verifyGreenApiLoginCode = onCall(
       phoneNumber,
       methods,
       enrollmentRequired: methods.length === 0,
-      isNewAccount: !userSnapshot.exists,
+      isNewAccount: !userSnapshot.exists || isIncompleteRegistration(userSnapshot.data()),
       expiresAtMillis,
     };
   }
@@ -9651,26 +9732,6 @@ async function claimAtMostOnceDelivery(
   });
 }
 
-async function claimFcmOutboxDelivery(reference) {
-  return admin.firestore().runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(reference);
-    const payload = snapshot.data() || {};
-    if (!snapshot.exists || String(payload.status || 'pending') !== 'pending') {
-      return null;
-    }
-    transaction.set(
-      reference,
-      {
-        status: 'sending',
-        deliveryClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
-        deliveryClaimedAtLocal: new Date().toISOString(),
-        attemptCount: admin.firestore.FieldValue.increment(1),
-      },
-      { merge: true }
-    );
-    return payload;
-  });
-}
 
 async function sendActiveHikeReopenReminder(
   sessionRef,
@@ -9691,6 +9752,7 @@ async function sendActiveHikeReopenReminder(
         return null;
       }
       const nowMillis = Date.now();
+      if (reason === 'heartbeat_stale' && latestHikeActivityMillis(current) >= nowMillis - hikeMonitoringStaleAfterMillis(current)) return null;
       const recentCandidates = [
         dateMillis(current.lastMonitoringReminderAt),
         dateMillis(current.lastMonitoringReminderAtLocal),
@@ -9818,21 +9880,34 @@ function dateMillis(value) {
   return Number.NaN;
 }
 
-function shouldAbandonInactiveHike(hike, nowMillis) {
+function hikeMonitoringStaleAfterMillis(hike) {
+  const seconds = Number(hike.locationRecordingIntervalSeconds
+    || Number(hike.locationRecordingIntervalMinutes || 0) * 60 || 30);
+  // Uploads may intentionally be sparse while local/native sampling continues.
+  // Allow one complete configured interval plus five minutes of network grace.
+  return Math.max(5 * 60000, Math.min(3600, Math.max(5, Number.isFinite(seconds) ? seconds : 30)) * 1000 + 5 * 60000);
+}
+
+function latestHikeActivityMillis(hike) {
   const heartbeatCandidates = [
     dateMillis(hike.monitoringHeartbeatAt),
     dateMillis(hike.monitoringHeartbeatAtLocal),
-    dateMillis(hike.updatedAt),
-    dateMillis(hike.updatedAtLocal),
+    dateMillis(hike.lastGpsActivityAtMillis),
+    dateMillis(hike.latestLocation?.fixCapturedAtMillis),
+    dateMillis(hike.latestLocation?.capturedAtLocal),
     dateMillis(hike.startedAt),
     dateMillis(hike.startedAtLocal),
   ].filter(Number.isFinite);
-  const latestActivityMillis = heartbeatCandidates.length > 0
+  return heartbeatCandidates.length > 0
     ? Math.max(...heartbeatCandidates)
     : Number.NaN;
+}
+
+function shouldAbandonInactiveHike(hike, nowMillis) {
+  const latestActivityMillis = latestHikeActivityMillis(hike);
   if (
     !Number.isFinite(latestActivityMillis)
-    || nowMillis - latestActivityMillis < 30 * 60 * 1000
+    || nowMillis - latestActivityMillis < Math.max(30 * 60 * 1000, hikeMonitoringStaleAfterMillis(hike))
   ) {
     return false;
   }
@@ -10449,17 +10524,42 @@ exports.manageAchievementDefinition = onCall(
   }
 );
 
+async function revokeTerminalHikeShare(hike) {
+  const shareId = String(hike.liveLocationShareId || '');
+  const userId = String(hike.userId || '');
+  if (!validFirestoreDocumentId(shareId) || !validFirestoreDocumentId(userId)) return;
+  const db = admin.firestore();
+  const shareRef = db.collection('live_location_shares').doc(shareId);
+  const userRef = db.collection('users').doc(userId);
+  await db.runTransaction(async tx => {
+    const [shareSnapshot, userSnapshot] = await Promise.all([tx.get(shareRef), tx.get(userRef)]);
+    const share = shareSnapshot.data() || {};
+    if (!shareSnapshot.exists || share.ownerUserId !== userId) return;
+    tx.update(shareRef, { isActive: false, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    if (userSnapshot.exists && userSnapshot.data()?.liveLocationShareId === shareId) {
+      tx.update(userRef, { liveLocationEnabled: false, liveLocationUpdatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    }
+  });
+}
+
 // Keep the deployed function name so a normal Functions deployment replaces
 // the legacy trigger that awarded preparation badges from an ordinary hike
 // start. No preparation metric is emitted until the backend has authoritative
 // offline-map and full-checklist evidence.
 exports.awardAchievementsForStartedHike = onDocumentCreated(
-  'hikeSessions/{sessionId}',
-  async () => undefined
+  { document: 'hikeSessions/{sessionId}', retry: true },
+  async (event) => {
+    const hike = event.data.data() || {};
+    if (hike.status !== 'completed') return;
+    await revokeTerminalHikeShare(hike);
+    await updateTeamParticipantForHike(hike, 'ended');
+    await applyCompletedHikeAchievements({ userId: String(hike.userId || ''),
+      sessionId: event.params.sessionId, trailId: String(hike.trailId || '') });
+  }
 );
 
 exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
-  'hikeSessions/{sessionId}',
+  { document: 'hikeSessions/{sessionId}', retry: true },
   async (event) => {
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
@@ -10487,6 +10587,7 @@ exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
         recordedAt: admin.firestore.FieldValue.serverTimestamp(),
         recordedAtLocal: nowIso,
       }, { merge: true });
+    await revokeTerminalHikeShare(after);
     await updateTeamParticipantForHike(after, 'ended');
     if (afterStatus !== 'completed') {
       return;
@@ -10500,7 +10601,7 @@ exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
 );
 
 exports.awardAchievementForCompletedTeamHike = onDocumentUpdated(
-  'teamHikeSessions/{teamId}',
+  { document: 'teamHikeSessions/{teamId}', retry: true },
   async (event) => {
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
@@ -10645,101 +10746,19 @@ exports.awardAchievementForApprovedHazard = onDocumentUpdated(
 );
 
 exports.incrementCommunityCommentCount = onDocumentCreated(
-  'communityPosts/{postId}/comments/{commentId}',
-  async (event) => {
-    const db = admin.firestore();
-    const postReference = db.collection('communityPosts').doc(event.params.postId);
-    const receiptReference = db
-      .collection('communityCounterEventReceipts')
-      .doc(serverEventReceiptId(
-        'comment-created',
-        event.id || '',
-        event.params.postId,
-        event.params.commentId
-      ));
-    await db.runTransaction(async (transaction) => {
-      const [postSnapshot, receiptSnapshot] = await Promise.all([
-        transaction.get(postReference),
-        transaction.get(receiptReference),
-      ]);
-      if (receiptSnapshot.exists) {
-        return;
-      }
-      const nowIso = new Date().toISOString();
-      if (postSnapshot.exists) {
-        transaction.set(
-          postReference,
-          {
-            commentCount: admin.firestore.FieldValue.increment(1),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAtLocal: nowIso,
-          },
-          { merge: true }
-        );
-      }
-      transaction.create(receiptReference, {
-        eventType: 'comment_created',
-        postId: event.params.postId,
-        commentId: event.params.commentId,
-        applied: postSnapshot.exists,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAtLocal: nowIso,
-      });
-    });
-  }
+  { document: 'communityPosts/{postId}/comments/{commentId}', retry: true },
+  async event => require('./community_comment_counter').reconcileCommentCount(
+    admin.firestore(), event.params.postId, () => admin.firestore.FieldValue.serverTimestamp())
 );
 
 exports.decrementCommunityCommentCount = onDocumentDeleted(
-  'communityPosts/{postId}/comments/{commentId}',
-  async (event) => {
-    const db = admin.firestore();
-    const postReference = db.collection('communityPosts').doc(event.params.postId);
-    const receiptReference = db
-      .collection('communityCounterEventReceipts')
-      .doc(serverEventReceiptId(
-        'comment-deleted',
-        event.id || '',
-        event.params.postId,
-        event.params.commentId
-      ));
-    await db.runTransaction(async (transaction) => {
-      const [postSnapshot, receiptSnapshot] = await Promise.all([
-        transaction.get(postReference),
-        transaction.get(receiptReference),
-      ]);
-      if (receiptSnapshot.exists) {
-        return;
-      }
-      const nowIso = new Date().toISOString();
-      if (postSnapshot.exists) {
-        const current = Math.max(
-          0,
-          Number(postSnapshot.data()?.commentCount || 0)
-        );
-        transaction.set(
-          postReference,
-          {
-            commentCount: Math.max(0, current - 1),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAtLocal: nowIso,
-          },
-          { merge: true }
-        );
-      }
-      transaction.create(receiptReference, {
-        eventType: 'comment_deleted',
-        postId: event.params.postId,
-        commentId: event.params.commentId,
-        applied: postSnapshot.exists,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAtLocal: nowIso,
-      });
-    });
-  }
+  { document: 'communityPosts/{postId}/comments/{commentId}', retry: true },
+  async event => require('./community_comment_counter').reconcileCommentCount(
+    admin.firestore(), event.params.postId, () => admin.firestore.FieldValue.serverTimestamp())
 );
 
 exports.notifyGroupMembersAboutMessage = onDocumentCreated(
-  'groupChats/{chatId}/messages/{messageId}',
+  { document: 'groupChats/{chatId}/messages/{messageId}', retry: true },
   async (event) => {
     const message = event.data.data() || {};
     if (message.isSystemMessage === true) {
@@ -10892,25 +10911,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       }
     }
 
-    // Fallback: ensure chat document has lastMessage metadata so
-    // recipient circle page snapshot listeners fire with the update
-    // even if the sender's client-side .set(merge:true) failed.
-    await chatReference.set(
-      {
-        lastMessage: String(message.text || message.attachmentType || ''),
-        lastMessageAtLocal: String(
-          message.sentAtLocal || new Date().toISOString()
-        ),
-        lastMessageSenderPhone: String(message.senderPhone || ''),
-      },
-      { merge: true }
-    );
-
-    // Use a transaction to atomically read lastReadAt and increment unreadCount.
-    // This eliminates the race where markGroupChatAsRead (unreadCount = 0,
-    // lastReadAt = now) commits between the re-read and the update — the
-    // transaction retries with the latest data, ensuring we never increment
-    // for messages the user has already seen.
+    // Preview and unread state are applied only to a still-existing message.
     const messageTimeMs = new Date(
       message.sentAtLocal || message.createdAt || new Date().toISOString()
     ).getTime();
@@ -10919,10 +10920,21 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
         transaction.get(chatReference),
         transaction.get(event.data.ref),
       ]);
-      if (freshMessageSnapshot.data()?.unreadProcessedAt) {
+      if (!freshMessageSnapshot.exists || !freshChatSnapshot.exists
+          || freshChatSnapshot.data()?.isDeleted === true
+          || freshMessageSnapshot.data()?.unreadProcessedAt) {
         return;
       }
       const freshChat = freshChatSnapshot.data() || {};
+      const currentPreviewTime = dateMillis(freshChat.lastMessageAtLocal);
+      if (Number.isFinite(messageTimeMs)
+          && (!Number.isFinite(currentPreviewTime) || messageTimeMs >= currentPreviewTime)) {
+        transaction.update(chatReference, {
+          lastMessage: groupChatMessagePreview(message),
+          lastMessageAtLocal: new Date(messageTimeMs).toISOString(),
+          lastMessageSenderPhone: senderPhone,
+        });
+      }
       const unreadUpdates = {};
       for (const phone of participantPhones) {
         const phoneKey = phoneKeyFor(phone);
@@ -10942,18 +10954,14 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
       if (Object.keys(unreadUpdates).length > 0) {
         transaction.update(chatReference, unreadUpdates);
       }
-      transaction.set(
-        event.data.ref,
-        {
-          unreadProcessedAt: admin.firestore.FieldValue.serverTimestamp(),
-          unreadProcessedAtLocal: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      transaction.update(event.data.ref, {
+        unreadProcessedAt: admin.firestore.FieldValue.serverTimestamp(),
+        unreadProcessedAtLocal: new Date().toISOString(),
+      });
     });
 
     if (shouldAttemptNotification) {
-      await event.data.ref.set(
+      await event.data.ref.update(
         {
           notificationEligibleUsers: eligibleUsers,
           notificationTokenCount: tokenList.length,
@@ -10966,9 +10974,10 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
           notificationProcessedAt:
             admin.firestore.FieldValue.serverTimestamp(),
           notificationProcessedAtLocal: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+        }
+      ).catch(error => {
+        if (Number(error?.code) !== 5 && error?.code !== 'not-found') throw error;
+      });
       logger.log(
         `Group chat ${event.params.chatId} message ${event.params.messageId}: ${successCount} notifications sent, ${failureCount} failed.`
       );
@@ -10976,11 +10985,15 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
   }
 );
 
-exports.deliverFcmOutboxMessage = onDocumentCreated(
-  'fcmOutbox/{messageId}',
-  async (event) => {
-    const payload = await claimFcmOutboxDelivery(event.data.ref);
-    if (!payload) return;
+async function deliverFcmOutboxDocument(reference, messageId) {
+  const db = admin.firestore();
+  const lifecycle = require('./fcm_outbox_delivery');
+  const timestamp = () => admin.firestore.FieldValue.serverTimestamp();
+  const claim = await lifecycle.claimOutbox(db, reference, timestamp);
+  if (!claim) return;
+  const payload = claim.payload;
+  const finish = update => lifecycle.updateClaim(db, reference, claim.attemptId, update);
+  try {
     const type = String(payload.type || '');
     const recipientPhone = String(payload.recipientPhoneNumber || '');
     const senderPhone = String(payload.senderPhoneNumber || '');
@@ -11002,9 +11015,8 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
       || !/^\+[1-9]\d{7,14}$/.test(senderPhone)
       || !teamHikeSessionId
     ) {
-      await event.data.ref.set(
-        { status: 'failed', error: 'Invalid or unsupported outbox payload' },
-        { merge: true }
+      await finish(
+        { status: 'failed', error: 'Invalid or unsupported outbox payload' }
       );
       return;
     }
@@ -11049,9 +11061,8 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
           && recipientIsParticipant)
       );
     if (!authorized) {
-      await event.data.ref.set(
-        { status: 'failed', error: 'Sender is not authorized for this team message' },
-        { merge: true }
+      await finish(
+        { status: 'failed', error: 'Sender is not authorized for this team message' }
       );
       return;
     }
@@ -11086,13 +11097,12 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
     const user = userSnapshot.data() || {};
     const tokenList = latestFcmTokensForUser(user);
     if (tokenList.length === 0) {
-      await event.data.ref.set(
+      await finish(
         {
           status: 'no_token',
           processedAt: admin.firestore.FieldValue.serverTimestamp(),
           processedAtLocal: new Date().toISOString(),
-        },
-        { merge: true }
+        }
       );
       return;
     }
@@ -11101,6 +11111,7 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
       teamHikeSessionId,
       deepLink: safeDeepLink,
     };
+    if (!await lifecycle.beginOutbound(db, reference, claim.attemptId)) return;
     let successCount = 0;
     let failureCount = 0;
     try {
@@ -11122,7 +11133,7 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
         failureCount += response.failureCount;
       }
     } catch (error) {
-      await event.data.ref.set(
+      await finish(
         {
           status: 'delivery_uncertain',
           successCount,
@@ -11131,27 +11142,56 @@ exports.deliverFcmOutboxMessage = onDocumentCreated(
           processedAtLocal: new Date().toISOString(),
           error: String(error?.code || error?.name || 'fcm_transport_error')
             .slice(0, 160),
-        },
-        { merge: true }
+        }
       );
-      logger.error(`FCM outbox delivery ${event.params.messageId} is uncertain`, {
+      logger.error(`FCM outbox delivery ${messageId} is uncertain`, {
         errorName: String(error?.name || ''),
         errorCode: String(error?.code || ''),
       });
       return;
     }
-    await event.data.ref.set(
+    await finish(
       {
         status: failureCount === 0 ? 'sent' : 'partial',
         successCount,
         failureCount,
         processedAt: admin.firestore.FieldValue.serverTimestamp(),
         processedAtLocal: new Date().toISOString(),
-      },
-      { merge: true }
+      }
     );
+  } catch (error) {
+    // Safe to retry reads/validation before the fenced outbound transition.
+    // Once outbound starts, a failed bookkeeping write must not resend FCM.
+    const retried = await lifecycle.retryPreflight(db, reference, claim.attemptId, error);
+    if (!retried) {
+      await finish({ status: 'delivery_uncertain', error: 'delivery_or_bookkeeping_failed',
+        processedAt: timestamp(), processedAtLocal: new Date().toISOString() });
+    }
+    logger.error(`FCM outbox ${messageId} needs recovery`, { errorCode: String(error?.code || '') });
   }
+}
+
+exports.deliverFcmOutboxMessage = onDocumentCreated(
+  { document: 'fcmOutbox/{messageId}', retry: true },
+  event => deliverFcmOutboxDocument(event.data.ref, event.params.messageId)
 );
+
+exports.recoverFcmOutboxDeliveries = onSchedule('every 5 minutes', async () => {
+  let cursor = null;
+  while (true) {
+    let query = admin.firestore().collection('fcmOutbox')
+      .where('status', 'in', ['pending', 'sending'])
+      .orderBy(admin.firestore.FieldPath.documentId()).limit(100);
+    if (cursor) query = query.startAfter(cursor);
+    const page = await query.get();
+    if (page.empty) break;
+    for (const document of page.docs) {
+      await deliverFcmOutboxDocument(document.ref, document.id);
+    }
+    if (page.size < 100) break;
+    cursor = page.docs[page.docs.length - 1];
+  }
+});
 
 exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
   'upcomingHikes/{hikeId}',
@@ -11705,11 +11745,15 @@ exports.cleanExpiredUpcomingHikes = onSchedule('every 60 minutes', async () => {
       continue;
     }
 
-    await document.ref.delete();
+    if (hike.expired === true) continue;
+    await document.ref.set({ expired: true, isDeleted: true,
+      deletedReason: hike.deletedReason || 'departure_time_expired',
+      expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+      expiredAtLocal: new Date().toISOString() }, { merge: true });
     deletedCount++;
   }
 
-  logger.log(`Deleted ${deletedCount} expired upcoming hike documents.`);
+  logger.log(`Archived ${deletedCount} expired upcoming hike documents.`);
 });
 
 exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
@@ -11720,7 +11764,7 @@ exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
       .collection('hikeSessions')
       .where('status', '==', 'active')
       .get();
-    const staleBefore = Date.now() - 5 * 60 * 1000;
+    const monitoringNowMillis = Date.now();
     let reminderCount = 0;
 
     for (const document of snapshot.docs) {
@@ -11729,11 +11773,8 @@ exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
         continue;
       }
 
-      const heartbeat = data.monitoringHeartbeatAt;
-      const heartbeatMillis =
-        heartbeat && typeof heartbeat.toDate === 'function'
-          ? heartbeat.toDate().getTime()
-          : Date.parse(data.monitoringHeartbeatAtLocal || '');
+      const staleBefore = monitoringNowMillis - hikeMonitoringStaleAfterMillis(data);
+      const heartbeatMillis = latestHikeActivityMillis(data);
       if (!Number.isFinite(heartbeatMillis) || heartbeatMillis >= staleBefore) {
         continue;
       }
@@ -11741,7 +11782,8 @@ exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
       // Re-read the document to verify the hike is still active and not completed.
       const freshSnapshot = await document.ref.get();
       const freshData = freshSnapshot.data();
-      if (!freshData || freshData.status !== 'active') {
+      if (!freshData || freshData.status !== 'active'
+          || latestHikeActivityMillis(freshData) >= staleBefore) {
         continue;
       }
 
@@ -11765,142 +11807,9 @@ exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
 // Runs every 15 minutes to find and clean up hike sessions that are stuck
 // in 'active' status but no longer have an active monitoring loop.
 
-// Scheduled safety check-ins are driven by the backend so reminders still
-// arrive when Flutter timers are suspended in the background.
-exports.sendScheduledActiveHikeCheckIns = onSchedule(
-  'every 1 minutes',
-  async () => {
-    const snapshot = await admin
-      .firestore()
-      .collection('hikeSessions')
-      .where('status', '==', 'active')
-      .get();
-    const now = Date.now();
-    let sentCount = 0;
-
-    for (const document of snapshot.docs) {
-      const claimedHike = await admin.firestore().runTransaction(
-        async (transaction) => {
-          const freshSnapshot = await transaction.get(document.ref);
-          const hike = freshSnapshot.data() || {};
-          const token = String(hike.monitoringFcmToken || '').trim();
-          if (
-            !freshSnapshot.exists
-            || String(hike.status || '') !== 'active'
-            || !token
-          ) {
-            return null;
-          }
-          const configuredSeconds = Number(
-            hike.safetyCheckInIntervalSeconds
-              || Number(hike.safetyCheckInIntervalMinutes || 0) * 60
-          );
-          if (!Number.isFinite(configuredSeconds) || configuredSeconds < 60) {
-            return null;
-          }
-          const intervalMillis =
-            Math.min(configuredSeconds, 6 * 60 * 60) * 1000;
-          const anchorCandidates = [
-            dateMillis(hike.lastCheckInAt),
-            dateMillis(hike.lastCheckInAtLocal),
-            dateMillis(hike.startedAt),
-            dateMillis(hike.startedAtLocal),
-          ].filter(Number.isFinite);
-          const anchorMillis = anchorCandidates.length > 0
-            ? Math.max(...anchorCandidates)
-            : Number.NaN;
-          if (
-            !Number.isFinite(anchorMillis)
-            || now - anchorMillis < intervalMillis
-          ) {
-            return null;
-          }
-          const reminderCandidates = [
-            dateMillis(hike.lastScheduledCheckInReminderAt),
-            dateMillis(hike.lastScheduledCheckInReminderAtLocal),
-            dateMillis(hike.lastScheduledCheckInReminderClaimedAt),
-            dateMillis(hike.lastScheduledCheckInReminderClaimedAtLocal),
-          ].filter(Number.isFinite);
-          if (
-            reminderCandidates.length > 0
-            && now - Math.max(...reminderCandidates) < 10 * 60 * 1000
-          ) {
-            return null;
-          }
-          transaction.set(
-            document.ref,
-            {
-              lastScheduledCheckInReminderClaimedAt:
-                admin.firestore.FieldValue.serverTimestamp(),
-              lastScheduledCheckInReminderClaimedAtLocal:
-                new Date(now).toISOString(),
-            },
-            { merge: true }
-          );
-          return hike;
-        }
-      );
-      const token = String(claimedHike?.monitoringFcmToken || '').trim();
-      if (!token) {
-        continue;
-      }
-
-      try {
-        const deepLink =
-          `hikercircle://hike/check-in?sessionId=${encodeURIComponent(document.id)}`;
-        await admin.messaging().send({
-          token,
-          notification: {
-            title: 'Scheduled hike check-in',
-            body: 'Confirm that you are safe. Open HikerCircle to check in.',
-          },
-          data: {
-            type: 'active_hike_scheduled_check_in',
-            sessionId: document.id,
-            deepLink,
-          },
-          android: {
-            priority: 'high',
-            notification: {
-              channelId: 'hiker_circle_active_hike',
-              priority: 'high',
-            },
-          },
-          apns: {
-            headers: { 'apns-priority': '10' },
-            payload: { aps: { sound: 'default' } },
-          },
-        });
-        await document.ref.set(
-          {
-            lastScheduledCheckInReminderAt:
-              admin.firestore.FieldValue.serverTimestamp(),
-            lastScheduledCheckInReminderAtLocal: new Date(now).toISOString(),
-            lastScheduledCheckInReminderDeliveryStatus: 'sent',
-          },
-          { merge: true }
-        );
-        sentCount++;
-      } catch (error) {
-        await document.ref.set(
-          {
-            lastScheduledCheckInReminderDeliveryStatus:
-              'delivery_uncertain',
-            lastScheduledCheckInReminderError: String(
-              error?.code || error?.name || 'fcm_transport_error'
-            ).slice(0, 160),
-          },
-          { merge: true }
-        ).catch(() => undefined);
-        logger.error(
-          `Unable to send check-in reminder for ${document.id}:`,
-          error
-        );
-      }
-    }
-    logger.log(`Sent ${sentCount} scheduled active-hike check-in reminders.`);
-  }
-);
+// GPS/monitoring activity drives current safety monitoring. Retain the deployed
+// schedule name to replace the legacy check-in prompt without erasing history.
+exports.sendScheduledActiveHikeCheckIns = onSchedule('every 1 minutes', async () => undefined);
 
 exports.cleanStaleHikeSessions = onSchedule('every 15 minutes', async () => {
   const snapshot = await admin

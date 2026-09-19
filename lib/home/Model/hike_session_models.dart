@@ -196,6 +196,8 @@ class PlannedHike {
     required this.checklistTotal,
     required this.phoneBatteryLevel,
     required this.liveLocationConfigured,
+    this.locationRecordingInterval =
+        HikeSessionDraft.defaultLocationRecordingInterval,
     this.upcomingHikeId = '',
     this.hasKnownBatteryLevel = true,
     this.completedChecklistItems = const {},
@@ -213,6 +215,7 @@ class PlannedHike {
   final int checklistTotal;
   final int phoneBatteryLevel;
   final bool liveLocationConfigured;
+  final Duration locationRecordingInterval;
   final String upcomingHikeId;
   final bool hasKnownBatteryLevel;
   final Set<String> completedChecklistItems;
@@ -227,6 +230,13 @@ class PlannedHike {
   Set<String> get missingRequiredGear =>
       gearPlan.missingRequired(completedChecklistItems);
   bool get requiredGearReady => missingRequiredGear.isEmpty;
+
+  HikeSessionDraft applyToDraft(HikeSessionDraft draft) => draft.copyWith(
+    completedChecklistItems: completedChecklistItems,
+    trail: draft.trail.copyWith(weather: trail.weather),
+    shareLiveLocation: liveLocationConfigured,
+    locationRecordingInterval: locationRecordingInterval,
+  );
 
   PlannedHike withGearProgress() => copyWith(
     checklistCompleted: gearPlan.completed(completedChecklistItems),
@@ -265,6 +275,7 @@ class PlannedHike {
     int? checklistTotal,
     int? phoneBatteryLevel,
     bool? liveLocationConfigured,
+    Duration? locationRecordingInterval,
     String? upcomingHikeId,
     bool? hasKnownBatteryLevel,
     Set<String>? completedChecklistItems,
@@ -283,6 +294,8 @@ class PlannedHike {
       phoneBatteryLevel: phoneBatteryLevel ?? this.phoneBatteryLevel,
       liveLocationConfigured:
           liveLocationConfigured ?? this.liveLocationConfigured,
+      locationRecordingInterval:
+          locationRecordingInterval ?? this.locationRecordingInterval,
       upcomingHikeId: upcomingHikeId ?? this.upcomingHikeId,
       hasKnownBatteryLevel: hasKnownBatteryLevel ?? this.hasKnownBatteryLevel,
       completedChecklistItems:
@@ -1639,7 +1652,7 @@ class HikeSummaryReport {
       insights: [
         'Average pace: ${paceMinutesPerKm.round()} min/km across ${distanceKm.toStringAsFixed(2)} km.',
         'Tracking density: ${routePoints.length} GPS points saved for replay and safety review.',
-        'Safety rhythm: $actualCheckIns check-ins and $actualManualPins pinned locations.',
+        'Route notes: $actualManualPins pinned locations and automatic GPS tracking.',
         'Battery used: $batteryDrop% over ${_formatDuration(duration)} (${(batteryDrop / movingHours).toStringAsFixed(1)}% per hour).',
         if (activeHike.queuedUpdates == 0)
           'Cloud sync: all hike telemetry is up to date.'
@@ -1694,7 +1707,7 @@ class HikeSummaryReport {
       'Hike summary: $trailName',
       'Distance: ${distanceKm.toStringAsFixed(2)} km',
       'Duration: ${_formatDuration(duration)}',
-      'Check-ins: $checkIns',
+      if (checkIns > 0) 'Past check-ins: $checkIns',
       'Pinned locations: $manualPins',
       'Battery: $batteryStartPercent% to $batteryEndPercent%',
       ...insights.map((insight) => '- $insight'),

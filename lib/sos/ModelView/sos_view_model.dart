@@ -20,9 +20,18 @@ class SosViewModel extends ChangeNotifier {
        dashboard = repository.loadDashboard(),
        _emergencyContacts = repository.loadEmergencyContacts(),
        _metrics = repository.loadMetrics(),
-       sections = repository.loadSections();
+       sections = repository.loadSections() {
+    _contactsSubscription = EmergencyContactsRepository.changes.listen((
+      change,
+    ) {
+      if (!_isDisposed && change.phoneNumber == _session.phoneNumber) {
+        replaceEmergencyContacts(change.contacts);
+      }
+    });
+  }
 
   final AppSession _session;
+  StreamSubscription<EmergencyContactsChange>? _contactsSubscription;
   final EmergencyContactsRepository emergencyContactsRepository;
   final SosAlertRepository _sosAlertRepository;
   final SosDashboard dashboard;
@@ -358,6 +367,7 @@ class SosViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
+    unawaited(_contactsSubscription?.cancel());
     super.dispose();
   }
 }

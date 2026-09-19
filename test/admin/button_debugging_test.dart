@@ -304,7 +304,7 @@ void main() {
           '${temp.path}/legacy.db',
         );
         expect((await verified.query('sentinel')).single['value'], 'keep me');
-        expect(await verified.getVersion(), 27);
+        expect(await verified.getVersion(), 28);
         await verified.close();
       },
     );

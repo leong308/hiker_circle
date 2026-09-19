@@ -34,6 +34,15 @@
     ],
     "headers": [
       {
+        "source": "/internal/app-showcase{,/**}",
+        "headers": [
+          { "key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive, nosnippet" },
+          { "key": "Referrer-Policy", "value": "no-referrer" },
+          { "key": "Cache-Control", "value": "private, no-store" },
+          { "key": "X-Content-Type-Options", "value": "nosniff" }
+        ]
+      },
+      {
         "source": "/.well-known/apple-app-site-association",
         "headers": [
           {

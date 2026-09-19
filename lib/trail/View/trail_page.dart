@@ -664,6 +664,7 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     _RoutePreview(
                       key: _routePreviewKey,
                       trail: trail,
+                      onReportHazard: _reportHazard,
                       departureTime: _previewDepartureTime,
                       onAnimationProgress: (value) =>
                           _checkpointPlayback.value = value,
@@ -751,9 +752,38 @@ class HazardReportPage extends StatefulWidget {
 
 class _HazardReportPageState extends State<HazardReportPage> {
   final TextEditingController _descriptionController = TextEditingController();
-  String _hazardType = 'Slippery pathway';
-  String _severity = 'Moderate';
+  static const _categories = <String, (IconData, List<String>)>{
+    'Trail surface': (
+      Icons.terrain_rounded,
+      ['Slippery pathway', 'Loose rock', 'Deep mud', 'Ice or snow'],
+    ),
+    'Blocked route': (
+      Icons.block_rounded,
+      ['Fallen tree', 'Landslide', 'Closed trail', 'Other obstruction'],
+    ),
+    'Water': (
+      Icons.water_rounded,
+      ['Flooded route', 'Fast river crossing', 'Damaged bridge'],
+    ),
+    'Wildlife': (
+      Icons.pets_rounded,
+      ['Wild animal sighting', 'Snakes', 'Stinging insects'],
+    ),
+    'Trail structures': (
+      Icons.stairs_rounded,
+      ['Damaged steps', 'Unsafe ladder or rope', 'Missing sign'],
+    ),
+    'Other caution': (
+      Icons.warning_amber_rounded,
+      ['Unsafe human activity', 'Poor visibility', 'Other'],
+    ),
+  };
+  String? _category;
+  String? _selected;
+  String? _error;
   bool _isSubmitting = false;
+  late final String _reportId =
+      'report_${DateTime.now().microsecondsSinceEpoch}_${widget.session.phoneNumber.replaceAll(RegExp(r'[^0-9]'), '')}';
 
   @override
   void dispose() {
@@ -762,195 +792,157 @@ class _HazardReportPageState extends State<HazardReportPage> {
   }
 
   Future<void> _submit() async {
-    if (_isSubmitting) {
-      return;
-    }
-
+    if (_isSubmitting || _selected == null) return;
     setState(() {
       _isSubmitting = true;
+      _error = null;
     });
-    final messenger = ScaffoldMessenger.of(context);
-
     try {
-      final location = await LocationSnapshotService.instance.refresh();
+      final location = await LocationSnapshotService.instance.refresh().timeout(
+        const Duration(seconds: 4),
+        onTimeout: () => LocationSnapshotService.instance.latestLocation,
+      );
+      if (location == null ||
+          location.capturedAt == null ||
+          DateTime.now().toUtc().difference(location.capturedAt!.toUtc()) >
+              const Duration(seconds: 30)) {
+        throw StateError(
+          'Waiting for a current GPS location. Try again when your location is available.',
+        );
+      }
       await widget.hikerCircleRepository.submitHazardReport(
         session: widget.session,
         trail: widget.trail,
-        hazardType: _hazardType,
-        description: _descriptionController.text.trim().isEmpty
-            ? 'No description provided.'
-            : _descriptionController.text,
-        severity: _severity,
+        hazardType: _selected!,
+        description: _descriptionController.text,
+        severity: 'moderate',
         location: location,
+        reportId: _reportId,
       );
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.of(context).pop();
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Hazard report saved to Firebase as Community Report - Not Officially Verified.',
-            ),
-            behavior: SnackBarBehavior.floating,
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Caution reported. Other hikers can see it on the map.',
           ),
-        );
+        ),
+      );
     } catch (error) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+          _error = '$error';
+        });
       }
-      setState(() {
-        _isSubmitting = false;
-      });
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text('Unable to submit hazard report: $error'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    const hazardTypes = [
-      'Fallen tree',
-      'Landslide',
-      'Slippery pathway',
-      'Flooded route',
-      'Damaged steps or bridge',
-      'Wild animal sighting',
-      'Blocked route',
-      'Unsafe human activity',
-      'Other',
-    ];
-
+    final category = _category;
     return Scaffold(
-      backgroundColor: _TrailColors.backgroundFor(context),
+      appBar: AppBar(
+        title: Text(category ?? 'Report a caution'),
+        leading: BackButton(
+          onPressed: () {
+            if (_isSubmitting) return;
+            if (category != null) {
+              setState(() {
+                _category = null;
+                _selected = null;
+              });
+            } else {
+              Navigator.of(context).pop();
+            }
+          },
+        ),
+      ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              category == null
+                  ? 'What is on the trail?'
+                  : 'Choose what you see',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 20),
+            if (category == null)
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.35,
                 children: [
-                  _DetailHeader(
-                    onBack: () => Navigator.of(context).pop(),
-                    title: 'Report Hazard',
-                    subtitle: widget.trail.name,
-                  ),
-                  const SizedBox(height: 16),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
+                  for (final entry in _categories.entries)
+                    OutlinedButton(
+                      onPressed: () => setState(() => _category = entry.key),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(
-                            'Report Trail Hazard',
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(
-                                  color: _TrailColors.textFor(context),
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                          const SizedBox(height: 14),
-                          _ReadOnlyField(
-                            label: 'Trail',
-                            value: widget.trail.name,
-                            icon: Icons.terrain_rounded,
-                          ),
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            initialValue: _hazardType,
-                            decoration: const InputDecoration(
-                              labelText: 'Hazard Type',
-                              prefixIcon: Icon(Icons.report_problem_rounded),
-                            ),
-                            items: [
-                              for (final type in hazardTypes)
-                                DropdownMenuItem<String>(
-                                  value: type,
-                                  child: Text(type),
-                                ),
-                            ],
-                            onChanged: (value) {
-                              if (value != null) {
-                                setState(() {
-                                  _hazardType = value;
-                                });
-                              }
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          const _ReadOnlyField(
-                            label: 'Detected Location',
-                            value: 'Best available GPS attached on submit',
-                            icon: Icons.my_location_rounded,
-                          ),
-                          const SizedBox(height: 12),
-                          OutlinedButton.icon(
-                            onPressed: null,
-                            icon: const Icon(Icons.photo_camera_rounded),
-                            label: const Text('Photo upload unavailable'),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _descriptionController,
-                            minLines: 3,
-                            maxLines: 5,
-                            decoration: const InputDecoration(
-                              labelText: 'Description',
-                              alignLabelWithHint: true,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 8,
-                            children: [
-                              for (final severity in [
-                                'Low',
-                                'Moderate',
-                                'High',
-                              ])
-                                ChoiceChip(
-                                  label: Text(severity),
-                                  selected: _severity == severity,
-                                  onSelected: (_) {
-                                    setState(() {
-                                      _severity = severity;
-                                    });
-                                  },
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          FilledButton.icon(
-                            onPressed: _isSubmitting
-                                ? null
-                                : () => unawaited(_submit()),
-                            icon: const Icon(Icons.send_rounded),
-                            label: Text(
-                              _isSubmitting
-                                  ? 'Submitting'
-                                  : 'Submit Hazard Report',
-                            ),
-                          ),
+                          Icon(entry.value.$1, size: 34),
+                          const SizedBox(height: 10),
+                          Text(entry.key, textAlign: TextAlign.center),
                         ],
                       ),
                     ),
-                  ),
                 ],
+              )
+            else ...[
+              for (final item in _categories[category]!.$2)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _selected == item
+                      ? FilledButton.icon(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => setState(() => _selected = item),
+                          icon: const Icon(Icons.check_rounded),
+                          label: Text(item),
+                        )
+                      : OutlinedButton(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => setState(() => _selected = item),
+                          child: Text(item),
+                        ),
+                ),
+              if (_selected != null) ...[
+                ExpansionTile(
+                  title: const Text('Add a note (optional)'),
+                  children: [
+                    TextField(
+                      controller: _descriptionController,
+                      maxLength: 300,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        hintText: 'Anything hikers should know?',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _isSubmitting ? null : _submit,
+                  icon: const Icon(Icons.near_me_rounded),
+                  label: Text(_isSubmitting ? 'Reporting…' : 'Report here'),
+                ),
+              ],
+            ],
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -3299,14 +3291,10 @@ class _InsightTile extends StatelessWidget {
 }
 
 class _DetailHeader extends StatelessWidget {
-  const _DetailHeader({
-    required this.onBack,
-    this.title = 'Trail',
-    this.subtitle,
-  });
+  const _DetailHeader({required this.onBack, this.subtitle});
 
   final VoidCallback onBack;
-  final String title;
+  final String title = 'Trail';
   final String? subtitle;
 
   @override
@@ -4801,9 +4789,11 @@ class _RoutePreview extends StatefulWidget {
     this.localDatabase,
     this.departureTime,
     this.onAnimationProgress,
+    this.onReportHazard,
   });
 
   final ValueChanged<RouteCheckpointProgress>? onAnimationProgress;
+  final VoidCallback? onReportHazard;
   final DateTime? departureTime;
   final Trail trail;
   final int? highlightedCheckpointIndex;
@@ -4990,6 +4980,7 @@ class _RoutePreviewState extends State<_RoutePreview> {
                     route: _route,
                     departureTime: widget.departureTime,
                     onAnimationProgress: widget.onAnimationProgress,
+                    onReportHazard: widget.onReportHazard,
                     previewMode: _previewMode,
                     highlightedCheckpointIndex:
                         widget.highlightedCheckpointIndex,
@@ -5561,33 +5552,6 @@ class _HazardCard extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ReadOnlyField extends StatelessWidget {
-  const _ReadOnlyField({
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return InputDecorator(
-      decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon)),
-      child: Text(
-        value,
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: _TrailColors.textFor(context),
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0,
         ),
       ),
     );
