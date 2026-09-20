@@ -254,6 +254,7 @@ body.milestone-dialog-open { overflow: hidden; }
 .milestone-media-grid { margin-top: 2rem; display: grid; grid-template-columns: minmax(260px,.78fr) minmax(0,1.22fr); gap: 1rem; align-items: stretch; }
 .milestone-media-grid.has-single-media { grid-template-columns: 1fr; }
 .milestone-media-grid.has-media-pair { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.milestone-media-grid.has-video-placeholders { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .milestone-media-slot { min-height: 330px; padding: 1.4rem; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; border: 1px dashed rgba(35,100,82,.46); border-radius: 1.35rem; background: radial-gradient(circle at 90% 8%,rgba(184,215,93,.2),transparent 13rem),linear-gradient(145deg,#f8f6ee,#edf3ec); }
 .milestone-media-slot[hidden], .milestone-media-placeholder[hidden], .milestone-media-actual[hidden] { display: none; }
 .milestone-media-slot::after { content: ""; width: 180px; height: 180px; position: absolute; right: -92px; bottom: -100px; border: 1px solid rgba(35,100,82,.22); border-radius: 50%; }
@@ -456,6 +457,7 @@ body.milestone-dialog-open { overflow: hidden; }
   .milestone-achievement-grid { grid-template-columns: 1fr; }
   .milestone-achievement-grid article { min-height: 180px; }
   .milestone-media-grid { grid-template-columns: 1fr; }
+  .milestone-media-grid.has-video-placeholders { grid-template-columns: 1fr; }
   .milestone-media-slot { min-height: 285px; }
   .journey-grid { grid-template-columns: 1fr; }
   .journey-dark { transform: none; }

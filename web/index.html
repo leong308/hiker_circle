@@ -238,7 +238,7 @@
         <div class="evolution-toolbar">
           <div>
             <span class="evolution-kicker">Explore the milestones</span>
-            <strong><span data-evolution-current>01</span> / <span data-evolution-total>13</span></strong>
+            <strong><span data-evolution-current>01</span> / <span data-evolution-total>14</span></strong>
           </div>
           <div class="evolution-controls" aria-label="Evolution timeline controls">
             <button type="button" data-evolution-previous aria-label="Show previous milestone">←</button>
@@ -347,7 +347,7 @@
               <button class="evolution-card-trigger" type="button" data-milestone-open="today" aria-label="Explore milestone: HikerCircle opens outward"><span>Explore milestone</span><span aria-hidden="true">↗</span></button>
             </article>
 
-            <article class="evolution-card evolution-card-now" data-evolution-card data-milestone="trail-confidence" role="listitem">
+            <article class="evolution-card" data-evolution-card data-milestone="trail-confidence" role="listitem">
               <div class="evolution-card-top"><time datetime="2026-09-07">7 September 2026</time><span>12</span></div>
               <p class="evolution-era">A richer trail companion</p>
               <h3>Every adventure comes into focus</h3>
@@ -356,8 +356,17 @@
               <button class="evolution-card-trigger" type="button" data-milestone-open="trail-confidence" aria-label="Explore milestone: Every adventure comes into focus"><span>Explore milestone</span><span aria-hidden="true">↗</span></button>
             </article>
 
+            <article class="evolution-card evolution-card-now" data-evolution-card data-milestone="before-you-go" role="listitem">
+              <div class="evolution-card-top"><time datetime="2026-09-19">19 September 2026</time><span>13</span></div>
+              <p class="evolution-era">A clearer way ahead</p>
+              <h3>See the trail. Know your next hike.</h3>
+              <p>Take a first-person look along a route before setting out, then swipe between upcoming hikes to see the plan, the countdown, the weather and what still needs attention.</p>
+              <ul><li>First-person trail preview</li><li>Upcoming hikes in one swipeable view</li><li>Clearer weather and preparation details</li></ul>
+              <button class="evolution-card-trigger" type="button" data-milestone-open="before-you-go" aria-label="Explore milestone: See the trail. Know your next hike."><span>Explore milestone</span><span aria-hidden="true">↗</span></button>
+            </article>
+
             <article class="evolution-card evolution-card-future" data-evolution-card data-milestone="future" role="listitem">
-              <div class="evolution-card-top"><span class="evolution-date">Coming soon</span><span>13</span></div>
+              <div class="evolution-card-top"><span class="evolution-date">Coming soon</span><span>14</span></div>
               <p class="evolution-era">The next horizon</p>
               <h3>The circle reaches farther</h3>
               <p>HikerCircle is exploring a safety network that travels naturally with every hiker: quick alerts from smartwatches, long-range LoRa gateways for remote trails, and mesh connections that can pass safety messages between nearby hikers when mobile coverage fades.</p>
@@ -380,7 +389,7 @@
       <section class="milestone-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="milestone-dialog-title" aria-describedby="milestone-dialog-lead">
         <header class="milestone-dialog-header">
           <div>
-            <span data-milestone-count>Milestone 01 of 13</span>
+            <span data-milestone-count>Milestone 01 of 14</span>
             <strong data-milestone-date>28 May 2026</strong>
           </div>
           <button class="milestone-dialog-close" type="button" data-milestone-close aria-label="Close milestone showcase">×</button>
@@ -429,12 +438,12 @@
             <div class="milestone-media-grid" data-milestone-media-grid>
               <article class="milestone-media-slot milestone-media-slot-portrait" data-milestone-shot-slot>
                 <div class="milestone-media-placeholder" data-milestone-shot-placeholder>
-                  <div class="milestone-media-label"><span>Screenshot slot</span><small>Portrait</small></div>
+                  <div class="milestone-media-label"><span data-milestone-shot-label>Screenshot slot</span><small data-milestone-shot-format>Portrait</small></div>
                   <div class="milestone-media-brief">
-                    <span aria-hidden="true">01</span>
+                    <span aria-hidden="true" data-milestone-shot-icon>01</span>
                     <div><h4 data-milestone-shot-title></h4><p data-milestone-shot-brief></p></div>
                   </div>
-                  <strong>Awaiting final media</strong>
+                  <strong data-milestone-shot-status>Awaiting final media</strong>
                 </div>
                 <div class="milestone-media-actual" data-milestone-shot-media hidden>
                   <img data-milestone-shot-image alt="">
@@ -447,12 +456,12 @@
               </article>
               <article class="milestone-media-slot milestone-media-slot-motion" data-milestone-motion-slot>
                 <div class="milestone-media-placeholder" data-milestone-motion-placeholder>
-                  <div class="milestone-media-label"><span>Screen recording slot</span><small>10–15 sec</small></div>
+                  <div class="milestone-media-label"><span>Screen recording slot</span><small data-milestone-motion-format>10–15 sec</small></div>
                   <div class="milestone-media-brief">
                     <span class="milestone-play" aria-hidden="true">▶</span>
                     <div><h4 data-milestone-motion-title></h4><p data-milestone-motion-brief></p></div>
                   </div>
-                  <strong>Awaiting final media</strong>
+                  <strong data-milestone-motion-status>Awaiting final media</strong>
                 </div>
                 <div class="milestone-media-actual milestone-media-actual-motion" data-milestone-motion-media hidden>
                   <div class="milestone-video-frame">
@@ -472,7 +481,7 @@
 
         <footer class="milestone-dialog-footer">
           <button type="button" data-milestone-previous>← <span>Previous story</span></button>
-          <p><span data-milestone-footer-number>01</span> / 13</p>
+          <p><span data-milestone-footer-number>01</span> / <span data-milestone-footer-total>14</span></p>
           <button type="button" data-milestone-next><span>Next story</span> →</button>
         </footer>
       </section>

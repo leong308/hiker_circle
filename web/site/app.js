@@ -421,6 +421,25 @@
       },
     },
     {
+      id: "before-you-go",
+      date: "19 September 2026",
+      era: "A clearer way ahead",
+      title: "See the trail. Know your next hike.",
+      lead: "A new way to look ahead brings the route to life and puts each upcoming hike's most useful details within easy reach.",
+      features: [
+        ["See the route from the trail", "Follow a first-person preview with a moving view, compass, distance and estimated conditions along the way."],
+        ["Move between your plans", "Swipe through upcoming hikes to see each destination, departure countdown and preparation progress."],
+        ["Check what the day may bring", "Open the weather and preparation details for the hike you're viewing before you leave."],
+      ],
+      shot: ["Walk the route before you go", "Record a phone-screen walkthrough: open a trail, switch to its first-person map, and let the route play while the view and trail details update."],
+      motion: ["Your upcoming hikes, at a glance", "Record the redesigned Home screen: swipe between two scheduled hikes, then open the weather and preparation details for one of them."],
+      media: {
+        heading: "Two ways to look ahead.",
+        description: "Phone-screen recordings for these two experiences are being prepared.",
+        videoPlaceholders: true,
+      },
+    },
+    {
       id: "future",
       date: "Coming soon",
       era: "The next horizon",
@@ -640,12 +659,14 @@
     setMilestoneText("[data-milestone-title]", story.title);
     setMilestoneText("[data-milestone-lead]", story.lead);
     setMilestoneText("[data-milestone-footer-number]", number);
+    setMilestoneText("[data-milestone-footer-total]", String(milestoneStories.length));
     setMilestoneText("[data-milestone-shot-title]", story.shot[0]);
     setMilestoneText("[data-milestone-shot-brief]", story.shot[1]);
     setMilestoneText("[data-milestone-motion-title]", story.motion[0]);
     setMilestoneText("[data-milestone-motion-brief]", story.motion[1]);
 
     const media = story.media;
+    const videoPlaceholders = Boolean(media?.videoPlaceholders);
     const screenshot = media?.screenshot;
     const motion = media?.motion;
     const hasScreenshot = Boolean(screenshot?.src);
@@ -660,6 +681,12 @@
     const motionPlaceholder = milestoneDialog.querySelector("[data-milestone-motion-placeholder]");
     const motionMedia = milestoneDialog.querySelector("[data-milestone-motion-media]");
     const mediaDescription = milestoneDialog.querySelector("[data-milestone-media-description]");
+    setMilestoneText("[data-milestone-shot-label]", videoPlaceholders ? "Screen recording slot" : "Screenshot slot");
+    setMilestoneText("[data-milestone-shot-format]", videoPlaceholders ? "Phone portrait" : "Portrait");
+    setMilestoneText("[data-milestone-shot-icon]", videoPlaceholders ? "▶" : "01");
+    setMilestoneText("[data-milestone-shot-status]", videoPlaceholders ? "Recording needed" : "Awaiting final media");
+    setMilestoneText("[data-milestone-motion-format]", videoPlaceholders ? "Phone portrait" : "10–15 sec");
+    setMilestoneText("[data-milestone-motion-status]", videoPlaceholders ? "Recording needed" : "Awaiting final media");
     setMilestoneText("[data-milestone-media-heading]", story.concept ? "Beyond the phone. Still within the circle." : media?.heading || "Prepared for the real product story.");
     const futureLab = milestoneDialog.querySelector("[data-future-lab]");
     if (futureLab) futureLab.hidden = !story.concept;
@@ -678,6 +705,8 @@
     setMilestoneText("[data-milestone-motion-caption]", motion?.caption || "");
     mediaGrid?.classList.toggle("has-single-media", hasRealMedia && hasScreenshot !== hasMotion);
     mediaGrid?.classList.toggle("has-media-pair", hasScreenshot && hasMotion);
+    mediaGrid?.classList.toggle("has-video-placeholders", videoPlaceholders);
+    shotSlot?.classList.toggle("milestone-media-slot-motion", videoPlaceholders);
     shotSlot?.classList.toggle("has-media", hasScreenshot);
     if (shotPlaceholder) shotPlaceholder.hidden = hasScreenshot;
     if (shotMedia) shotMedia.hidden = !hasScreenshot;
