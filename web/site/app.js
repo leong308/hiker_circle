@@ -23,7 +23,6 @@
   const evolutionProgress = document.querySelector("[data-evolution-progress]");
   const milestoneDialog = document.querySelector("[data-milestone-dialog]");
   const milestonePanel = milestoneDialog?.querySelector(".milestone-dialog-panel");
-  const milestoneTriggers = [...document.querySelectorAll("[data-milestone-open]")];
   const milestoneCloseButtons = [...document.querySelectorAll("[data-milestone-close]")];
   const milestonePrevious = document.querySelector("[data-milestone-previous]");
   const milestoneNext = document.querySelector("[data-milestone-next]");
@@ -67,7 +66,7 @@
         ["Safety at the centre", "SOS and trusted emergency contacts became part of the product's foundation, not an afterthought."],
       ],
       shot: ["The original home and SOS experience", "Show the earliest home screen beside the first emergency contact or SOS view."],
-      motion: ["A first walk through HikerCircle", "Sign in, arrive at home, then open the first safety centre."],
+      motion: ["A first walk through HikerCircle", "Sign in, show Home, then open the first SOS centre."],
       media: {
         heading: "The first safety experience.",
         description: "",
@@ -341,7 +340,7 @@
         ["Extra care around important changes", "Sensitive account actions asked for another confirmation before proceeding."],
       ],
       shot: ["Security choices made clear", "Show the protection overview with WhatsApp, Authenticator, and passkey options."],
-      motion: ["A secure sign-in", "Complete sign-in with a second step, then review the available protection methods."],
+      motion: ["A secure sign-in", "Sign in with a second step, keeping codes and personal details hidden."],
       media: {
         heading: "Confidence starts with your account.",
         description: "Review your sign-in protection in one clear place.",
@@ -431,8 +430,8 @@
         ["Move between your plans", "Swipe through upcoming hikes to see each destination, departure countdown and preparation progress."],
         ["Check what the day may bring", "Open the weather and preparation details for the hike you're viewing before you leave."],
       ],
-      shot: ["Walk the route before you go", "Record a phone-screen walkthrough: open a trail, switch to its first-person map, and let the route play while the view and trail details update."],
-      motion: ["Your upcoming hikes, at a glance", "Record the redesigned Home screen: swipe between two scheduled hikes, then open the weather and preparation details for one of them."],
+      shot: ["Walk the route before you go", "Show a first-person trail preview moving along the map, with its route details updating."],
+      motion: ["Your upcoming hikes, at a glance", "Swipe between two upcoming hikes on Home; open weather and preparation for one."],
       media: {
         heading: "Two ways to look ahead.",
         description: "Phone-screen recordings for these two experiences are being prepared.",
@@ -652,6 +651,8 @@
     activeMilestoneIndex = Math.max(0, Math.min(milestoneStories.length - 1, index));
     const story = milestoneStories[activeMilestoneIndex];
     const number = String(activeMilestoneIndex + 1).padStart(2, "0");
+    const footer = milestoneDialog.querySelector(".milestone-dialog-footer");
+    if (footer) footer.hidden = Boolean(story.concept);
 
     setMilestoneText("[data-milestone-count]", `Milestone ${number} of ${milestoneStories.length}`);
     setMilestoneText("[data-milestone-date]", story.date);
@@ -832,13 +833,225 @@
     else milestoneCloseTimer = window.setTimeout(finishClose, 220);
   };
 
-  milestoneTriggers.forEach((trigger) => trigger.addEventListener("click", (event) => {
-    if (suppressMilestoneOpen) {
-      event.preventDefault();
-      return;
+  const evolutionElement = (tag, className, value) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (value) element.textContent = value;
+    return element;
+  };
+
+  const evolutionSlides = (story) => {
+    if (story.concept) return [{ kind: "concept", title: "A possible wider circle" }];
+    const slides = [];
+    if (story.media?.screenshot?.src) {
+      slides.push({ kind: "image", ...story.media.screenshot });
+    } else if (story.media?.videoPlaceholders) {
+      slides.push({ kind: "video-needed", title: story.shot[0], instruction: story.shot[1] });
     }
-    openMilestone(trigger.dataset.milestoneOpen, trigger);
-  }));
+    if (story.media?.motion?.src) {
+      slides.push({ kind: "video", ...story.media.motion });
+    } else if (story.motion) {
+      slides.push({ kind: "video-needed", title: story.motion[0], instruction: story.motion[1] });
+    }
+    return slides;
+  };
+
+  const evolutionTime = (seconds) => {
+    if (!Number.isFinite(seconds)) return "0:00";
+    const whole = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+  };
+
+  evolutionCards.forEach((card) => {
+    const story = milestoneStories.find((item) => item.id === card.dataset.milestone);
+    const trigger = card.querySelector("[data-milestone-open]");
+    if (!story || !trigger) return;
+    const slides = evolutionSlides(story);
+    const front = evolutionElement("div", "evolution-card-face evolution-card-front");
+    front.append(...card.children);
+    const back = evolutionElement("div", "evolution-card-face evolution-card-back");
+    back.inert = true;
+    back.setAttribute("aria-hidden", "true");
+    const inner = evolutionElement("div", "evolution-card-inner");
+    inner.append(front, back);
+    card.append(inner);
+    card.classList.add("is-flippable");
+
+    const triggerText = trigger.querySelector("span:first-child");
+    if (triggerText) triggerText.textContent = story.concept ? "View concept" : "View media";
+    trigger.setAttribute("aria-label", `Flip ${story.title} to ${story.concept ? "view the concept" : "view its media"}`);
+    trigger.setAttribute("aria-expanded", "false");
+
+    const top = evolutionElement("div", "evolution-card-back-top");
+    top.append(evolutionElement("span", "evolution-media-kind"), evolutionElement("span", "evolution-media-count"));
+    const returnButton = evolutionElement("button", "evolution-flip-back", "↶");
+    returnButton.type = "button";
+    returnButton.setAttribute("aria-label", `Return to ${story.title} milestone summary`);
+    const stage = evolutionElement("div", "evolution-media-stage");
+    const bottom = evolutionElement("div", "evolution-media-bottom");
+    const mediaTitle = evolutionElement("h4", "evolution-media-title");
+    const navigation = evolutionElement("div", "evolution-media-navigation");
+    const previous = evolutionElement("button", "evolution-media-previous", "←");
+    previous.type = "button";
+    previous.setAttribute("aria-label", `Previous media for ${story.title}`);
+    const next = evolutionElement("button", "evolution-media-next", "→");
+    next.type = "button";
+    next.setAttribute("aria-label", `Next media for ${story.title}`);
+    navigation.append(previous, returnButton, next);
+    bottom.append(mediaTitle, navigation);
+    back.append(top, stage, bottom);
+
+    let slideIndex = 0;
+    const renderSlide = (index) => {
+      if (!slides.length) return;
+      stage.querySelector("video")?.pause();
+      slideIndex = (index + slides.length) % slides.length;
+      const slide = slides[slideIndex];
+      top.firstElementChild.textContent = slide.kind === "image" ? "Screenshot" : slide.kind === "concept" ? "Exploring the future" : slide.kind === "video" ? "Screen recording" : "Video needed";
+      top.lastElementChild.textContent = slides.length > 1 ? `${slideIndex + 1} / ${slides.length}` : "";
+      mediaTitle.textContent = slide.title || "HikerCircle in action";
+      previous.hidden = slides.length < 2;
+      next.hidden = slides.length < 2;
+      bottom.querySelector(".evolution-video-player")?.remove();
+      bottom.querySelector(".evolution-concept-action")?.remove();
+      stage.replaceChildren();
+
+      if (slide.kind === "image") {
+        const image = evolutionElement("img", "evolution-media-image");
+        image.src = slide.src;
+        image.alt = slide.alt || slide.title || "HikerCircle app screenshot";
+        image.loading = "lazy";
+        stage.append(image);
+      } else if (slide.kind === "video") {
+        const video = evolutionElement("video", "evolution-media-video");
+        video.src = slide.src;
+        if (slide.poster) video.poster = slide.poster;
+        video.muted = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = "metadata";
+        video.setAttribute("aria-label", slide.title || "HikerCircle screen recording");
+        stage.append(video);
+        const player = evolutionElement("div", "evolution-video-player");
+        const playButton = evolutionElement("button", "evolution-video-toggle", "▶");
+        playButton.type = "button";
+        playButton.setAttribute("aria-label", "Play recording");
+        const seek = evolutionElement("input", "evolution-video-seek");
+        seek.type = "range";
+        seek.min = "0";
+        seek.max = "1000";
+        seek.value = "0";
+        seek.setAttribute("aria-label", "Seek through recording");
+        const clock = evolutionElement("span", "evolution-video-time", "0:00 / 0:00");
+        player.append(playButton, seek, clock);
+        bottom.insertBefore(player, navigation);
+        const syncPlayback = () => {
+          playButton.textContent = video.paused ? "▶" : "Ⅱ";
+          playButton.setAttribute("aria-label", video.paused ? "Play recording" : "Pause recording");
+        };
+        const syncProgress = () => {
+          const fraction = Number.isFinite(video.duration) && video.duration > 0 ? video.currentTime / video.duration : 0;
+          seek.value = String(Math.round(fraction * 1000));
+          seek.style.setProperty("--played", `${fraction * 100}%`);
+          clock.textContent = `${evolutionTime(video.currentTime)} / ${evolutionTime(video.duration)}`;
+        };
+        const togglePlayback = () => {
+          if (video.paused) {
+            delete video.dataset.userPaused;
+            video.play().catch(syncPlayback);
+          } else {
+            video.dataset.userPaused = "true";
+            video.pause();
+          }
+        };
+        video.addEventListener("play", syncPlayback);
+        video.addEventListener("pause", syncPlayback);
+        video.addEventListener("timeupdate", syncProgress);
+        video.addEventListener("loadedmetadata", syncProgress);
+        playButton.addEventListener("click", togglePlayback);
+        video.addEventListener("click", togglePlayback);
+        seek.addEventListener("input", () => {
+          if (Number.isFinite(video.duration)) video.currentTime = video.duration * Number(seek.value) / 1000;
+          syncProgress();
+        });
+        if (card.classList.contains("is-flipped") && !reducedMotion) video.play().catch(syncPlayback);
+      } else if (slide.kind === "video-needed") {
+        const placeholder = evolutionElement("div", "evolution-media-needed");
+        placeholder.append(
+          evolutionElement("span", "evolution-needed-icon", "▷"),
+          evolutionElement("strong", "", "Recording needed"),
+          evolutionElement("p", "", `${slide.instruction} Send a dark-mode phone-portrait clip to add it here.`),
+        );
+        stage.append(placeholder);
+      } else {
+        const concept = evolutionElement("div", "evolution-media-concept");
+        concept.append(
+          evolutionElement("span", "", "IDEA · NOT A RELEASE PROMISE"),
+          evolutionElement("strong", "", "A safety message that could travel farther."),
+          evolutionElement("p", "", "Watch → nearby hikers → trail gateway → your circle"),
+        );
+        stage.append(concept);
+        const conceptAction = evolutionElement("button", "evolution-concept-action", "Explore the idea ↗");
+        conceptAction.type = "button";
+        conceptAction.addEventListener("click", () => openMilestone(story.id, conceptAction));
+        bottom.insertBefore(conceptAction, navigation);
+      }
+    };
+
+    trigger.addEventListener("click", (event) => {
+      if (suppressMilestoneOpen) {
+        event.preventDefault();
+        return;
+      }
+      evolutionRail?.scrollTo({
+        left: card.offsetLeft - (evolutionRail.clientWidth - card.offsetWidth) / 2,
+        behavior: reducedMotion ? "instant" : "smooth",
+      });
+      card.classList.add("is-flipped");
+      trigger.setAttribute("aria-expanded", "true");
+      front.inert = true;
+      front.setAttribute("aria-hidden", "true");
+      back.inert = false;
+      back.removeAttribute("aria-hidden");
+      renderSlide(0);
+      returnButton.focus({ preventScroll: true });
+    });
+    returnButton.addEventListener("click", () => {
+      stage.querySelector("video")?.pause();
+      card.classList.remove("is-flipped");
+      trigger.setAttribute("aria-expanded", "false");
+      back.inert = true;
+      back.setAttribute("aria-hidden", "true");
+      front.inert = false;
+      front.removeAttribute("aria-hidden");
+      trigger.focus({ preventScroll: true });
+    });
+    previous.addEventListener("click", () => renderSlide(slideIndex - 1));
+    next.addEventListener("click", () => renderSlide(slideIndex + 1));
+    back.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        returnButton.click();
+        return;
+      }
+      if (event.target.tagName === "INPUT" || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.stopPropagation();
+      event.preventDefault();
+      renderSlide(slideIndex + (event.key === "ArrowRight" ? 1 : -1));
+    });
+    back.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button, input")) event.stopPropagation();
+    });
+  });
+
+  if (evolutionRail && "IntersectionObserver" in window) {
+    new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) evolutionCards.forEach((card) => card.querySelectorAll("video").forEach((video) => video.pause()));
+    }, { threshold: 0.1 }).observe(evolutionRail);
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) evolutionCards.forEach((card) => card.querySelectorAll("video").forEach((video) => video.pause()));
+  });
   milestoneCloseButtons.forEach((button) => button.addEventListener("click", closeMilestone));
   milestonePrevious?.addEventListener("click", () => renderMilestone(activeMilestoneIndex - 1));
   milestoneNext?.addEventListener("click", () => renderMilestone(activeMilestoneIndex + 1));
@@ -892,6 +1105,9 @@
       const current = cardIndex === index;
       card.classList.toggle("is-current", current);
       if (current) card.setAttribute("aria-current", "step"); else card.removeAttribute("aria-current");
+      const cardVideo = card.querySelector(".evolution-media-stage video");
+      if (!current) cardVideo?.pause();
+      else if (cardVideo?.paused && cardVideo.dataset.userPaused !== "true" && card.classList.contains("is-flipped") && !reducedMotion) cardVideo.play().catch(() => {});
     });
     if (evolutionCurrent) evolutionCurrent.textContent = String(index + 1).padStart(2, "0");
     if (evolutionTotal) evolutionTotal.textContent = String(evolutionCards.length).padStart(2, "0");
@@ -935,6 +1151,7 @@
   evolutionNext?.addEventListener("click", () => moveEvolution(1));
   evolutionRail?.addEventListener("keydown", (event) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (event.target.closest(".evolution-card-back")) return;
     event.preventDefault();
     moveEvolution(event.key === "ArrowLeft" ? -1 : 1);
   });
