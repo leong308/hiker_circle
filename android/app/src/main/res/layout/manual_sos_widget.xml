@@ -7,55 +7,59 @@
     android:contentDescription="HikerCircle Instant SOS"
     android:gravity="center_vertical"
     android:orientation="vertical"
-    android:padding="7dp">
+    android:padding="12dp">
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:ellipsize="end"
+        android:fontFamily="sans"
         android:gravity="start"
         android:includeFontPadding="false"
         android:maxLines="1"
         android:text="HikerCircle"
         android:textColor="#FFFFFFFF"
-        android:textSize="10sp"
+        android:textSize="11sp"
         android:textStyle="bold" />
 
     <LinearLayout
         android:id="@+id/manual_sos_widget_button"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="5dp"
+        android:layout_marginTop="10dp"
         android:layout_weight="1"
         android:background="@drawable/manual_sos_widget_button_background"
         android:clickable="true"
         android:contentDescription="Send Instant SOS"
         android:gravity="center"
-        android:orientation="horizontal"
-        android:padding="3dp">
+        android:orientation="vertical"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="6dp">
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:fontFamily="sans"
             android:gravity="center"
             android:includeFontPadding="false"
             android:maxLines="1"
             android:text="SOS"
             android:textColor="#FFFFFFFF"
-            android:textSize="17sp"
+            android:textSize="28sp"
             android:textStyle="bold" />
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="3dp"
+            android:layout_marginTop="4dp"
             android:ellipsize="end"
+            android:fontFamily="sans"
             android:gravity="center"
             android:includeFontPadding="false"
             android:maxLines="1"
             android:text="Instant"
-            android:textColor="#FFFFE4E6"
-            android:textSize="8sp" />
+            android:textColor="#D1FFFFFF"
+            android:textSize="11sp" />
     </LinearLayout>
 
 </LinearLayout>

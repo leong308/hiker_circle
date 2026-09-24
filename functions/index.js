@@ -76,7 +76,6 @@ const {
 const {
   SHARED_HIKE_PLAN_PRIVACY_VERSION,
   projectSharedHikePlan,
-  sharedHikePlanNeedsRedaction,
   sharedRouteAndTimingMatch,
   teamSourceMatchesRequest,
   scheduledTeamLaunchCanResume,
@@ -94,6 +93,11 @@ const {
   randomOpaqueToken,
   verifyTotp,
 } = require('./mfa_helpers');
+const {runMaintenanceTasks} = require('./scheduled_maintenance');
+const {
+  AssistantError: HikerCircleAssistantError,
+  createAssistantHandler,
+} = require('./hiker_circle_assistant');
 
 admin.initializeApp();
 
@@ -115,6 +119,34 @@ admin.messaging = () => getMessaging();
 const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
 const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
+const geminiApiKey = defineSecret('GEMINI_API_KEY');
+
+exports.askHikerCircleAssistant = onCall(
+  {
+    secrets: [geminiApiKey],
+    timeoutSeconds: 30,
+    memory: '256MiB',
+    maxInstances: 4,
+  },
+  async (request) => {
+    try {
+      const handler = createAssistantHandler({
+        db: admin.firestore(),
+        apiKey: geminiApiKey.value(),
+      });
+      return await handler(request);
+    } catch (error) {
+      if (error instanceof HikerCircleAssistantError) {
+        throw new HttpsError(error.code, error.message);
+      }
+      logger.error('HikerCircle assistant failed.', error);
+      throw new HttpsError(
+        'internal',
+        'The HikerCircle assistant could not answer right now.'
+      );
+    }
+  }
+);
 
 // Public, privacy-safe community totals for the marketing site. All values are
 // aggregate-only. A completed team hike contributes one session and its
@@ -7371,10 +7403,10 @@ function queueTeamOutboxForParticipants(
   }
 }
 
-exports.cleanExpiredTeamHikeInvitations = onSchedule(
-  'every 30 minutes',
-  async () => {
-    const db = admin.firestore();
+async function cleanExpiredTeamHikeInvitationsTask({
+  db = admin.firestore(),
+  nowMillis = Date.now(),
+} = {}) {
     const snapshot = await db
       .collection('teamHikeSessions')
       .where('phase', 'in', ['inviting', 'readyCheck', 'countdown'])
@@ -7392,7 +7424,7 @@ exports.cleanExpiredTeamHikeInvitations = onSchedule(
       const expiresAtMillis = Number.isFinite(expectedReturnMillis)
         ? expectedReturnMillis + 12 * 60 * 60 * 1000
         : createdMillis + 7 * 24 * 60 * 60 * 1000;
-      if (!Number.isFinite(expiresAtMillis) || Date.now() <= expiresAtMillis) {
+      if (!Number.isFinite(expiresAtMillis) || nowMillis <= expiresAtMillis) {
         continue;
       }
       const cleanedTeam = await db.runTransaction(async (transaction) => {
@@ -7409,9 +7441,9 @@ exports.cleanExpiredTeamHikeInvitations = onSchedule(
         const participants = validTeamParticipants(team).map((participant) => ({
           ...participant,
           status: 'ended',
-          updatedAtLocal: new Date().toISOString(),
+          updatedAtLocal: new Date(nowMillis).toISOString(),
         }));
-        const nowIso = new Date().toISOString();
+        const nowIso = new Date(nowMillis).toISOString();
         const patch = {
           phase: 'completed',
           participants,
@@ -7439,8 +7471,7 @@ exports.cleanExpiredTeamHikeInvitations = onSchedule(
       }
     }
     logger.log(`Closed ${cleanedCount} expired team hike invitations.`);
-  }
-);
+}
 
 const MFA_RP_ID = 'hiker-circle.web.app';
 const MFA_RP_NAME = 'HikerCircle';
@@ -11496,131 +11527,8 @@ async function claimUpcomingHikeReminder({
   });
 }
 
-// Legacy scheduled/team documents may predate the shared-plan projection and
-// contain a member's emergency settings or checklist. Progress cursors keep
-// both reads and writes bounded; 399 document updates plus the state document
-// remain below Firestore's 500-write batch ceiling (and the requested 400 cap).
-exports.redactLegacySharedHikeDrafts = onSchedule(
-  'every 15 minutes',
-  async () => {
-    const db = admin.firestore();
-    const stateReference = db
-      .collection('maintenanceState')
-      .doc('sharedHikePlanPrivacyV1');
-    const stateSnapshot = await stateReference.get();
-    const state = stateSnapshot.data() || {};
-    if (state.upcomingComplete === true && state.teamComplete === true) {
-      return;
-    }
-
-    const batch = db.batch();
-    const statePatch = {};
-    let documentWriteCount = 0;
-    let scannedCount = 0;
-
-    const processCollection = async ({
-      collectionName,
-      cursorField,
-      completeField,
-    }) => {
-      if (state[completeField] === true || documentWriteCount >= 399) {
-        return;
-      }
-      const pageLimit = 399 - documentWriteCount;
-      let query = db
-        .collection(collectionName)
-        .orderBy(admin.firestore.FieldPath.documentId())
-        .limit(pageLimit);
-      const cursor = String(state[cursorField] || '').trim();
-      if (cursor) {
-        query = query.startAfter(cursor);
-      }
-      const snapshot = await query.get();
-      let lastProcessedId = cursor;
-      for (const document of snapshot.docs) {
-        const data = document.data() || {};
-        const rawDraft = data.draft;
-        const storedPrivacyVersion = Number(
-          data.sharedHikePlanPrivacyVersion
-        );
-        const needsVersionUpgrade = !Number.isFinite(storedPrivacyVersion)
-          || storedPrivacyVersion < SHARED_HIKE_PLAN_PRIVACY_VERSION;
-        const needsMigration =
-          needsVersionUpgrade
-          || sharedHikePlanNeedsRedaction(rawDraft);
-        if (needsMigration) {
-          const patch = {
-            sharedHikePlanPrivacyVersion: needsVersionUpgrade
-              ? SHARED_HIKE_PLAN_PRIVACY_VERSION
-              : storedPrivacyVersion,
-            sharedHikePlanRedactedAt:
-              admin.firestore.FieldValue.serverTimestamp(),
-            sharedHikePlanRedactedAtLocal: new Date().toISOString(),
-          };
-          if (
-            rawDraft
-            && typeof rawDraft === 'object'
-            && !Array.isArray(rawDraft)
-          ) {
-            // update() replaces the top-level draft map, so omitted personal
-            // keys are deleted instead of surviving a recursive merge.
-            patch.draft = projectedLegacySharedHikePlan(rawDraft);
-          } else if (rawDraft != null) {
-            // A malformed legacy value cannot contain a usable shared plan.
-            // Delete it so the cursor does not leave an unredacted value behind.
-            patch.draft = admin.firestore.FieldValue.delete();
-          }
-          batch.update(document.ref, patch);
-          documentWriteCount += 1;
-        }
-        scannedCount += 1;
-        lastProcessedId = document.id;
-      }
-      statePatch[cursorField] = lastProcessedId;
-      statePatch[completeField] = snapshot.size < pageLimit;
-    };
-
-    await processCollection({
-      collectionName: 'upcomingHikes',
-      cursorField: 'upcomingCursor',
-      completeField: 'upcomingComplete',
-    });
-    const upcomingIsComplete = state.upcomingComplete === true
-      || statePatch.upcomingComplete === true;
-    if (upcomingIsComplete && documentWriteCount < 399) {
-      await processCollection({
-        collectionName: 'teamHikeSessions',
-        cursorField: 'teamCursor',
-        completeField: 'teamComplete',
-      });
-    }
-
-    batch.set(
-      stateReference,
-      {
-        migrationVersion: SHARED_HIKE_PLAN_PRIVACY_VERSION,
-        ...statePatch,
-        lastRunScannedCount: scannedCount,
-        lastRunDocumentWriteCount: documentWriteCount,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAtLocal: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-    await batch.commit();
-    logger.log(
-      `Shared hike draft privacy migration scanned ${scannedCount} and redacted ${documentWriteCount} documents.`
-    );
-  }
-);
-
-exports.processUpcomingHikeLifecycle = onSchedule(
-  'every 5 minutes',
-  async () => {
-    const db = admin.firestore();
-    const now = Date.now();
-    const expiredBefore = now - 60 * 60 * 1000;
-    const snapshot = await db.collection('upcomingHikes').get();
+async function processUpcomingHikeLifecycleTask({db, snapshot, now}) {
+    const expiredBefore = now - 15 * 60 * 1000;
 
     let hiddenCount = 0;
     let reminderHikeCount = 0;
@@ -11629,9 +11537,6 @@ exports.processUpcomingHikeLifecycle = onSchedule(
 
     for (const document of snapshot.docs) {
       const hike = document.data() || {};
-      if (hike.isDeleted === true) {
-        continue;
-      }
       const departureMillis = dateMillis(
         hike.departureTimeLocal || hike.departureTime
       );
@@ -11640,16 +11545,25 @@ exports.processUpcomingHikeLifecycle = onSchedule(
       }
 
       if (departureMillis <= expiredBefore) {
-        await document.ref.set(
-          {
-            isDeleted: true,
-            deletedReason: 'departure_time_expired',
-            deletedAt: admin.firestore.FieldValue.serverTimestamp(),
-            deletedAtLocal: new Date(now).toISOString(),
-          },
-          { merge: true }
-        );
-        hiddenCount++;
+        if (hike.expired !== true) {
+          await document.ref.set(
+            {
+              expired: true,
+              isDeleted: true,
+              deletedReason: hike.deletedReason || 'departure_time_expired',
+              deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+              deletedAtLocal: new Date(now).toISOString(),
+              expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+              expiredAtLocal: new Date(now).toISOString(),
+            },
+            { merge: true }
+          );
+          hiddenCount++;
+        }
+        continue;
+      }
+
+      if (hike.isDeleted === true) {
         continue;
       }
 
@@ -11718,157 +11632,161 @@ exports.processUpcomingHikeLifecycle = onSchedule(
     logger.log(
       `Upcoming hike lifecycle: hidden ${hiddenCount}, reminded ${reminderHikeCount} hikes, ${reminderSuccessCount} sent, ${reminderFailureCount} failed.`
     );
+}
+
+exports.processUpcomingHikeOperations = onSchedule(
+  {schedule: 'every 5 minutes', timeoutSeconds: 540},
+  async () => {
+    const db = admin.firestore();
+    const now = Date.now();
+    const snapshot = await db.collection('upcomingHikes').get();
+    await runMaintenanceTasks(
+      'Upcoming hike operations',
+      [
+        {
+          name: 'lifecycle',
+          run: () => processUpcomingHikeLifecycleTask({db, snapshot, now}),
+        },
+        {
+          name: 'precautions',
+          run: () => require('./hike_precaution_reminders')
+            .sendPrecautionReminders({
+              db,
+              messaging: admin.messaging(),
+              getWeather: require('./trail_weather').sharedTrailWeather,
+              userId: userDocumentIdForPhone,
+              tokensFor: latestFcmTokensForUser,
+              now,
+              hikes: snapshot,
+            }),
+        },
+      ],
+      (task, error) => logger.error(
+        `Upcoming hike ${task} task failed.`,
+        error
+      ),
+      {concurrent: true}
+    );
   }
 );
 
-exports.sendUpcomingHikePrecautions = onSchedule(
-  {schedule: 'every 5 minutes', timeoutSeconds: 540},
-  async () => require('./hike_precaution_reminders').sendPrecautionReminders({
-    db: admin.firestore(), messaging: admin.messaging(),
-    getWeather: require('./trail_weather').sharedTrailWeather,
-    userId: userDocumentIdForPhone, tokensFor: latestFcmTokensForUser,
-  })
-);
+async function abandonInactiveHikeDocument(db, document, now) {
+  return db.runTransaction(async (transaction) => {
+    const freshSnapshot = await transaction.get(document.ref);
+    const fresh = freshSnapshot.data() || {};
+    if (
+      !freshSnapshot.exists
+      || String(fresh.status || '') !== 'active'
+      || !shouldAbandonInactiveHike(fresh, now)
+    ) {
+      return null;
+    }
+    const nowIso = new Date(now).toISOString();
+    transaction.set(
+      document.ref,
+      {
+        status: 'abandoned',
+        monitoringExpected: false,
+        monitoringLifecycleState: 'abandoned',
+        abandonedAt: admin.firestore.FieldValue.serverTimestamp(),
+        abandonedAtLocal: nowIso,
+        abandonmentReason: 'heartbeat_stale_past_expected_return_grace',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAtLocal: nowIso,
+      },
+      { merge: true }
+    );
+    return fresh;
+  });
+}
 
-exports.cleanExpiredUpcomingHikes = onSchedule('every 60 minutes', async () => {
-  const db = admin.firestore();
-  const expiredBefore = Date.now() - 15 * 60 * 1000;
-  const snapshot = await db.collection('upcomingHikes').get();
-  let deletedCount = 0;
+async function monitorActiveHikesTask({db, snapshot, now}) {
+  let reminderCount = 0;
+  let cleanedCount = 0;
 
   for (const document of snapshot.docs) {
-    const hike = document.data() || {};
-    const departureMillis = dateMillis(
-      hike.departureTimeLocal || hike.departureTime
-    );
-    if (!Number.isFinite(departureMillis) || departureMillis > expiredBefore) {
+    const data = document.data() || {};
+    if (shouldAbandonInactiveHike(data, now)) {
+      const abandoned = await abandonInactiveHikeDocument(
+        db,
+        document,
+        now
+      );
+      if (abandoned) {
+        await updateTeamParticipantForHike(abandoned, 'ended');
+        cleanedCount++;
+        logger.log(
+          `Cleaned stale hike session ${document.id} after its return grace.`
+        );
+      }
       continue;
     }
 
-    if (hike.expired === true) continue;
-    await document.ref.set({ expired: true, isDeleted: true,
-      deletedReason: hike.deletedReason || 'departure_time_expired',
-      expiredAt: admin.firestore.FieldValue.serverTimestamp(),
-      expiredAtLocal: new Date().toISOString() }, { merge: true });
-    deletedCount++;
-  }
-
-  logger.log(`Archived ${deletedCount} expired upcoming hike documents.`);
-});
-
-exports.checkActiveHikeMonitoringHeartbeats = onSchedule(
-  'every 1 minutes',
-  async () => {
-    const snapshot = await admin
-      .firestore()
-      .collection('hikeSessions')
-      .where('status', '==', 'active')
-      .get();
-    const monitoringNowMillis = Date.now();
-    let reminderCount = 0;
-
-    for (const document of snapshot.docs) {
-      const data = document.data();
-      if (data.monitoringExpected !== true) {
-        continue;
-      }
-
-      const staleBefore = monitoringNowMillis - hikeMonitoringStaleAfterMillis(data);
-      const heartbeatMillis = latestHikeActivityMillis(data);
-      if (!Number.isFinite(heartbeatMillis) || heartbeatMillis >= staleBefore) {
-        continue;
-      }
-
-      // Re-read the document to verify the hike is still active and not completed.
-      const freshSnapshot = await document.ref.get();
-      const freshData = freshSnapshot.data();
-      if (!freshData || freshData.status !== 'active'
-          || latestHikeActivityMillis(freshData) >= staleBefore) {
-        continue;
-      }
-
-      await updateTeamParticipantForHike(freshData, 'offline');
-
-      if (
-        await sendActiveHikeReopenReminder(
-          document.ref,
-          freshData,
-          'heartbeat_stale'
-        )
-      ) {
-        reminderCount++;
-      }
+    if (data.monitoringExpected !== true) {
+      continue;
     }
-    logger.log(`Sent ${reminderCount} stale hike monitoring reminders.`);
+    const staleBefore = now - hikeMonitoringStaleAfterMillis(data);
+    const heartbeatMillis = latestHikeActivityMillis(data);
+    if (!Number.isFinite(heartbeatMillis) || heartbeatMillis >= staleBefore) {
+      continue;
+    }
+
+    // Re-read before sending so a hike completed during this run is untouched.
+    const freshSnapshot = await document.ref.get();
+    const fresh = freshSnapshot.data() || {};
+    const freshStaleBefore = now - hikeMonitoringStaleAfterMillis(fresh);
+    if (
+      !freshSnapshot.exists
+      || String(fresh.status || '') !== 'active'
+      || fresh.monitoringExpected !== true
+      || latestHikeActivityMillis(fresh) >= freshStaleBefore
+    ) {
+      continue;
+    }
+
+    if (shouldAbandonInactiveHike(fresh, now)) {
+      const abandoned = await abandonInactiveHikeDocument(
+        db,
+        document,
+        now
+      );
+      if (abandoned) {
+        await updateTeamParticipantForHike(abandoned, 'ended');
+        cleanedCount++;
+      }
+      continue;
+    }
+
+    await updateTeamParticipantForHike(fresh, 'offline');
+    if (
+      await sendActiveHikeReopenReminder(
+        document.ref,
+        fresh,
+        'heartbeat_stale'
+      )
+    ) {
+      reminderCount++;
+    }
   }
-);
 
-// ─── Stale Hike Session Cleaner ──────────────────────────────────
-// Runs every 15 minutes to find and clean up hike sessions that are stuck
-// in 'active' status but no longer have an active monitoring loop.
+  logger.log(
+    `Active hike monitor sent ${reminderCount} reminders and cleaned ${cleanedCount} stale sessions.`
+  );
+}
 
-// GPS/monitoring activity drives current safety monitoring. Retain the deployed
-// schedule name to replace the legacy check-in prompt without erasing history.
-exports.sendScheduledActiveHikeCheckIns = onSchedule('every 1 minutes', async () => undefined);
-
-exports.cleanStaleHikeSessions = onSchedule('every 15 minutes', async () => {
-  const snapshot = await admin
-    .firestore()
+exports.monitorActiveHikes = onSchedule('every 1 minutes', async () => {
+  const db = admin.firestore();
+  const snapshot = await db
     .collection('hikeSessions')
     .where('status', '==', 'active')
     .get();
-
-  let cleanedCount = 0;
-  const now = Date.now();
-
-  for (const document of snapshot.docs) {
-    const data = document.data();
-    if (!shouldAbandonInactiveHike(data, now)) {
-      continue;
-    }
-    const didAbandon = await admin.firestore().runTransaction(
-      async (transaction) => {
-        const freshSnapshot = await transaction.get(document.ref);
-        const fresh = freshSnapshot.data() || {};
-        if (
-          !freshSnapshot.exists
-          || String(fresh.status || '') !== 'active'
-          || !shouldAbandonInactiveHike(fresh, Date.now())
-        ) {
-          return false;
-        }
-        const nowIso = new Date().toISOString();
-        transaction.set(
-          document.ref,
-          {
-            status: 'abandoned',
-            monitoringExpected: false,
-            monitoringLifecycleState: 'abandoned',
-            abandonedAt: admin.firestore.FieldValue.serverTimestamp(),
-            abandonedAtLocal: nowIso,
-            abandonmentReason: 'heartbeat_stale_past_expected_return_grace',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAtLocal: nowIso,
-          },
-          { merge: true }
-        );
-        return true;
-      }
-    );
-    if (!didAbandon) {
-      continue;
-    }
-    await updateTeamParticipantForHike(data, 'ended');
-    cleanedCount++;
-    logger.log(`Cleaned stale hike session ${document.id} after its return grace.`);
-  }
-
-  logger.log(`Cleaned ${cleanedCount} stale hike sessions.`);
+  await monitorActiveHikesTask({db, snapshot, now: Date.now()});
 });
 
-exports.cleanExpiredGroupChats = onSchedule('every 60 minutes', async () => {
-  const db = admin.firestore();
-  const now = Date.now();
+async function cleanExpiredGroupChatsTask({
+  db = admin.firestore(),
+  now = Date.now(),
+} = {}) {
   const nowIso = new Date(now).toISOString();
   const orphanThreshold = now - 60 * 60 * 1000;
 
@@ -11955,4 +11873,32 @@ exports.cleanExpiredGroupChats = onSchedule('every 60 minutes', async () => {
   logger.log(
     `Group chat cleaner marked ${deletedCount} deleted and started ${noticeCount} closure notices.`
   );
-});
+}
+
+exports.cleanExpiredTeamAndGroupChats = onSchedule(
+  {schedule: 'every 60 minutes', timeoutSeconds: 540},
+  async () => {
+    const db = admin.firestore();
+    const now = Date.now();
+    await runMaintenanceTasks(
+      'Team and group chat cleanup',
+      [
+        {
+          name: 'team invitations',
+          run: () => cleanExpiredTeamHikeInvitationsTask({
+            db,
+            nowMillis: now,
+          }),
+        },
+        {
+          name: 'group chats',
+          run: () => cleanExpiredGroupChatsTask({db, now}),
+        },
+      ],
+      (task, error) => logger.error(
+        `Scheduled ${task} cleanup failed.`,
+        error
+      )
+    );
+  }
+);

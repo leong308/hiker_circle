@@ -1,7 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {upcomingPrecautions} = require('../hike_precaution_reminders');
+const {
+  sendPrecautionReminders,
+  upcomingPrecautions,
+} = require('../hike_precaution_reminders');
 const now = Date.UTC(2026,8,10);
 function weather(overrides={}) { return {cachedAtLocal:new Date(now).toISOString(),forecastData:{hourly:{time:[now/1000,now/1000+3600,now/1000+7200],weather_code:[0,0,95],...overrides}}}; }
 test('excludes storm outside hiking window including buffer',()=>{
@@ -23,4 +26,17 @@ test('stale or unknown freshness does not send weather claims',()=>{
 test('heavy rain and strong gusts outrank ordinary precautions',()=>{
   const result=upcomingPrecautions(weather({precipitation:[10,0],wind_gusts_10m:[60,0],uv_index:[8,0]}),now,30,now);
   assert.deepEqual(result.map(c=>[c.id,c.severity]),[['rain',3],['wind',3],['uv',2]]);
+});
+test('uses the parent scheduler snapshot without querying upcoming hikes again', async()=>{
+  const hikes={docs:[]};
+  const db={collection:()=>{throw new Error('unexpected duplicate query');}};
+  await sendPrecautionReminders({
+    db,
+    messaging:{},
+    getWeather:async()=>null,
+    userId:value=>value,
+    tokensFor:()=>[],
+    hikes,
+    now,
+  });
 });

@@ -50,6 +50,47 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('friend request avatar opens the requester profile overview', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _FriendRequestRepository();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CirclePage(
+            session: AppSession(
+              phoneNumber: '+60123456789',
+              signedInAt: DateTime.utc(2026),
+            ),
+            hikerCircleRepository: repository,
+            firebaseBootstrapResult: const FirebaseBootstrapResult.unavailable(
+              'Offline test',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Friend requests'));
+    await tester.pumpAndSettle();
+    expect(find.text('Friend Requests'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('buddy-request-profile-60111222333')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Requested you'), findsOneWidget);
+    expect(find.text('Trekker'), findsWidgets);
+    expect(find.text('Penang'), findsOneWidget);
+    expect(repository.loadedProfilePhone, '+60111222333');
+  });
 }
 
 class _CommunityRepository extends HikerCircleFirebaseRepository {
@@ -68,4 +109,58 @@ class _CommunityRepository extends HikerCircleFirebaseRepository {
   Future<List<Map<String, dynamic>>> loadCommunityPosts({
     int limit = 30,
   }) async => [];
+}
+
+class _FriendRequestRepository extends _CommunityRepository {
+  String loadedProfilePhone = '';
+
+  static final List<Map<String, dynamic>> _requests = [
+    {
+      'phoneNumber': '+60111222333',
+      'displayName': 'Maya Hiker',
+      'handle': '@maya',
+      'photoURL': '',
+      'createdAtLocal': DateTime.utc(2026, 1, 1).toIso8601String(),
+    },
+  ];
+
+  @override
+  Stream<List<Map<String, dynamic>>> watchBuddyRequests({
+    required AppSession session,
+  }) => Stream.value(_requests);
+
+  @override
+  Future<List<Map<String, dynamic>>> loadBuddyRequests({
+    required AppSession session,
+  }) async => _requests;
+
+  @override
+  Future<Map<String, dynamic>?> loadCommunityProfile({
+    String userId = '',
+    String phoneNumber = '',
+  }) async {
+    loadedProfilePhone = phoneNumber;
+    return {
+      'userId': 'maya-user',
+      'phoneNumber': phoneNumber,
+      'displayName': 'Maya Hiker',
+      'handle': '@maya',
+      'photoURL': '',
+      'hikerExperience': 'Intermediate',
+      'hikeFrequency': 'Weekly',
+      'residentialLocation': 'Penang',
+      'level': 3,
+      'levelName': 'Trekker',
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> loadPublicHikerProfile({
+    String userId = '',
+    String phoneNumber = '',
+  }) async => {
+    'profile': {'hikeFrequency': 'Weekly'},
+    'achievements': <Map<String, dynamic>>[],
+    'hikeHistory': <Map<String, dynamic>>[],
+  };
 }

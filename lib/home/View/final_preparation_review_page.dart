@@ -2,6 +2,7 @@ import 'dart:async';
 import '../../sos/Model/sos_models.dart';
 import '../Data/hike_briefing_weather_service.dart';
 import '../Model/hike_preparation_sharing.dart';
+import '../Model/hike_shirt_color.dart';
 import 'hiking_forecast_sheet.dart';
 import 'preparation_conditions.dart';
 import 'preparation_safety_details_page.dart';
@@ -410,10 +411,57 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     return '${d.day}/${d.month} · ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
+  HikeShirtColor? get _selectedShirtColor => _plan == null
+      ? null
+      : HikeShirtColor.fromPreferences(_plan!.completedChecklistItems);
+
+  HikeWeatherBriefing get _shirtWeatherBriefing =>
+      HikeWeatherBriefing.fromWeather(
+        _plan!.trail.weather,
+        _plan!.plannedStartTime,
+        _plan!.expectedReturnTime,
+      );
+
+  bool get _shirtChoiceOverlapsDaylight =>
+      HikeShirtColorAdvice.overlapsDaylight(
+        departure: _plan!.plannedStartTime,
+        returning: _plan!.expectedReturnTime,
+        briefing: _shirtWeatherBriefing,
+      );
+
+  Future<void> _selectShirtColor(HikeShirtColor color) async {
+    final plan = _plan;
+    if (plan == null || _busy) return;
+    final updated = HikeShirtColor.setPreference(
+      plan.completedChecklistItems,
+      color,
+    );
+    final saved = await _saveGear(updated);
+    if (!saved || !mounted) return;
+    await _showShirtColorAdvice(color);
+  }
+
+  Future<void> _showShirtColorAdvice(HikeShirtColor color) async {
+    final advice = HikeShirtColorAdvice.forSelection(
+      color: color,
+      overlapsDaylight: _shirtChoiceOverlapsDaylight,
+    );
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) =>
+          _ShirtColorAdviceSheet(color: color, advice: advice),
+    );
+  }
+
   List<_PreparationStep> get _steps {
     final plan = _plan;
     if (plan == null) return const [];
     final gear = plan.gearPlan;
+    final plannedDuration = plan.expectedReturnTime.difference(
+      plan.plannedStartTime,
+    );
     _PreparationStep itemStep(String item, bool required) => _PreparationStep(
       id: 'gear:$item',
       stage: required ? 0 : 1,
@@ -445,7 +493,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       _PreparationStep(
         id: 'contacts',
         stage: 2,
-        eyebrow: 'SAFETY CHECK · 1 OF 4',
+        eyebrow: 'SAFETY CHECK · 1 OF 5',
         title: 'Who can help if you need it?',
         body: _contacts.isNotEmpty
             ? 'Your emergency contacts are available. Make sure someone knows your route and expected return time.'
@@ -455,16 +503,17 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       _PreparationStep(
         id: 'battery',
         stage: 2,
-        eyebrow: 'SAFETY CHECK · 2 OF 4',
+        eyebrow: 'SAFETY CHECK · 2 OF 5',
         title: 'Is your phone ready for the trail?',
-        body:
-            'Check your charge before leaving, and consider a power bank for longer hikes.',
+        body: plannedDuration > const Duration(hours: 3)
+            ? 'Check the current charge below. This hike exceeds 3 hours, so bring a charged power bank.'
+            : 'Check the current charge below before leaving.',
         icon: Icons.battery_charging_full_rounded,
       ),
       _PreparationStep(
         id: 'sharing',
         stage: 2,
-        eyebrow: 'SAFETY CHECK · 3 OF 4',
+        eyebrow: 'SAFETY CHECK · 3 OF 5',
         title: 'How will you share your location?',
         body: plan.liveLocationConfigured
             ? 'Live location sharing is on for this hike.'
@@ -472,9 +521,19 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         icon: Icons.my_location_rounded,
       ),
       _PreparationStep(
+        id: 'shirtColor',
+        stage: 2,
+        eyebrow: 'SAFETY CHECK · 4 OF 5',
+        title: 'What colour shirt will you wear?',
+        body: _selectedShirtColor == null
+            ? 'Choose the closest colour. We will check heat, visibility and biting-insect considerations for this hike.'
+            : '${_selectedShirtColor!.label} selected. Review the recommendation below before continuing.',
+        icon: Icons.checkroom_rounded,
+      ),
+      _PreparationStep(
         id: 'conditions',
         stage: 2,
-        eyebrow: 'SAFETY CHECK · 4 OF 4',
+        eyebrow: 'SAFETY CHECK · 5 OF 5',
         title: 'Have you checked the conditions?',
         body:
             'Your pack adapts to the route and forecast. Check conditions at the trail too, and adjust your plans if needed.',
@@ -988,39 +1047,13 @@ class _PreparationState extends State<FinalPreparationReviewPage>
           ],
         );
       case 'battery':
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              plan.hasKnownBatteryLevel
-                  ? 'Phone battery · ${plan.phoneBatteryLevel}%'
-                  : 'Phone battery unavailable',
-              style: theme.textTheme.titleLarge,
-            ),
-            if (_loadingBattery) const LinearProgressIndicator(),
-            if (widget.loadBatteryLevel != null) ...[
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: _interactionBusy
-                    ? null
-                    : () => _openDetails(
-                        () => Navigator.of(context).push<void>(
-                          MaterialPageRoute(
-                            builder: (_) => PreparationBatteryPage(
-                              loadBattery: widget.loadBatteryLevel!,
-                              initialLevel: plan.hasKnownBatteryLevel
-                                  ? plan.phoneBatteryLevel
-                                  : null,
-                            ),
-                          ),
-                        ),
-                        refresh: _refreshBattery,
-                      ),
-                icon: const Icon(Icons.battery_std),
-                label: const Text('Battery details'),
-              ),
-            ],
-          ],
+        return _BatteryPreparationStatus(
+          hasKnownLevel: plan.hasKnownBatteryLevel,
+          level: plan.phoneBatteryLevel,
+          loading: _loadingBattery,
+          plannedDuration: plan.expectedReturnTime.difference(
+            plan.plannedStartTime,
+          ),
         );
       case 'sharing':
         final choice = HikePreparationSharing.fromPlan(plan);
@@ -1055,6 +1088,14 @@ class _PreparationState extends State<FinalPreparationReviewPage>
               label: const Text('Modify sharing'),
             ),
           ],
+        );
+      case 'shirtColor':
+        return _ShirtColorSelector(
+          selected: _selectedShirtColor,
+          overlapsDaylight: _shirtChoiceOverlapsDaylight,
+          enabled: widget.onPlanChanged != null && !_interactionBusy,
+          onSelected: _selectShirtColor,
+          onShowAdvice: _showShirtColorAdvice,
         );
       case 'conditions':
         return Column(
@@ -1131,6 +1172,23 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         _advance();
       };
       secondaryAction = () => _showStep('contacts');
+    } else if (step.id == 'shirtColor') {
+      final selected = _selectedShirtColor;
+      final warning =
+          selected != null &&
+          selected.suitability == HikeShirtColorSuitability.avoidInDaylight &&
+          _shirtChoiceOverlapsDaylight;
+      label = selected == null
+          ? 'Choose a shirt colour'
+          : warning
+          ? 'Continue with warning'
+          : 'Continue';
+      hint = selected == null
+          ? 'Select the closest colour before continuing.'
+          : warning
+          ? 'A lighter, more visible shirt is recommended for this daytime hike.'
+          : 'Your shirt-colour guidance is saved for this hike.';
+      action = selected == null ? null : _advance;
     } else if (step.id == 'ready') {
       final missing = plan.missingRequiredGear;
       if (_sharingError != null) {
@@ -1230,6 +1288,540 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       return Icons.hiking_rounded;
     }
     return Icons.backpack_outlined;
+  }
+}
+
+class _ShirtColorSelector extends StatelessWidget {
+  const _ShirtColorSelector({
+    required this.selected,
+    required this.overlapsDaylight,
+    required this.enabled,
+    required this.onSelected,
+    required this.onShowAdvice,
+  });
+
+  final HikeShirtColor? selected;
+  final bool overlapsDaylight;
+  final bool enabled;
+  final Future<void> Function(HikeShirtColor) onSelected;
+  final Future<void> Function(HikeShirtColor) onShowAdvice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(
+              overlapsDaylight
+                  ? Icons.wb_sunny_outlined
+                  : Icons.nights_stay_outlined,
+              size: 20,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                overlapsDaylight
+                    ? 'This hike overlaps daylight after sunrise.'
+                    : 'This hike is currently planned outside daylight.',
+                style: theme.textTheme.labelLarge,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final color in HikeShirtColor.values)
+              _ShirtColorChoice(
+                color: color,
+                selected: selected == color,
+                enabled: enabled,
+                onTap: () => unawaited(onSelected(color)),
+              ),
+          ],
+        ),
+        if (selected == null) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Hover over or long-press a swatch to see its colour name.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 12),
+          _SelectedShirtColorStatus(
+            color: selected!,
+            advice: HikeShirtColorAdvice.forSelection(
+              color: selected!,
+              overlapsDaylight: overlapsDaylight,
+            ),
+            onTap: () => unawaited(onShowAdvice(selected!)),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ShirtColorChoice extends StatelessWidget {
+  const _ShirtColorChoice({
+    required this.color,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final HikeShirtColor color;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final swatch = Color(color.colorValue);
+    final foreground = swatch.computeLuminance() > .5
+        ? const Color(0xFF152019)
+        : Colors.white;
+    return Tooltip(
+      message: color.label,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: '${color.label} shirt',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: ValueKey('shirt-color-${color.name}'),
+            onTap: enabled ? onTap : null,
+            customBorder: const CircleBorder(),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              width: 46,
+              height: 46,
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: selected
+                    ? theme.colorScheme.primaryContainer
+                    : theme.colorScheme.surfaceContainerHighest,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.outlineVariant,
+                  width: selected ? 3 : 1,
+                ),
+              ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: swatch,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withValues(alpha: .45),
+                  ),
+                ),
+                child: selected
+                    ? Icon(Icons.check_rounded, size: 21, color: foreground)
+                    : null,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SelectedShirtColorStatus extends StatelessWidget {
+  const _SelectedShirtColorStatus({
+    required this.color,
+    required this.advice,
+    required this.onTap,
+  });
+
+  final HikeShirtColor color;
+  final HikeShirtColorAdvice advice;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context), scheme = theme.colorScheme;
+    final accent = switch (advice.tone) {
+      HikeShirtColorSuitability.recommended => scheme.primary,
+      HikeShirtColorSuitability.visible => scheme.tertiary,
+      HikeShirtColorSuitability.avoidInDaylight => scheme.error,
+    };
+    return Material(
+      color: accent.withValues(alpha: .09),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        key: const ValueKey('shirt-color-guidance'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: accent.withValues(alpha: .45)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Color(color.colorValue),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: scheme.outlineVariant),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      color.label,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      advice.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(color: accent),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.info_outline_rounded, color: accent, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShirtColorAdviceSheet extends StatelessWidget {
+  const _ShirtColorAdviceSheet({required this.color, required this.advice});
+
+  final HikeShirtColor color;
+  final HikeShirtColorAdvice advice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: Color(color.colorValue),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${color.label} shirt',
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        'Hike clothing guidance',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _ShirtColorAdviceCard(advice: advice),
+            const SizedBox(height: 12),
+            Text(
+              'Colour is only one layer of protection. Wear suitable coverage and use an effective insect repellent where needed.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 18),
+            FilledButton(
+              key: const ValueKey('close-shirt-color-guidance'),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Got it'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BatteryPreparationStatus extends StatelessWidget {
+  const _BatteryPreparationStatus({
+    required this.hasKnownLevel,
+    required this.level,
+    required this.loading,
+    required this.plannedDuration,
+  });
+
+  final bool hasKnownLevel;
+  final int level;
+  final bool loading;
+  final Duration plannedDuration;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context), scheme = theme.colorScheme;
+    final normalizedLevel = level.clamp(0, 100);
+    final lowBattery = !hasKnownLevel || normalizedLevel < 60;
+    final longHike = plannedDuration > const Duration(hours: 3);
+    final accent = lowBattery ? scheme.error : scheme.primary;
+    final icon = !hasKnownLevel
+        ? Icons.battery_unknown_rounded
+        : normalizedLevel < 20
+        ? Icons.battery_alert_rounded
+        : normalizedLevel < 60
+        ? Icons.battery_3_bar_rounded
+        : Icons.battery_full_rounded;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: .09),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: accent.withValues(alpha: .4)),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 32, color: accent),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Current battery', style: theme.textTheme.labelLarge),
+                    Text(
+                      hasKnownLevel ? '$normalizedLevel%' : 'Unavailable',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        color: accent,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (loading)
+                const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+        ),
+        if (hasKnownLevel) ...[
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(99),
+            child: LinearProgressIndicator(
+              minHeight: 7,
+              value: normalizedLevel / 100,
+              color: accent,
+              backgroundColor: scheme.surfaceContainerHighest,
+            ),
+          ),
+        ],
+        if (lowBattery) ...[
+          const SizedBox(height: 12),
+          _BatteryNotice(
+            icon: Icons.electrical_services_rounded,
+            color: scheme.error,
+            title: hasKnownLevel
+                ? 'Charge your phone before departure'
+                : 'Battery level could not be checked',
+            body: hasKnownLevel
+                ? 'At least 60% is recommended so GPS tracking, communication and SOS features have enough power.'
+                : 'Check the phone battery manually and charge it before starting the hike.',
+          ),
+        ],
+        if (longHike) ...[
+          const SizedBox(height: 12),
+          _BatteryNotice(
+            icon: Icons.power_rounded,
+            color: scheme.tertiary,
+            title: 'Bring a charged power bank',
+            body:
+                'This hike is planned for ${_durationLabel(plannedDuration)}, which is more than 3 hours. Keep the cable accessible and protect both from rain.',
+          ),
+        ],
+      ],
+    );
+  }
+
+  static String _durationLabel(Duration duration) {
+    final minutes = duration.inMinutes.clamp(0, 24 * 60 * 7);
+    final hours = minutes ~/ 60;
+    final remainder = minutes % 60;
+    if (remainder == 0) return '${hours}h';
+    return '${hours}h ${remainder}m';
+  }
+}
+
+class _BatteryNotice extends StatelessWidget {
+  const _BatteryNotice({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.body,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 21),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(body, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShirtColorAdviceCard extends StatelessWidget {
+  const _ShirtColorAdviceCard({required this.advice});
+
+  final HikeShirtColorAdvice advice;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context), scheme = theme.colorScheme;
+    final (accent, background, icon) = switch (advice.tone) {
+      HikeShirtColorSuitability.recommended => (
+        scheme.primary,
+        scheme.primaryContainer.withValues(alpha: .62),
+        Icons.thumb_up_alt_outlined,
+      ),
+      HikeShirtColorSuitability.visible => (
+        scheme.tertiary,
+        scheme.tertiaryContainer.withValues(alpha: .62),
+        Icons.visibility_outlined,
+      ),
+      HikeShirtColorSuitability.avoidInDaylight => (
+        scheme.error,
+        scheme.errorContainer.withValues(alpha: .62),
+        Icons.warning_amber_rounded,
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accent.withValues(alpha: .55)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  advice.title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(advice.summary),
+          const SizedBox(height: 10),
+          for (final point in advice.points)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Container(
+                      width: 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: accent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(child: Text(point)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

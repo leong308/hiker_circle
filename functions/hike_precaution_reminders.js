@@ -32,9 +32,9 @@ function upcomingPrecautions(weather, departure, duration, now = Date.now()) {
   return result.sort((a,b) => b.severity-a.severity || a.id.localeCompare(b.id));
 }
 
-async function sendPrecautionReminders({db, messaging, getWeather, userId, tokensFor, now = Date.now()}) {
-  const hikes = await db.collection('upcomingHikes').get();
-  for (const doc of hikes.docs) {
+async function sendPrecautionReminders({db, messaging, getWeather, userId, tokensFor, now = Date.now(), hikes}) {
+  const hikeSnapshot = hikes || await db.collection('upcomingHikes').get();
+  for (const doc of hikeSnapshot.docs) {
     const hike = doc.data();
     const departure = Date.parse(hike.departureTimeLocal || hike.departureTime);
     if (hike.isDeleted || hike.startedAtLocal || ['active','ended','completed','cancelled'].includes(hike.status) || !Number.isFinite(departure) || departure <= now || departure > now + 24 * 3600000) continue;

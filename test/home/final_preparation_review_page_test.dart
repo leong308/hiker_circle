@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/home/Data/planned_hike_state_service.dart';
 import 'package:hiker_circle/home/Model/hike_session_models.dart';
+import 'package:hiker_circle/home/Model/hike_shirt_color.dart';
 import 'package:hiker_circle/home/View/final_preparation_review_page.dart';
 import 'next_hike_briefing_test.dart' as fixtures;
 import 'package:hiker_circle/trail/Model/trail_models.dart';
@@ -126,6 +127,14 @@ Future<void> tap(WidgetTester tester, String text) async {
   await tester.pump(const Duration(milliseconds: 350));
 }
 
+Future<void> closeShirtColorGuidance(WidgetTester tester) async {
+  final closeButton = find.byKey(const ValueKey('close-shirt-color-guidance'));
+  await tester.ensureVisible(closeButton);
+  await tester.pumpAndSettle();
+  await tester.tap(closeButton);
+  await tester.pumpAndSettle();
+}
+
 Future<void> finishGuide(WidgetTester tester, {bool pack = true}) async {
   for (var i = 0; i < 40; i++) {
     if (find.text('FINAL REVIEW').evaluate().isNotEmpty) return;
@@ -140,6 +149,23 @@ Future<void> finishGuide(WidgetTester tester, {bool pack = true}) async {
       }
     } else if (find.text('Skip extras').evaluate().isNotEmpty) {
       await tap(tester, 'Skip extras');
+    } else if (find
+            .byKey(const ValueKey('shirt-color-white'))
+            .evaluate()
+            .isNotEmpty &&
+        continueButton(tester).onPressed == null) {
+      final white = find.byKey(const ValueKey('shirt-color-white'));
+      await tester.ensureVisible(white);
+      await tester.pumpAndSettle();
+      await tester.tap(white);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      if (find
+          .byKey(const ValueKey('close-shirt-color-guidance'))
+          .evaluate()
+          .isNotEmpty) {
+        await closeShirtColorGuidance(tester);
+      }
     } else {
       await tap(tester, 'Continue');
     }
@@ -374,6 +400,57 @@ void main() {
   );
 
   testWidgets(
+    'shirt colour is saved and dark daytime clothing shows a clear warning',
+    (tester) async {
+      final saves = <PlannedHike>[];
+      await openPage(
+        tester,
+        initialPlan: testPlan(packed: true),
+        save: (value) async => saves.add(value),
+      );
+      await tap(tester, 'Skip extras');
+      await tap(tester, 'Continue');
+      await tap(tester, 'Continue');
+      await tap(tester, 'Continue');
+
+      expect(find.text('What colour shirt will you wear?'), findsOneWidget);
+      expect(continueButton(tester).onPressed, isNull);
+      expect(find.text('Black'), findsNothing);
+      expect(find.byTooltip('Black'), findsOneWidget);
+      final black = find.byKey(const ValueKey('shirt-color-black'));
+      await tester.ensureVisible(black);
+      await tester.pumpAndSettle();
+      await tester.tap(black);
+      await tester.pumpAndSettle();
+
+      expect(
+        saves.last.completedChecklistItems,
+        contains(HikeShirtColor.black.preference),
+      );
+      expect(find.textContaining('absorbs more solar heat'), findsOneWidget);
+      await closeShirtColorGuidance(tester);
+      expect(find.text('Continue with warning'), findsOneWidget);
+
+      final lightBlue = find.byKey(const ValueKey('shirt-color-lightBlue'));
+      await tester.ensureVisible(lightBlue);
+      await tester.pumpAndSettle();
+      await tester.tap(lightBlue);
+      await tester.pumpAndSettle();
+      expect(
+        saves.last.completedChecklistItems,
+        contains(HikeShirtColor.lightBlue.preference),
+      );
+      expect(
+        saves.last.completedChecklistItems,
+        isNot(contains(HikeShirtColor.black.preference)),
+      );
+      expect(find.text('Good choice for hiking'), findsAtLeastNWidgets(1));
+      await closeShirtColorGuidance(tester);
+      expect(find.text('Light blue'), findsAtLeastNWidgets(1));
+    },
+  );
+
+  testWidgets(
     'optional gear can be saved or skipped without blocking departure',
     (tester) async {
       PlannedHike? saved;
@@ -520,6 +597,13 @@ void main() {
     for (var i = 0; i < 3; i++) {
       await tap(tester, 'Continue');
     }
+    final white = find.byKey(const ValueKey('shirt-color-white'));
+    await tester.ensureVisible(white);
+    await tester.pumpAndSettle();
+    await tester.tap(white);
+    await tester.pumpAndSettle();
+    await closeShirtColorGuidance(tester);
+    await tap(tester, 'Continue');
     expect(
       find.textContaining('Route conditions are unavailable.'),
       findsAtLeastNWidgets(1),

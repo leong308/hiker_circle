@@ -478,8 +478,35 @@ class _CirclePageState extends State<CirclePage> {
         requests: _buddyRequests,
         onAccept: (request) => unawaited(_acceptBuddyRequest(request)),
         onDecline: (request) => unawaited(_declineBuddyRequest(request)),
+        onOpenProfile: (request) =>
+            unawaited(_showBuddyRequestProfile(request)),
       ),
     );
+  }
+
+  Future<void> _showBuddyRequestProfile(_BuddyRequest request) async {
+    Map<String, dynamic>? profile;
+    try {
+      profile = await widget.hikerCircleRepository.loadCommunityProfile(
+        phoneNumber: request.phoneNumber,
+      );
+    } catch (_) {
+      // The request snapshot still contains enough information to open the
+      // profile overview while the public discovery profile is unavailable.
+    }
+    if (!mounted) return;
+    final person = profile == null
+        ? _CommunityPerson(
+            phoneNumber: request.phoneNumber,
+            name: request.name,
+            handle: request.handle,
+            subtitle: '',
+            trailAffinity: 'HikerCircle',
+            color: _colorForPost(request.phoneNumber),
+            photoURL: request.photoURL,
+          )
+        : _communityPersonFromProfile(profile);
+    await _showCommunityPersonProfile(person);
   }
 
   Future<void> _openDirectChat(_CommunityPerson person) async {
@@ -525,6 +552,10 @@ class _CirclePageState extends State<CirclePage> {
       // temporarily unavailable.
     }
     if (!mounted) return;
+    final isIncomingRequest = _buddyRequests.any(
+      (request) =>
+          _phoneKeyFor(request.phoneNumber) == _phoneKeyFor(person.phoneNumber),
+    );
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -533,6 +564,7 @@ class _CirclePageState extends State<CirclePage> {
         person: person,
         details: details,
         isBuddy: _buddyPhones.contains(person.phoneNumber),
+        isIncomingRequest: isIncomingRequest,
         isRequested: _outgoingBuddyRequestPhones.contains(
           _phoneKeyFor(person.phoneNumber),
         ),
@@ -2780,6 +2812,7 @@ class _CommunityProfileSheet extends StatelessWidget {
     required this.person,
     required this.details,
     required this.isBuddy,
+    required this.isIncomingRequest,
     required this.isRequested,
     required this.isOwnProfile,
     required this.onAddBuddy,
@@ -2789,6 +2822,7 @@ class _CommunityProfileSheet extends StatelessWidget {
   final _CommunityPerson person;
   final Map<String, dynamic> details;
   final bool isBuddy;
+  final bool isIncomingRequest;
   final bool isRequested;
   final bool isOwnProfile;
   final VoidCallback onAddBuddy;
@@ -2864,6 +2898,11 @@ class _CommunityProfileSheet extends StatelessWidget {
                         const _StatusPill(
                           label: 'You',
                           color: _CircleColors.green,
+                        )
+                      else if (isIncomingRequest)
+                        const _StatusPill(
+                          label: 'Requested you',
+                          color: _CircleColors.orange,
                         )
                       else if (isRequested)
                         const _StatusPill(
@@ -3698,11 +3737,13 @@ class _BuddyRequestsSheet extends StatelessWidget {
     required this.requests,
     required this.onAccept,
     required this.onDecline,
+    required this.onOpenProfile,
   });
 
   final List<_BuddyRequest> requests;
   final ValueChanged<_BuddyRequest> onAccept;
   final ValueChanged<_BuddyRequest> onDecline;
+  final ValueChanged<_BuddyRequest> onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -3761,6 +3802,7 @@ class _BuddyRequestsSheet extends StatelessWidget {
                             Navigator.of(context).pop();
                             onDecline(request);
                           },
+                          onOpenProfile: () => onOpenProfile(request),
                         );
                       },
                     ),
@@ -3779,11 +3821,13 @@ class _BuddyRequestRow extends StatelessWidget {
     required this.request,
     required this.onAccept,
     required this.onDecline,
+    required this.onOpenProfile,
   });
 
   final _BuddyRequest request;
   final VoidCallback onAccept;
   final VoidCallback onDecline;
+  final VoidCallback onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -3791,10 +3835,24 @@ class _BuddyRequestRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
         children: [
-          _Avatar(
-            label: _circleInitial(request.name),
-            color: _colorForPost(request.phoneNumber),
-            imageUrl: request.photoURL,
+          Semantics(
+            key: ValueKey(
+              'buddy-request-profile-${_phoneKeyFor(request.phoneNumber)}',
+            ),
+            button: true,
+            label: 'View ${request.name} profile',
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onOpenProfile,
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: _Avatar(
+                  label: _circleInitial(request.name),
+                  color: _colorForPost(request.phoneNumber),
+                  imageUrl: request.photoURL,
+                ),
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(

@@ -1,4 +1,5 @@
 import 'route_gear_assessment.dart';
+import 'hike_shirt_color.dart';
 import 'trail_gear_plan.dart';
 import 'dart:math' as math;
 
@@ -178,7 +179,10 @@ class GearChecklistCatalog {
   static Set<String> sanitize(Iterable<String> items) {
     return Set<String>.unmodifiable(
       items.where(
-        (item) => allItems.contains(item) || TrailGearPlan.isPreference(item),
+        (item) =>
+            allItems.contains(item) ||
+            TrailGearPlan.isPreference(item) ||
+            HikeShirtColor.isPreference(item),
       ),
     );
   }

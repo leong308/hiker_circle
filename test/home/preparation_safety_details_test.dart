@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/home/Model/hike_preparation_sharing.dart';
 import 'package:hiker_circle/home/Model/hike_session_models.dart';
+import 'package:hiker_circle/home/Model/hike_shirt_color.dart';
 import 'package:hiker_circle/home/Model/route_gear_assessment.dart';
 import 'package:hiker_circle/home/View/final_preparation_review_page.dart';
 import 'package:hiker_circle/home/View/preparation_conditions.dart';
@@ -15,8 +16,21 @@ import 'next_hike_briefing_test.dart' as fixtures;
 
 Future<void> toStep(WidgetTester tester, String step) async {
   await guide.tap(tester, 'Skip extras');
-  for (final id in ['contacts', 'battery', 'sharing', 'conditions']) {
+  for (final id in [
+    'contacts',
+    'battery',
+    'sharing',
+    'shirtColor',
+    'conditions',
+  ]) {
     if (id == step) return;
+    if (id == 'shirtColor') {
+      final white = find.byKey(const ValueKey('shirt-color-white'));
+      await tester.ensureVisible(white);
+      await tester.tap(white);
+      await tester.pumpAndSettle();
+      await guide.closeShirtColorGuidance(tester);
+    }
     await guide.tap(tester, 'Continue');
   }
 }
@@ -100,7 +114,16 @@ void main() {
       await guide.finishGuide(tester);
       await guide.tap(tester, 'Start hike');
       await tester.pumpAndSettle();
-      expect(reviewed!.completedChecklistItems, plan.completedChecklistItems);
+      expect(
+        reviewed!.completedChecklistItems
+            .where((item) => !HikeShirtColor.isPreference(item))
+            .toSet(),
+        plan.completedChecklistItems,
+      );
+      expect(
+        HikeShirtColor.fromPreferences(reviewed!.completedChecklistItems),
+        HikeShirtColor.white,
+      );
       expect(reviewed!.emergencyContactsSelected, isTrue);
     },
   );
@@ -138,30 +161,33 @@ void main() {
   );
 
   testWidgets(
-    'battery details return to the battery question with a fresh reading',
+    'battery question stays inline, refreshes, and warns for a long hike',
     (tester) async {
       var level = 42;
+      final plan = guide.testPlan(packed: true);
       await guide.openPage(
         tester,
-        initialPlan: guide.testPlan(packed: true),
+        initialPlan: plan.copyWith(
+          expectedReturnTime: plan.plannedStartTime.add(
+            const Duration(hours: 4),
+          ),
+        ),
         save: (_) async {},
         battery: () async => level,
       );
       await toStep(tester, 'battery');
-      expect(find.text('Phone battery · 42%'), findsOneWidget);
-      await revealAndTap(tester, 'Battery details');
-      expect(find.byType(PreparationBatteryPage), findsOneWidget);
-      level = 76;
-      await tester.ensureVisible(find.text('Return to preparation'));
-      await guide.tap(tester, 'Return to preparation');
-      await tester.pumpAndSettle();
-      expect(find.text('Is your phone ready for the trail?'), findsOneWidget);
-      expect(find.text('Phone battery · 76%'), findsOneWidget);
+      expect(find.text('Current battery'), findsOneWidget);
+      expect(find.text('42%'), findsOneWidget);
+      expect(find.text('Charge your phone before departure'), findsOneWidget);
+      expect(find.text('Bring a charged power bank'), findsOneWidget);
+      expect(find.text('Battery details'), findsNothing);
       level = 79;
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pumpAndSettle();
-      expect(find.text('Phone battery · 79%'), findsOneWidget);
+      expect(find.text('79%'), findsOneWidget);
+      expect(find.text('Charge your phone before departure'), findsNothing);
+      expect(find.text('Bring a charged power bank'), findsOneWidget);
     },
   );
 
@@ -204,7 +230,16 @@ void main() {
       );
       expect(draft.shareLiveLocation, isTrue);
       expect(draft.locationRecordingInterval, const Duration(minutes: 1));
-      expect(draft.completedChecklistItems, plan.completedChecklistItems);
+      expect(
+        draft.completedChecklistItems
+            .where((item) => !HikeShirtColor.isPreference(item))
+            .toSet(),
+        plan.completedChecklistItems,
+      );
+      expect(
+        HikeShirtColor.fromPreferences(draft.completedChecklistItems),
+        HikeShirtColor.white,
+      );
     },
   );
 

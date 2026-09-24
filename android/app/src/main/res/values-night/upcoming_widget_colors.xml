@@ -1,1 +1,16 @@
-<resources><color name="upcoming_bg">#141C17</color><color name="upcoming_fg">#EAF4EE</color><color name="upcoming_secondary">#A8B8AE</color><color name="upcoming_accent">#7AD69C</color></resources>
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_bg">#1C1C1E</color>
+    <color name="widget_fg">#F2F2F7</color>
+    <color name="widget_secondary">#AEAEB2</color>
+    <color name="widget_green">#7AD69C</color>
+    <color name="widget_cyan">#66D4F0</color>
+    <color name="widget_separator">#3A3A3C</color>
+    <color name="widget_date_bg">#337AD69C</color>
+    <color name="widget_progress_track">#4D8E8E93</color>
+
+    <color name="upcoming_bg">@color/widget_bg</color>
+    <color name="upcoming_fg">@color/widget_fg</color>
+    <color name="upcoming_secondary">@color/widget_secondary</color>
+    <color name="upcoming_accent">@color/widget_green</color>
+</resources>

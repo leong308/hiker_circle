@@ -1,1 +1,17 @@
-<resources><color name="upcoming_bg">#F4F8F4</color><color name="upcoming_fg">#17231B</color><color name="upcoming_secondary">#53675B</color><color name="upcoming_accent">#3F8F5E</color></resources>
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the iOS secondarySystemBackground widget palette. -->
+    <color name="widget_bg">#F2F2F7</color>
+    <color name="widget_fg">#1C1C1E</color>
+    <color name="widget_secondary">#6E6E73</color>
+    <color name="widget_green">#2F8F58</color>
+    <color name="widget_cyan">#1689A7</color>
+    <color name="widget_separator">#D1D1D6</color>
+    <color name="widget_date_bg">#1F2F8F58</color>
+    <color name="widget_progress_track">#263C3C43</color>
+
+    <color name="upcoming_bg">@color/widget_bg</color>
+    <color name="upcoming_fg">@color/widget_fg</color>
+    <color name="upcoming_secondary">@color/widget_secondary</color>
+    <color name="upcoming_accent">@color/widget_green</color>
+</resources>

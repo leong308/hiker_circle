@@ -2,8 +2,9 @@
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:initialLayout="@layout/hike_home_widget"
     android:previewLayout="@layout/hike_home_widget"
-    android:minWidth="240dp" android:minHeight="160dp"
-    android:minResizeWidth="220dp" android:minResizeHeight="160dp"
-    android:targetCellWidth="4" android:targetCellHeight="3"
-    android:resizeMode="horizontal|vertical" android:updatePeriodMillis="1800000"
+    android:minWidth="155dp" android:minHeight="150dp"
+    android:minResizeWidth="155dp" android:minResizeHeight="150dp"
+    android:maxResizeWidth="360dp" android:maxResizeHeight="180dp"
+    android:targetCellWidth="4" android:targetCellHeight="2"
+    android:resizeMode="horizontal" android:updatePeriodMillis="1800000"
     android:widgetCategory="home_screen" />

@@ -1,4 +1,4 @@
-package com.example.hiker_circle
+package com.leongziqi.hikercircle
 
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic

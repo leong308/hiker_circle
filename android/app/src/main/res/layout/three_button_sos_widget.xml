@@ -4,25 +4,28 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/three_button_sos_widget_background"
+    android:contentDescription="HikerCircle SOS actions"
     android:gravity="center_vertical"
     android:orientation="vertical"
-    android:padding="11dp">
+    android:padding="8dp">
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:ellipsize="end"
+        android:fontFamily="sans"
         android:gravity="start"
+        android:includeFontPadding="false"
         android:maxLines="1"
         android:text="SOS with HikerCircle"
         android:textColor="#FFFFFFFF"
-        android:textSize="13sp"
+        android:textSize="10sp"
         android:textStyle="bold" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="5dp"
         android:layout_weight="1"
         android:gravity="center"
         android:orientation="horizontal">
@@ -31,18 +34,22 @@
             android:id="@+id/instant_sos_widget_button"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_marginEnd="7dp"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
             android:background="@drawable/three_button_sos_instant_background"
             android:clickable="true"
+            android:contentDescription="Send Instant SOS"
             android:gravity="center"
             android:orientation="vertical"
-            android:padding="8dp">
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="3dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:fontFamily="sans"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="SOS"
                 android:textColor="#FFFFFFFF"
@@ -52,47 +59,57 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="1dp"
                 android:ellipsize="end"
+                android:fontFamily="sans"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Instant"
-                android:textColor="#FFEAF7EE"
-                android:textSize="11sp" />
+                android:textColor="#DBFFFFFF"
+                android:textSize="9sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <LinearLayout
             android:id="@+id/medical_sos_widget_button"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_marginEnd="7dp"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
             android:background="@drawable/three_button_sos_medical_background"
             android:clickable="true"
+            android:contentDescription="Request Medical Help"
             android:gravity="center"
             android:orientation="vertical"
-            android:padding="8dp">
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="3dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:fontFamily="sans"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="+"
                 android:textColor="#FFFFFFFF"
-                android:textSize="26sp"
+                android:textSize="22sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
+                android:layout_marginTop="0dp"
                 android:ellipsize="end"
+                android:fontFamily="sans"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Medical"
-                android:textColor="#FFEAF7EE"
-                android:textSize="11sp" />
+                android:textColor="#DBFFFFFF"
+                android:textSize="9sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <LinearLayout
@@ -102,30 +119,37 @@
             android:layout_weight="1"
             android:background="@drawable/three_button_sos_duress_background"
             android:clickable="true"
+            android:contentDescription="Send Duress SOS"
             android:gravity="center"
             android:orientation="vertical"
-            android:padding="8dp">
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="3dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:fontFamily="sans"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="!"
                 android:textColor="#FFFFFFFF"
-                android:textSize="26sp"
+                android:textSize="22sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
+                android:layout_marginTop="0dp"
                 android:ellipsize="end"
+                android:fontFamily="sans"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Duress"
-                android:textColor="#FFEAF7EE"
-                android:textSize="11sp" />
+                android:textColor="#DBFFFFFF"
+                android:textSize="9sp"
+                android:textStyle="bold" />
         </LinearLayout>
     </LinearLayout>
 

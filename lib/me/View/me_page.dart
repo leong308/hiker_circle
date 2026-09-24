@@ -15,6 +15,7 @@ import '../../app/Data/local_session_database.dart';
 import '../../app/Model/app_session.dart';
 import '../../app/Model/preferred_time_zone.dart';
 import '../../authentication/View/security_methods_page.dart';
+import '../../assistant/View/hiker_circle_assistant_page.dart';
 import '../../core/models/hiker_level.dart';
 import '../../core/services/privacy_policy_launcher.dart';
 import '../../core/services/offline_map_service.dart';
@@ -2710,6 +2711,42 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
+                  _SectionTitle(label: 'HikerCircle Assistant'),
+                  const SizedBox(height: 8),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    color: _MeColors.surfaceFor(context),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: _MeColors.separatorFor(context)),
+                    ),
+                    child: ListTile(
+                      leading: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: _MeColors.greenSoftFor(context),
+                          borderRadius: BorderRadius.circular(13),
+                        ),
+                        child: const Icon(
+                          Icons.auto_awesome_rounded,
+                          color: _MeColors.green,
+                        ),
+                      ),
+                      title: const Text('Ask HikerCircle'),
+                      subtitle: const Text(
+                        'Quick answers from reviewed app guides · unpaid Gemini quota',
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (context) =>
+                              const HikerCircleAssistantPage(),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
                   _SectionTitle(label: 'Account Security'),
                   const SizedBox(height: 8),
                   Card(
