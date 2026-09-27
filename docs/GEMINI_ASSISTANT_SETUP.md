@@ -8,16 +8,37 @@ The first release is available from:
 
 The mobile app calls the authenticated Firebase callable function
 `askHikerCircleAssistant`. The Gemini API key never enters the Flutter app.
-The function retrieves up to three reviewed HikerCircle help articles and asks
-Gemini only to compose a short answer from those articles.
+For app help, the function retrieves up to three reviewed HikerCircle help
+articles and asks Gemini to compose a short answer. Gemini returns JSON with
+answer text, reviewed source IDs, and optionally a destination ID. The server
+checks source IDs and destination IDs against its registered lists before the
+app renders a navigation button. Gemini never supplies a raw app route.
+Direct requests to open a page return a registered navigation action without
+calling Gemini. Feature questions may include both a Gemini explanation and
+a page button.
+
+Trail discovery uses the live Firestore `trails` collection. The function
+ranks trails by device distance for nearby requests, route length for longest
+or shortest requests, or name/area/state relevance for other searches. It
+returns trail summaries and document IDs; the app reloads the chosen trail
+before opening its detail page. Device coordinates are sent only to the
+Firebase function for nearby ranking and are not included in Gemini prompts.
 
 The implementation also:
 
 - rejects unauthenticated requests;
-- does not save chat history;
+- saves chat messages in the app's account-scoped local database,
+  including trail cards and page buttons; users can clear the chat in the
+  assistant header. Messages also sync to the private
+  `assistantConversations/{uid}/messages` Firestore collection so the chat
+  can be restored on another signed-in device. Local history remains available
+  when cloud sync is unavailable; pending messages upload when the chat next
+  synchronizes. Clearing the chat records a cutoff and removes older cloud
+  messages. Up to eight recent non-sensitive message
+  texts accompany a Gemini request so follow-up questions have context;
 - rejects common phone numbers, email addresses, verification codes, and exact
   latitude/longitude pairs before calling Gemini;
-- answers obvious emergency prompts locally without sending them to Gemini;
+- answers active emergency prompts locally without sending them to Gemini;
 - limits each account to 6 requests per minute and 40 requests per UTC day;
 - uses `gemini-3.5-flash-lite`, with `gemini-3.1-flash-lite` as a second
   free-tier attempt when the primary model is temporarily overloaded;

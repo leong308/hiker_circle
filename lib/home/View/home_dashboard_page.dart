@@ -718,7 +718,6 @@ class _BestMatchesSectionState extends State<_BestMatchesSection>
       children: [
         _BestMatchesHeader(
           onAddTrailByAdmin: widget.onAddTrailByAdmin,
-          hasActiveFilter: _filterMode != _TrailFilterMode.all,
         ),
         const SizedBox(height: 8),
         Material(
@@ -788,28 +787,15 @@ class _BestMatchesSectionState extends State<_BestMatchesSection>
 }
 
 class _BestMatchesHeader extends StatelessWidget {
-  const _BestMatchesHeader({
-    this.onAddTrailByAdmin,
-    required this.hasActiveFilter,
-  });
+  const _BestMatchesHeader({this.onAddTrailByAdmin});
 
   final VoidCallback? onAddTrailByAdmin;
-  final bool hasActiveFilter;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
         const Expanded(child: _SectionTitle(label: 'Hiking Trails')),
-        if (hasActiveFilter)
-          const Padding(
-            padding: EdgeInsets.only(right: 8),
-            child: Icon(
-              Icons.filter_alt_rounded,
-              size: 18,
-              color: _HomeColors.green,
-            ),
-          ),
         if (onAddTrailByAdmin != null)
           Tooltip(
             message: 'Add trail',

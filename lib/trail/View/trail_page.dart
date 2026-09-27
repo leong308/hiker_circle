@@ -1,3 +1,4 @@
+import '../Model/trail_hazard_categories.dart';
 import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -752,32 +753,7 @@ class HazardReportPage extends StatefulWidget {
 
 class _HazardReportPageState extends State<HazardReportPage> {
   final TextEditingController _descriptionController = TextEditingController();
-  static const _categories = <String, (IconData, List<String>)>{
-    'Trail surface': (
-      Icons.terrain_rounded,
-      ['Slippery pathway', 'Loose rock', 'Deep mud', 'Ice or snow'],
-    ),
-    'Blocked route': (
-      Icons.block_rounded,
-      ['Fallen tree', 'Landslide', 'Closed trail', 'Other obstruction'],
-    ),
-    'Water': (
-      Icons.water_rounded,
-      ['Flooded route', 'Fast river crossing', 'Damaged bridge'],
-    ),
-    'Wildlife': (
-      Icons.pets_rounded,
-      ['Wild animal sighting', 'Snakes', 'Stinging insects'],
-    ),
-    'Trail structures': (
-      Icons.stairs_rounded,
-      ['Damaged steps', 'Unsafe ladder or rope', 'Missing sign'],
-    ),
-    'Other caution': (
-      Icons.warning_amber_rounded,
-      ['Unsafe human activity', 'Poor visibility', 'Other'],
-    ),
-  };
+  static const _categories = trailHazardReportCategories;
   String? _category;
   String? _selected;
   String? _error;
@@ -1032,6 +1008,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   bool _hasFetchedRoute = false;
   String? _routeResultCheckpointsHash;
   bool _locationFailed = false;
+  int _locationGeneration = 0;
   bool _isUploadingImages = false;
   HikingRouteResult? _routeResult;
 
@@ -1239,7 +1216,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
   }
 
   Future<void> _addCheckpointsOnMap() async {
-    final existingPins = _checkpointModels()
+    final previousCheckpoints = _checkpointModels();
+    final existingPins = previousCheckpoints
         .map(
           (c) => mapbox.Point(
             coordinates: mapbox.Position(c.longitude, c.latitude),
@@ -1274,12 +1252,16 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     for (final checkpoint in _checkpoints) {
       checkpoint.dispose();
     }
-    for (final checkpoint in _checkpoints) {
-      checkpoint.dispose();
-    }
     _checkpoints.clear();
     for (var i = 0; i < validConfirmed.length; i++) {
-      final name = i == 0
+      final matching = previousCheckpoints.where(
+        (point) =>
+            (point.latitude - validConfirmed[i].latitude).abs() < 0.000001 &&
+            (point.longitude - validConfirmed[i].longitude).abs() < 0.000001,
+      );
+      final name = matching.isNotEmpty
+          ? matching.first.name
+          : i == 0
           ? 'Trailhead'
           : i == validConfirmed.length - 1
           ? 'End point'
@@ -1291,7 +1273,21 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           .toStringAsFixed(6);
       _checkpoints.add(draft);
     }
-    setState(() {});
+    _checkpointsChanged();
+  }
+
+  void _checkpointsChanged() {
+    setState(() {
+      _routeResult = null;
+      _hasFetchedRoute = false;
+      _routeResultCheckpointsHash = null;
+    });
+    final points = _checkpointModels();
+    if (points.isNotEmpty) {
+      unawaited(
+        _resolveLocation(points.first.latitude, points.first.longitude),
+      );
+    }
   }
 
   void _removeCheckpoint(int index) {
@@ -1299,38 +1295,41 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     setState(() {
       _checkpoints.removeAt(index).dispose();
     });
+    _checkpointsChanged();
   }
+
+  Trail _draftTrail(List<TrailCheckpoint> checkpoints) => Trail(
+    trailId: '',
+    name: '',
+    area: '',
+    state: '',
+    latitude: checkpoints.first.latitude,
+    longitude: checkpoints.first.longitude,
+    distanceKm: 0,
+    difficulty: '',
+    estimatedDurationMinutes: 0,
+    elevationGainMeters: 0,
+    ratingAverage: 0,
+    offlineMapAvailable: false,
+    offlineMapDownloaded: false,
+    isVerifiedTrail: true,
+    routeFilePath: '',
+    coverColorValue: 0xFF34A853,
+    checkpoints: checkpoints,
+    weather: TrailWeather(
+      summary: '',
+      temperatureRange: '',
+      rainProbability: 0,
+      cachedAt: DateTime.now().toUtc(),
+    ),
+    hazards: const [],
+  );
 
   Future<HikingRouteResult?> _fetchRoute(
     List<TrailCheckpoint> checkpoints,
   ) async {
     try {
-      final trail = Trail(
-        trailId: '',
-        name: '',
-        area: '',
-        state: '',
-        latitude: checkpoints.first.latitude,
-        longitude: checkpoints.first.longitude,
-        distanceKm: 0,
-        difficulty: '',
-        estimatedDurationMinutes: 0,
-        elevationGainMeters: 0,
-        ratingAverage: 0,
-        offlineMapAvailable: false,
-        offlineMapDownloaded: false,
-        isVerifiedTrail: true,
-        routeFilePath: '',
-        coverColorValue: 0xFF34A853,
-        checkpoints: checkpoints,
-        weather: TrailWeather(
-          summary: '',
-          temperatureRange: '',
-          rainProbability: 0,
-          cachedAt: DateTime.now().toUtc(),
-        ),
-        hazards: const [],
-      );
+      final trail = _draftTrail(checkpoints);
 
       return await HikingRouteService().findHikingRouteForTrail(trail);
     } catch (_) {
@@ -1351,14 +1350,16 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     _routeResultCheckpointsHash = HikingRouteService.checkpointsHash(
       checkpoints ?? _checkpointModels(),
     );
-
-    final pts = checkpoints ?? _checkpointModels();
-    if (pts.isNotEmpty) {
-      unawaited(_resolveLocation(pts.first.latitude, pts.first.longitude));
-    }
   }
 
   Future<void> _resolveLocation(double latitude, double longitude) async {
+    final generation = ++_locationGeneration;
+    setState(() {
+      _locationFailed = false;
+      _areaController.clear();
+      _stateController.clear();
+      _countryController.clear();
+    });
     try {
       final geocoding = GoogleCityGeocodingService();
       final result = await geocoding.resolveCity(
@@ -1369,7 +1370,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         country: result.country,
         state: result.state,
       );
-      if (mounted) {
+      if (mounted && generation == _locationGeneration) {
         setState(() {
           if (_areaController.text.isEmpty) {
             _areaController.text = result.city;
@@ -1390,7 +1391,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           country: result.country,
           state: result.state,
         );
-        if (mounted) {
+        if (mounted && generation == _locationGeneration) {
           setState(() {
             if (_areaController.text.isEmpty && result.area.isNotEmpty) {
               _areaController.text = result.area;
@@ -1402,7 +1403,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
         return;
       } catch (_) {}
     }
-    if (mounted) {
+    if (mounted && generation == _locationGeneration) {
       setState(() {
         _locationFailed = true;
       });
@@ -1642,33 +1643,10 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     return checkpoints;
   }
 
-  Future<void> _chooseWorldwideRegion() async {
-    final region = await WorldwideRegionPicker.show(
-      context,
-      initialCountry: _countryController.text,
-      initialState: _stateController.text,
-    );
-    if (!mounted || region == null) return;
-    setState(() {
-      _countryController.text = region.country;
-      _stateController.text = region.state;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _TrailColors.backgroundFor(context),
-      appBar: _step == _AddTrailStep.pickCheckpoints
-          ? null
-          : AppBar(
-              leading: IconButton(
-                icon: const Icon(Icons.close_rounded),
-                onPressed: _isUploadingImages
-                    ? null
-                    : () => Navigator.of(context).pop(),
-              ),
-            ),
       body: Stack(
         children: [
           switch (_step) {
@@ -1752,103 +1730,141 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'Add Trail',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _TrailColors.textFor(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Add Trail',
+                        style: PageHeaderStyle.title(
+                          context,
+                          _TrailColors.textFor(context),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Plan the route, add details, and preview your trail.',
+                        style: PageHeaderStyle.subtitle(
+                          context,
+                          _TrailColors.secondaryTextFor(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                PageHeaderAction(
+                  icon: Icons.close_rounded,
+                  tooltip: 'Close',
+                  color: _TrailColors.textFor(context),
+                  surface: _TrailColors.surfaceFor(context),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Creating a new hiking trail. '
-              'Route metrics are auto-filled from the routing API.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _TrailColors.secondaryTextFor(context),
-                letterSpacing: 0,
-              ),
-            ),
+            const SizedBox(height: 24),
+            const _SectionTitle(label: 'Trail details'),
             if (_errorMessage != null) ...[
               const SizedBox(height: 10),
               _TrailFormError(message: _errorMessage!),
             ],
             const SizedBox(height: 14),
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Trail name',
-                prefixIcon: Icon(Icons.terrain_rounded),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _areaController,
-                    readOnly: !_locationFailed,
-                    decoration: InputDecoration(
-                      labelText: 'Area',
-                      hintText: _locationFailed ? 'Enter area manually' : null,
-                      prefixIcon: _locationFailed
-                          ? const Icon(Icons.edit_rounded, size: 18)
-                          : null,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _stateController,
-                    readOnly: true,
-                    onTap: _chooseWorldwideRegion,
-                    decoration: InputDecoration(
-                      labelText: 'State',
-                      hintText: 'Select worldwide state',
-                      suffixIcon: const Icon(Icons.expand_more_rounded),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _countryController,
-              readOnly: true,
-              onTap: _chooseWorldwideRegion,
-              decoration: InputDecoration(
-                labelText: 'Country',
-                hintText: 'Select worldwide country',
-                prefixIcon: const Icon(Icons.public_rounded, size: 18),
-                suffixIcon: const Icon(Icons.expand_more_rounded),
-              ),
-            ),
-            if (_locationFailed)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(
+            _InsetGroup(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(
-                      Icons.info_outline_rounded,
-                      size: 14,
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFFA8B8AE)
-                          : const Color(0xFF6E6E73),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Auto location unavailable — enter the area and select its country/state',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Theme.of(context).brightness == Brightness.dark
-                            ? const Color(0xFFA8B8AE)
-                            : const Color(0xFF6E6E73),
+                    TextField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Trail name',
+                        prefixIcon: Icon(Icons.terrain_rounded),
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _areaController,
+                            readOnly: !_locationFailed,
+                            decoration: InputDecoration(
+                              labelText: 'Area',
+                              hintText: _locationFailed
+                                  ? 'Enter area manually'
+                                  : null,
+                              prefixIcon: _locationFailed
+                                  ? const Icon(Icons.edit_rounded, size: 18)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: _stateController,
+                            readOnly: true,
+                            decoration: InputDecoration(
+                              labelText: 'State',
+                              hintText: 'Finding state…',
+                              suffixIcon: const Icon(
+                                Icons.lock_outline_rounded,
+                                size: 18,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _countryController,
+                      readOnly: true,
+                      decoration: InputDecoration(
+                        labelText: 'Country',
+                        hintText: 'Finding country…',
+                        prefixIcon: const Icon(Icons.public_rounded, size: 18),
+                        suffixIcon: const Icon(
+                          Icons.lock_outline_rounded,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(
+                        'State and country are determined by your starting point.',
+                        style: PageHeaderStyle.subtitle(
+                          context,
+                          _TrailColors.secondaryTextFor(context),
+                        ),
+                      ),
+                    ),
+                    if (_locationFailed)
+                      TextButton.icon(
+                        onPressed: () {
+                          final points = _checkpointModels();
+                          if (points.isNotEmpty) {
+                            unawaited(
+                              _resolveLocation(
+                                points.first.latitude,
+                                points.first.longitude,
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text(
+                          'Location unavailable. Retry location lookup',
+                        ),
+                      ),
                   ],
                 ),
               ),
-            const SizedBox(height: 10),
+            ),
+            const SizedBox(height: 20),
             _InsetGroup(
               child: Padding(
                 padding: const EdgeInsets.all(14),
@@ -1866,7 +1882,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                     const SizedBox(height: 4),
                     Text(
                       'Take a photo or select up to $_maxImages gallery images. '
-                      'They will upload to Firebase Storage when the trail is saved.',
+                      'The first photo will be your trail cover.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: _TrailColors.secondaryTextFor(context),
                         letterSpacing: 0,
@@ -2009,6 +2025,64 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              onPressed: _addCheckpointsOnMap,
+              icon: const Icon(Icons.add_location_alt_rounded),
+              label: const Text('Add checkpoints on map'),
+            ),
+            const SizedBox(height: 14),
+            const _SectionTitle(label: 'Checkpoints'),
+            const SizedBox(height: 8),
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: _checkpoints.length,
+              onReorderItem: (int oldIndex, int newIndex) {
+                setState(() {
+                  final draft = _checkpoints.removeAt(oldIndex);
+                  _checkpoints.insert(newIndex, draft);
+                });
+                _checkpointsChanged();
+              },
+              itemBuilder: (context, index) {
+                final draft = _checkpoints[index];
+                return Padding(
+                  key: ValueKey(draft.id),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _CheckpointDraftFields(
+                    draft: draft,
+                    index: index,
+                    canRemove: _checkpoints.length > 3,
+                    onRemove: () => _removeCheckpoint(index),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 14),
+            const _SectionTitle(label: 'Route preview'),
+            const SizedBox(height: 8),
+            if (_checkpointModels().length >= 3)
+              _RoutePreview(
+                trail: _draftTrail(_checkpointModels()),
+                onRouteLoaded: (route) {
+                  if (!mounted) return;
+                  setState(() {
+                    _routeResult = route;
+                    _applyRouteData(route, _checkpointModels());
+                  });
+                },
+              )
+            else
+              const _InsetGroup(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Text(
+                    'Add at least 3 checkpoints to preview your trail route.',
+                  ),
+                ),
+              ),
             if (_hasFetchedRoute) ...[
               const SizedBox(height: 10),
               _InsetGroup(
@@ -2068,47 +2142,12 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
                 ),
               ),
             ],
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              onPressed: _addCheckpointsOnMap,
-              icon: const Icon(Icons.add_location_alt_rounded),
-              label: const Text('Add checkpoints on map'),
-            ),
-            const SizedBox(height: 14),
-            const _SectionTitle(label: 'Checkpoints'),
-            const SizedBox(height: 8),
-            ReorderableListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: false,
-              itemCount: _checkpoints.length,
-              onReorderItem: (int oldIndex, int newIndex) {
-                setState(() {
-                  final draft = _checkpoints.removeAt(oldIndex);
-                  _checkpoints.insert(newIndex, draft);
-                });
-              },
-              itemBuilder: (context, index) {
-                final draft = _checkpoints[index];
-                return Padding(
-                  key: ValueKey(draft.id),
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _CheckpointDraftFields(
-                    draft: draft,
-                    index: index,
-                    canRemove: _checkpoints.length > 3,
-                    onRemove: () => _removeCheckpoint(index),
-                  ),
-                );
-              },
-            ),
+            const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _isUploadingImages ? null : _saveTrail,
               icon: const Icon(Icons.cloud_upload_rounded),
               label: Text(
-                _isUploadingImages
-                    ? 'Uploading trail images…'
-                    : 'Add Trail to Firebase',
+                _isUploadingImages ? 'Uploading trail images…' : 'Finish & Add',
               ),
             ),
           ],
@@ -2188,7 +2227,7 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
   void didUpdateWidget(_MapBasedCheckpointPicker oldWidget) {
     super.didUpdateWidget(oldWidget);
     final nextPins = _validPoints(widget.pins);
-    if (!listEquals(nextPins, _pins)) {
+    if (!listEquals(nextPins, _validPoints(oldWidget.pins))) {
       _pins = nextPins;
       unawaited(_syncPins());
     }
@@ -2209,7 +2248,7 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
   static List<mapbox.Point> _validPoints(Iterable<mapbox.Point> points) {
     return points
         .where((point) => mapPointCoordinatesOrNull(point) != null)
-        .toList(growable: false);
+        .toList();
   }
 
   static bool listEquals(List<mapbox.Point>? a, List<mapbox.Point>? b) {
@@ -2654,14 +2693,12 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                     key: const ValueKey('checkpoint-picker'),
                     // Initial framing only; subsequent camera moves use flyTo.
                     // ignore: deprecated_member_use
-                    cameraOptions: widget.showStateFocus
-                        ? mapbox.CameraOptions(
-                            center: _initialCenter(),
-                            zoom: _pins.isEmpty ? 5 : 15,
-                            pitch: 0,
-                            bearing: 0,
-                          )
-                        : null,
+                    cameraOptions: mapbox.CameraOptions(
+                      center: _initialCenter(),
+                      zoom: _pins.isEmpty ? 5 : 15,
+                      pitch: 0,
+                      bearing: 0,
+                    ),
                     styleUri: mapStyleUrls[0],
                     gestureRecognizers: eagerMapGestureRecognizers,
                     onMapCreated: _onMapCreated,
@@ -4790,8 +4827,10 @@ class _RoutePreview extends StatefulWidget {
     this.departureTime,
     this.onAnimationProgress,
     this.onReportHazard,
+    this.onRouteLoaded,
   });
 
+  final ValueChanged<HikingRouteResult>? onRouteLoaded;
   final ValueChanged<RouteCheckpointProgress>? onAnimationProgress;
   final VoidCallback? onReportHazard;
   final DateTime? departureTime;
@@ -4913,6 +4952,7 @@ class _RoutePreviewState extends State<_RoutePreview> {
         _loadingMessage = '';
         _attempt = 0;
       });
+      widget.onRouteLoaded?.call(route);
     } catch (_) {
       if (!mounted || generation != _loadGeneration) {
         return;

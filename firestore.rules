@@ -372,6 +372,27 @@ service cloud.firestore {
       allow delete: if admin();
     }
 
+    match /assistantConversations/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update: if signedIn() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['clearedAtMicros'])
+        && request.resource.data.clearedAtMicros is int
+        && request.resource.data.clearedAtMicros >= 0;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow create, update: if signedIn() && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly(['id', 'createdAtMicros', 'payload'])
+          && request.resource.data.id == messageId
+          && request.resource.data.createdAtMicros is int
+          && request.resource.data.createdAtMicros >= 0
+          && request.resource.data.payload is string
+          && request.resource.data.payload.size() <= 30000;
+        allow delete: if signedIn() && request.auth.uid == userId;
+      }
+    }
+
     // Authentication factors, OTP/session material, and WebAuthn challenges
     // are backend-only. They must never be readable through a mobile SDK,
     // including by the account owner or an administrator client session.

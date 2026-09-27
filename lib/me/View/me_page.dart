@@ -18,10 +18,12 @@ import '../../authentication/View/security_methods_page.dart';
 import '../../assistant/View/hiker_circle_assistant_page.dart';
 import '../../core/models/hiker_level.dart';
 import '../../core/services/privacy_policy_launcher.dart';
-import '../../core/services/offline_map_service.dart';
-import '../../core/services/static_hazard_dataset_service.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../feedback/feedback_page.dart';
+import '../../home/View/find_hike_page.dart';
+import '../../trail/Model/trail_models.dart';
+import '../../trail/View/trail_page.dart';
 import '../../home/Model/hike_session_models.dart';
 import '../../sos/Data/emergency_contacts_repository.dart';
 import '../../sos/Data/sos_device_alert_service.dart';
@@ -31,6 +33,7 @@ import '../../onboarding/Data/onboarding_repository.dart';
 import '../Model/me_models.dart';
 import '../ModelView/me_view_model.dart';
 import 'hike_history_page.dart';
+import 'help_center_page.dart';
 import 'location_sharing_page.dart';
 import 'profile_details_page.dart';
 import 'qr_scanner_page.dart';
@@ -41,12 +44,16 @@ class MePage extends StatefulWidget {
     required this.session,
     required this.phoneNumber,
     required this.onSignOut,
+    this.onStartHike,
+    this.onOpenSos,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
   });
 
   final AppSession session;
   final String phoneNumber;
   final VoidCallback onSignOut;
+  final Future<void> Function(Trail trail)? onStartHike;
+  final VoidCallback? onOpenSos;
   final FirebaseBootstrapResult firebaseBootstrapResult;
 
   @override
@@ -461,6 +468,78 @@ class _MePageState extends State<MePage> {
     });
   }
 
+  Future<void> _openAssistantTrail(String trailId) async {
+    final trails = await firebaseRepository.loadTrails();
+    if (!mounted) return;
+    for (final trail in trails) {
+      if (trail.trailId == trailId) {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => TrailDetailPage(
+              session: widget.session,
+              hikerCircleRepository: firebaseRepository,
+              trail: trail,
+              onStartHike: widget.onStartHike ?? (_) async {},
+            ),
+          ),
+        );
+        return;
+      }
+    }
+    HikerCircleToast.show(context, 'This trail is no longer available.');
+  }
+
+  void _navigateFromAssistant(String destinationId) {
+    switch (destinationId) {
+      case 'trails':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => TrailPage(
+              session: widget.session,
+              hikerCircleRepository: firebaseRepository,
+              onStartHike: widget.onStartHike ?? (_) async {},
+            ),
+          ),
+        );
+      case 'find_hike':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => FindHikePage(
+              session: widget.session,
+              repository: firebaseRepository,
+            ),
+          ),
+        );
+      case 'emergency_contacts':
+        unawaited(_openEmergencyContacts());
+      case 'sos':
+        Navigator.of(context).pop();
+        Navigator.of(context).pop();
+        widget.onOpenSos?.call();
+      case 'security':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const SecurityMethodsPage()),
+        );
+      case 'hike_history':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => HikeHistoryPage(
+              repository: firebaseRepository,
+              session: widget.session,
+            ),
+          ),
+        );
+      case 'achievements':
+        unawaited(_openAchievements());
+      case 'feedback':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => FeedbackPage(isAdmin: widget.session.isAdmin),
+          ),
+        );
+    }
+  }
+
   void _openStatDetail(MeStat stat) {
     switch (stat.label) {
       case 'Circles':
@@ -543,7 +622,9 @@ class _MePageState extends State<MePage> {
 
   void _openHelpCenter() {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (context) => const _HelpCenterPage()),
+      MaterialPageRoute<void>(
+        builder: (context) => HelpCenterPage(isAdmin: widget.session.isAdmin),
+      ),
     );
   }
 
@@ -553,6 +634,8 @@ class _MePageState extends State<MePage> {
         builder: (context) => _AdvancedAppSettingsPage(
           session: widget.session,
           firebaseRepository: firebaseRepository,
+          onOpenTrail: _openAssistantTrail,
+          onNavigate: _navigateFromAssistant,
         ),
       ),
     );
@@ -2185,75 +2268,18 @@ String _notificationTimeLabel(DateTime receivedAt) {
   return '${localTime.day}/${localTime.month} $hour:$minute$period';
 }
 
-class _HelpCenterPage extends StatelessWidget {
-  const _HelpCenterPage();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _MeColors.backgroundFor(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _DetailHeader(
-                    title: 'Help Center',
-                    subtitle: 'Guides, support, and safety education',
-                    onBack: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(height: 16),
-                  const _ProfileHistoryCard(
-                    item: _ProfileHistoryItem(
-                      title: 'Using SOS safely',
-                      subtitle:
-                          'Understand manual SOS, local SOS, and duress behavior.',
-                      meta: 'Safety guide',
-                      icon: Icons.sos_rounded,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  const _ProfileHistoryCard(
-                    item: _ProfileHistoryItem(
-                      title: 'Team hike basics',
-                      subtitle:
-                          'How circles, buddies, check-ins, and roles work together.',
-                      meta: 'Team guide',
-                      icon: Icons.groups_2_rounded,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  const _ProfileHistoryCard(
-                    item: _ProfileHistoryItem(
-                      title: 'Report a problem',
-                      subtitle:
-                          'A support contact has not been configured in this mobile build.',
-                      meta: 'Unavailable',
-                      icon: Icons.support_agent_rounded,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _AdvancedAppSettingsPage extends StatefulWidget {
   const _AdvancedAppSettingsPage({
     required this.session,
     required this.firebaseRepository,
+    required this.onOpenTrail,
+    required this.onNavigate,
   });
 
   final AppSession session;
   final HikerCircleFirebaseRepository firebaseRepository;
+  final Future<void> Function(String trailId) onOpenTrail;
+  final void Function(String destinationId) onNavigate;
 
   @override
   State<_AdvancedAppSettingsPage> createState() =>
@@ -2262,40 +2288,15 @@ class _AdvancedAppSettingsPage extends StatefulWidget {
 
 class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
   final AppSettingsController _settings = AppSettingsController.instance;
-  final LocalSessionDatabase _localDatabase = LocalSessionDatabase();
   final SosDeviceAlertService _deviceAlertService =
       const SosDeviceAlertService();
-  CacheUsageSummary? _cacheUsageSummary;
-  bool _isClearingCache = false;
   bool _isLoadingTimeZone = true;
   bool _isSavingTimeZone = false;
   String _timeZoneStatus = 'Loading your saved SOS timezone…';
-  late final OfflineMapService _offlineMapService;
-  late final StaticHazardDatasetService _hazardDatasetService;
-  LocalOfflineMapRegion? _malaysiaOfflineMap;
-  LocalHazardDatasetSummary? _hazardDatasetSummary;
-  bool _isLoadingOfflineMap = true;
-  bool _isDownloadingOfflineMap = false;
-  bool _isRemovingOfflineMap = false;
-  double _offlineMapProgress = 0;
-  String _offlineMapError = '';
-  bool _isLoadingHazardDataset = true;
-  bool _isDownloadingHazardDataset = false;
-  bool _isRemovingHazardDataset = false;
-  double _hazardDatasetProgress = 0;
-  String _hazardDatasetError = '';
-
   @override
   void initState() {
     super.initState();
-    _offlineMapService = OfflineMapService(_localDatabase);
-    _hazardDatasetService = StaticHazardDatasetService(
-      database: _localDatabase,
-    );
     _settings.addListener(_handleSettingsChanged);
-    unawaited(_loadCacheUsage());
-    unawaited(_loadOfflineMap());
-    unawaited(_loadHazardDataset());
     unawaited(_loadPreferredTimeZone());
   }
 
@@ -2308,207 +2309,6 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
   void _handleSettingsChanged() {
     if (mounted) {
       setState(() {});
-    }
-  }
-
-  Future<void> _loadCacheUsage() async {
-    try {
-      final summary = await _localDatabase.loadCacheUsageSummary();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _cacheUsageSummary = summary;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _cacheUsageSummary = null;
-      });
-    }
-  }
-
-  Future<void> _loadOfflineMap() async {
-    try {
-      final region = await _offlineMapService.loadMalaysiaRegion();
-      if (!mounted) return;
-      setState(() {
-        _malaysiaOfflineMap = region;
-        _offlineMapProgress = region?.isComplete == true ? 1 : 0;
-        _isLoadingOfflineMap = false;
-        if (region?.status == 'failed') {
-          _offlineMapError = region!.lastError.trim().isEmpty
-              ? 'The previous download did not complete. Tap Retry for details.'
-              : _offlineDownloadError(region.lastError);
-        }
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingOfflineMap = false;
-        _offlineMapError = 'Unable to read offline map storage.';
-      });
-    }
-  }
-
-  Future<void> _downloadMalaysiaOfflineMap() async {
-    if (_isDownloadingOfflineMap || _isRemovingOfflineMap) return;
-    setState(() {
-      _isDownloadingOfflineMap = true;
-      _offlineMapError = '';
-      _offlineMapProgress = 0;
-    });
-    try {
-      final region = await _offlineMapService.downloadMalaysia(
-        onProgress: (progress) {
-          if (!mounted) return;
-          setState(() => _offlineMapProgress = progress.clamp(0, 1));
-        },
-      );
-      if (!mounted) return;
-      setState(() => _malaysiaOfflineMap = region);
-      await _loadCacheUsage();
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _offlineMapError = _offlineDownloadError(error);
-      });
-      await _loadOfflineMap();
-    } finally {
-      if (mounted) setState(() => _isDownloadingOfflineMap = false);
-    }
-  }
-
-  String _offlineDownloadError(Object error) {
-    final detail = error
-        .toString()
-        .replaceAll(RegExp(r'access_token=[^&\s]+'), 'access_token=hidden')
-        .replaceFirst('PlatformException(', '')
-        .trim();
-    if (detail.toLowerCase().contains('tile pack') ||
-        detail.toLowerCase().contains('quota')) {
-      return 'Mapbox storage limit reached. Remove another offline region and retry. ($detail)';
-    }
-    if (detail.length > 220) {
-      return 'Download failed: ${detail.substring(0, 220)}…';
-    }
-    return 'Download failed: $detail';
-  }
-
-  Future<void> _loadHazardDataset() async {
-    try {
-      final summary = await _hazardDatasetService.loadSummary();
-      if (!mounted) return;
-      setState(() {
-        _hazardDatasetSummary = summary;
-        _isLoadingHazardDataset = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingHazardDataset = false;
-        _hazardDatasetError = 'Unable to read the offline hazard dataset.';
-      });
-    }
-  }
-
-  Future<void> _downloadHazardDataset() async {
-    if (_isDownloadingHazardDataset || _isRemovingHazardDataset) return;
-    setState(() {
-      _isDownloadingHazardDataset = true;
-      _hazardDatasetError = '';
-      _hazardDatasetProgress = 0;
-    });
-    try {
-      final trails = await widget.firebaseRepository.loadTrails();
-      final summary = await _hazardDatasetService.downloadForTrails(
-        trails,
-        onProgress: (completed, total) {
-          if (!mounted) return;
-          setState(() {
-            _hazardDatasetProgress = total <= 0 ? 0 : completed / total;
-          });
-        },
-      );
-      if (!mounted) return;
-      setState(() {
-        _hazardDatasetSummary = summary;
-        _hazardDatasetProgress = 1;
-      });
-      await _loadCacheUsage();
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _hazardDatasetError = error.toString());
-    } finally {
-      if (mounted) setState(() => _isDownloadingHazardDataset = false);
-    }
-  }
-
-  Future<void> _removeHazardDataset() async {
-    if (_isDownloadingHazardDataset || _isRemovingHazardDataset) return;
-    setState(() => _isRemovingHazardDataset = true);
-    try {
-      await _hazardDatasetService.clear();
-      if (!mounted) return;
-      setState(() {
-        _hazardDatasetSummary = const LocalHazardDatasetSummary(
-          hazardCount: 0,
-          trailCount: 0,
-        );
-        _hazardDatasetProgress = 0;
-        _hazardDatasetError = '';
-      });
-      await _loadCacheUsage();
-    } catch (error) {
-      if (mounted) {
-        setState(
-          () => _hazardDatasetError = 'Unable to remove hazards: $error',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isRemovingHazardDataset = false);
-    }
-  }
-
-  Future<void> _removeMalaysiaOfflineMap() async {
-    if (_isDownloadingOfflineMap || _isRemovingOfflineMap) return;
-    final confirmed = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (context) => CupertinoAlertDialog(
-        title: const Text('Remove Malaysia Offline Map?'),
-        content: const Text(
-          'Malaysia map coverage will no longer be guaranteed without an internet connection.',
-        ),
-        actions: [
-          CupertinoDialogAction(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          CupertinoDialogAction(
-            isDestructiveAction: true,
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() => _isRemovingOfflineMap = true);
-    try {
-      await _offlineMapService.removeMalaysia();
-      if (!mounted) return;
-      setState(() {
-        _malaysiaOfflineMap = null;
-        _offlineMapProgress = 0;
-        _offlineMapError = '';
-      });
-      await _loadCacheUsage();
-    } catch (_) {
-      if (mounted) {
-        setState(() => _offlineMapError = 'Unable to remove the map package.');
-      }
-    } finally {
-      if (mounted) setState(() => _isRemovingOfflineMap = false);
     }
   }
 
@@ -2649,49 +2449,6 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
     }
   }
 
-  Future<void> _clearCacheData() async {
-    if (_isClearingCache) {
-      return;
-    }
-    setState(() {
-      _isClearingCache = true;
-    });
-    try {
-      await _offlineMapService.removeAllTileRegions();
-      await _localDatabase.clearCacheData();
-      await _loadCacheUsage();
-      await _loadOfflineMap();
-      await _loadHazardDataset();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Cached maps and connection history cleared.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Unable to clear cached data right now.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isClearingCache = false;
-        });
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2740,8 +2497,11 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                       trailing: const Icon(Icons.chevron_right_rounded),
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute<void>(
-                          builder: (context) =>
-                              const HikerCircleAssistantPage(),
+                          builder: (context) => HikerCircleAssistantPage(
+                            ownerPhoneNumber: widget.session.phoneNumber,
+                            onOpenTrail: widget.onOpenTrail,
+                            onNavigate: widget.onNavigate,
+                          ),
                         ),
                       ),
                     ),
@@ -2824,40 +2584,6 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                         'Used for route tracking and emergency map links.',
                     value: _settings.preciseLocationEnabled,
                     onChanged: (value) => unawaited(_setPreciseLocation(value)),
-                  ),
-                  const SizedBox(height: 18),
-                  _SectionTitle(label: 'Storage & Cache'),
-                  const SizedBox(height: 8),
-                  _OfflineMapSettingsCard(
-                    isSupported: OfflineMapService.isSupported,
-                    region: _malaysiaOfflineMap,
-                    isLoading: _isLoadingOfflineMap,
-                    isDownloading: _isDownloadingOfflineMap,
-                    isRemoving: _isRemovingOfflineMap,
-                    progress: _offlineMapProgress,
-                    error: _offlineMapError,
-                    onDownload: () => unawaited(_downloadMalaysiaOfflineMap()),
-                    onRemove: () => unawaited(_removeMalaysiaOfflineMap()),
-                  ),
-                  const SizedBox(height: 8),
-                  _HazardDatasetSettingsCard(
-                    summary: _hazardDatasetSummary,
-                    isLoading: _isLoadingHazardDataset,
-                    isDownloading: _isDownloadingHazardDataset,
-                    isRemoving: _isRemovingHazardDataset,
-                    progress: _hazardDatasetProgress,
-                    error: _hazardDatasetError,
-                    onDownload: () => unawaited(_downloadHazardDataset()),
-                    onRemove: () => unawaited(_removeHazardDataset()),
-                  ),
-                  const SizedBox(height: 8),
-                  _CacheUsageCard(
-                    icon: Icons.storage_rounded,
-                    title: 'Cache usage',
-                    subtitle:
-                        _cacheUsageSummary?.label ?? 'Calculating cache usage',
-                    isClearing: _isClearingCache,
-                    onClear: () => unawaited(_clearCacheData()),
                   ),
                   const SizedBox(height: 18),
                   _SectionTitle(label: 'Trail Recommendations'),
@@ -5983,358 +5709,6 @@ class _AnimatedBooleanToggle extends StatelessWidget {
       animationDuration: const Duration(milliseconds: 260),
       animationCurve: Curves.easeOutCubic,
       onChanged: onChanged,
-    );
-  }
-}
-
-class _OfflineMapSettingsCard extends StatelessWidget {
-  const _OfflineMapSettingsCard({
-    required this.isSupported,
-    required this.region,
-    required this.isLoading,
-    required this.isDownloading,
-    required this.isRemoving,
-    required this.progress,
-    required this.error,
-    required this.onDownload,
-    required this.onRemove,
-  });
-
-  final bool isSupported;
-  final LocalOfflineMapRegion? region;
-  final bool isLoading;
-  final bool isDownloading;
-  final bool isRemoving;
-  final double progress;
-  final String error;
-  final VoidCallback onDownload;
-  final VoidCallback onRemove;
-
-  String get _status {
-    if (!isSupported) return 'Available in the iOS and Android app';
-    if (isLoading) return 'Checking device storage…';
-    if (isDownloading) return 'Downloading ${(progress * 100).round()}%';
-    if (region?.isComplete == true) {
-      final bytes = region!.completedBytes;
-      final size = bytes <= 0
-          ? 'stored on this device'
-          : '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-      return 'Available offline · $size';
-    }
-    if (region?.status == 'failed') return 'Incomplete · retry required';
-    return 'Trails are scanned automatically when first opened';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final busy = !isSupported || isLoading || isDownloading || isRemoving;
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _Glyph(icon: Icons.public_rounded),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Malaysia offline map',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.textFor(context),
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    'Peninsular Malaysia, Sabah and Sarawak · regional detail (zoom 4–12). Shared by every account on this device. Maps seen before downloading may come from Mapbox’s temporary cache and are not guaranteed offline.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryTextFor(context),
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _status,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: region?.isComplete == true
-                          ? _MeColors.green
-                          : _MeColors.secondaryTextFor(context),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (isDownloading) ...[
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(value: progress),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Keep HikerCircle open until the download completes.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _MeColors.secondaryTextFor(context),
-                      ),
-                    ),
-                  ],
-                  if (error.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      error,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: busy ? null : onDownload,
-                        icon: isDownloading
-                            ? const SizedBox.square(
-                                dimension: 16,
-                                child: HikerCircleMinorLoadingIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.download_rounded),
-                        label: Text(
-                          isDownloading
-                              ? 'Downloading'
-                              : region?.isComplete == true
-                              ? 'Update map'
-                              : region?.status == 'failed'
-                              ? 'Retry download'
-                              : 'Download Malaysia',
-                        ),
-                      ),
-                      if (isSupported && region != null)
-                        OutlinedButton.icon(
-                          onPressed: busy ? null : onRemove,
-                          icon: isRemoving
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child: HikerCircleMinorLoadingIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.delete_outline_rounded),
-                          label: Text(isRemoving ? 'Removing' : 'Remove'),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HazardDatasetSettingsCard extends StatelessWidget {
-  const _HazardDatasetSettingsCard({
-    required this.summary,
-    required this.isLoading,
-    required this.isDownloading,
-    required this.isRemoving,
-    required this.progress,
-    required this.error,
-    required this.onDownload,
-    required this.onRemove,
-  });
-
-  final LocalHazardDatasetSummary? summary;
-  final bool isLoading;
-  final bool isDownloading;
-  final bool isRemoving;
-  final double progress;
-  final String error;
-  final VoidCallback onDownload;
-  final VoidCallback onRemove;
-
-  String get _status {
-    if (isLoading) return 'Checking SQLite…';
-    if (isDownloading) {
-      return 'Scanning saved trails ${(progress * 100).round()}%';
-    }
-    if (summary?.isDownloaded == true) {
-      return '${summary!.hazardCount} mapped caution${summary!.hazardCount == 1 ? '' : 's'} · ${summary!.trailCount} saved trail${summary!.trailCount == 1 ? '' : 's'} scanned';
-    }
-    return 'Not downloaded';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final busy = isLoading || isDownloading || isRemoving;
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _Glyph(icon: Icons.warning_amber_rounded),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Offline trail hazards',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.textFor(context),
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    'River, stream, cliff, and mapped bridge-crossing points are downloaded automatically when a trail is first opened, then stored in SQLite for offline use. Coverage can be incomplete and does not predict wildlife.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryTextFor(context),
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _status,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: summary?.isDownloaded == true
-                          ? _MeColors.green
-                          : _MeColors.secondaryTextFor(context),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (isDownloading) ...[
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(value: progress),
-                  ],
-                  if (error.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      error,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: busy ? null : onDownload,
-                        icon: isDownloading
-                            ? const SizedBox.square(
-                                dimension: 16,
-                                child: HikerCircleMinorLoadingIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.download_for_offline_rounded),
-                        label: Text(
-                          isDownloading
-                              ? 'Downloading'
-                              : 'Refresh all trails now',
-                        ),
-                      ),
-                      if (summary?.isDownloaded == true)
-                        OutlinedButton.icon(
-                          onPressed: busy ? null : onRemove,
-                          icon: isRemoving
-                              ? const SizedBox.square(
-                                  dimension: 16,
-                                  child: HikerCircleMinorLoadingIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.delete_outline_rounded),
-                          label: Text(isRemoving ? 'Removing' : 'Remove'),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CacheUsageCard extends StatelessWidget {
-  const _CacheUsageCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.isClearing,
-    required this.onClear,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool isClearing;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _Glyph(icon: icon),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: _MeColors.textFor(context),
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _MeColors.secondaryTextFor(context),
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      onPressed: isClearing ? null : onClear,
-                      icon: isClearing
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: HikerCircleMinorLoadingIndicator(
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Icon(Icons.cleaning_services_rounded),
-                      label: Text(isClearing ? 'Clearing' : 'Clear cache data'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

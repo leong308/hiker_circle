@@ -7,6 +7,9 @@ const {
   containsSensitivePersonalData,
   createAssistantHandler,
   isEmergencyQuestion,
+  findTrails,
+  navigationAction,
+  normalizeHistory,
   parseGeminiResponse,
   retrieveArticles,
 } = require('../hiker_circle_assistant');
@@ -79,6 +82,57 @@ test('emergency language is detected without calling the model', async () => {
   assert.equal(databaseUsed, false);
 });
 
+test('recent context omits sensitive entries before Gemini', () => {
+  assert.deepEqual(normalizeHistory([
+    {role: 'user', text: 'How do I join a hike?'},
+    {role: 'assistant', text: 'Send a join request.'},
+    {role: 'user', text: 'My email is hiker@example.com'},
+  ]), [
+    {role: 'user', text: 'How do I join a hike?'},
+    {role: 'assistant', text: 'Send a join request.'},
+  ]);
+});
+
+test('emergency contact setup is help, not an active emergency', () => {
+  assert.equal(isEmergencyQuestion('How to set my emergency contacts'), false);
+  assert.equal(isEmergencyQuestion('I have an emergency right now'), true);
+});
+
+test('live trail search ranks nearby and longest trails and returns IDs', async () => {
+  const db = {collection(name) {
+    assert.equal(name, 'trails');
+    return {async get() {return {docs: [
+      {id: 'short', data: () => ({name: 'Near Hill', latitude: 3.1,
+        longitude: 101.1, distanceKm: 2})},
+      {id: 'long', data: () => ({name: 'Far Ridge', latitude: 4,
+        longitude: 102, distanceKm: 15})},
+    ]};}};
+  }};
+  const nearby = await findTrails(db, 'nearest hiking trail',
+    {latitude: 3.11, longitude: 101.11});
+  assert.equal(nearby.trails[0].id, 'short');
+  assert.ok(nearby.trails[0].distanceFromUserKm < nearby.trails[1].distanceFromUserKm);
+  const longest = await findTrails(db, 'what is the longest trail');
+  assert.equal(longest.trails[0].id, 'long');
+});
+
+test('navigation resolves registered destinations without inventing routes', () => {
+  assert.equal(navigationAction('Take me to emergency contacts').destinationId,
+    'emergency_contacts');
+  assert.equal(navigationAction('How to set my emergency contacts').destinationId,
+    'emergency_contacts');
+  assert.equal(navigationAction('How do emergency contacts work?'), null);
+});
+
+test('direct page request returns a button without contacting Gemini', async () => {
+  const handler = createAssistantHandler({db: fakeDatabase(), apiKey: 'test',
+    fetchImpl: () => {throw new Error('Gemini should not be called');}});
+  const result = await handler({auth: {uid: 'test-user'},
+    data: {question: 'Take me to emergency contacts'}});
+  assert.equal(result.responseMode, 'curated_navigation');
+  assert.equal(result.action.destinationId, 'emergency_contacts');
+});
+
 test('Gemini JSON only exposes reviewed source identifiers', () => {
   const articles = retrieveArticles('How do achievements work?');
   const parsed = parseGeminiResponse({
@@ -110,6 +164,7 @@ test('authenticated handler records usage and returns a constrained answer', asy
       assert.equal(options.headers['x-goog-api-key'], 'test-key');
       const request = JSON.parse(options.body);
       assert.match(request.contents[0].parts[0].text, /Login and account security/);
+      assert.match(request.contents[0].parts[0].text, /user: Where is Login security\?/);
       return {
         ok: true,
         status: 200,
@@ -130,7 +185,9 @@ test('authenticated handler records usage and returns a constrained answer', asy
   });
   const result = await handler({
     auth: {uid: 'test-user'},
-    data: {question: 'Where do I manage my passkey?'},
+    data: {question: 'Where do I manage my passkey?', history: [
+      {role: 'user', text: 'Where is Login security?'},
+    ]},
   });
   assert.equal(result.responseMode, 'gemini_free_tier');
   assert.equal(db.stored.dayCount, 1);

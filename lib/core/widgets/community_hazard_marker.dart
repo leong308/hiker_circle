@@ -103,6 +103,40 @@ List<CommunityHazardCluster> clusterCommunityHazards(
 Future<Uint8List> communityHazardMarkerImage(int count) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
+  _paintCommunityHazardMarker(canvas, count);
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(80, 76);
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  image.dispose();
+  picture.dispose();
+  return bytes!.buffer.asUint8List();
+}
+
+/// Matches the single-report marker shown on trail maps.
+class CommunityHazardMarkerIcon extends StatelessWidget {
+  const CommunityHazardMarkerIcon({super.key});
+  @override
+  Widget build(BuildContext context) => const CustomPaint(
+    size: Size(44, 42),
+    painter: _CommunityHazardIconPainter(),
+  );
+}
+
+class _CommunityHazardIconPainter extends CustomPainter {
+  const _CommunityHazardIconPainter();
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 80, size.height / 76);
+    _paintCommunityHazardMarker(canvas, 1);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_CommunityHazardIconPainter oldDelegate) => false;
+}
+
+void _paintCommunityHazardMarker(Canvas canvas, int count) {
   canvas.drawCircle(const Offset(36, 40), 27, Paint()..color = Colors.white);
   canvas.drawCircle(
     const Offset(36, 40),
@@ -144,12 +178,6 @@ Future<Uint8List> communityHazardMarkerImage(int count) async {
     )..layout();
     badge.paint(canvas, Offset(58 - badge.width / 2, 17 - badge.height / 2));
   }
-  final picture = recorder.endRecording();
-  final image = await picture.toImage(80, 76);
-  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-  image.dispose();
-  picture.dispose();
-  return bytes!.buffer.asUint8List();
 }
 
 mapbox.PointAnnotationOptions communityHazardAnnotation(

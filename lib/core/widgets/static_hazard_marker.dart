@@ -663,6 +663,48 @@ Future<Uint8List> _drawStaticHazardMarker(StaticHazardMarkerKind kind) async {
   const height = 72;
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
+  _paintStaticHazardMarker(canvas, kind);
+
+  final image = await recorder.endRecording().toImage(width, height);
+  try {
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (bytes == null) {
+      throw StateError('Unable to encode the static hazard marker.');
+    }
+    return bytes.buffer.asUint8List();
+  } finally {
+    image.dispose();
+  }
+}
+
+/// Uses the exact same artwork as the native map annotation.
+class StaticHazardMarkerIcon extends StatelessWidget {
+  const StaticHazardMarkerIcon({super.key, required this.kind});
+  final StaticHazardMarkerKind kind;
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    size: const Size(44, 40),
+    painter: _StaticHazardIconPainter(kind),
+  );
+}
+
+class _StaticHazardIconPainter extends CustomPainter {
+  const _StaticHazardIconPainter(this.kind);
+  final StaticHazardMarkerKind kind;
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 80, size.height / 72);
+    _paintStaticHazardMarker(canvas, kind);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_StaticHazardIconPainter oldDelegate) =>
+      oldDelegate.kind != kind;
+}
+
+void _paintStaticHazardMarker(ui.Canvas canvas, StaticHazardMarkerKind kind) {
   final triangle = ui.Path()
     ..moveTo(40, 5)
     ..lineTo(75, 65)
@@ -699,17 +741,6 @@ Future<Uint8List> _drawStaticHazardMarker(StaticHazardMarkerKind kind) async {
     const ui.Rect.fromLTWH(18, 24, 44, 33),
     const ui.Color(0xFFFFFFFF),
   );
-
-  final image = await recorder.endRecording().toImage(width, height);
-  try {
-    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    if (bytes == null) {
-      throw StateError('Unable to encode the static hazard marker.');
-    }
-    return bytes.buffer.asUint8List();
-  } finally {
-    image.dispose();
-  }
 }
 
 void _drawHazardGlyph(

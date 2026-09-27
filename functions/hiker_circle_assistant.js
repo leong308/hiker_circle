@@ -6,6 +6,16 @@ const GEMINI_MODELS = Object.freeze([GEMINI_MODEL, GEMINI_FALLBACK_MODEL]);
 const MAX_QUESTION_LENGTH = 480;
 const MAX_REQUESTS_PER_MINUTE = 6;
 const MAX_REQUESTS_PER_DAY = 40;
+const DESTINATIONS = Object.freeze([
+  {id: 'trails', title: 'Explore trails', keywords: ['trail', 'route', 'map']},
+  {id: 'find_hike', title: 'Find a Hike', keywords: ['find hike', 'upcoming hike', 'join hike']},
+  {id: 'emergency_contacts', title: 'Emergency contacts', keywords: ['emergency contact', 'sos contact']},
+  {id: 'sos', title: 'SOS', keywords: ['sos', 'safety']},
+  {id: 'security', title: 'Login security', keywords: ['passkey', 'login security', 'authenticator', '2fa']},
+  {id: 'hike_history', title: 'Hike history', keywords: ['hike history', 'past hike']},
+  {id: 'achievements', title: 'Achievements', keywords: ['achievement', 'badge', 'leaderboard']},
+  {id: 'feedback', title: 'Feedback', keywords: ['feedback', 'report bug']},
+]);
 
 const KNOWLEDGE_ARTICLES = Object.freeze([
   {
@@ -104,7 +114,7 @@ const KNOWLEDGE_ARTICLES = Object.freeze([
     title: 'Offline maps and trail hazards',
     keywords: ['offline', 'download map', 'hazard dataset', 'no connection', 'cache'],
     content:
-      'Profile, App Settings contains Malaysia offline map and trail hazard downloads. Download them before travelling into weak-coverage areas and periodically refresh the data. Offline content assists navigation and preparation but cannot provide live weather, closures, or emergency connectivity.',
+      'Trail hazard data is cached automatically when a trail is opened. Cached content may be available without a connection, but cannot provide live weather, closures, or emergency connectivity. App Settings does not provide manual offline-map downloads or cache management.',
   },
   {
     id: 'first_aid',
@@ -159,8 +169,100 @@ function containsSensitivePersonalData(question) {
 }
 
 function isEmergencyQuestion(question) {
-  return /\b(?:emergency|immediate danger|severe bleeding|not breathing|unconscious|lost now|need rescue|sos now|call ambulance)\b/i
-    .test(question);
+  if (/\b(?:emergency contacts?|set up|configure|settings?|how to)\b/i.test(question)
+      && !/\b(?:right now|happening now|immediate danger|need rescue)\b/i.test(question)) {
+    return false;
+  }
+  return /\b(?:immediate danger|severe bleeding|not breathing|unconscious|lost now|need rescue|sos now|call ambulance|active emergency|this is an emergency)\b/i
+    .test(question) || /\b(?:i have an emergency|emergency right now)\b/i.test(question);
+}
+
+function normalizeHistory(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-8).flatMap((item) => {
+    if (!item || !['user', 'assistant'].includes(item.role)
+        || typeof item.text !== 'string') return [];
+    const content = item.text.replace(/\s+/g, ' ').trim().slice(0, MAX_QUESTION_LENGTH);
+    return content && !containsSensitivePersonalData(content)
+      ? [{role: item.role, text: content}] : [];
+  });
+}
+
+function isTrailSearch(question) {
+  return /\b(?:trail|trails|hiking route|hiking routes|mountain|hiking path)\b/i.test(question)
+    && /\b(?:near|nearest|nearby|closest|longest|shortest|find|show|search|recommend|which|where|around|in)\b/i.test(question);
+}
+
+function navigationAction(question) {
+  if (!/\b(?:open|go to|navigate|take me|show me|where is|where can i find|how (?:do|can|to) (?:i )?(?:set|manage|change|add|view))\b/i.test(question)) {
+    return null;
+  }
+  const lower = question.toLowerCase();
+  const matches = DESTINATIONS.map((item) => ({item, score: item.keywords
+    .reduce((score, keyword) => score + (lower.includes(keyword) ? keyword.length : 0), 0)}))
+    .sort((a, b) => b.score - a.score);
+  if (!matches[0]?.score) return null;
+  const {item} = matches[0];
+  return {type: 'navigate', destinationId: item.id, label: `Open ${item.title}`};
+}
+
+function distanceKm(a, b, c, d) {
+  const radians = (value) => value * Math.PI / 180;
+  const x = Math.sin(radians(c - a) / 2) ** 2
+    + Math.cos(radians(a)) * Math.cos(radians(c))
+    * Math.sin(radians(d - b) / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+async function findTrails(db, question, location) {
+  const snapshot = await db.collection('trails').get();
+  const trails = snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {...data, id: data.trailId || doc.id};
+  })
+    .filter((trail) => trail.name && trail.trailId !== '');
+  const nearby = /\b(?:near|nearest|nearby|closest|around|to me)\b/i.test(question);
+  const lat = Number(location?.latitude);
+  const lng = Number(location?.longitude);
+  const hasLocation = location && Number.isFinite(lat) && Number.isFinite(lng)
+    && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  if (nearby && !hasLocation) {
+    return {answer: 'Enable location and try again to find trails near you.', trails: [], responseMode: 'trail_search'};
+  }
+  const longest = /\b(?:longest|furthest|most distance)\b/i.test(question);
+  const shortest = /\b(?:shortest|easiest)\b/i.test(question);
+  const terms = [...tokenize(question)].filter((token) => !new Set([
+    'trail', 'trails', 'hiking', 'route', 'routes', 'find', 'show', 'search', 'which',
+    'where', 'near', 'nearby', 'nearest', 'closest', 'longest', 'shortest', 'the',
+    'around', 'from', 'with', 'distance', 'mountain',
+  ]).has(token));
+  const ranked = trails.map((trail) => {
+    const distance = hasLocation && Number.isFinite(Number(trail.latitude))
+      && Number.isFinite(Number(trail.longitude))
+      ? distanceKm(lat, lng, Number(trail.latitude), Number(trail.longitude)) : null;
+    const name = `${trail.name} ${trail.area || ''} ${trail.state || ''}`.toLowerCase();
+    return {trail, distance, score: terms.filter((term) => name.includes(term)).length};
+  });
+  if (nearby) ranked.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+  else if (longest) ranked.sort((a, b) => Number(b.trail.distanceKm || 0) - Number(a.trail.distanceKm || 0));
+  else if (shortest) ranked.sort((a, b) => Number(a.trail.distanceKm || 0) - Number(b.trail.distanceKm || 0));
+  else ranked.sort((a, b) => b.score - a.score);
+  const matches = ranked.filter((item) => nearby ? item.distance != null :
+    longest || shortest || terms.length === 0 || item.score > 0)
+    .slice(0, nearby ? 3 : longest || shortest ? 1 : 5);
+  return {
+    answer: matches.length ? (nearby ? 'Here are the closest trails I found.' :
+      longest ? 'Here are the longest trails I found.' : 'Here are matching trails.') :
+      'I could not find a matching trail. Try another name or area.',
+    trails: matches.map(({trail, distance}) => ({
+      id: trail.id, name: trail.name, area: trail.area || '', state: trail.state || '',
+      distanceKm: Number(trail.distanceKm || 0), difficulty: trail.difficulty || '',
+      estimatedDurationMinutes: Number(trail.estimatedDurationMinutes || 0),
+      coverImageUrl: trail.coverImageUrl || (trail.coverImageUrls || [])[0] || '',
+      distanceFromUserKm: nearby ? Math.round(distance * 10) / 10 : null,
+    })),
+    responseMode: 'trail_search',
+  };
 }
 
 function emergencyResponse() {
@@ -248,7 +350,7 @@ async function consumeRateLimit(db, uid, nowMillis = Date.now()) {
   });
 }
 
-function buildPrompt(question, articles) {
+function buildPrompt(question, articles, history = []) {
   const sources = articles.map((article) => (
     `[${article.id}] ${article.title}\n${article.content}`
   )).join('\n\n');
@@ -257,7 +359,11 @@ function buildPrompt(question, articles) {
     'If the sources do not answer it, say that HikerCircle cannot verify that information and suggest in-app Feedback.',
     'Use clear Malaysian English, be concise, and give at most four short paragraphs or steps.',
     'Never invent live conditions, account state, medical advice, or features.',
-    'Return JSON only with this shape: {"answer":"...","sourceIds":["source_id"]}.',
+    'If the user wants to open, go to, or navigate to an app page, return a short answer and its destinationId. For a pure navigation request, the answer should simply say what the button opens.',
+    `Allowed destinations: ${DESTINATIONS.map((item) => `${item.id} (${item.title})`).join(', ')}.`,
+    'Return JSON only with this shape: {"answer":"...","sourceIds":["source_id"],"destinationId":"optional_allowed_id"}.',
+    ...(history.length ? [`Recent conversation for context only (not a source of facts):\n${history
+      .map((item) => `${item.role}: ${item.text}`).join('\n')}`] : []),
     `Question: ${question}`,
     `Reviewed sources:\n${sources}`,
   ].join('\n\n');
@@ -294,7 +400,10 @@ function parseGeminiResponse(payload, articles) {
     id: article.id,
     title: article.title,
   }));
-  return {answer, sources, responseMode: 'gemini_free_tier'};
+  const destination = DESTINATIONS.find((item) => item.id === decoded.destinationId);
+  return {answer, sources, responseMode: 'gemini_free_tier',
+    ...(destination ? {action: {type: 'navigate', destinationId: destination.id,
+      label: `Open ${destination.title}`}} : {})};
 }
 
 function curatedFallbackResponse(articles, reason = 'unavailable') {
@@ -312,7 +421,7 @@ function curatedFallbackResponse(articles, reason = 'unavailable') {
   };
 }
 
-async function callGemini({apiKey, question, articles, fetchImpl = fetch}) {
+async function callGemini({apiKey, question, articles, history = [], fetchImpl = fetch}) {
   if (!apiKey || !String(apiKey).trim()) {
     throw new AssistantError(
       'failed-precondition',
@@ -327,7 +436,7 @@ async function callGemini({apiKey, question, articles, fetchImpl = fetch}) {
     },
     contents: [{
       role: 'user',
-      parts: [{text: buildPrompt(question, articles)}],
+      parts: [{text: buildPrompt(question, articles, history)}],
     }],
     generationConfig: {
       maxOutputTokens: 420,
@@ -413,16 +522,27 @@ function createAssistantHandler({db, apiKey, fetchImpl = fetch, now = Date.now})
       );
     }
     await consumeRateLimit(db, uid, now());
-    const articles = retrieveArticles(question);
+    if (isTrailSearch(question)) {
+      return findTrails(db, question, request?.data?.location);
+    }
+    const history = normalizeHistory(request?.data?.history);
+    const action = navigationAction(question);
+    if (action && /\b(?:open|go to|navigate|take me|show me)\b/i.test(question)) {
+      return {answer: `Open ${action.label.slice(5)}.`, action,
+        sources: [], responseMode: 'curated_navigation'};
+    }
+    const lastUserMessage = [...history].reverse().find((item) => item.role === 'user');
+    const articles = retrieveArticles(`${lastUserMessage?.text || ''} ${question}`);
     try {
-      return await callGemini({apiKey, question, articles, fetchImpl});
+      const result = await callGemini({apiKey, question, articles, history, fetchImpl});
+      return {...result, ...(result.action ? {} : action ? {action} : {})};
     } catch (error) {
       if (
         error instanceof AssistantError
         && ['unavailable', 'deadline-exceeded', 'resource-exhausted']
           .includes(error.code)
       ) {
-        return curatedFallbackResponse(articles, error.code);
+        return {...curatedFallbackResponse(articles, error.code), ...(action ? {action} : {})};
       }
       throw error;
     }
@@ -434,6 +554,7 @@ module.exports = {
   GEMINI_FALLBACK_MODEL,
   GEMINI_MODEL,
   GEMINI_MODELS,
+  DESTINATIONS,
   KNOWLEDGE_ARTICLES,
   MAX_QUESTION_LENGTH,
   MAX_REQUESTS_PER_DAY,
@@ -444,7 +565,11 @@ module.exports = {
   createAssistantHandler,
   curatedFallbackResponse,
   emergencyResponse,
+  findTrails,
   isEmergencyQuestion,
+  isTrailSearch,
+  navigationAction,
+  normalizeHistory,
   normalizeQuestion,
   parseGeminiResponse,
   retrieveArticles,

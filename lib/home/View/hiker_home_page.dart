@@ -5244,6 +5244,8 @@ class _HikerHomePageState extends State<HikerHomePage>
           session: widget.session,
           phoneNumber: widget.session.phoneNumber,
           onSignOut: _signOutAndClearActiveHike,
+          onStartHike: (trail) => openStartHikeWizard(trail),
+          onOpenSos: openSosTab,
           firebaseBootstrapResult: widget.firebaseBootstrapResult,
         );
       case 'Admin':

@@ -5,7 +5,7 @@ void main() {
   test('normalizes a question and parses reviewed sources', () async {
     String? receivedQuestion;
     final repository = HikerCircleAssistantRepository(
-      callable: (question) async {
+      callable: (question, location, history) async {
         receivedQuestion = question;
         return <String, dynamic>{
           'answer': 'Open Profile, App Settings, then Login security.',
@@ -30,7 +30,7 @@ void main() {
 
   test('identifies a curated emergency answer', () async {
     final repository = HikerCircleAssistantRepository(
-      callable: (_) async => <String, dynamic>{
+      callable: (_, location, history) async => <String, dynamic>{
         'answer': 'Call 999 or 112.',
         'responseMode': 'curated_emergency',
         'notice': 'Answered locally.',
@@ -47,7 +47,7 @@ void main() {
   test('rejects a question before invoking the callable', () async {
     var called = false;
     final repository = HikerCircleAssistantRepository(
-      callable: (_) async {
+      callable: (_, location, history) async {
         called = true;
         return <String, dynamic>{};
       },

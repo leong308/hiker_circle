@@ -1134,88 +1134,6 @@ class LocalSessionDatabase {
     });
   }
 
-  Future<CacheUsageSummary> loadCacheUsageSummary() async {
-    final database = await _openDatabase();
-    final downloadedMapCount =
-        Sqflite.firstIntValue(
-          await database.rawQuery('''
-            SELECT COUNT(*) FROM downloaded_maps AS maps
-            WHERE NOT EXISTS (
-              SELECT 1 FROM offline_map_regions AS regions
-              WHERE regions.trail_id = maps.trail_id
-                AND regions.status = 'complete'
-            )
-          '''),
-        ) ??
-        0;
-    final downloadedMapBytes =
-        Sqflite.firstIntValue(
-          await database.rawQuery(
-            'SELECT COALESCE(SUM(file_size), 0) FROM downloaded_maps',
-          ),
-        ) ??
-        0;
-    final networkObservationCount =
-        Sqflite.firstIntValue(
-          await database.rawQuery('SELECT COUNT(*) FROM network_observations'),
-        ) ??
-        0;
-    final cachedEntityCount =
-        Sqflite.firstIntValue(
-          await database.rawQuery('SELECT COUNT(*) FROM cached_entities'),
-        ) ??
-        0;
-    final staticHazardCount =
-        Sqflite.firstIntValue(
-          await database.rawQuery('SELECT COUNT(*) FROM hazard_features'),
-        ) ??
-        0;
-    final offlineRegionBytes =
-        Sqflite.firstIntValue(
-          await database.rawQuery(
-            'SELECT COALESCE(SUM(completed_bytes), 0) FROM offline_map_regions',
-          ),
-        ) ??
-        0;
-    final offlineRegionCount =
-        Sqflite.firstIntValue(
-          await database.rawQuery(
-            "SELECT COUNT(*) FROM offline_map_regions WHERE status = 'complete'",
-          ),
-        ) ??
-        0;
-
-    return CacheUsageSummary(
-      downloadedMapCount: downloadedMapCount + offlineRegionCount,
-      downloadedMapBytes: downloadedMapBytes + offlineRegionBytes,
-      networkObservationCount: networkObservationCount,
-      cachedEntityCount: cachedEntityCount + staticHazardCount,
-    );
-  }
-
-  Future<void> clearCacheData() async {
-    final database = await _openDatabase();
-    await database.transaction((transaction) async {
-      await transaction.delete('downloaded_maps');
-      await transaction.delete('network_observations');
-      await transaction.delete('cached_entities');
-      await transaction.delete('offline_map_regions');
-      await transaction.delete('trail_hazard_matches');
-      await transaction.delete('hazard_feature_rtree');
-      await transaction.delete('hazard_features');
-      await transaction.delete(
-        'local_preferences',
-        where:
-            'owner_phone_number = ? AND (preference_key = ? OR preference_key LIKE ?)',
-        whereArgs: [
-          '',
-          'static_hazard_dataset_metadata',
-          '$_staticHazardScanPreferencePrefix%',
-        ],
-      );
-    });
-  }
-
   Future<void> saveCachedEntity(LocalCachedEntity entity) async {
     final database = await _openDatabase();
     await database.insert('cached_entities', {
@@ -3908,28 +3826,6 @@ class LocalPendingHikeEnd {
     } catch (_) {
       return null;
     }
-  }
-}
-
-class CacheUsageSummary {
-  const CacheUsageSummary({
-    required this.downloadedMapCount,
-    required this.downloadedMapBytes,
-    required this.networkObservationCount,
-    this.cachedEntityCount = 0,
-  });
-
-  final int downloadedMapCount;
-  final int downloadedMapBytes;
-  final int networkObservationCount;
-  final int cachedEntityCount;
-
-  String get label {
-    final sizeLabel = downloadedMapBytes <= 0
-        ? '0 MB'
-        : '${(downloadedMapBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    return '$sizeLabel offline maps, $downloadedMapCount route packs, '
-        '$cachedEntityCount cached items, $networkObservationCount connection records';
   }
 }
 

@@ -129,6 +129,59 @@ Future<void> _close(WidgetTester tester) async {
 
 void main() {
   testWidgets(
+    'add form locks region and checkpoint map starts at selected trailhead',
+    (tester) async {
+      final startingMap = await _open(tester);
+      _tap(startingMap, 100.27, 5.42);
+      await tester.pump();
+      await tester.tap(find.text('Use this location'));
+      await tester.pump();
+      expect(find.byType(AppBar), findsNothing);
+      expect(tester.widget<Text>(find.text('Add Trail')).style?.fontSize, 26);
+      for (final label in ['State', 'Country']) {
+        final field = tester.widget<TextField>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is TextField && widget.decoration?.labelText == label,
+          ),
+        );
+        expect(field.readOnly, isTrue);
+        expect(field.onTap, isNull);
+      }
+      expect(find.text('Finish & Add'), findsOneWidget);
+      await tester.ensureVisible(find.text('Add checkpoints on map'));
+      await tester.tap(find.text('Add checkpoints on map'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final map =
+          tester.widget<DeferredMap>(find.byType(DeferredMap)).child
+              as mapbox.MapWidget;
+      // ignore: deprecated_member_use
+      expect(map.cameraOptions!.center!.coordinates.lng, 100.27);
+      // ignore: deprecated_member_use
+      expect(map.cameraOptions!.center!.coordinates.lat, 5.42);
+      _tap(map, 100.28, 5.43);
+      _tap(map, 100.29, 5.44);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      // A selected pin can also be removed without a fixed-length-list error.
+      _tap(map, 100.29, 5.44);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      _tap(map, 100.29, 5.44);
+      await tester.pump();
+      await tester.tap(find.text('Confirm 3 pins'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('ROUTE PREVIEW'), findsOneWidget);
+      expect(find.text('Normal'), findsOneWidget);
+      expect(find.text('FPV'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await _close(tester);
+    },
+  );
+
+  testWidgets(
     'header matches app and repeated nearby taps keep the selected location',
     (tester) async {
       final map = await _open(tester);
@@ -202,3 +255,4 @@ void main() {
     },
   );
 }
+

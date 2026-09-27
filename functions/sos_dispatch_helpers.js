@@ -48,7 +48,9 @@ function normalizeText(value, maxLength) {
 }
 
 function normalizeSosTimeZone(value) {
-  const timeZone = String(value || '').trim();
+  const storedTimeZone = String(value || '').trim();
+  const timeZone = storedTimeZone === 'Asia/Kuching'
+    ? 'Asia/Kuala_Lumpur' : storedTimeZone;
   if (!timeZone || timeZone.length > 80) return DEFAULT_SOS_TIME_ZONE;
   try {
     new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date(0));

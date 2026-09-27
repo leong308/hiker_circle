@@ -193,6 +193,31 @@ async function run() {
       await assertFails(anonymousDb.doc(`users/${OWNER_UID}`).get());
     });
 
+    test('assistant conversation and messages are account-private', async () => {
+      const conversation = `assistantConversations/${OWNER_UID}`;
+      const message = `${conversation}/messages/message-1`;
+      await assertSucceeds(ownerDb.doc(conversation).set({clearedAtMicros: 10}));
+      await assertSucceeds(ownerDb.doc(message).set({
+        id: 'message-1', createdAtMicros: 11,
+        payload: '{"text":"Find a trail","isUser":true}',
+      }));
+      await assertSucceeds(ownerDb.doc(message).get());
+      await assertSucceeds(ownerDb.collection(`${conversation}/messages`).get());
+      await assertSucceeds(ownerDb.collection(`${conversation}/messages`)
+        .where('createdAtMicros', '<=', 11).limit(400).get());
+      await assertFails(memberDb.doc(message).get());
+      await assertFails(memberDb.collection(`${conversation}/messages`).get());
+      await assertFails(adminDb.doc(message).get());
+      await assertFails(anonymousDb.doc(message).get());
+      await assertFails(memberDb.doc(message).set({
+        id: 'message-1', createdAtMicros: 12, payload: '{}',
+      }));
+      await assertFails(ownerDb.doc(`${conversation}/messages/message-2`).set({
+        id: 'wrong-id', createdAtMicros: 12, payload: '{}',
+      }));
+      await assertSucceeds(ownerDb.doc(message).delete());
+    });
+
     test('user creation requires exact uid and phone identity', async () => {
       const self = userContext(environment, 'new_self', '+60555555555').firestore();
       await assertSucceeds(

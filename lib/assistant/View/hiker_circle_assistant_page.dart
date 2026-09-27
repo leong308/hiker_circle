@@ -6,12 +6,25 @@ import 'package:flutter/material.dart';
 
 import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/page_header_style.dart';
+import '../../sos/Data/location_snapshot_service.dart';
+import '../Data/hiker_circle_assistant_history_store.dart';
 import '../Data/hiker_circle_assistant_repository.dart';
 
 class HikerCircleAssistantPage extends StatefulWidget {
-  const HikerCircleAssistantPage({super.key, this.repository});
+  const HikerCircleAssistantPage({
+    super.key,
+    this.repository,
+    this.onOpenTrail,
+    this.onNavigate,
+    this.ownerPhoneNumber,
+    this.historyStore,
+  });
 
   final HikerCircleAssistantRepository? repository;
+  final Future<void> Function(String trailId)? onOpenTrail;
+  final void Function(String destinationId)? onNavigate;
+  final String? ownerPhoneNumber;
+  final HikerCircleAssistantHistoryStore? historyStore;
 
   @override
   State<HikerCircleAssistantPage> createState() =>
@@ -28,6 +41,8 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
   ];
 
   late final HikerCircleAssistantRepository _repository;
+  HikerCircleAssistantHistoryStore? _historyStore;
+  Future<void> _pendingSave = Future<void>.value();
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final _focusNode = FocusNode();
@@ -39,11 +54,98 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
     ),
   ];
   bool _isSending = false;
+  bool _isLoadingHistory = false;
 
   @override
   void initState() {
     super.initState();
     _repository = widget.repository ?? HikerCircleAssistantRepository();
+    _historyStore =
+        widget.historyStore ??
+        (widget.ownerPhoneNumber?.trim().isNotEmpty == true
+            ? HikerCircleAssistantHistoryStore(
+                ownerPhoneNumber: widget.ownerPhoneNumber!.trim(),
+                cloud: FirebaseAssistantHistoryCloud(),
+              )
+            : null);
+    if (_historyStore != null) {
+      _isLoadingHistory = true;
+      unawaited(_restoreHistory());
+    }
+  }
+
+  Future<void> _restoreHistory() async {
+    try {
+      final saved = await _historyStore!.load();
+      if (!mounted) return;
+      setState(() {
+        _messages.addAll(saved.map(_AssistantMessage.fromMap));
+      });
+      _scrollToEnd();
+      try {
+        final synced = await _historyStore!.synchronize().timeout(
+          const Duration(seconds: 8),
+        );
+        if (!mounted) return;
+        setState(() {
+          _messages.removeRange(1, _messages.length);
+          _messages.addAll(synced.map(_AssistantMessage.fromMap));
+        });
+        _scrollToEnd();
+      } catch (_) {
+        // The local copy remains available when Firestore cannot be reached.
+      }
+      if (mounted) setState(() => _isLoadingHistory = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoadingHistory = false);
+      HikerCircleToast.show(context, 'Saved chat could not be loaded.');
+    }
+  }
+
+  void _saveHistory() {
+    final store = _historyStore;
+    if (store == null) return;
+    final data = _messages.skip(1).map((message) => message.toMap()).toList();
+    _pendingSave = _pendingSave.then((_) => store.save(data)).catchError((_) {
+      if (mounted) {
+        HikerCircleToast.show(context, 'Chat could not be saved.');
+      }
+    });
+  }
+
+  Future<void> _clearHistory() async {
+    await _pendingSave;
+    try {
+      await _historyStore?.clear();
+      if (mounted) setState(() => _messages.removeRange(1, _messages.length));
+    } catch (_) {
+      if (!mounted) return;
+      HikerCircleToast.show(context, 'Chat could not be cleared.');
+    }
+  }
+
+  Future<void> _confirmClearHistory() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Clear assistant chat?'),
+        content: const Text(
+          'This removes the saved conversation from this device and Firestore.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Clear chat'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) await _clearHistory();
   }
 
   @override
@@ -55,7 +157,7 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
   }
 
   Future<void> _send([String? suggestedQuestion]) async {
-    if (_isSending) return;
+    if (_isSending || _isLoadingHistory) return;
     final question = (suggestedQuestion ?? _controller.text).trim();
     if (question.length < 3) {
       HikerCircleToast.show(
@@ -67,27 +169,71 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
     }
     FocusScope.of(context).unfocus();
     _controller.clear();
+    final previous = _messages
+        .skip(1)
+        .where((message) => !message.isError)
+        .map(
+          (message) => <String, String>{
+            'role': message.isUser ? 'user' : 'assistant',
+            'text': message.text,
+          },
+        )
+        .toList();
+    final history = previous.length > 8
+        ? previous.sublist(previous.length - 8)
+        : previous;
     setState(() {
-      _messages.add(_AssistantMessage(text: question, isUser: true));
+      _messages.add(_AssistantMessage.newEntry(text: question, isUser: true));
       _isSending = true;
     });
+    _saveHistory();
     _scrollToEnd();
     try {
+      final needsLocation =
+          RegExp(
+            r'\b(near|nearest|nearby|closest|around|to me)\b',
+            caseSensitive: false,
+          ).hasMatch(question) &&
+          RegExp(
+            r'\b(trail|hiking route|mountain)\b',
+            caseSensitive: false,
+          ).hasMatch(question);
+      final position = needsLocation
+          ? await LocationSnapshotService.instance.refresh()
+          : null;
+      final validPosition =
+          position != null &&
+          position.latitude.isFinite &&
+          position.longitude.isFinite &&
+          position.latitude.abs() <= 90 &&
+          position.longitude.abs() <= 180;
       final answer = await _repository
-          .ask(question)
+          .ask(
+            question,
+            location: validPosition
+                ? {
+                    'latitude': position.latitude,
+                    'longitude': position.longitude,
+                  }
+                : null,
+            history: history,
+          )
           .timeout(const Duration(seconds: 30));
       if (!mounted) return;
       setState(() {
         _messages.add(
-          _AssistantMessage(
+          _AssistantMessage.newEntry(
             text: answer.answer,
             isUser: false,
             sources: answer.sources,
             isEmergency: answer.isEmergency,
             notice: answer.notice,
+            trails: answer.trails,
+            action: answer.action,
           ),
         );
       });
+      _saveHistory();
     } on TimeoutException {
       if (!mounted) return;
       _addError(
@@ -107,9 +253,10 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
   void _addError(String message) {
     setState(() {
       _messages.add(
-        _AssistantMessage(text: message, isUser: false, isError: true),
+        _AssistantMessage.newEntry(text: message, isUser: false, isError: true),
       );
     });
+    _saveHistory();
     HikerCircleToast.show(
       context,
       message,
@@ -180,6 +327,15 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
                       ],
                     ),
                   ),
+                  if (_messages.length > 1)
+                    IconButton(
+                      key: const Key('assistant-clear-chat'),
+                      tooltip: 'Clear chat',
+                      onPressed: _isSending || _isLoadingHistory
+                          ? null
+                          : () => unawaited(_confirmClearHistory()),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
                 ],
               ),
             ),
@@ -215,7 +371,7 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
                                 Icons.auto_awesome_rounded,
                                 size: 16,
                               ),
-                              onPressed: _isSending
+                              onPressed: _isSending || _isLoadingHistory
                                   ? null
                                   : () => _send(suggestion),
                               backgroundColor: surface,
@@ -233,6 +389,8 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
                       text: text,
                       secondary: secondary,
                       separator: separator,
+                      onOpenTrail: widget.onOpenTrail,
+                      onNavigate: widget.onNavigate,
                     ),
                   if (_isSending)
                     _AiThinkingBubble(
@@ -247,7 +405,7 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
             _QuestionComposer(
               controller: _controller,
               focusNode: _focusNode,
-              enabled: !_isSending,
+              enabled: !_isSending && !_isLoadingHistory,
               surface: surface,
               text: text,
               secondary: secondary,
@@ -265,18 +423,126 @@ class _AssistantMessage {
   const _AssistantMessage({
     required this.text,
     required this.isUser,
+    this.id = '',
+    this.createdAtMicros = 0,
     this.sources = const [],
     this.isEmergency = false,
     this.isError = false,
     this.notice,
+    this.trails = const [],
+    this.action,
   });
+
+  factory _AssistantMessage.newEntry({
+    required String text,
+    required bool isUser,
+    List<HikerCircleAssistantSource> sources = const [],
+    bool isEmergency = false,
+    bool isError = false,
+    String? notice,
+    List<HikerCircleAssistantTrail> trails = const [],
+    HikerCircleAssistantAction? action,
+  }) {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    return _AssistantMessage(
+      id: '$now-${math.Random().nextInt(1 << 32)}',
+      createdAtMicros: now,
+      text: text,
+      isUser: isUser,
+      sources: sources,
+      isEmergency: isEmergency,
+      isError: isError,
+      notice: notice,
+      trails: trails,
+      action: action,
+    );
+  }
 
   final String text;
   final bool isUser;
+  final String id;
+  final int createdAtMicros;
   final List<HikerCircleAssistantSource> sources;
   final bool isEmergency;
   final bool isError;
   final String? notice;
+  final List<HikerCircleAssistantTrail> trails;
+  final HikerCircleAssistantAction? action;
+
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'createdAtMicros': createdAtMicros,
+    'text': text,
+    'isUser': isUser,
+    'isEmergency': isEmergency,
+    'isError': isError,
+    if (notice != null) 'notice': notice,
+    'sources': sources
+        .map((source) => {'id': source.id, 'title': source.title})
+        .toList(),
+    'trails': trails
+        .map(
+          (trail) => {
+            'id': trail.id,
+            'name': trail.name,
+            'area': trail.area,
+            'state': trail.state,
+            'difficulty': trail.difficulty,
+            'distanceKm': trail.distanceKm,
+            'estimatedDurationMinutes': trail.estimatedDurationMinutes,
+            if (trail.distanceFromUserKm != null)
+              'distanceFromUserKm': trail.distanceFromUserKm,
+          },
+        )
+        .toList(),
+    if (action != null)
+      'action': {
+        'destinationId': action!.destinationId,
+        'label': action!.label,
+      },
+  };
+
+  factory _AssistantMessage.fromMap(Map<String, dynamic> data) {
+    final sourceValues = data['sources'];
+    final trailValues = data['trails'];
+    final actionValue = data['action'];
+    return _AssistantMessage(
+      id: data['id']?.toString() ?? '',
+      createdAtMicros: (data['createdAtMicros'] as num?)?.toInt() ?? 0,
+      text: data['text']?.toString() ?? '',
+      isUser: data['isUser'] == true,
+      isEmergency: data['isEmergency'] == true,
+      isError: data['isError'] == true,
+      notice: data['notice']?.toString(),
+      sources: sourceValues is List
+          ? sourceValues
+                .whereType<Map>()
+                .map(
+                  (value) => HikerCircleAssistantSource.fromMap(
+                    Map<String, dynamic>.from(value),
+                  ),
+                )
+                .toList()
+          : const [],
+      trails: trailValues is List
+          ? trailValues
+                .whereType<Map>()
+                .map(
+                  (value) => HikerCircleAssistantTrail.fromMap(
+                    Map<String, dynamic>.from(value),
+                  ),
+                )
+                .toList()
+          : const [],
+      action:
+          actionValue is Map && actionValue['destinationId'] != 'offline_maps'
+          ? HikerCircleAssistantAction(
+              destinationId: actionValue['destinationId']?.toString() ?? '',
+              label: actionValue['label']?.toString() ?? '',
+            )
+          : null,
+    );
+  }
 }
 
 class _AiThinkingBubble extends StatefulWidget {
@@ -483,7 +749,7 @@ class _AssistantIntroCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Gemini free tier · no app chat history stored',
+                      'Gemini free tier · chat synced to your account',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: secondary,
                         fontWeight: FontWeight.w600,
@@ -532,6 +798,8 @@ class _MessageBubble extends StatelessWidget {
     required this.text,
     required this.secondary,
     required this.separator,
+    this.onOpenTrail,
+    this.onNavigate,
   });
 
   final _AssistantMessage message;
@@ -539,6 +807,8 @@ class _MessageBubble extends StatelessWidget {
   final Color text;
   final Color secondary;
   final Color separator;
+  final Future<void> Function(String trailId)? onOpenTrail;
+  final void Function(String destinationId)? onNavigate;
 
   @override
   Widget build(BuildContext context) {
@@ -584,6 +854,63 @@ class _MessageBubble extends StatelessWidget {
                 fontWeight: FontWeight.w500,
               ),
             ),
+            if (message.action case final action?) ...[
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed: onNavigate == null
+                    ? null
+                    : () => onNavigate!(action.destinationId),
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: Text(action.label),
+              ),
+            ],
+            for (final trail in message.trails) ...[
+              const SizedBox(height: 9),
+              Card(
+                margin: EdgeInsets.zero,
+                color: surface,
+                child: InkWell(
+                  key: Key('assistant-trail-${trail.id}'),
+                  onTap: onOpenTrail == null
+                      ? null
+                      : () => unawaited(onOpenTrail!(trail.id)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          trail.name,
+                          style: TextStyle(
+                            color: text,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          [
+                            trail.area,
+                            trail.state,
+                          ].where((s) => s.isNotEmpty).join(', '),
+                          style: TextStyle(color: secondary),
+                        ),
+                        Text(
+                          '${trail.distanceKm.toStringAsFixed(1)} km trail'
+                          '${trail.difficulty.isNotEmpty ? ' · ${trail.difficulty}' : ''}'
+                          '${trail.estimatedDurationMinutes > 0 ? ' · ${trail.estimatedDurationMinutes} min' : ''}'
+                          '${trail.distanceFromUserKm != null ? ' · ${trail.distanceFromUserKm!.toStringAsFixed(1)} km away' : ''}',
+                          style: TextStyle(color: secondary),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'View trail →',
+                          style: TextStyle(color: Color(0xFF34A853)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
             if (message.notice case final notice?) ...[
               const SizedBox(height: 9),
               Container(
