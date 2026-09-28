@@ -144,9 +144,9 @@ function triggerLabel(fn) {
 
 add('# HikerCircle Firebase Schema and Cleanup Audit');
 add();
-add(`Audit snapshot: **${inventory.generatedAt}**  `);
-add(`Firebase project: **${inventory.projectId}**  `);
-add('Scope: Authentication, Cloud Firestore, Cloud Storage, Cloud Functions, Hosting, rules, indexes, and data lifecycle.');
+add(`- Audit snapshot: **${inventory.generatedAt}**`);
+add(`- Firebase project: **${inventory.projectId}**`);
+add('- Scope: Authentication, Cloud Firestore, Cloud Storage, Cloud Functions, Hosting, rules, indexes, and data lifecycle.');
 add();
 add('> This document records schema names and types only. User values, tokens, verification codes, messages, coordinates, and secrets are deliberately excluded. A field observed in fewer than all documents is optional, legacy, workflow-specific, or populated later by the backend.');
 add();
@@ -198,7 +198,7 @@ add('Encoded REST document size dropped from approximately **42 KB to 9 KB** for
 add();
 add('### Explicitly retained');
 add();
-add('Hike sessions/history, raw route points, route captures, check-ins, SOS events and dispatch evidence, chats/messages, community posts, user/achievement records, trail ratings, current trail covers, the two KKM videos, feedback screenshots, the current profile photo, and the published Android beta APK were retained. These are active, user-facing, safety/audit-relevant, or still referenced.');
+add('Hike sessions/history, raw route points, route captures, check-ins, SOS events and dispatch evidence, chats/messages, community posts, user/achievement records, trail ratings, current trail covers, feedback screenshots, the current profile photo, and the published Android beta APK were retained. These are active, user-facing, safety/audit-relevant, or still referenced.');
 add();
 add('## Firestore collection registry');
 add();
@@ -287,7 +287,6 @@ add('|---|---:|---|');
 const prefixDescriptions = {
   app_feedback: '`app_feedback/{uid}/{reportId}/screenshot.png` — owner/admin read, PNG only, maximum 5 MiB.',
   community_hikes: '`community_hikes/{uid}/{sessionId}/{file}` — owner-created hike images, supported image formats, maximum 10 MiB.',
-  first_aid: '`first_aid/videos/{topic}_v{version}.mp4` — deployment-managed KKM tutorial media, authenticated read, app-cached.',
   group_chats: '`group_chats/{chatId}/attachments/{file}` — chat-member media/documents, maximum 25 MiB.',
   profile_photos: '`profile_photos/{uid}/{file}` — owner/admin managed profile image, maximum 10 MiB.',
   releases: '`releases/android/beta/{apk}` — APK referenced by `web/site/beta-release.json`.',

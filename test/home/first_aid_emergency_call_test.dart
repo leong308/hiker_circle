@@ -4,7 +4,7 @@ import 'package:hiker_circle/core/services/emergency_number_service.dart';
 import 'package:hiker_circle/home/View/first_aid_guide_page.dart';
 
 void main() {
-  testWidgets('shows the regional emergency call action below search', (
+  testWidgets('shows the regional emergency call action below the header', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -18,7 +18,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(TextField), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
     expect(find.text('Call emergency services'), findsOneWidget);
     expect(find.text('Malaysia ambulance service • 999'), findsOneWidget);
     expect(

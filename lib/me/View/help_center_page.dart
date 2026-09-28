@@ -52,14 +52,7 @@ class HelpCenterPage extends StatelessWidget {
         icon: Icons.route_rounded,
         title: 'Plan & track a hike',
         subtitle: 'Trails, preparation, maps and history',
-        onTap: () => _open(
-          context,
-          const _HelpArticlePage(
-            title: 'Plan & track',
-            subtitle: 'From choosing a trail to getting home',
-            articles: planningHelp,
-          ),
-        ),
+        onTap: () => _open(context, const _PlanTrackHelpPage()),
       ),
       _GuideLink(
         icon: Icons.groups_2_rounded,
@@ -352,6 +345,820 @@ class _HelpArticlePage extends StatelessWidget {
         ),
     ],
   );
+}
+
+enum _PlanPhase { before, during, after }
+
+extension on _PlanPhase {
+  String get label => switch (this) {
+    _PlanPhase.before => 'Before hike',
+    _PlanPhase.during => 'On trail',
+    _PlanPhase.after => 'After hike',
+  };
+}
+
+class _PlanStepMeta {
+  const _PlanStepMeta({
+    required this.icon,
+    required this.eyebrow,
+    required this.phases,
+  });
+
+  final IconData icon;
+  final String eyebrow;
+  final Set<_PlanPhase> phases;
+}
+
+const _planStepMeta = <_PlanStepMeta>[
+  _PlanStepMeta(
+    icon: Icons.explore_rounded,
+    eyebrow: 'Choose with confidence',
+    phases: {_PlanPhase.before},
+  ),
+  _PlanStepMeta(
+    icon: Icons.map_rounded,
+    eyebrow: 'Know the route',
+    phases: {_PlanPhase.before},
+  ),
+  _PlanStepMeta(
+    icon: Icons.cloud_rounded,
+    eyebrow: 'Check the full window',
+    phases: {_PlanPhase.before},
+  ),
+  _PlanStepMeta(
+    icon: Icons.backpack_rounded,
+    eyebrow: 'Prepare for the conditions',
+    phases: {_PlanPhase.before},
+  ),
+  _PlanStepMeta(
+    icon: Icons.navigation_rounded,
+    eyebrow: 'Stay aware as you move',
+    phases: {_PlanPhase.during},
+  ),
+  _PlanStepMeta(
+    icon: Icons.flag_rounded,
+    eyebrow: 'Close the loop',
+    phases: {_PlanPhase.after},
+  ),
+  _PlanStepMeta(
+    icon: Icons.signal_cellular_connected_no_internet_4_bar_rounded,
+    eyebrow: 'Plan beyond coverage',
+    phases: {_PlanPhase.before, _PlanPhase.during},
+  ),
+];
+
+class _PlanTrackHelpPage extends StatefulWidget {
+  const _PlanTrackHelpPage();
+
+  @override
+  State<_PlanTrackHelpPage> createState() => _PlanTrackHelpPageState();
+}
+
+class _PlanTrackHelpPageState extends State<_PlanTrackHelpPage> {
+  Future<void> _openGuide() {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.72),
+      builder: (_) => const _PlanGuideOverlay(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final text = dark ? const Color(0xFFEAF4EE) : const Color(0xFF111111);
+    final secondary = dark ? const Color(0xFFA8B8AE) : const Color(0xFF6E6E73);
+    return _HelpScaffold(
+      title: 'Plan & track',
+      subtitle: 'From choosing a trail to getting home',
+      children: [
+        _PlanJourneyHero(onStart: _openGuide),
+        const SizedBox(height: 22),
+        Text(
+          'At a glance',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: text,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          'The guide follows the same flow as a real hike.',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: secondary),
+        ),
+        const SizedBox(height: 12),
+        const _PlanOverviewRow(
+          icon: Icons.backpack_rounded,
+          title: 'Before the hike',
+          detail: 'Choose, understand, check and prepare',
+          count: '4 steps',
+        ),
+        const SizedBox(height: 9),
+        const _PlanOverviewRow(
+          icon: Icons.navigation_rounded,
+          title: 'On the trail',
+          detail: 'Track progress and handle weak signal',
+          count: '2 topics',
+        ),
+        const SizedBox(height: 9),
+        const _PlanOverviewRow(
+          icon: Icons.flag_rounded,
+          title: 'After the hike',
+          detail: 'Finish safely and review your record',
+          count: '1 step',
+        ),
+        const SizedBox(height: 18),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _green.withValues(alpha: dark ? 0.12 : 0.08),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _green.withValues(alpha: 0.28)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.shield_outlined, color: _green),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Conditions can change quickly',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: text,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Follow closures and local instructions, keep a backup plan, and turn back when the route exceeds your ability.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: secondary,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlanJourneyHero extends StatelessWidget {
+  const _PlanJourneyHero({required this.onStart});
+
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1E7D42), Color(0xFF0B3E26)],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF146B39).withValues(alpha: 0.28),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                      child: const Text(
+                        'PLAN → TRACK → REVIEW',
+                        style: TextStyle(
+                          color: Color(0xFFB8EDC9),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Your hike in 7 clear steps',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 23,
+                        height: 1.15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(
+                      'Swipe through practical guidance from choosing a trail to getting home.',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.78),
+                        height: 1.42,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 14),
+              SizedBox.square(
+                dimension: 64,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox.square(
+                      dimension: 64,
+                      child: CircularProgressIndicator(
+                        value: 1,
+                        strokeWidth: 6,
+                        color: const Color(0xFF8CE7A8),
+                        backgroundColor: Colors.white.withValues(alpha: 0.14),
+                      ),
+                    ),
+                    const Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '7',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            height: 1,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          'STEPS',
+                          style: TextStyle(
+                            color: Color(0xFFB8EDC9),
+                            fontSize: 8,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  key: const ValueKey('plan-guide-start'),
+                  onPressed: onStart,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFF145C34),
+                  ),
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Start guide'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanOverviewRow extends StatelessWidget {
+  const _PlanOverviewRow({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.count,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+  final String count;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final text = dark ? const Color(0xFFEAF4EE) : const Color(0xFF111111);
+    final secondary = dark ? const Color(0xFFA8B8AE) : const Color(0xFF6E6E73);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _surface(context),
+        borderRadius: BorderRadius.circular(17),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 43,
+            height: 43,
+            decoration: BoxDecoration(
+              color: _green.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Icon(icon, color: _green),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: text, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(detail, style: TextStyle(color: secondary, fontSize: 12)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            count,
+            style: const TextStyle(
+              color: _green,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanJourneyStop extends StatelessWidget {
+  const _PlanJourneyStop({
+    super.key,
+    required this.number,
+    required this.icon,
+    required this.title,
+    required this.reviewed,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int number;
+  final IconData icon;
+  final String title;
+  final bool reviewed;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final text = dark ? const Color(0xFFEAF4EE) : const Color(0xFF111111);
+    final border = dark ? const Color(0xFF2B3A31) : const Color(0xFFD9E1DC);
+    return SizedBox(
+      width: 104,
+      child: Material(
+        color: selected
+            ? _green.withValues(alpha: dark ? 0.18 : 0.10)
+            : _surface(context),
+        borderRadius: BorderRadius.circular(17),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(
+                color: selected ? _green : border,
+                width: selected ? 1.5 : 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(icon, color: _green, size: 20),
+                    const Spacer(),
+                    if (reviewed)
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        color: _green,
+                        size: 17,
+                      )
+                    else
+                      Text(
+                        '$number',
+                        style: const TextStyle(
+                          color: _green,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                  ],
+                ),
+                const Spacer(),
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: text,
+                    fontSize: 12,
+                    height: 1.2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlanGuideCard extends StatelessWidget {
+  const _PlanGuideCard({
+    required this.index,
+    required this.article,
+    required this.meta,
+    required this.expanded,
+    required this.reviewed,
+    required this.selected,
+  });
+
+  final int index;
+  final HelpArticle article;
+  final _PlanStepMeta meta;
+  final bool expanded;
+  final bool reviewed;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final text = dark ? const Color(0xFFEAF4EE) : const Color(0xFF111111);
+    final border = dark ? const Color(0xFF2B3A31) : const Color(0xFFD9E1DC);
+    return Material(
+      key: ValueKey('plan-step-card-$index'),
+      color: _surface(context),
+      borderRadius: BorderRadius.circular(19),
+      clipBehavior: Clip.antiAlias,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(19),
+          border: Border.all(
+            color: selected ? _green.withValues(alpha: 0.7) : border,
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            InkWell(
+              key: ValueKey('plan-step-toggle-$index'),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(15, 14, 12, 14),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: reviewed
+                            ? _green
+                            : _green.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      alignment: Alignment.center,
+                      child: reviewed
+                          ? const Icon(Icons.check_rounded, color: Colors.white)
+                          : Icon(meta.icon, color: _green),
+                    ),
+                    const SizedBox(width: 13),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${meta.phases.map((phase) => phase.label.toUpperCase()).join(' + ')} · STEP ${index + 1}',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: _green,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.45,
+                                ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            meta.eyebrow,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: text.withValues(alpha: 0.66)),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            article.title,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: text,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            AnimatedCrossFade(
+              firstChild: const SizedBox(width: double.infinity),
+              secondChild: Padding(
+                padding: const EdgeInsets.fromLTRB(15, 0, 15, 15),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Divider(color: border, height: 1),
+                    const SizedBox(height: 14),
+                    Text(
+                      article.text,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: text,
+                        height: 1.52,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              crossFadeState: expanded
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 240),
+              sizeCurve: Curves.easeOutCubic,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PlanGuideOverlay extends StatefulWidget {
+  const _PlanGuideOverlay();
+
+  @override
+  State<_PlanGuideOverlay> createState() => _PlanGuideOverlayState();
+}
+
+class _PlanGuideOverlayState extends State<_PlanGuideOverlay> {
+  late final PageController _pageController;
+  final ScrollController _stepController = ScrollController();
+  int _page = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(viewportFraction: 0.92);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _stepController.dispose();
+    super.dispose();
+  }
+
+  void _goTo(int page) {
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _onPageChanged(int page) {
+    setState(() => _page = page);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_stepController.hasClients) return;
+      final target = (page * 113.0).clamp(
+        0.0,
+        _stepController.position.maxScrollExtent,
+      );
+      _stepController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final text = dark ? const Color(0xFFEAF4EE) : const Color(0xFF111111);
+    final secondary = dark ? const Color(0xFFA8B8AE) : const Color(0xFF6E6E73);
+    final border = dark ? const Color(0xFF2B3A31) : const Color(0xFFD9E1DC);
+    final lastPage = _page == planningHelp.length - 1;
+    return FractionallySizedBox(
+      key: const ValueKey('plan-guide-overlay'),
+      heightFactor: 0.92,
+      child: Material(
+        color: dark ? const Color(0xFF0C120F) : const Color(0xFFF2F2F7),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                color: secondary.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 10, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Plan & track guide',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                color: text,
+                                fontWeight: FontWeight.w900,
+                              ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Swipe sideways or tap a step',
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(color: secondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    key: const ValueKey('plan-guide-close'),
+                    tooltip: 'Close guide',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 2, 18, 10),
+              child: Row(
+                children: [
+                  Text(
+                    'Step ${_page + 1} of ${planningHelp.length}',
+                    key: const ValueKey('plan-guide-step-count'),
+                    style: const TextStyle(
+                      color: _green,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(
+                        minHeight: 5,
+                        value: (_page + 1) / planningHelp.length,
+                        color: _green,
+                        backgroundColor: border,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 98,
+              child: ListView.separated(
+                key: const ValueKey('plan-guide-step-strip'),
+                controller: _stepController,
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                itemCount: planningHelp.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 9),
+                itemBuilder: (context, index) => _PlanJourneyStop(
+                  key: ValueKey('plan-journey-stop-$index'),
+                  number: index + 1,
+                  icon: _planStepMeta[index].icon,
+                  title: planningHelp[index].title,
+                  reviewed: false,
+                  selected: _page == index,
+                  onTap: () => _goTo(index),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: PageView.builder(
+                key: const ValueKey('plan-guide-pages'),
+                controller: _pageController,
+                itemCount: planningHelp.length,
+                onPageChanged: _onPageChanged,
+                itemBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  child: SingleChildScrollView(
+                    child: _PlanGuideCard(
+                      index: index,
+                      article: planningHelp[index],
+                      meta: _planStepMeta[index],
+                      expanded: true,
+                      reviewed: false,
+                      selected: true,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
+              child: Row(
+                children: [
+                  IconButton.outlined(
+                    key: const ValueKey('plan-guide-previous'),
+                    tooltip: 'Previous step',
+                    onPressed: _page == 0 ? null : () => _goTo(_page - 1),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: List<Widget>.generate(
+                      planningHelp.length,
+                      (index) => AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        width: index == _page ? 16 : 5,
+                        height: 5,
+                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                        decoration: BoxDecoration(
+                          color: index == _page
+                              ? _green
+                              : secondary.withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton.filled(
+                    key: const ValueKey('plan-guide-next'),
+                    tooltip: lastPage ? 'Close guide' : 'Next step',
+                    onPressed: lastPage
+                        ? () => Navigator.of(context).pop()
+                        : () => _goTo(_page + 1),
+                    icon: Icon(
+                      lastPage
+                          ? Icons.check_rounded
+                          : Icons.arrow_forward_rounded,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 const _green = Color(0xFF34A853);

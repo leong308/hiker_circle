@@ -1,14 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/services/emergency_number_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
-import '../Model/first_aid_video.dart';
-import 'first_aid_tutorial_video.dart';
 
 class FirstAidGuidePage extends StatefulWidget {
   const FirstAidGuidePage({
@@ -27,27 +28,14 @@ class FirstAidGuidePage extends StatefulWidget {
 }
 
 class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
-  final TextEditingController _searchController = TextEditingController();
   late Future<List<FirstAidTopic>> _topicsFuture;
   late Future<EmergencyDialTarget> _emergencyTargetFuture;
-  String _query = '';
 
   @override
   void initState() {
     super.initState();
     _topicsFuture = _loadTopics();
     _emergencyTargetFuture = _resolveEmergencyTarget();
-    _searchController.addListener(() {
-      setState(() {
-        _query = _searchController.text.trim().toLowerCase();
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
   }
 
   Future<List<FirstAidTopic>> _loadTopics() async {
@@ -58,16 +46,34 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
       final data = jsonDecode(rawJson);
       final topics = data is Map<String, dynamic> ? data['topics'] : null;
       if (topics is List) {
+        unawaited(_removeRetiredTutorialCache());
         return topics
             .whereType<Map<String, dynamic>>()
             .map(FirstAidTopic.fromJson)
             .toList();
       }
     } catch (_) {
+      unawaited(_removeRetiredTutorialCache());
       return FirstAidTopic.defaults;
     }
 
+    unawaited(_removeRetiredTutorialCache());
     return FirstAidTopic.defaults;
+  }
+
+  Future<void> _removeRetiredTutorialCache() async {
+    try {
+      final supportDirectory = await getApplicationSupportDirectory();
+      final separator = Platform.pathSeparator;
+      final tutorialDirectory = Directory(
+        '${supportDirectory.path}${separator}first_aid${separator}videos',
+      );
+      if (await tutorialDirectory.exists()) {
+        await tutorialDirectory.delete(recursive: true);
+      }
+    } catch (_) {
+      // Retired media cleanup must never prevent the offline guide from opening.
+    }
   }
 
   Future<EmergencyDialTarget> _resolveEmergencyTarget() async {
@@ -136,17 +142,7 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
           future: _topicsFuture,
           builder: (context, snapshot) {
             final topics = snapshot.data ?? FirstAidTopic.defaults;
-            final categories = _FirstAidCategory.fromTopics(topics).where((
-              category,
-            ) {
-              if (_query.isEmpty) {
-                return true;
-              }
-              return category.title.toLowerCase().contains(_query) ||
-                  category.topics.any(
-                    (topic) => topic.title.toLowerCase().contains(_query),
-                  );
-            }).toList();
+            final categories = _FirstAidCategory.fromTopics(topics);
 
             return SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
@@ -157,14 +153,6 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _Header(onBack: () => Navigator.of(context).pop()),
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: _searchController,
-                        decoration: const InputDecoration(
-                          hintText: 'Search first-aid category...',
-                          prefixIcon: Icon(Icons.search_rounded),
-                        ),
-                      ),
                       const SizedBox(height: 16),
                       FutureBuilder<EmergencyDialTarget>(
                         future: _emergencyTargetFuture,
@@ -185,29 +173,24 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
                       const SizedBox(height: 22),
                       _SectionTitle(label: 'First choose a category'),
                       const SizedBox(height: 8),
-                      if (categories.isEmpty)
-                        const _EmptyState(
-                          message: 'No first-aid categories match this search.',
-                        )
-                      else
-                        for (final category in categories) ...[
-                          _CategoryCard(
-                            category: category,
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (detailContext) =>
-                                    _FirstAidCategoryPage(
-                                      category: category,
-                                      onOpenSos: () {
-                                        Navigator.of(detailContext).pop();
-                                        Navigator.of(context).pop('sos');
-                                      },
-                                    ),
+                      for (final category in categories) ...[
+                        _CategoryCard(
+                          key: ValueKey('first-aid-category-${category.title}'),
+                          category: category,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (detailContext) => _FirstAidCategoryPage(
+                                category: category,
+                                onOpenSos: () {
+                                  Navigator.of(detailContext).pop();
+                                  Navigator.of(context).pop('sos');
+                                },
                               ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                        ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                     ],
                   ),
                 ),
@@ -226,10 +209,9 @@ class FirstAidTopic {
     required this.title,
     required this.category,
     required this.steps,
+    this.scenarios = const [],
     this.guidanceSource = '',
     this.guidanceSourceUrl = '',
-    this.video,
-    this.videoUnavailableReason = '',
   });
 
   factory FirstAidTopic.fromJson(Map<String, dynamic> json) {
@@ -241,12 +223,12 @@ class FirstAidTopic {
       steps: rawSteps is List
           ? rawSteps.whereType<String>().toList()
           : const [],
+      scenarios: (json['scenarios'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(FirstAidScenario.fromJson)
+          .toList(growable: false),
       guidanceSource: _stringFrom(json['guidanceSource']),
       guidanceSourceUrl: _stringFrom(json['guidanceSourceUrl']),
-      videoUnavailableReason: _stringFrom(json['videoUnavailableReason']),
-      video: json['video'] is Map<String, dynamic>
-          ? FirstAidVideo.fromJson(json['video'] as Map<String, dynamic>)
-          : null,
     );
   }
 
@@ -254,10 +236,9 @@ class FirstAidTopic {
   final String title;
   final String category;
   final List<String> steps;
+  final List<FirstAidScenario> scenarios;
   final String guidanceSource;
   final String guidanceSourceUrl;
-  final FirstAidVideo? video;
-  final String videoUnavailableReason;
 
   static const List<FirstAidTopic> defaults = [
     FirstAidTopic(
@@ -288,6 +269,45 @@ class FirstAidTopic {
   static String _stringFrom(Object? value) {
     return value is String ? value : '';
   }
+}
+
+class FirstAidScenario {
+  const FirstAidScenario({
+    required this.id,
+    required this.title,
+    required this.summary,
+    required this.urgency,
+    required this.steps,
+    required this.avoid,
+    required this.referenceName,
+    required this.referenceUrl,
+  });
+
+  factory FirstAidScenario.fromJson(Map<String, dynamic> json) {
+    List<String> strings(Object? value) => value is List
+        ? value.whereType<String>().toList(growable: false)
+        : const <String>[];
+
+    return FirstAidScenario(
+      id: FirstAidTopic._stringFrom(json['id']),
+      title: FirstAidTopic._stringFrom(json['title']),
+      summary: FirstAidTopic._stringFrom(json['summary']),
+      urgency: FirstAidTopic._stringFrom(json['urgency']),
+      steps: strings(json['steps']),
+      avoid: strings(json['avoid']),
+      referenceName: FirstAidTopic._stringFrom(json['referenceName']),
+      referenceUrl: FirstAidTopic._stringFrom(json['referenceUrl']),
+    );
+  }
+
+  final String id;
+  final String title;
+  final String summary;
+  final String urgency;
+  final List<String> steps;
+  final List<String> avoid;
+  final String referenceName;
+  final String referenceUrl;
 }
 
 class _FirstAidCategory {
@@ -397,7 +417,7 @@ class _Header extends StatelessWidget {
                 ),
               ),
               Text(
-                'Categories, steps, and tutorial media',
+                'Scenario-based emergency guidance',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _GuideColors.secondaryTextFor(context),
                   fontWeight: FontWeight.w600,
@@ -424,6 +444,9 @@ class _FirstAidCategoryPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final allSteps = category.topics.expand((topic) => topic.steps).toList();
+    final scenarios = category.topics
+        .expand((topic) => topic.scenarios)
+        .toList(growable: false);
 
     return Scaffold(
       backgroundColor: _GuideColors.backgroundFor(context),
@@ -444,25 +467,33 @@ class _FirstAidCategoryPage extends StatelessWidget {
                   const SizedBox(height: 16),
                   _CategoryHero(category: category),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'KKM video reference'),
-                  const SizedBox(height: 8),
-                  _TutorialMediaStrip(category: category),
-                  const SizedBox(height: 22),
                   _SectionTitle(label: 'What to do'),
                   const SizedBox(height: 8),
-                  _InsetGroup(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
-                      child: Column(
-                        children: [
-                          for (var index = 0; index < allSteps.length; index++)
-                            _StepRow(index: index, step: allSteps[index]),
-                        ],
+                  if (scenarios.isNotEmpty)
+                    _ScenarioResponseGuide(
+                      scenarios: scenarios,
+                      category: category,
+                    )
+                  else ...[
+                    _InsetGroup(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+                        child: Column(
+                          children: [
+                            for (
+                              var index = 0;
+                              index < allSteps.length;
+                              index++
+                            )
+                              _StepRow(index: index, step: allSteps[index]),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                   const SizedBox(height: 10),
-                  _GuidanceSourceCard(topic: category.topics.first),
+                  if (scenarios.isEmpty)
+                    _GuidanceSourceCard(topic: category.topics.first),
                   const SizedBox(height: 22),
                   _SectionTitle(label: 'When to use SOS'),
                   const SizedBox(height: 8),
@@ -524,7 +555,7 @@ class _FirstAidCategoryPage extends StatelessWidget {
 }
 
 class _CategoryCard extends StatelessWidget {
-  const _CategoryCard({required this.category, required this.onTap});
+  const _CategoryCard({super.key, required this.category, required this.onTap});
 
   final _FirstAidCategory category;
   final VoidCallback onTap;
@@ -630,46 +661,631 @@ class _CategoryHero extends StatelessWidget {
   }
 }
 
-class _TutorialMediaStrip extends StatelessWidget {
-  const _TutorialMediaStrip({required this.category});
+class _ScenarioResponseGuide extends StatelessWidget {
+  const _ScenarioResponseGuide({
+    required this.scenarios,
+    required this.category,
+  });
 
+  final List<FirstAidScenario> scenarios;
   final _FirstAidCategory category;
+
+  Future<void> _openScenario(
+    BuildContext context,
+    FirstAidScenario scenario,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.62),
+      builder: (sheetContext) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.88,
+        minChildSize: 0.62,
+        maxChildSize: 0.96,
+        snap: true,
+        snapSizes: const [0.62, 0.88, 0.96],
+        builder: (context, scrollController) => _ScenarioActionSheet(
+          scenario: scenario,
+          categoryTitle: category.title,
+          scrollController: scrollController,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final topic = category.topics.first;
-    final video = topic.video;
-    if (video == null) {
-      return _EmptyState(
-        message: topic.videoUnavailableReason.isNotEmpty
-            ? topic.videoUnavailableReason
-            : 'No verified KKM video is available for this category. Use the written guidance below.',
-      );
-    }
+    if (scenarios.isEmpty) return const SizedBox.shrink();
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      key: const ValueKey('first-aid-scenario-list'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (video.scopeNote.isNotEmpty) ...[
-          Text(video.scopeNote, style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 12),
-        ],
-        FirstAidTutorialVideoCard(
-          topicId: topic.id,
-          video: video,
-          color: category.color,
-        ),
-        if (video.licenseUrl.isNotEmpty)
-          TextButton(
-            onPressed: () => launchUrl(
-              Uri.parse(video.licenseUrl),
-              mode: LaunchMode.externalApplication,
-            ),
-            child: Text('${video.language} · KKM reuse permission'),
+        _InsetGroup(
+          child: Column(
+            children: [
+              for (var index = 0; index < scenarios.length; index++) ...[
+                _ScenarioLaunchTile(
+                  scenario: scenarios[index],
+                  onTap: () => _openScenario(context, scenarios[index]),
+                ),
+                if (index != scenarios.length - 1)
+                  Divider(
+                    height: 1,
+                    indent: 64,
+                    color: _GuideColors.chevronFor(
+                      context,
+                    ).withValues(alpha: 0.3),
+                  ),
+              ],
+            ],
           ),
+        ),
       ],
     );
   }
 }
+
+class _ScenarioLaunchTile extends StatelessWidget {
+  const _ScenarioLaunchTile({required this.scenario, required this.onTap});
+
+  final FirstAidScenario scenario;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _scenarioColor(scenario.id);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: ValueKey('first-aid-scenario-${scenario.id}'),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  _scenarioIcon(scenario.id),
+                  color: accent,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      scenario.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: _GuideColors.textFor(context),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      scenario.urgency,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: accent,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Tap to view steps',
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.touch_app_rounded, color: accent, size: 20),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScenarioActionSheet extends StatefulWidget {
+  const _ScenarioActionSheet({
+    required this.scenario,
+    required this.categoryTitle,
+    required this.scrollController,
+  });
+
+  final FirstAidScenario scenario;
+  final String categoryTitle;
+  final ScrollController scrollController;
+
+  @override
+  State<_ScenarioActionSheet> createState() => _ScenarioActionSheetState();
+}
+
+class _ScenarioActionSheetState extends State<_ScenarioActionSheet> {
+  int _selectedAction = 0;
+
+  Future<void> _openReference() async {
+    final uri = Uri.tryParse(widget.scenario.referenceUrl);
+    if (uri == null) return;
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+      if (!opened) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (_) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  void _moveTo(int index) {
+    if (index < 0 || index >= widget.scenario.steps.length) return;
+    setState(() => _selectedAction = index);
+    if (widget.scrollController.hasClients) {
+      widget.scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scenario = widget.scenario;
+    final accent = _scenarioColor(scenario.id);
+    final isLast = _selectedAction == scenario.steps.length - 1;
+    return Container(
+      key: ValueKey('first-aid-scenario-sheet-${scenario.id}'),
+      decoration: BoxDecoration(
+        color: _GuideColors.backgroundFor(context),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 24,
+            offset: Offset(0, -6),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 10, 8),
+            child: Column(
+              children: [
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: _GuideColors.chevronFor(
+                      context,
+                    ).withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.13),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        _scenarioIcon(scenario.id),
+                        color: accent,
+                        size: 25,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.categoryTitle.toUpperCase(),
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: accent,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.1,
+                                ),
+                          ),
+                          Text(
+                            scenario.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(
+                                  color: _GuideColors.textFor(context),
+                                  fontWeight: FontWeight.w900,
+                                ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('first-aid-scenario-close'),
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Divider(
+            height: 1,
+            color: _GuideColors.chevronFor(context).withValues(alpha: 0.3),
+          ),
+          Expanded(
+            child: ListView(
+              controller: widget.scrollController,
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
+              children: [
+                Text(
+                  scenario.summary,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: _GuideColors.secondaryTextFor(context),
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.11),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.timer_outlined, color: accent, size: 20),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          scenario.urgency,
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: accent,
+                                fontWeight: FontWeight.w900,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Text(
+                      'ACTION ${_selectedAction + 1} OF ${scenario.steps.length}',
+                      key: const ValueKey('first-aid-action-count'),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: _GuideColors.secondaryTextFor(context),
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          value: (_selectedAction + 1) / scenario.steps.length,
+                          minHeight: 6,
+                          color: accent,
+                          backgroundColor: accent.withValues(alpha: 0.12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  child: Container(
+                    key: ValueKey('${scenario.id}-action-$_selectedAction'),
+                    constraints: const BoxConstraints(minHeight: 150),
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: _GuideColors.surfaceFor(context),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: accent.withValues(alpha: 0.26)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: accent,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '${_selectedAction + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 17,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 13),
+                        Text(
+                          scenario.steps[_selectedAction],
+                          style: Theme.of(context).textTheme.bodyLarge
+                              ?.copyWith(
+                                color: _GuideColors.textFor(context),
+                                height: 1.48,
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('first-aid-action-previous'),
+                        onPressed: _selectedAction == 0
+                            ? null
+                            : () => _moveTo(_selectedAction - 1),
+                        icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                        label: const Text('Previous'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.icon(
+                        key: const ValueKey('first-aid-action-next'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: accent,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: isLast
+                            ? () => Navigator.of(context).pop()
+                            : () => _moveTo(_selectedAction + 1),
+                        icon: Icon(
+                          isLast
+                              ? Icons.check_rounded
+                              : Icons.arrow_forward_rounded,
+                          size: 18,
+                        ),
+                        label: Text(isLast ? 'Done' : 'Next action'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (scenario.avoid.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  Text(
+                    'AVOID',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: _GuideColors.red,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: _GuideColors.red.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _GuideColors.red.withValues(alpha: 0.18),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        for (
+                          var index = 0;
+                          index < scenario.avoid.length;
+                          index++
+                        )
+                          Padding(
+                            padding: EdgeInsets.only(
+                              bottom: index == scenario.avoid.length - 1
+                                  ? 0
+                                  : 9,
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(
+                                  Icons.block_rounded,
+                                  color: _GuideColors.red,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 9),
+                                Expanded(
+                                  child: Text(
+                                    scenario.avoid[index],
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: _GuideColors.textFor(context),
+                                          height: 1.4,
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: ValueKey('first-aid-reference-${scenario.id}'),
+                    onTap: _openReference,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      padding: const EdgeInsets.all(13),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _GuideColors.chevronFor(
+                            context,
+                          ).withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.verified_rounded,
+                            color: _GuideColors.green,
+                            size: 21,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Medical reference',
+                                  style: Theme.of(context).textTheme.labelMedium
+                                      ?.copyWith(
+                                        color: _GuideColors.textFor(context),
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                ),
+                                Text(
+                                  scenario.referenceName,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: _GuideColors.secondaryTextFor(
+                                          context,
+                                        ),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.open_in_new_rounded,
+                            color: _GuideColors.chevronFor(context),
+                            size: 18,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _scenarioIcon(String id) => switch (id) {
+  'life_threatening_external' ||
+  'major_fall_multiple_injuries' ||
+  'heat_stroke' ||
+  'snake_bite_unconscious' => Icons.emergency_rounded,
+  'embedded_object' => Icons.push_pin_rounded,
+  'nosebleed' => Icons.face_rounded,
+  'minor_cut_graze' ||
+  'minor_fall_bruise' ||
+  'mild_ankle_sprain' => Icons.healing_rounded,
+  'suspected_internal' || 'heat_syncope' => Icons.monitor_heart_rounded,
+  'suspected_fracture' ||
+  'severe_ankle_injury' ||
+  'ankle_deformity_open_wound' => Icons.personal_injury_rounded,
+  'head_injury' || 'snake_bite_neuro_signs' => Icons.psychology_alt_rounded,
+  'suspected_spinal_injury' => Icons.accessibility_new_rounded,
+  'joint_dislocation' => Icons.sync_problem_rounded,
+  'ankle_circulation_problem' => Icons.device_thermostat_rounded,
+  'heat_cramps' => Icons.fitness_center_rounded,
+  'heat_exhaustion_symptoms' => Icons.thermostat_rounded,
+  'heat_rhabdomyolysis' => Icons.water_drop_rounded,
+  'snake_bite_no_symptoms' ||
+  'snake_bite_swelling' => Icons.crisis_alert_rounded,
+  'lost_recently_off_route' => Icons.route_rounded,
+  'lost_no_signal_low_battery' => Icons.signal_cellular_off_rounded,
+  'lost_after_dark' => Icons.dark_mode_rounded,
+  'lost_injured_immobile' => Icons.sos_rounded,
+  'group_member_missing' => Icons.person_search_rounded,
+  'weather_lightning' => Icons.thunderstorm_rounded,
+  'weather_flash_flood' => Icons.flood_rounded,
+  'weather_strong_wind' => Icons.air_rounded,
+  'weather_cold_wet' => Icons.ac_unit_rounded,
+  'weather_poor_visibility' => Icons.visibility_off_rounded,
+  'weather_landslide' => Icons.landslide_rounded,
+  _ => Icons.bloodtype_rounded,
+};
+
+Color _scenarioColor(String id) => switch (id) {
+  'life_threatening_external' ||
+  'suspected_internal' ||
+  'suspected_spinal_injury' ||
+  'major_fall_multiple_injuries' ||
+  'ankle_deformity_open_wound' ||
+  'ankle_circulation_problem' ||
+  'heat_stroke' ||
+  'heat_rhabdomyolysis' ||
+  'snake_bite_neuro_signs' ||
+  'snake_bite_unconscious' ||
+  'lost_injured_immobile' ||
+  'group_member_missing' ||
+  'weather_flash_flood' ||
+  'weather_landslide' => _GuideColors.red,
+  'embedded_object' ||
+  'suspected_fracture' ||
+  'joint_dislocation' ||
+  'severe_ankle_injury' ||
+  'heat_cramps' ||
+  'heat_exhaustion_symptoms' ||
+  'heat_syncope' ||
+  'snake_bite_no_symptoms' ||
+  'snake_bite_swelling' ||
+  'weather_lightning' ||
+  'weather_strong_wind' => _GuideColors.orange,
+  'nosebleed' ||
+  'head_injury' ||
+  'lost_no_signal_low_battery' ||
+  'lost_after_dark' ||
+  'weather_cold_wet' ||
+  'weather_poor_visibility' => const Color(0xFF5478C8),
+  _ => _GuideColors.green,
+};
 
 class _GuidanceSourceCard extends StatelessWidget {
   const _GuidanceSourceCard({required this.topic});
@@ -918,31 +1534,6 @@ class _SectionTitle extends StatelessWidget {
           fontSize: 12,
           fontWeight: FontWeight.w500,
           letterSpacing: 0,
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Center(
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: _GuideColors.secondaryTextFor(context),
-              letterSpacing: 0,
-            ),
-          ),
         ),
       ),
     );

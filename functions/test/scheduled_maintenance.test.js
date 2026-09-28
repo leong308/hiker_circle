@@ -92,3 +92,18 @@ test('scheduler exports stay consolidated and removed jobs do not return', () =>
     assert.doesNotMatch(source, new RegExp(`exports\\.${name}\\s*=`));
   }
 });
+
+test('active hike monitoring runs every two minutes', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'index.js'),
+    'utf8'
+  );
+  assert.match(
+    source,
+    /exports\.monitorActiveHikes\s*=\s*onSchedule\(\s*['"]every 2 minutes['"]/
+  );
+  assert.doesNotMatch(
+    source,
+    /exports\.monitorActiveHikes\s*=\s*onSchedule\(\s*['"]every 1 minutes['"]/
+  );
+});

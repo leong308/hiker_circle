@@ -13,15 +13,129 @@
         "Support a suspected fracture in the position found. Do not straighten it or push exposed bone back in.",
         "Keep the person warm and still, monitor breathing and alertness, and wait for professional rescue if walking could worsen the injury."
       ],
-      "video": null,
-      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
+      "scenarios": [
+        {
+          "id": "minor_fall_bruise",
+          "title": "Minor fall or bruise",
+          "summary": "The person is alert, can move normally, and has only mild pain, swelling, or bruising.",
+          "urgency": "Stop, check the whole body, then reassess",
+          "steps": [
+            "Make sure the landing area is safe, then ask the person to stay still briefly while you check what happened and where it hurts.",
+            "Check for head impact, neck or back pain, unusual drowsiness, severe pain, deformity, numbness, bleeding, or difficulty breathing before helping them move.",
+            "If none of those warning signs are present, help them sit up slowly. Stop if movement causes dizziness, sharp pain, weakness, or nausea.",
+            "For a bruise or mild swelling, wrap a cold pack in cloth and apply it for up to 20 minutes. Protect the area from further impact.",
+            "Do not resume the hike until walking, balance, and joint movement are comfortable. Arrange assessment if pain or swelling increases."
+          ],
+          "avoid": [
+            "Do not immediately pull the person upright after a fall.",
+            "Do not continue hiking through worsening pain, dizziness, or reduced movement."
+          ],
+          "referenceName": "American Red Cross — Muscle, Bone and Joint Injury",
+          "referenceUrl": "https://www.redcross.org/take-a-class/resources/learn-first-aid/muscle-bone-joint-injury"
+        },
+        {
+          "id": "suspected_fracture",
+          "title": "Suspected fracture",
+          "summary": "There is severe pain, swelling, deformity, grating, inability to use the limb, or bone is visible.",
+          "urgency": "Keep it still and arrange medical help",
+          "steps": [
+            "Use SOS or call 999 for an open fracture, a deformed limb, a cold or numb extremity, severe pain, or a suspected fracture of the neck, back, pelvis, hip, or thigh.",
+            "Ask the person to keep still. Support the injured part in the position found by holding above and below the injury.",
+            "Remove rings, watches, or tight items early if this can be done without moving the injury, because swelling may increase.",
+            "If there is a wound, cover it with a sterile dressing or clean non-fluffy cloth. Press around exposed bone, never directly on it.",
+            "Pad around the injury for support, keep the person warm, and repeatedly check colour, warmth, feeling, and circulation beyond the injury."
+          ],
+          "avoid": [
+            "Do not straighten the limb or push exposed bone back in.",
+            "Do not move the person until the injury is supported unless there is immediate danger."
+          ],
+          "referenceName": "St John Ambulance — Broken bones and fractures",
+          "referenceUrl": "https://www.sja.org.uk/first-aid-advice/fractures-and-broken-bones/"
+        },
+        {
+          "id": "head_injury",
+          "title": "Head injury or concussion",
+          "summary": "The head was struck or jolted, with possible headache, dizziness, confusion, vomiting, or altered behaviour.",
+          "urgency": "Monitor closely; red flags need 999",
+          "steps": [
+            "Tell the person to stop moving and check responsiveness, breathing, neck pain, memory, speech, balance, vision, and limb strength.",
+            "Use SOS or call 999 for loss of consciousness, increasing drowsiness, seizure, repeated vomiting, weakness, balance or speech problems, fluid or blood from the ears or nose, or a dangerous fall.",
+            "If a neck injury is possible, keep the head and neck still in the position found. Move them only for immediate safety, CPR, or airway care.",
+            "For a minor bump without emergency signs, rest and apply a cold pack wrapped in cloth for short periods. The person must not continue hiking alone.",
+            "Arrange medical advice and have a responsible adult observe the person for at least 24 hours because symptoms can appear later."
+          ],
+          "avoid": [
+            "Do not allow a return to hiking, driving, alcohol, or risky activity while symptoms remain.",
+            "Do not leave the person alone or dismiss new confusion, sleepiness, or vomiting."
+          ],
+          "referenceName": "NHS — Head injury and concussion",
+          "referenceUrl": "https://www.nhs.uk/conditions/head-injury-and-concussion/"
+        },
+        {
+          "id": "suspected_spinal_injury",
+          "title": "Neck, back or spinal injury",
+          "summary": "A hard fall, neck or back pain, tingling, numbness, weakness, or loss of movement suggests spinal injury.",
+          "urgency": "Use SOS or call 999 immediately",
+          "steps": [
+            "Tell the person not to move and use SOS or call 999. Share the fall mechanism, exact location, symptoms, and terrain access.",
+            "Keep the head, neck, and body in the position found. Ask them to answer verbally rather than nodding or turning.",
+            "Support the head on both sides with your hands or rolled clothing only if this can be done without changing its position.",
+            "Monitor breathing and responsiveness continuously. If they vomit or the airway becomes blocked, follow emergency-dispatcher instructions and use enough help to keep the spine aligned.",
+            "Protect them from cold, rain, and heat while waiting for rescuers, without placing bulky material beneath or moving the spine."
+          ],
+          "avoid": [
+            "Do not sit them up, remove a helmet, test movement, or let them walk.",
+            "Do not move them except for immediate danger, airway care, or CPR."
+          ],
+          "referenceName": "St John Ambulance — Spinal injury first aid",
+          "referenceUrl": "https://www.sja.org.uk/first-aid-advice/spinal-injury/"
+        },
+        {
+          "id": "joint_dislocation",
+          "title": "Dislocated joint",
+          "summary": "A joint looks out of position or deformed and is painful, swollen, or impossible to move normally.",
+          "urgency": "Support it as found and seek urgent care",
+          "steps": [
+            "Stop movement and check for severe bleeding, numbness, pale or cold skin, and whether the injury also involves the head, neck, spine, pelvis, or upper leg.",
+            "Arrange urgent medical assessment. Use SOS or call 999 if circulation is reduced, pain is severe, the person cannot be moved safely, or other major injuries are possible.",
+            "Support the joint in the most comfortable position found using hands, clothing, padding, or a sling.",
+            "Apply a cold pack wrapped in cloth near the joint for up to 20 minutes without pressing or forcing its position.",
+            "Recheck warmth, colour, feeling, and circulation beyond the joint while waiting for help."
+          ],
+          "avoid": [
+            "Do not attempt to push or pull the joint back into place.",
+            "Do not force movement or let the person use the injured joint."
+          ],
+          "referenceName": "American Red Cross — Muscle, Bone and Joint Injury",
+          "referenceUrl": "https://www.redcross.org/take-a-class/resources/learn-first-aid/muscle-bone-joint-injury"
+        },
+        {
+          "id": "major_fall_multiple_injuries",
+          "title": "Major fall or multiple injuries",
+          "summary": "A fall from height, tumbling down a slope, or a hard impact may cause several hidden injuries.",
+          "urgency": "Use SOS or call 999 immediately",
+          "steps": [
+            "Do not rush into unstable terrain. Make the area safe, prevent another fall, and use SOS or call 999 with the exact location and access conditions.",
+            "Ask the person not to move. Check responsiveness, breathing, and life-threatening bleeding without twisting the head, neck, or body.",
+            "Control life-threatening bleeding with firm direct pressure while keeping a suspected neck or spinal injury as still as possible.",
+            "Do not search for every injury by moving limbs. Note pain, deformity, swelling, numbness, breathing difficulty, and changes in alertness for rescuers.",
+            "Keep the person warm and continuously monitor breathing and responsiveness. Follow emergency-dispatcher instructions until rescue arrives."
+          ],
+          "avoid": [
+            "Do not help the person walk out after a high-energy fall.",
+            "Do not give food or drink when emergency treatment may be required."
+          ],
+          "referenceName": "American Red Cross — Muscle, Bone and Joint Injury",
+          "referenceUrl": "https://www.redcross.org/take-a-class/resources/learn-first-aid/muscle-bone-joint-injury"
+        }
+      ]
     },
     {
       "id": "bleeding",
       "title": "Bleeding",
       "category": "Bleeding",
-      "guidanceSource": "Uniformed Services University STOP THE BLEED",
-      "guidanceSourceUrl": "https://stopthebleed.usuhs.edu/",
+      "guidanceSource": "Malaysian Medical Gazette: First Aid & Basic Life Support",
+      "guidanceSourceUrl": "https://www.mmgazette.com/first-aid-basic-life-support-dr-khoo-yoong-khean/",
       "steps": [
         "Make sure the scene is safe, then use SOS or call emergency services for bleeding that is spurting, pooling, or will not stop.",
         "Expose the wound and apply firm, continuous direct pressure with clean gauze or cloth. Keep pressing without repeatedly lifting it to check.",
@@ -29,8 +143,122 @@
         "For life-threatening bleeding from an arm or leg that direct pressure cannot control, apply a commercial tourniquet above the wound, not over a joint, and note the time. Do not loosen it.",
         "Do not remove soaked dressings; add more on top. Keep the person warm and still, and monitor breathing until help arrives."
       ],
-      "video": null,
-      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
+      "scenarios": [
+        {
+          "id": "bleeding_wound",
+          "title": "Bleeding wound",
+          "summary": "A visible wound that is bleeding but is not spurting or rapidly pooling.",
+          "urgency": "Control the bleeding and reassess",
+          "steps": [
+            "Make sure the area is safe. Use gloves, a plastic bag, or another barrier if one is immediately available.",
+            "Check whether anything is embedded. If the wound is clear, press firmly and continuously with clean gauze or cloth.",
+            "Keep steady pressure without repeatedly lifting the dressing to check. If blood comes through, keep the first dressing in place and reinforce it while maintaining pressure.",
+            "When bleeding is controlled, secure the dressing and check the skin beyond it for normal colour, warmth, and feeling.",
+            "Keep the person warm and still. Use SOS or call 999 if bleeding becomes heavy, restarts, or cannot be controlled."
+          ],
+          "avoid": [
+            "Do not clean a heavily bleeding wound before the bleeding is controlled.",
+            "Do not remove an embedded object."
+          ],
+          "referenceName": "Malaysian Medical Gazette — First Aid & Basic Life Support",
+          "referenceUrl": "https://www.mmgazette.com/first-aid-basic-life-support-dr-khoo-yoong-khean/"
+        },
+        {
+          "id": "life_threatening_external",
+          "title": "Life-threatening bleeding",
+          "summary": "Blood is continuously flowing, spurting, rapidly pooling, or the person shows signs of shock.",
+          "urgency": "Use SOS or call 999 immediately",
+          "steps": [
+            "Call for emergency help immediately and expose the wound so the bleeding source is visible.",
+            "Place clean gauze, cloth, or a haemostatic dressing directly on the wound and apply firm, continuous pressure.",
+            "Keep pressing until bleeding stops, another person relieves you, or a tourniquet is ready for life-threatening bleeding from an arm or leg.",
+            "If trained and a commercial tourniquet is available, place it 5–7 cm above the wound, never over the wound or a joint. Tighten until bleeding stops, note the time, and do not loosen it.",
+            "Keep the person warm, still, and reassured. Continually watch breathing and responsiveness until help arrives."
+          ],
+          "avoid": [
+            "Do not delay direct pressure while searching for perfect equipment.",
+            "Do not loosen or remove a tourniquet after it has controlled life-threatening bleeding."
+          ],
+          "referenceName": "American Red Cross — Life-Threatening External Bleeding",
+          "referenceUrl": "https://www.redcross.org/take-a-class/resources/learn-first-aid/bleeding-life-threatening-external"
+        },
+        {
+          "id": "embedded_object",
+          "title": "Object embedded in wound",
+          "summary": "Glass, a branch, metal, or another object remains lodged in the wound.",
+          "urgency": "Stabilise it and get urgent medical help",
+          "steps": [
+            "Use SOS or call 999 for a large, deep, or dangerously positioned embedded object.",
+            "Do not remove the object. It may be limiting blood loss and removal can worsen the injury.",
+            "Apply firm pressure on either side of the object, never directly on top of it.",
+            "Build padding around the object with clean dressings, then bandage around the padding to hold it steady without pushing it deeper.",
+            "Keep the person still, monitor circulation beyond the injury, and watch for shock while waiting for help."
+          ],
+          "avoid": [
+            "Do not pull, twist, shorten, or press down on the object.",
+            "Do not give food or drink if emergency treatment may be required."
+          ],
+          "referenceName": "St John Ambulance — Severe bleeding first aid",
+          "referenceUrl": "https://www.sja.org.uk/first-aid-advice/severe-bleeding/"
+        },
+        {
+          "id": "nosebleed",
+          "title": "Nosebleed",
+          "summary": "Bleeding is coming from one or both nostrils without another major wound.",
+          "urgency": "Pinch continuously for 10–15 minutes",
+          "steps": [
+            "Sit upright and lean forward with the mouth open. Do not tilt the head back.",
+            "Pinch the soft part of the nose just above the nostrils and hold continuously for 10–15 minutes. Time it without releasing to check.",
+            "Breathe through the mouth and spit out blood rather than swallowing it.",
+            "Use 999 or urgent medical care if bleeding is excessive, lasts beyond 10–15 minutes, follows a blow to the head, causes weakness or dizziness, or makes breathing difficult.",
+            "After it stops, avoid blowing or picking the nose, hot drinks, alcohol, heavy lifting, and strenuous exercise for 24 hours."
+          ],
+          "avoid": [
+            "Do not lean back or lie flat.",
+            "Do not stuff tissue or cotton wool into the nose."
+          ],
+          "referenceName": "NHS — Nosebleed",
+          "referenceUrl": "https://www.nhs.uk/conditions/nosebleed/"
+        },
+        {
+          "id": "minor_cut_graze",
+          "title": "Minor cut or graze",
+          "summary": "A shallow wound with light bleeding that stops with brief pressure.",
+          "urgency": "Clean and protect once bleeding stops",
+          "steps": [
+            "Wash and dry your hands, and put on disposable gloves if available.",
+            "Apply gentle pressure with clean gauze or cloth until bleeding stops.",
+            "Rinse the wound with clean bottled or tap water. Clean the surrounding skin with soap and water, wiping away from the wound.",
+            "Pat dry and cover with a sterile dressing or plaster. Keep it clean and dry and change it when wet or dirty.",
+            "Seek medical advice for a dirty wound that will not clean, a bite, increasing redness or pain, pus, fever, loss of feeling, or a large or deep cut."
+          ],
+          "avoid": [
+            "Do not put unverified creams, powders, leaves, or soil into the wound.",
+            "Do not continue hiking if the wound keeps reopening or function is affected."
+          ],
+          "referenceName": "NHS — Cuts and grazes",
+          "referenceUrl": "https://www.nhs.uk/conditions/cuts-and-grazes/"
+        },
+        {
+          "id": "suspected_internal",
+          "title": "Suspected internal bleeding",
+          "summary": "After a fall or impact: pain, swelling, rigid abdomen, unusual bruising, blood in vomit or urine, or signs of shock.",
+          "urgency": "Use SOS or call 999 immediately",
+          "steps": [
+            "Treat suspected internal bleeding as an emergency and share the exact location and injury mechanism with responders.",
+            "Keep the person in the position found if a head, neck, or back injury is possible, unless movement is required for immediate safety or CPR.",
+            "If shock is suspected and no spinal injury is likely, let the person lie flat or use the position most comfortable for breathing.",
+            "Keep them warm without overheating, reassure them, and continuously monitor breathing and responsiveness.",
+            "Do not give anything to eat or drink. Be ready to begin CPR if they become unresponsive and are not breathing normally."
+          ],
+          "avoid": [
+            "Do not assume there is no serious bleeding because no blood is visible.",
+            "Do not let the person walk out or continue hiking."
+          ],
+          "referenceName": "American Red Cross — Life-Threatening Internal Bleeding",
+          "referenceUrl": "https://www.redcross.org/take-a-class/resources/learn-first-aid/bleeding-life-threatening-internal"
+        }
+      ]
     },
     {
       "id": "sprain",
@@ -45,8 +273,84 @@
         "Raise the ankle at or above heart level when practical and rest it for the next several days.",
         "Seek urgent medical assessment for severe pain, deformity, numbness, a cold foot, a popping sound with loss of function, or inability to walk."
       ],
-      "video": null,
-      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
+      "scenarios": [
+        {
+          "id": "mild_ankle_sprain",
+          "title": "Mild ankle sprain",
+          "summary": "The ankle is painful or mildly swollen, but has no deformity and limited gentle weight-bearing is possible.",
+          "urgency": "Protect it and stop hiking for now",
+          "steps": [
+            "Stop and sit somewhere safe. Remove the pack and protect the ankle from further twisting or impact.",
+            "Rest the ankle and avoid weight-bearing that causes pain. Use trekking poles or assistance only to reach immediate safety.",
+            "Wrap a cold pack in cloth and apply it for up to 20 minutes. Wait at least 20 minutes before repeating.",
+            "Apply an elastic support if available, starting at the foot and wrapping upward. It should feel supportive, never tight.",
+            "Elevate the ankle when practical and arrange a safe return. Resume normal movement gradually only when pain no longer stops it."
+          ],
+          "avoid": [
+            "Do not apply ice directly to skin.",
+            "Avoid heat, alcohol, massage, and strenuous activity during the first two to three days."
+          ],
+          "referenceName": "NHS — Sprains and strains",
+          "referenceUrl": "https://www.nhs.uk/conditions/sprains-and-strains/"
+        },
+        {
+          "id": "severe_ankle_injury",
+          "title": "Cannot bear weight or heard a pop",
+          "summary": "Severe pain, rapid swelling, a pop or snap, or inability to walk may indicate a major sprain or fracture.",
+          "urgency": "Treat as a possible fracture",
+          "steps": [
+            "Stop movement and do not ask the person to test the ankle again.",
+            "Use SOS or arrange urgent assessment if they cannot walk more than a few steps, pain is severe, or swelling is rapidly increasing.",
+            "Support the ankle in the position found with padding, clothing, or a splint only if trained. Do not straighten it.",
+            "Apply a wrapped cold pack for no more than 20 minutes if the wound is closed and this does not delay evacuation.",
+            "Keep the person warm and monitor pain, swelling, colour, warmth, feeling, and movement of the toes until help arrives."
+          ],
+          "avoid": [
+            "Do not force the person to walk out on the injured ankle.",
+            "Do not attempt to straighten a deformed ankle."
+          ],
+          "referenceName": "American Red Cross — Muscle, Bone and Joint Injury",
+          "referenceUrl": "https://www.redcross.org/take-a-class/resources/learn-first-aid/muscle-bone-joint-injury"
+        },
+        {
+          "id": "ankle_deformity_open_wound",
+          "title": "Deformity or open wound",
+          "summary": "The ankle looks bent or displaced, bone may be visible, or there is a wound over the suspected fracture.",
+          "urgency": "Use SOS or call 999 immediately",
+          "steps": [
+            "Call 999 or use SOS and keep the person still. Share the precise location and terrain access.",
+            "Control bleeding with a sterile dressing or clean cloth, pressing around—not on—exposed bone or the deformity.",
+            "Support the limb above and below the injury in the position found. Add padding without forcing alignment.",
+            "Remove rings, anklets, or tight footwear only if this can be done without moving the injury.",
+            "Monitor breathing and shock, keep the person warm, and recheck circulation beyond the injury while awaiting rescue."
+          ],
+          "avoid": [
+            "Do not push exposed bone back in or reposition the joint.",
+            "Do not give food or drink when emergency treatment may be needed."
+          ],
+          "referenceName": "St John Ambulance — Broken bones and fractures",
+          "referenceUrl": "https://www.sja.org.uk/first-aid-advice/fractures-and-broken-bones/"
+        },
+        {
+          "id": "ankle_circulation_problem",
+          "title": "Foot becomes numb, pale or cold",
+          "summary": "Reduced feeling, unusual colour, cold skin, or worsening pain can mean impaired circulation or excessive compression.",
+          "urgency": "Loosen compression and get urgent help",
+          "steps": [
+            "Stop and compare both feet for colour, warmth, feeling, and toe movement.",
+            "If an elastic wrap was applied, loosen or remove it while keeping the injured ankle supported.",
+            "Use SOS or call 999 if normal colour, warmth, and feeling do not return promptly or the injury is deformed.",
+            "Keep the ankle still in the position found and protect it from pressure, cold, and further movement.",
+            "Repeat circulation checks while waiting for professional help and report any worsening numbness or pain."
+          ],
+          "avoid": [
+            "Do not tighten a bandage to control swelling.",
+            "Do not continue hiking on a numb, pale, blue, or cold foot."
+          ],
+          "referenceName": "American Red Cross — Muscle, Bone and Joint Injury",
+          "referenceUrl": "https://www.redcross.org/take-a-class/resources/learn-first-aid/muscle-bone-joint-injury"
+        }
+      ]
     },
     {
       "id": "heat_exhaustion",
@@ -61,22 +365,103 @@
         "Do not leave the person alone. Arrange medical help if symptoms worsen, vomiting occurs, or recovery is not prompt.",
         "Confusion, fainting, seizures, or very hot skin may mean heat stroke: call emergency services immediately, cool rapidly, and do not give anything by mouth if alertness is impaired."
       ],
-      "video": {
-        "title": "Strok haba: tanda awal dan rawatan segera",
-        "storagePath": "first_aid/videos/kkm_heat_awareness_v2.mp4",
-        "durationLabel": "00:38",
-        "attribution": "Bahagian Pendidikan Kesihatan, Kementerian Kesihatan Malaysia (2023)",
-        "license": "KKM InfoSihat: unmodified republication permitted",
-        "licenseUrl": "https://infosihat.moh.gov.my/faq.html",
-        "sourceUrl": "https://infosihat.moh.gov.my/cuaca-panas.html",
-        "downloadUrl": "https://infosihat.moh.gov.my/images/media_sihat/video/mp4/TANDA2%20STROK%20HABA%202.0.mp4",
-        "version": 2,
-        "expectedBytes": 4348400,
-        "sha256": "b9ecb95a753160c80878fc3c937fa1fea3507e712e599d82ba3e84daf324903d",
-        "region": "MY",
-        "language": "Bahasa Melayu",
-        "scopeNote": "KKM awareness video: heat-stroke warning signs and seeking treatment. It is not a step-by-step cooling demonstration. Full original video, including credits."
-      }
+      "scenarios": [
+        {
+          "id": "heat_cramps",
+          "title": "Heat cramps",
+          "summary": "Painful muscle cramps or spasms occur during heavy sweating, usually in the legs, arms, or abdomen.",
+          "urgency": "Stop activity and replace fluids",
+          "steps": [
+            "Stop hiking and move to shade or the coolest available place.",
+            "Sit or lie down, loosen unnecessary clothing, and gently rest the cramped muscles.",
+            "If fully alert and not vomiting, drink water plus an electrolyte or carbohydrate drink in small amounts every 15 to 20 minutes.",
+            "Do not resume strenuous activity for several hours after the cramps settle; arrange a safe return instead.",
+            "Seek medical help if cramps last more than one hour, recur, or the person has heart problems or follows a low-sodium diet."
+          ],
+          "avoid": [
+            "Do not use salt tablets.",
+            "Do not treat cramps as harmless if weakness, dizziness, confusion, or vomiting develops."
+          ],
+          "referenceName": "CDC/NIOSH — Heat-related illnesses",
+          "referenceUrl": "https://www.cdc.gov/niosh/heat-stress/about/illnesses.html"
+        },
+        {
+          "id": "heat_exhaustion_symptoms",
+          "title": "Heat exhaustion",
+          "summary": "Heavy sweating, headache, nausea, dizziness, thirst, weakness, irritability, or reduced urine suggests heat exhaustion.",
+          "urgency": "Cool now and arrange medical assessment",
+          "steps": [
+            "Stop hiking and move the person into shade, air conditioning, or the coolest available place.",
+            "Remove the pack, shoes, socks, and unnecessary or tight clothing.",
+            "Cool the head, face, neck, and skin with cool water, wet cloths, cold compresses, and fanning.",
+            "If fully alert and not vomiting, give frequent small sips of cool water or an electrolyte drink.",
+            "Do not leave them alone. Seek medical assessment; call 999 if symptoms worsen, vomiting prevents drinking, confusion develops, or recovery is not prompt."
+          ],
+          "avoid": [
+            "Do not allow the person to continue hiking after temporary improvement.",
+            "Do not give fluids if alertness is impaired or swallowing is unsafe."
+          ],
+          "referenceName": "KKM InfoSihat — Cuaca Panas",
+          "referenceUrl": "https://infosihat.moh.gov.my/cuaca-panas.html"
+        },
+        {
+          "id": "heat_syncope",
+          "title": "Dizzy or fainted in heat",
+          "summary": "Brief fainting, dizziness, or light-headedness can follow heat exposure, dehydration, or standing suddenly.",
+          "urgency": "Lie down, cool, and reassess",
+          "steps": [
+            "Prevent a fall and help the person lie down in a cool, shaded place.",
+            "Check responsiveness and normal breathing. If unresponsive or not breathing normally, call 999 and begin appropriate emergency care.",
+            "Loosen clothing and cool them with water, wet cloths, and fanning.",
+            "Once fully alert and able to swallow, offer small sips of water, clear juice, or an electrolyte drink.",
+            "Arrange medical assessment if fainting was prolonged, happened during exertion, recurs, caused injury, or is accompanied by chest pain, confusion, or breathing difficulty."
+          ],
+          "avoid": [
+            "Do not make the person stand up quickly.",
+            "Do not assume every faint in hot weather is harmless."
+          ],
+          "referenceName": "CDC/NIOSH — Heat syncope",
+          "referenceUrl": "https://www.cdc.gov/niosh/heat-stress/about/illnesses.html"
+        },
+        {
+          "id": "heat_stroke",
+          "title": "Heat stroke warning signs",
+          "summary": "Confusion, slurred speech, seizure, collapse, very hot skin, or loss of consciousness indicates a life-threatening emergency.",
+          "urgency": "Call 999 and cool immediately",
+          "steps": [
+            "Use SOS or call 999 immediately. Heat stroke can cause death or permanent disability if treatment is delayed.",
+            "Move the person to shade or the coolest available place and remove outer clothing and equipment.",
+            "Cool rapidly: immerse in cool or ice water if safely possible, or soak the skin and clothing with cool water while fanning continuously.",
+            "Place cold wet cloths or wrapped ice packs at the head, neck, armpits, and groin while awaiting emergency help.",
+            "Continuously monitor breathing and responsiveness. Begin CPR if they become unresponsive and are not breathing normally."
+          ],
+          "avoid": [
+            "Do not delay cooling while waiting for transport.",
+            "Do not give anything by mouth when the person is confused, drowsy, vomiting, or unconscious."
+          ],
+          "referenceName": "CDC/NIOSH — Heat stroke first aid",
+          "referenceUrl": "https://www.cdc.gov/niosh/heat-stress/about/illnesses.html"
+        },
+        {
+          "id": "heat_rhabdomyolysis",
+          "title": "Severe muscle pain or dark urine",
+          "summary": "Unusual muscle pain, marked weakness, or tea- or cola-coloured urine after heat and exertion may indicate muscle breakdown.",
+          "urgency": "Stop activity and seek immediate care",
+          "steps": [
+            "Stop hiking immediately and move to a cool place.",
+            "Use SOS or arrange urgent medical transport; tell responders about the heat exposure, exertion, muscle symptoms, and urine colour.",
+            "Rest the affected muscles and remove unnecessary clothing or equipment.",
+            "If fully alert and not vomiting, give water in small amounts while awaiting professional instructions.",
+            "Monitor for confusion, collapse, abnormal heartbeat, seizure, or reduced urine, and call 999 if any occur."
+          ],
+          "avoid": [
+            "Do not massage painful muscles or continue exercising.",
+            "Do not wait for the urine colour to return to normal before seeking care."
+          ],
+          "referenceName": "CDC/NIOSH — Rhabdomyolysis associated with heat",
+          "referenceUrl": "https://www.cdc.gov/niosh/heat-stress/about/illnesses.html"
+        }
+      ]
     },
     {
       "id": "snake_bite",
@@ -91,8 +476,84 @@
         "Remove rings, watches, and tight clothing before swelling starts. Wash gently with soap and water if available and cover with a clean, dry dressing.",
         "Mark the leading edge of swelling and write the time. Do not use ice, a tourniquet, electric shock, alcohol, cutting, suction, or folk remedies."
       ],
-      "video": null,
-      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
+      "scenarios": [
+        {
+          "id": "snake_bite_no_symptoms",
+          "title": "Bite with no symptoms yet",
+          "summary": "Fang marks may be small and serious effects can be delayed, even when pain or swelling is absent.",
+          "urgency": "Treat every suspected bite as an emergency",
+          "steps": [
+            "Move everyone away from the snake without approaching, trapping, or killing it.",
+            "Use SOS or call 999 immediately and arrange transport to a hospital. Do not wait for symptoms to appear.",
+            "Keep the person calm, lying or seated, and completely still. Carry them rather than allowing them to walk when possible.",
+            "Remove rings, watches, footwear, and tight clothing from the bitten limb before swelling begins.",
+            "Note the bite time and location. Photograph the snake only from a safe distance if this causes no delay or additional risk."
+          ],
+          "avoid": [
+            "Do not cut, suck, burn, massage, or apply herbs to the bite.",
+            "Do not apply ice, electric shock, or a tight tourniquet."
+          ],
+          "referenceName": "Ministry of Health Malaysia — Guideline Management of Snakebite",
+          "referenceUrl": "https://www2.moh.gov.my/moh/resources/Penerbitan/Garis%20Panduan/Garis%20Panduan%20Umum%28KKM%29/Guideline%20Management%20Of%20Snakebite.pdf"
+        },
+        {
+          "id": "snake_bite_swelling",
+          "title": "Swelling or pain is spreading",
+          "summary": "Increasing swelling, tenderness, bruising, blistering, or bleeding can indicate progressing envenomation.",
+          "urgency": "Immobilise and transport urgently",
+          "steps": [
+            "Confirm that emergency help and hospital transport are already being arranged.",
+            "Keep the person and bitten limb as still as possible in a neutral, comfortable position.",
+            "Remove constricting items and loosely cover the bite with a clean, dry dressing.",
+            "Mark the leading edge of swelling on the skin and write the time beside it; repeat only if swelling advances.",
+            "Monitor breathing, alertness, bleeding, swelling, and circulation while keeping the person reassured and still."
+          ],
+          "avoid": [
+            "Do not tightly wrap the limb unless specifically directed by Malaysian medical professionals trained for the identified snake.",
+            "Do not give aspirin, ibuprofen, naproxen, alcohol, or folk remedies."
+          ],
+          "referenceName": "CDC/NIOSH — Venomous snakes",
+          "referenceUrl": "https://www.cdc.gov/niosh/outdoor-workers/about/venomous-snakes.html"
+        },
+        {
+          "id": "snake_bite_neuro_signs",
+          "title": "Drooping, weakness or breathing trouble",
+          "summary": "Drooping eyelids, blurred vision, difficulty speaking or swallowing, weakness, or breathing difficulty may indicate neurotoxic venom.",
+          "urgency": "Call 999; airway support may be needed",
+          "steps": [
+            "Call 999 immediately or update responders that breathing or neurological symptoms have developed.",
+            "Keep the person lying still and continuously observe breathing, speech, swallowing, and alertness.",
+            "Loosen clothing around the neck and chest while maintaining warmth and privacy.",
+            "If vomiting occurs and the airway cannot be protected, place the person on their side while minimising movement.",
+            "If they become unresponsive and are not breathing normally, begin CPR and follow emergency-dispatcher instructions."
+          ],
+          "avoid": [
+            "Do not give food, drink, or oral medicine when swallowing is difficult or alertness is impaired.",
+            "Do not transport them walking, riding alone, or driving themselves."
+          ],
+          "referenceName": "World Health Organization — Snakebite",
+          "referenceUrl": "https://www.who.int/health-topics/snakebite"
+        },
+        {
+          "id": "snake_bite_unconscious",
+          "title": "Collapsed or unconscious",
+          "summary": "Collapse, seizure, severe bleeding, shock, or unconsciousness after a bite is immediately life-threatening.",
+          "urgency": "Use SOS or call 999 immediately",
+          "steps": [
+            "Ensure 999 has been called and make the location accessible to rescuers if this can be done safely.",
+            "Check responsiveness and normal breathing while keeping the person as still as possible.",
+            "If breathing normally, protect the airway in a side position while minimising movement of the bitten limb.",
+            "If not breathing normally, begin CPR and use an AED if available, following its prompts.",
+            "Keep monitoring and be ready to report the bite time, symptoms, snake appearance, and any first aid already given."
+          ],
+          "avoid": [
+            "Do not delay resuscitation to photograph or identify the snake.",
+            "Tell responders immediately if a tight tourniquet was applied, and follow their instructions before altering it."
+          ],
+          "referenceName": "World Health Organization — Snakebite envenoming first aid",
+          "referenceUrl": "https://www.who.int/news-room/questions-and-answers/item/snakebite-envenoming"
+        }
+      ]
     },
     {
       "id": "lost_stranded",
@@ -107,8 +568,103 @@
         "Protect the group from rain, wind, cold, heat, and darkness. Use available shelter, clothing, food, and water carefully.",
         "Signal in groups of three with a whistle, light, or visible material. Once rescuers know your position, remain there unless they instruct otherwise."
       ],
-      "video": null,
-      "videoUnavailableReason": "No matching KKM video has been verified for this topic. The previous U.S. clip has been withdrawn. Use the written guidance below."
+      "scenarios": [
+        {
+          "id": "lost_recently_off_route",
+          "title": "Recently off route",
+          "summary": "You have just lost the marked trail but still know your recent route or last confirmed point.",
+          "urgency": "Stop before moving farther away",
+          "steps": [
+            "Stop, breathe, and gather the group. Do not let anyone search alone.",
+            "Mark or save the current location in HikerCircle and check the recorded route, offline map, compass, and visible landmarks.",
+            "Identify the last place where the route was certain. Retrace only if the path back is clearly safe and confidently recognised.",
+            "If the route cannot be confirmed quickly, stop self-rescue, contact help, and remain at a safe fixed location.",
+            "Tell a trusted contact or rescuers the current coordinates, last known trail point, group size, clothing colours, supplies, and conditions."
+          ],
+          "avoid": [
+            "Do not follow an unfamiliar river, drainage, shortcut, or steep slope.",
+            "Do not keep walking merely to feel that progress is being made."
+          ],
+          "referenceName": "U.S. National Park Service — Outdoor Emergency Plan",
+          "referenceUrl": "https://home.nps.gov/articles/gtgemergencyplan.htm"
+        },
+        {
+          "id": "lost_no_signal_low_battery",
+          "title": "No signal or low battery",
+          "summary": "Phone service is unreliable or the remaining battery must be preserved for location and rescue contact.",
+          "urgency": "Conserve power and establish a visible position",
+          "steps": [
+            "Stay at a safe, identifiable location and record the coordinates, time, and nearby landmarks while the phone is available.",
+            "Enable battery saver, dim the screen, close nonessential apps, and keep the phone warm and dry.",
+            "Try emergency contact briefly from the fixed location. Send one concise message containing coordinates, trail, condition, and group size when service appears.",
+            "Use a whistle, signal mirror, bright clothing, or flashlight patterns rather than continuous shouting or lighting.",
+            "Check for messages or signal at spaced intervals without wandering to exposed ridges or dangerous terrain solely for reception."
+          ],
+          "avoid": [
+            "Do not continuously redial, stream media, or leave navigation running at full brightness.",
+            "Do not climb unsafe terrain just to obtain phone signal."
+          ],
+          "referenceName": "U.S. National Park Service — Outdoor Emergency Plan",
+          "referenceUrl": "https://www.nps.gov/subjects/healthandsafety/upload/NPS-Outdoor-Emergency-Plan-508c.pdf"
+        },
+        {
+          "id": "lost_after_dark",
+          "title": "Darkness is approaching",
+          "summary": "Continuing without a clearly recognised trail and reliable lighting may increase fall and navigation risk.",
+          "urgency": "Stop early and prepare to remain safely",
+          "steps": [
+            "Stop before visibility becomes too poor and choose a stable place away from cliffs, rivers, dead branches, and flood channels.",
+            "Share or record the exact location and contact emergency services if the group cannot return safely.",
+            "Put on warm and rain-protective layers before becoming cold, and insulate the group from wet ground.",
+            "Inventory water, food, lighting, first aid, and battery. Ration lighting and phone use, not essential drinking water.",
+            "Make the location visible and use recognised distress signals while remaining together until daylight or rescue instructions."
+          ],
+          "avoid": [
+            "Do not continue through unfamiliar steep terrain just to avoid an overnight wait.",
+            "Do not build a fire where it could spread or violate local restrictions."
+          ],
+          "referenceName": "National Park Service — Hike Smart emergency guidance",
+          "referenceUrl": "https://www.nps.gov/havo/planyourvisit/hike-tips.htm"
+        },
+        {
+          "id": "lost_injured_immobile",
+          "title": "Injured and unable to continue",
+          "summary": "An injury, illness, exhaustion, or unsafe terrain prevents the person or group from hiking out.",
+          "urgency": "Use SOS and remain at the reported location",
+          "steps": [
+            "Stabilise immediate threats such as breathing problems, severe bleeding, dangerous heat, or cold.",
+            "Use SOS or call 999 and provide coordinates, injury details, number of people, clothing colours, equipment, and route access.",
+            "Do not move the injured person if a head, neck, spine, pelvis, hip, or serious leg injury is possible unless there is immediate danger.",
+            "Protect the person from rain, wind, ground cold, and direct sun while monitoring breathing and alertness.",
+            "Keep the location fixed after reporting it. If someone must seek help, send a capable pair with written location and patient details rather than leaving the person alone."
+          ],
+          "avoid": [
+            "Do not attempt a difficult carry without training or enough helpers.",
+            "Do not relocate after rescuers have your coordinates unless safety requires it or they instruct you."
+          ],
+          "referenceName": "National Park Service — Wilderness safety",
+          "referenceUrl": "https://home.nps.gov/yose/planyourvisit/wilderness_safety.htm"
+        },
+        {
+          "id": "group_member_missing",
+          "title": "A group member is missing",
+          "summary": "Someone has become separated and their exact location is unknown.",
+          "urgency": "Stop the group and report the last known point",
+          "steps": [
+            "Stop the activity, account for everyone, and gather the remaining group together.",
+            "Return together only to the missing person's last confirmed location if that route is known and safe.",
+            "Call 999 or use SOS with the last known coordinates, time last seen, intended route, description, clothing, equipment, medical needs, and phone number.",
+            "Ask the missing person by message or call to stay put and share their location if contact is established.",
+            "Wait at the agreed or last known location when safe, make the group visible, and follow search-and-rescue instructions."
+          ],
+          "avoid": [
+            "Do not split into multiple uncoordinated search parties or search off trail.",
+            "Do not erase footprints, move abandoned equipment, or change the agreed meeting point without informing rescuers."
+          ],
+          "referenceName": "U.S. National Park Service — Outdoor Emergency Plan",
+          "referenceUrl": "https://home.nps.gov/articles/gtgemergencyplan.htm"
+        }
+      ]
     },
     {
       "id": "severe_weather",
@@ -123,22 +679,122 @@
         "Keep the group together while moving to shelter, protect phones and emergency equipment from water, and share your location and revised plan.",
         "Wait at least 30 minutes after the last thunder before leaving lightning shelter. Use SOS for injury, entrapment, hypothermia, or inability to reach safety."
       ],
-      "video": {
-        "title": "Panduan Semasa Banjir",
-        "storagePath": "first_aid/videos/kkm_flood_health_v2.mp4",
-        "durationLabel": "00:25",
-        "attribution": "Kementerian Kesihatan Malaysia (2023), via InfoSihat",
-        "license": "KKM InfoSihat: unmodified republication permitted",
-        "licenseUrl": "https://infosihat.moh.gov.my/faq.html",
-        "sourceUrl": "https://infosihat.moh.gov.my/penerbitan-multimedia/video/item/panduan-semasa-banjir.html",
-        "downloadUrl": "https://infosihat.moh.gov.my/penerbitan-multimedia/video.raw?task=callelement&item_id=8208&element=94b7b825-f583-4f52-a725-5b59f293b228&method=download&args[0]=0",
-        "version": 2,
-        "expectedBytes": 12921264,
-        "sha256": "472b6f90c83954e4ba4b1947bc03758b1c46efe63461f8efcfa90be7dcafa5c2",
-        "region": "MY",
-        "language": "Bahasa Melayu",
-        "scopeNote": "KKM flood-health advice: safe food and drinking water, hygiene, and when to seek treatment. This is not a lightning or flood-rescue tutorial. Full original video, including credits."
-      }
+      "scenarios": [
+        {
+          "id": "weather_lightning",
+          "title": "Thunder or lightning",
+          "summary": "Every Malaysian thunderstorm can produce dangerous lightning, including before heavy rain reaches the trail.",
+          "urgency": "Leave exposed terrain immediately",
+          "steps": [
+            "Stop the hike when thunder is heard or lightning is seen; do not wait for rain to begin.",
+            "Move away from summits, ridges, open ground, water, metal fences, poles, and isolated trees.",
+            "Enter a substantial enclosed building or hard-topped vehicle if reachable without crossing exposed terrain.",
+            "If no safe structure exists, move to a lower non-flooding area, spread the group apart, and minimise contact with the ground.",
+            "Wait at least 30 minutes after the last thunder before resuming. Call 999 and begin CPR or use an AED if someone is struck and is not breathing normally."
+          ],
+          "avoid": [
+            "Do not shelter under an isolated tree, open hut, tent, or small rain shelter.",
+            "Do not remain in water or on exposed high ground."
+          ],
+          "referenceName": "METMalaysia — Thunderstorm and lightning safety",
+          "referenceUrl": "https://www.met.gov.my/en/pendidikan/fenomena-cuaca/"
+        },
+        {
+          "id": "weather_flash_flood",
+          "title": "Rising river or flash flood",
+          "summary": "Rapidly rising, muddy, or fast-moving water can arrive from heavy rain upstream even when local rain is light.",
+          "urgency": "Move to higher ground immediately",
+          "steps": [
+            "Turn away from the water and move to stable higher ground without crossing the flow.",
+            "Leave riverbanks, waterfalls, drainage channels, narrow valleys, and low bridges immediately.",
+            "Keep the group together and identify a route that continues upward, not along the river.",
+            "Use SOS or call 999 if trapped, cut off, injured, or unable to reach safe ground; share the exact location and water conditions.",
+            "Remain on high ground and follow official instructions until water clearly recedes and the route is confirmed safe."
+          ],
+          "avoid": [
+            "Do not wade, swim, jump, or drive through moving floodwater.",
+            "Do not use a submerged, damaged, or unstable bridge."
+          ],
+          "referenceName": "METMalaysia — Monsoon and flash-flood preparedness",
+          "referenceUrl": "https://www.met.gov.my/en/pendidikan/fenomena-cuaca/"
+        },
+        {
+          "id": "weather_strong_wind",
+          "title": "Strong wind or falling branches",
+          "summary": "Squalls and thunderstorms can bring sudden strong winds, falling limbs, and unstable trees.",
+          "urgency": "Leave trees, ridges, and exposed edges",
+          "steps": [
+            "Stop and move away from ridgelines, cliff edges, isolated trees, dead branches, and visibly leaning or damaged trees.",
+            "Seek a substantial building or hard-topped vehicle when safely reachable.",
+            "If no building is available, choose a low stable area away from flood channels and tree-fall hazards.",
+            "Secure loose equipment, keep the group low and together, and protect the head and eyes from debris.",
+            "Use SOS if anyone is struck, trapped, separated, or unable to move to safer ground."
+          ],
+          "avoid": [
+            "Do not shelter in a tent, under a lone tree, or beside a damaged tree.",
+            "Do not continue along exposed ridges or suspension bridges during strong gusts."
+          ],
+          "referenceName": "METMalaysia — Weather phenomena and thunderstorm hazards",
+          "referenceUrl": "https://www.met.gov.my/en/pendidikan/fenomena-cuaca/"
+        },
+        {
+          "id": "weather_cold_wet",
+          "title": "Cold, soaked or shivering",
+          "summary": "Heavy rain, wind, exhaustion, and wet clothing can cool the body dangerously even in Malaysia.",
+          "urgency": "Stop heat loss and seek shelter",
+          "steps": [
+            "Move out of wind and rain into the driest safe shelter available.",
+            "Remove wet outer layers when dry replacements are available, then add insulation around the head, neck, chest, and body.",
+            "Insulate the person from wet ground and share shelter or body warmth without rubbing cold skin.",
+            "If fully alert and able to swallow, offer a warm sweet non-alcoholic drink and energy food.",
+            "Use SOS or call 999 for confusion, clumsiness, slurred speech, worsening drowsiness, stopped shivering, or inability to rewarm."
+          ],
+          "avoid": [
+            "Do not use very hot water, direct high heat, alcohol, or vigorous massage.",
+            "Do not make a confused or severely cold person walk."
+          ],
+          "referenceName": "National Park Service — Hiking weather and hypothermia safety",
+          "referenceUrl": "https://www.nps.gov/havo/planyourvisit/hike-tips.htm"
+        },
+        {
+          "id": "weather_poor_visibility",
+          "title": "Fog or very poor visibility",
+          "summary": "Fog and intense rain can hide trail markers, junctions, cliffs, and other group members.",
+          "urgency": "Slow down; stop if the route is uncertain",
+          "steps": [
+            "Bring the group together immediately and confirm every member is present.",
+            "Stop at a safe point away from edges, waterways, and falling-branch hazards if the next trail marker cannot be seen.",
+            "Save the current location and compare the recorded route, offline map, compass, and last confirmed trail point.",
+            "Retrace only when the route is confidently known and safe; otherwise remain visible and contact help.",
+            "Use lights, bright clothing, voices, or whistles to maintain group contact without splitting up."
+          ],
+          "avoid": [
+            "Do not shortcut switchbacks or follow an unverified path in poor visibility.",
+            "Do not allow faster members to move ahead alone."
+          ],
+          "referenceName": "National Park Service — Outdoor Emergency Plan",
+          "referenceUrl": "https://home.nps.gov/articles/gtgemergencyplan.htm"
+        },
+        {
+          "id": "weather_landslide",
+          "title": "Landslide or unstable ground",
+          "summary": "Heavy rain can loosen slopes; cracking sounds, falling rocks, moving soil, or sudden muddy flow require immediate retreat.",
+          "urgency": "Leave the slope and drainage path",
+          "steps": [
+            "Turn around immediately when the trail surface moves, rocks begin falling, or a slope shows fresh cracks or flowing debris.",
+            "Move away from the slide path, steep cut slopes, gullies, stream channels, and the base of unstable cliffs.",
+            "Choose stable higher ground using an established route without crossing active debris or fast water.",
+            "Warn nearby group members without entering the danger area and account for everyone from safety.",
+            "Use SOS or call 999 for entrapment, injury, blocked retreat, or a missing member, and report the exact affected location."
+          ],
+          "avoid": [
+            "Do not climb over fresh slide debris or stop beneath a damaged slope.",
+            "Do not return until authorities or trail managers confirm the route is safe."
+          ],
+          "referenceName": "METMalaysia — Heavy rain, flash floods and landslide hazards",
+          "referenceUrl": "https://www.met.gov.my/en/pendidikan/fenomena-cuaca/"
+        }
+      ]
     }
   ],
   "region": "MY"

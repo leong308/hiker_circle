@@ -1,16 +1,16 @@
 # HikerCircle Firebase Schema and Cleanup Audit
 
-Audit snapshot: **2026-09-13T07:14:08.045Z**  
-Firebase project: **hiker-circle**  
-Scope: Authentication, Cloud Firestore, Cloud Storage, Cloud Functions, Hosting, rules, indexes, and data lifecycle.
+- Audit snapshot: **2026-09-27T17:55:27.789Z**
+- Firebase project: **hiker-circle**
+- Scope: Authentication, Cloud Firestore, Cloud Storage, Cloud Functions, Hosting, rules, indexes, and data lifecycle.
 
 > This document records schema names and types only. User values, tokens, verification codes, messages, coordinates, and secrets are deliberately excluded. A field observed in fewer than all documents is optional, legacy, workflow-specific, or populated later by the backend.
 
 ## Audit result
 
 - Cloud Functions: **80 ACTIVE deployments**, exactly matching the 80 exports in `functions/index.js`; no stale function was deleted.
-- Firestore after cleanup: **28 non-empty root collections** plus documented subcollections.
-- Cloud Storage after cleanup: **59 objects / 221.31 MiB**.
+- Firestore after cleanup: **42 non-empty root collections** plus documented subcollections.
+- Cloud Storage after cleanup: **57 objects / 204.84 MiB**.
 - Firebase Authentication: **2 accounts** were counted through the Admin API; account values were not exported.
 - Firebase Hosting: one live default site, `hiker-circle` (`https://hiker-circle.web.app`).
 - Hosting versions: 2 superseded versions older than 30 days were deleted; 52 finalized versions inside the 30-day rollback window were retained.
@@ -54,38 +54,52 @@ Encoded REST document size dropped from approximately **42 KB to 9 KB** for one 
 
 ### Explicitly retained
 
-Hike sessions/history, raw route points, route captures, check-ins, SOS events and dispatch evidence, chats/messages, community posts, user/achievement records, trail ratings, current trail covers, the two KKM videos, feedback screenshots, the current profile photo, and the published Android beta APK were retained. These are active, user-facing, safety/audit-relevant, or still referenced.
+Hike sessions/history, raw route points, route captures, check-ins, SOS events and dispatch evidence, chats/messages, community posts, user/achievement records, trail ratings, current trail covers, feedback screenshots, the current profile photo, and the published Android beta APK were retained. These are active, user-facing, safety/audit-relevant, or still referenced.
 
 ## Firestore collection registry
 
 | Collection | Documents | Purpose | Access | Lifecycle |
 |---|---:|---|---|---|
-| `achievementEventReceipts` | 18 | Idempotency receipts for achievement event processing. | Backend only | Keep while source event replay remains possible. |
+| `achievementEventReceipts` | 56 | Idempotency receipts for achievement event processing. | Backend only | Keep while source event replay remains possible. |
 | `achievements` | 24 | Server-managed achievement catalogue and reward definitions. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `activeHikeStartRateLimits` | 1 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `appFeedback` | 2 | In-app feedback reports and optional screenshot references. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
-| `checkIns` | 26 | Safety check-ins recorded during a hike session. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `assistantUsage` | 2 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `checkIns` | 28 | Safety check-ins recorded during a hike session. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `communityCounterEventReceipts` | 1 | Idempotency receipts for post comment counters. | Backend only | Keep while source event replay remains possible. |
-| `communityPosts` | 2 | Community hike posts, route previews, images, and engagement counters. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `communityPosts` | 3 | Community hike posts, route previews, images, and engagement counters. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `downloadedMaps` | 2 | Per-user metadata for offline trail-map downloads. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `fcmOutbox` | 14 | Short-lived queue and delivery result for team-hike push notifications. | Backend only | Terminal entries: 30-day retention; pending entries retained. |
+| `greenApiLoginChallenges` | 2 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `groupChats` | 48 | Direct and hike-derived chat metadata and lifecycle state. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `hazardReports` | 2 | User-submitted trail hazard reports and moderation status. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
-| `hikeRouteCaptures` | 48 | Detailed recorded route geometry and completion summary. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
-| `hikeSessionTerminalStates` | 8 | Idempotent terminal-state markers for completion processing. | Backend only | Retained while the feature/user history needs it. |
-| `hikeSessions` | 93 | Active and historical solo/group hike sessions. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
-| `liveLocationContactDispatches` | 1 | At-most-once delivery ledger for live-location messages. | Backend only | Operational delivery evidence; retain with SOS/live-share audit. |
-| `localLocationPoints` | 548 | Synced raw route/location observations used by hike history. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `hikeCompletionRateLimits` | 1 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `hikePrecautionDeliveries` | 4 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `hikeRouteCaptures` | 51 | Detailed recorded route geometry and completion summary. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `hikeSessionTerminalStates` | 11 | Idempotent terminal-state markers for completion processing. | Backend only | Retained while the feature/user history needs it. |
+| `hikeSessions` | 96 | Active and historical solo/group hike sessions. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `liveLocationContactDispatches` | 4 | At-most-once delivery ledger for live-location messages. | Backend only | Operational delivery evidence; retain with SOS/live-share audit. |
+| `live_location_shares` | 1 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `localLocationPoints` | 559 | Synced raw route/location observations used by hike history. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `maintenanceState` | 1 | Cursor and progress state for backend maintenance jobs. | Backend only | Singleton operational state; never purge while jobs use it. |
-| `nearbySosIncidents` | 2 | Deduplicated nearby SOS incidents reported by button receivers. | Backend only | Retained while the feature/user history needs it. |
-| `networkObservations` | 55 | Route network-availability observations. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
-| `sosAlerts` | 140 | Canonical SOS events and their contact delivery summary. | Rules-controlled app/backend | Safety history; retained. |
-| `sosWhatsAppDispatches` | 60 | At-most-once WhatsApp delivery ledger for SOS messages. | Backend only | SOS delivery evidence; retained. |
+| `mfaAuthenticationChallenges` | 1 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `mfaLoginSessions` | 1 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `nearbySosIncidents` | 6 | Deduplicated nearby SOS incidents reported by button receivers. | Backend only | Retained while the feature/user history needs it. |
+| `networkObservations` | 59 | Route network-availability observations. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `passwordResetChallenges` | 1 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `passwordResetPasskeyChallenges` | 6 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `passwordResetSessions` | 5 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `sosAlerts` | 141 | Canonical SOS events and their contact delivery summary. | Rules-controlled app/backend | Safety history; retained. |
+| `sosMessageRateLimits` | 1 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `sosWhatsAppDispatches` | 61 | At-most-once WhatsApp delivery ledger for SOS messages. | Backend only | SOS delivery evidence; retained. |
 | `teamHikeSessions` | 29 | Team readiness, participant state, shared plan, and active-session links. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `teams` | 1 | Saved team definition and member list. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
-| `trailWeatherCache` | 34 | Backend weather cache and refresh lease state. | Backend only | Replace in place; safe to rebuild from provider. |
+| `trailWeatherCache` | 35 | Backend weather cache and refresh lease state. | Backend only | Replace in place; safe to rebuild from provider. |
 | `trails` | 35 | Trail catalogue, Mapbox route, elevation range, media, ratings, and hazards. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `upcomingHikeJoinRequests` | 2 | Join-request workflow and host notification outcome. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
-| `userAchievements` | 34 | Per-user progress and award state for each achievement. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `upcomingHikeRateLimits` | 2 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `upcomingHikes` | 3 | Application data collection. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
+| `userAchievements` | 38 | Per-user progress and award state for each achievement. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `users` | 2 | Private account profile, safety settings, MFA summary, devices, and aggregates. | Rules-controlled app/backend | Retained while the feature/user history needs it. |
 | `whatsAppMessageLogs` | 49 | User-facing WhatsApp send history for SOS messaging. | Rules-controlled app/backend | User-visible message history; retained. |
 
@@ -117,16 +131,16 @@ These schemas exist in application/backend code or rules but have no live root d
 
 ### `achievementEventReceipts/{documentId}`
 
-Idempotency receipts for achievement event processing. Observed documents: **18**.
+Idempotency receipts for achievement event processing. Observed documents: **56**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `achievementId` | string | 18/18 |
-| `applied` | boolean | 18/18 |
-| `createdAt` | timestamp | 18/18 |
-| `createdAtLocal` | string | 18/18 |
-| `eventKey` | string | 18/18 |
-| `userId` | string | 18/18 |
+| `achievementId` | string | 56/56 |
+| `applied` | boolean | 56/56 |
+| `createdAt` | timestamp | 56/56 |
+| `createdAtLocal` | string | 56/56 |
+| `eventKey` | string | 56/56 |
+| `userId` | string | 56/56 |
 
 ### `achievements/{documentId}`
 
@@ -152,6 +166,16 @@ Server-managed achievement catalogue and reward definitions. Observed documents:
 | `updatedAt` | timestamp | 24/24 |
 | `updatedAtLocal` | string | 20/24 |
 
+### `activeHikeStartRateLimits/{documentId}`
+
+Application data collection. Observed documents: **1**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `actionCount` | integer | 1/1 |
+| `updatedAt` | timestamp | 1/1 |
+| `windowStartedAtMillis` | integer | 1/1 |
+
 ### `appFeedback/{documentId}`
 
 In-app feedback reports and optional screenshot references. Observed documents: **2**.
@@ -166,22 +190,34 @@ In-app feedback reports and optional screenshot references. Observed documents: 
 | `status` | string | 2/2 |
 | `uid` | string | 2/2 |
 
-### `checkIns/{documentId}`
+### `assistantUsage/{documentId}`
 
-Safety check-ins recorded during a hike session. Observed documents: **26**.
+Application data collection. Observed documents: **2**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `batteryLevel` | integer | 26/26 |
-| `checkInId` | string | 5/26 |
-| `createdAt` | timestamp | 26/26 |
-| `createdAtLocal` | string | 26/26 |
-| `location` | map | 25/26 |
-| `sessionId` | string | 26/26 |
-| `status` | string | 26/26 |
-| `trailId` | string | 26/26 |
-| `userId` | string | 26/26 |
-| `userPhoneNumber` | string | 26/26 |
+| `dayBucket` | string | 2/2 |
+| `dayCount` | integer | 2/2 |
+| `minuteBucket` | integer | 2/2 |
+| `minuteCount` | integer | 2/2 |
+| `updatedAt` | string | 2/2 |
+
+### `checkIns/{documentId}`
+
+Safety check-ins recorded during a hike session. Observed documents: **28**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `batteryLevel` | integer | 28/28 |
+| `checkInId` | string | 7/28 |
+| `createdAt` | timestamp | 28/28 |
+| `createdAtLocal` | string | 28/28 |
+| `location` | map | 27/28 |
+| `sessionId` | string | 28/28 |
+| `status` | string | 28/28 |
+| `trailId` | string | 28/28 |
+| `userId` | string | 28/28 |
+| `userPhoneNumber` | string | 28/28 |
 
 ### `communityCounterEventReceipts/{documentId}`
 
@@ -198,43 +234,44 @@ Idempotency receipts for post comment counters. Observed documents: **1**.
 
 ### `communityPosts/{documentId}`
 
-Community hike posts, route previews, images, and engagement counters. Observed documents: **2**.
+Community hike posts, route previews, images, and engagement counters. Observed documents: **3**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `authorAchievementPoints` | integer | 2/2 |
-| `authorHandle` | string | 2/2 |
-| `authorId` | string | 2/2 |
-| `authorLevel` | integer | 2/2 |
-| `authorLevelBadge` | string | 2/2 |
-| `authorLevelName` | string | 2/2 |
-| `authorName` | string | 2/2 |
-| `authorPhoneNumber` | string | 2/2 |
-| `caption` | string | 2/2 |
-| `checkIns` | integer | 1/2 |
-| `commentCount` | integer | 2/2 |
-| `createdAt` | timestamp | 2/2 |
-| `createdAtLocal` | string | 2/2 |
-| `distanceKm` | double | 1/2 |
-| `durationMinutes` | integer | 1/2 |
-| `highestAltitudeMeters` | null | 1/2 |
-| `imageUrls` | array | 2/2 |
-| `likeCount` | integer | 2/2 |
-| `manualPins` | integer | 1/2 |
-| `postId` | string | 2/2 |
-| `postType` | string | 2/2 |
-| `routeBounds` | map | 1/2 |
-| `routeCaptureId` | string | 1/2 |
-| `routeEnd` | map | 1/2 |
-| `routePointCount` | integer | 1/2 |
-| `routePreviewPoints` | array | 1/2 |
-| `routeStart` | map | 1/2 |
-| `sessionId` | string | 1/2 |
-| `summaryReport` | map | 1/2 |
-| `thumbnailType` | string | 1/2 |
-| `trailId` | string | 1/2 |
-| `trailName` | string | 1/2 |
-| `visibility` | string | 2/2 |
+| `authorAchievementPoints` | integer | 3/3 |
+| `authorHandle` | string | 3/3 |
+| `authorId` | string | 3/3 |
+| `authorLevel` | integer | 3/3 |
+| `authorLevelBadge` | string | 3/3 |
+| `authorLevelName` | string | 3/3 |
+| `authorName` | string | 3/3 |
+| `authorPhoneNumber` | string | 3/3 |
+| `authorPhotoURL` | string | 1/3 |
+| `caption` | string | 3/3 |
+| `checkIns` | integer | 2/3 |
+| `commentCount` | integer | 3/3 |
+| `createdAt` | timestamp | 3/3 |
+| `createdAtLocal` | string | 3/3 |
+| `distanceKm` | double | 2/3 |
+| `durationMinutes` | integer | 2/3 |
+| `highestAltitudeMeters` | null | 2/3 |
+| `imageUrls` | array | 3/3 |
+| `likeCount` | integer | 3/3 |
+| `manualPins` | integer | 2/3 |
+| `postId` | string | 3/3 |
+| `postType` | string | 3/3 |
+| `routeBounds` | map | 2/3 |
+| `routeCaptureId` | string | 2/3 |
+| `routeEnd` | map | 2/3 |
+| `routePointCount` | integer | 2/3 |
+| `routePreviewPoints` | array | 2/3 |
+| `routeStart` | map | 2/3 |
+| `sessionId` | string | 2/3 |
+| `summaryReport` | map | 2/3 |
+| `thumbnailType` | string | 2/3 |
+| `trailId` | string | 2/3 |
+| `trailName` | string | 2/3 |
+| `visibility` | string | 3/3 |
 
 ### `downloadedMaps/{documentId}`
 
@@ -274,6 +311,25 @@ Short-lived queue and delivery result for team-hike push notifications. Observed
 | `type` | string | 14/14 |
 | `updatedAt` | timestamp | 14/14 |
 | `updatedAtLocal` | string | 14/14 |
+
+### `greenApiLoginChallenges/{documentId}`
+
+Application data collection. Observed documents: **2**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `attemptsRemaining` | integer | 2/2 |
+| `consumed` | boolean | 2/2 |
+| `createdAt` | timestamp | 2/2 |
+| `deliveredAt` | timestamp | 2/2 |
+| `deliveryState` | string | 2/2 |
+| `expiresAtMillis` | integer | 2/2 |
+| `intent` | string | 2/2 |
+| `passwordVerified` | boolean | 2/2 |
+| `phoneNumber` | string | 2/2 |
+| `providerMessageId` | string | 2/2 |
+| `sentAtMillis` | integer | 2/2 |
+| `verifiedAt` | timestamp | 2/2 |
 
 ### `groupChats/{documentId}`
 
@@ -348,180 +404,220 @@ User-submitted trail hazard reports and moderation status. Observed documents: *
 | `trailId` | string | 2/2 |
 | `trailName` | string | 2/2 |
 
-### `hikeRouteCaptures/{documentId}`
+### `hikeCompletionRateLimits/{documentId}`
 
-Detailed recorded route geometry and completion summary. Observed documents: **48**.
+Application data collection. Observed documents: **1**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `anonymousRecommendationEligible` | boolean | 48/48 |
-| `captureType` | string | 48/48 |
-| `communityPostId` | string | 12/48 |
-| `createdAt` | timestamp | 48/48 |
-| `createdAtLocal` | string | 48/48 |
-| `manualPinCount` | integer | 8/48 |
-| `manualPins` | array | 48/48 |
-| `manualPinsDownsampled` | boolean | 8/48 |
-| `routeBounds` | map | 46/48 |
-| `routeEnd` | map | 46/48 |
-| `routePointCount` | integer | 47/48 |
-| `routePoints` | array | 48/48 |
-| `routePointsDownsampled` | boolean | 8/48 |
-| `routeStart` | map | 46/48 |
-| `sessionId` | string | 48/48 |
-| `storedManualPinCount` | integer | 8/48 |
-| `storedRoutePointCount` | integer | 8/48 |
-| `summaryReport` | map | 48/48 |
-| `trailId` | string | 48/48 |
-| `trailName` | string | 48/48 |
-| `updatedAt` | timestamp | 47/48 |
-| `updatedAtLocal` | string | 47/48 |
-| `userId` | string | 48/48 |
-| `userPhoneNumber` | string | 48/48 |
+| `actionCount` | integer | 1/1 |
+| `updatedAt` | timestamp | 1/1 |
+| `windowStartedAtMillis` | integer | 1/1 |
+
+### `hikePrecautionDeliveries/{documentId}`
+
+Application data collection. Observed documents: **4**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `leaseUntil` | integer | 4/4 |
+| `sent` | map | 2/4 |
+| `sentAt` | string | 2/4 |
+
+### `hikeRouteCaptures/{documentId}`
+
+Detailed recorded route geometry and completion summary. Observed documents: **51**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `anonymousRecommendationEligible` | boolean | 51/51 |
+| `captureType` | string | 51/51 |
+| `communityPostId` | string | 13/51 |
+| `createdAt` | timestamp | 51/51 |
+| `createdAtLocal` | string | 51/51 |
+| `manualPinCount` | integer | 11/51 |
+| `manualPins` | array | 51/51 |
+| `manualPinsDownsampled` | boolean | 11/51 |
+| `routeBounds` | map | 49/51 |
+| `routeEnd` | map | 49/51 |
+| `routePointCount` | integer | 50/51 |
+| `routePoints` | array | 51/51 |
+| `routePointsDownsampled` | boolean | 11/51 |
+| `routeStart` | map | 49/51 |
+| `sessionId` | string | 51/51 |
+| `storedManualPinCount` | integer | 11/51 |
+| `storedRoutePointCount` | integer | 11/51 |
+| `summaryReport` | map | 51/51 |
+| `trailId` | string | 51/51 |
+| `trailName` | string | 51/51 |
+| `updatedAt` | timestamp | 50/51 |
+| `updatedAtLocal` | string | 50/51 |
+| `userId` | string | 51/51 |
+| `userPhoneNumber` | string | 51/51 |
 
 ### `hikeSessionTerminalStates/{documentId}`
 
-Idempotent terminal-state markers for completion processing. Observed documents: **8**.
+Idempotent terminal-state markers for completion processing. Observed documents: **11**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `recordedAt` | timestamp | 8/8 |
-| `recordedAtLocal` | string | 8/8 |
-| `sessionId` | string | 8/8 |
-| `status` | string | 8/8 |
-| `userId` | string | 8/8 |
-| `userPhoneNumber` | string | 8/8 |
+| `recordedAt` | timestamp | 11/11 |
+| `recordedAtLocal` | string | 11/11 |
+| `sessionId` | string | 11/11 |
+| `status` | string | 11/11 |
+| `userId` | string | 11/11 |
+| `userPhoneNumber` | string | 11/11 |
 
 ### `hikeSessions/{documentId}`
 
-Active and historical solo/group hike sessions. Observed documents: **93**.
+Active and historical solo/group hike sessions. Observed documents: **96**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `checkIns` | integer | 54/93 |
-| `checkpoints` | array | 63/93 |
-| `completedChecklistItems` | array | 93/93 |
-| `createdAt` | timestamp | 8/93 |
-| `createdAtLocal` | string | 8/93 |
-| `destinationName` | string | 93/93 |
-| `distanceKm` | double \| integer | 54/93 |
-| `durationMinutes` | integer | 54/93 |
-| `duressEnabled` | boolean | 93/93 |
-| `emergencyContactNames` | array | 93/93 |
-| `endedAt` | timestamp | 64/93 |
-| `endedAtLocal` | string | 64/93 |
-| `expectedArrivalTimeLocal` | string | 93/93 |
-| `expectedReturnTimeLocal` | string | 93/93 |
-| `fallDetectionEnabled` | boolean | 93/93 |
-| `fallDetectionLongestRestDurationSeconds` | integer | 29/93 |
-| `fallDetectionResponseDurationSeconds` | integer | 29/93 |
-| `fallDetectionSensorSensitivity` | double \| integer | 92/93 |
-| `fallDetectionStillnessDurationSeconds` | integer | 92/93 |
-| `hikeType` | string | 93/93 |
-| `lastCheckInAt` | timestamp | 13/93 |
-| `lastCheckInAtLocal` | string | 13/93 |
-| `lastCheckInStatus` | string | 13/93 |
-| `lastMonitoringReminderAt` | timestamp | 2/93 |
-| `lastMonitoringReminderAtLocal` | string | 2/93 |
-| `lastMonitoringReminderClaimedAt` | timestamp | 1/93 |
-| `lastMonitoringReminderClaimedAtLocal` | string | 1/93 |
-| `lastMonitoringReminderDeliveryStatus` | string | 1/93 |
-| `lastMonitoringReminderReason` | string | 2/93 |
-| `lastPathDeviation` | map | 2/93 |
-| `lastPathDeviationAt` | timestamp | 2/93 |
-| `lastPathDeviationAtLocal` | string | 2/93 |
-| `lastScheduledCheckInReminderAt` | timestamp | 1/93 |
-| `lastScheduledCheckInReminderAtLocal` | string | 1/93 |
-| `lastScheduledCheckInReminderClaimedAt` | timestamp | 1/93 |
-| `lastScheduledCheckInReminderClaimedAtLocal` | string | 1/93 |
-| `lastScheduledCheckInReminderDeliveryStatus` | string | 1/93 |
-| `latestLocation` | map | 90/93 |
-| `latestLocationUpdatedAt` | timestamp | 90/93 |
-| `latestLocationUpdatedAtLocal` | string | 90/93 |
-| `latestMotion` | map | 4/93 |
-| `latestMotionUpdatedAt` | timestamp | 4/93 |
-| `latestMotionUpdatedAtLocal` | string | 4/93 |
-| `liveLocationShareId` | string | 1/93 |
-| `liveLocationShareLinkedAt` | timestamp | 1/93 |
-| `liveLocationShareLinkedAtLocal` | string | 1/93 |
-| `locationRecordingIntervalMinutes` | integer | 93/93 |
-| `locationRecordingIntervalSeconds` | integer | 71/93 |
-| `manualPins` | integer | 54/93 |
-| `monitoringExpected` | boolean | 54/93 |
-| `monitoringFcmToken` | string | 16/93 |
-| `monitoringHeartbeatAt` | timestamp | 28/93 |
-| `monitoringHeartbeatAtLocal` | string | 28/93 |
-| `monitoringLifecycleState` | string | 54/93 |
-| `offlinePhysicalAlertEnabled` | boolean | 93/93 |
-| `pathDeviationAlertCount` | integer | 2/93 |
-| `pathDeviationEnabled` | boolean | 93/93 |
-| `plannedStartTimeLocal` | string | 93/93 |
-| `routePointCount` | integer | 54/93 |
-| `safetyCheckInIntervalMinutes` | integer | 93/93 |
-| `safetyCheckInIntervalSeconds` | integer | 8/93 |
-| `sessionId` | string | 93/93 |
-| `shareLiveLocation` | boolean | 93/93 |
-| `sourceUpcomingHikeId` | string | 6/93 |
-| `startedAt` | timestamp | 93/93 |
-| `startedAtLocal` | string | 93/93 |
-| `startPointName` | string | 93/93 |
-| `status` | string | 93/93 |
-| `summaryReport` | map | 54/93 |
-| `teamBuddies` | array | 67/93 |
-| `teamHikeSessionId` | string | 12/93 |
-| `trail` | map | 93/93 |
-| `trailId` | string | 93/93 |
-| `trailName` | string | 93/93 |
-| `updatedAt` | timestamp | 93/93 |
-| `updatedAtLocal` | string | 93/93 |
-| `userId` | string | 93/93 |
-| `userPhoneNumber` | string | 93/93 |
+| `checkIns` | integer | 57/96 |
+| `checkpoints` | array | 66/96 |
+| `completedChecklistItems` | array | 96/96 |
+| `createdAt` | timestamp | 11/96 |
+| `createdAtLocal` | string | 11/96 |
+| `destinationName` | string | 96/96 |
+| `distanceKm` | double \| integer | 57/96 |
+| `durationMinutes` | integer | 57/96 |
+| `duressEnabled` | boolean | 96/96 |
+| `emergencyContactNames` | array | 96/96 |
+| `endedAt` | timestamp | 67/96 |
+| `endedAtLocal` | string | 67/96 |
+| `expectedArrivalTimeLocal` | string | 96/96 |
+| `expectedReturnTimeLocal` | string | 96/96 |
+| `fallDetectionEnabled` | boolean | 96/96 |
+| `fallDetectionLongestRestDurationSeconds` | integer | 32/96 |
+| `fallDetectionResponseDurationSeconds` | integer | 32/96 |
+| `fallDetectionSensorSensitivity` | double \| integer | 95/96 |
+| `fallDetectionStillnessDurationSeconds` | integer | 95/96 |
+| `hikeType` | string | 96/96 |
+| `lastCheckInAt` | timestamp | 15/96 |
+| `lastCheckInAtLocal` | string | 15/96 |
+| `lastCheckInStatus` | string | 15/96 |
+| `lastMonitoringReminderAt` | timestamp | 2/96 |
+| `lastMonitoringReminderAtLocal` | string | 2/96 |
+| `lastMonitoringReminderClaimedAt` | timestamp | 1/96 |
+| `lastMonitoringReminderClaimedAtLocal` | string | 1/96 |
+| `lastMonitoringReminderDeliveryStatus` | string | 1/96 |
+| `lastMonitoringReminderReason` | string | 2/96 |
+| `lastPathDeviation` | map | 3/96 |
+| `lastPathDeviationAt` | timestamp | 3/96 |
+| `lastPathDeviationAtLocal` | string | 3/96 |
+| `lastScheduledCheckInReminderAt` | timestamp | 1/96 |
+| `lastScheduledCheckInReminderAtLocal` | string | 1/96 |
+| `lastScheduledCheckInReminderClaimedAt` | timestamp | 1/96 |
+| `lastScheduledCheckInReminderClaimedAtLocal` | string | 1/96 |
+| `lastScheduledCheckInReminderDeliveryStatus` | string | 1/96 |
+| `latestLocation` | map | 93/96 |
+| `latestLocationUpdatedAt` | timestamp | 93/96 |
+| `latestLocationUpdatedAtLocal` | string | 93/96 |
+| `latestMotion` | map | 7/96 |
+| `latestMotionUpdatedAt` | timestamp | 7/96 |
+| `latestMotionUpdatedAtLocal` | string | 7/96 |
+| `liveLocationShareId` | string | 4/96 |
+| `liveLocationShareLinkedAt` | timestamp | 4/96 |
+| `liveLocationShareLinkedAtLocal` | string | 4/96 |
+| `locationRecordingIntervalMinutes` | integer | 96/96 |
+| `locationRecordingIntervalSeconds` | integer | 74/96 |
+| `manualPins` | integer | 57/96 |
+| `monitoringExpected` | boolean | 57/96 |
+| `monitoringFcmToken` | string | 16/96 |
+| `monitoringHeartbeatAt` | timestamp | 31/96 |
+| `monitoringHeartbeatAtLocal` | string | 31/96 |
+| `monitoringLifecycleState` | string | 57/96 |
+| `offlinePhysicalAlertEnabled` | boolean | 96/96 |
+| `pathDeviationAlertCount` | integer | 3/96 |
+| `pathDeviationEnabled` | boolean | 96/96 |
+| `plannedStartTimeLocal` | string | 96/96 |
+| `routePointCount` | integer | 57/96 |
+| `safetyCheckInIntervalMinutes` | integer | 96/96 |
+| `safetyCheckInIntervalSeconds` | integer | 11/96 |
+| `sessionId` | string | 96/96 |
+| `shareLiveLocation` | boolean | 96/96 |
+| `sourceUpcomingHikeId` | string | 6/96 |
+| `startedAt` | timestamp | 96/96 |
+| `startedAtLocal` | string | 96/96 |
+| `startPointName` | string | 96/96 |
+| `status` | string | 96/96 |
+| `summaryReport` | map | 57/96 |
+| `teamBuddies` | array | 70/96 |
+| `teamHikeSessionId` | string | 12/96 |
+| `trail` | map | 96/96 |
+| `trailId` | string | 96/96 |
+| `trailName` | string | 96/96 |
+| `updatedAt` | timestamp | 96/96 |
+| `updatedAtLocal` | string | 96/96 |
+| `userId` | string | 96/96 |
+| `userPhoneNumber` | string | 96/96 |
 
 ### `liveLocationContactDispatches/{documentId}`
 
-At-most-once delivery ledger for live-location messages. Observed documents: **1**.
+At-most-once delivery ledger for live-location messages. Observed documents: **4**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `attemptCount` | integer | 1/1 |
-| `attemptNonce` | string | 1/1 |
+| `attemptCount` | integer | 4/4 |
+| `attemptNonce` | string | 4/4 |
+| `createdAt` | timestamp | 4/4 |
+| `createdAtLocal` | string | 4/4 |
+| `deliveryUncertain` | boolean | 4/4 |
+| `leaseExpiresAtMillis` | integer | 4/4 |
+| `messageType` | string | 4/4 |
+| `outboundStartedAt` | timestamp | 4/4 |
+| `outboundStartedAtLocal` | string | 4/4 |
+| `ownerUid` | string | 4/4 |
+| `providerMessageId` | string | 4/4 |
+| `recipientPhoneNumber` | string | 4/4 |
+| `retryable` | boolean | 4/4 |
+| `senderPhoneNumber` | string | 4/4 |
+| `sentAt` | timestamp | 4/4 |
+| `sentAtLocal` | string | 4/4 |
+| `sessionId` | string | 4/4 |
+| `status` | string | 4/4 |
+| `updatedAt` | timestamp | 4/4 |
+| `updatedAtLocal` | string | 4/4 |
+
+### `live_location_shares/{documentId}`
+
+Application data collection. Observed documents: **1**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
 | `createdAt` | timestamp | 1/1 |
 | `createdAtLocal` | string | 1/1 |
-| `deliveryUncertain` | boolean | 1/1 |
-| `leaseExpiresAtMillis` | integer | 1/1 |
-| `messageType` | string | 1/1 |
-| `outboundStartedAt` | timestamp | 1/1 |
-| `outboundStartedAtLocal` | string | 1/1 |
-| `ownerUid` | string | 1/1 |
-| `providerMessageId` | string | 1/1 |
-| `recipientPhoneNumber` | string | 1/1 |
-| `retryable` | boolean | 1/1 |
-| `senderPhoneNumber` | string | 1/1 |
-| `sentAt` | timestamp | 1/1 |
-| `sentAtLocal` | string | 1/1 |
-| `sessionId` | string | 1/1 |
-| `status` | string | 1/1 |
+| `expiresAt` | timestamp | 1/1 |
+| `expiresAtLocal` | string | 1/1 |
+| `isActive` | boolean | 1/1 |
+| `latestLocation` | map | 1/1 |
+| `ownerUserDocumentPath` | string | 1/1 |
+| `ownerUserId` | string | 1/1 |
+| `phoneNumber` | string | 1/1 |
+| `shareId` | string | 1/1 |
+| `shareUrl` | string | 1/1 |
 | `updatedAt` | timestamp | 1/1 |
 | `updatedAtLocal` | string | 1/1 |
 
 ### `localLocationPoints/{documentId}`
 
-Synced raw route/location observations used by hike history. Observed documents: **548**.
+Synced raw route/location observations used by hike history. Observed documents: **559**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `accuracyMeters` | double | 548/548 |
-| `batteryLevel` | integer | 548/548 |
-| `isSynced` | boolean | 548/548 |
-| `latitude` | double | 548/548 |
-| `longitude` | double | 548/548 |
-| `pointType` | string | 548/548 |
-| `recordedAt` | timestamp | 245/548 |
-| `recordedAtLocal` | string | 548/548 |
-| `sessionId` | string | 548/548 |
-| `trailId` | string | 548/548 |
-| `userId` | string | 548/548 |
-| `userPhoneNumber` | string | 548/548 |
+| `accuracyMeters` | double | 559/559 |
+| `batteryLevel` | integer | 559/559 |
+| `isSynced` | boolean | 559/559 |
+| `latitude` | double | 559/559 |
+| `longitude` | double | 559/559 |
+| `pointType` | string | 559/559 |
+| `recordedAt` | timestamp | 245/559 |
+| `recordedAtLocal` | string | 559/559 |
+| `sessionId` | string | 559/559 |
+| `trailId` | string | 559/559 |
+| `userId` | string | 559/559 |
+| `userPhoneNumber` | string | 559/559 |
 
 ### `maintenanceState/{documentId}`
 
@@ -539,101 +635,199 @@ Cursor and progress state for backend maintenance jobs. Observed documents: **1*
 | `updatedAt` | timestamp | 1/1 |
 | `updatedAtLocal` | string | 1/1 |
 
-### `nearbySosIncidents/{documentId}`
+### `mfaAuthenticationChallenges/{documentId}`
 
-Deduplicated nearby SOS incidents reported by button receivers. Observed documents: **2**.
+Application data collection. Observed documents: **1**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `accuracyMeters` | double | 2/2 |
-| `counter` | integer | 2/2 |
-| `deviceIdHash` | string | 2/2 |
-| `firstReceivedAtLocal` | string | 2/2 |
-| `incidentId` | string | 2/2 |
-| `lastReceivedAtLocal` | string | 2/2 |
-| `latitude` | double | 2/2 |
-| `locationSource` | string | 2/2 |
-| `longitude` | double | 2/2 |
-| `reporterCount` | integer | 2/2 |
-| `status` | string | 2/2 |
-| `updatedAt` | timestamp | 2/2 |
-| `updatedAtLocal` | string | 2/2 |
-| `verificationState` | string | 2/2 |
+| `attemptsRemaining` | integer | 1/1 |
+| `consumed` | boolean | 1/1 |
+| `consumedAt` | timestamp | 1/1 |
+| `createdAt` | timestamp | 1/1 |
+| `expiresAtMillis` | integer | 1/1 |
+| `sessionDigest` | string | 1/1 |
+| `userId` | string | 1/1 |
+
+### `mfaLoginSessions/{documentId}`
+
+Application data collection. Observed documents: **1**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `attemptsRemaining` | integer | 1/1 |
+| `completedMethod` | string | 1/1 |
+| `consumed` | boolean | 1/1 |
+| `consumedAt` | timestamp | 1/1 |
+| `createdAt` | timestamp | 1/1 |
+| `createdAtLocal` | string | 1/1 |
+| `enrollmentRequired` | boolean | 1/1 |
+| `expiresAtMillis` | integer | 1/1 |
+| `loginIntent` | string | 1/1 |
+| `methods` | array | 1/1 |
+| `passwordVerified` | boolean | 1/1 |
+| `phoneNumber` | string | 1/1 |
+| `userId` | string | 1/1 |
+| `whatsappChallengeId` | string | 1/1 |
+| `whatsappVerified` | boolean | 1/1 |
+
+### `nearbySosIncidents/{documentId}`
+
+Deduplicated nearby SOS incidents reported by button receivers. Observed documents: **6**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `accuracyMeters` | double \| integer | 6/6 |
+| `counter` | integer | 6/6 |
+| `deviceIdHash` | string | 6/6 |
+| `firstReceivedAtLocal` | string | 6/6 |
+| `incidentId` | string | 6/6 |
+| `lastReceivedAtLocal` | string | 6/6 |
+| `latitude` | double | 6/6 |
+| `locationSource` | string | 6/6 |
+| `longitude` | double | 6/6 |
+| `reporterCount` | integer | 6/6 |
+| `status` | string | 6/6 |
+| `updatedAt` | timestamp | 6/6 |
+| `updatedAtLocal` | string | 6/6 |
+| `verificationState` | string | 6/6 |
 
 ### `networkObservations/{documentId}`
 
-Route network-availability observations. Observed documents: **55**.
+Route network-availability observations. Observed documents: **59**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `apiRequestSuccess` | boolean | 55/55 |
-| `gpsAccuracy` | double | 55/55 |
-| `latitude` | double | 55/55 |
-| `longitude` | double | 55/55 |
-| `networkType` | string | 55/55 |
-| `recordedAt` | timestamp | 55/55 |
-| `recordedAtLocal` | string | 55/55 |
-| `sessionId` | string | 55/55 |
-| `trailId` | string | 55/55 |
-| `userId` | string | 55/55 |
+| `apiRequestSuccess` | boolean | 59/59 |
+| `gpsAccuracy` | double | 59/59 |
+| `latitude` | double | 59/59 |
+| `longitude` | double | 59/59 |
+| `networkType` | string | 59/59 |
+| `recordedAt` | timestamp | 59/59 |
+| `recordedAtLocal` | string | 59/59 |
+| `sessionId` | string | 59/59 |
+| `trailId` | string | 59/59 |
+| `userId` | string | 59/59 |
+
+### `passwordResetChallenges/{documentId}`
+
+Application data collection. Observed documents: **1**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `attemptsRemaining` | integer | 1/1 |
+| `consumed` | boolean | 1/1 |
+| `createdAt` | timestamp | 1/1 |
+| `deliveredAt` | timestamp | 1/1 |
+| `deliveryState` | string | 1/1 |
+| `expiresAtMillis` | integer | 1/1 |
+| `phoneNumber` | string | 1/1 |
+| `providerMessageId` | string | 1/1 |
+| `sentAtMillis` | integer | 1/1 |
+| `verifiedAt` | timestamp | 1/1 |
+
+### `passwordResetPasskeyChallenges/{documentId}`
+
+Application data collection. Observed documents: **6**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `attemptsRemaining` | integer | 6/6 |
+| `consumed` | boolean | 6/6 |
+| `consumedAt` | timestamp | 3/6 |
+| `createdAt` | timestamp | 6/6 |
+| `expiresAtMillis` | integer | 6/6 |
+| `sessionDigest` | string | 6/6 |
+| `userId` | string | 6/6 |
+| `webAuthnChallenge` | string | 3/6 |
+
+### `passwordResetSessions/{documentId}`
+
+Application data collection. Observed documents: **5**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `attemptsRemaining` | integer | 5/5 |
+| `challengeId` | string | 5/5 |
+| `createdAt` | timestamp | 5/5 |
+| `expiresAtMillis` | integer | 5/5 |
+| `phoneNumber` | string | 5/5 |
+| `recoveryMethod` | string | 3/5 |
+| `recoveryMethods` | array | 4/5 |
+| `recoveryVerified` | boolean | 4/5 |
+| `recoveryVerifiedAt` | timestamp | 3/5 |
+| `safetyQuestionField` | string | 5/5 |
+| `skipQuestion` | boolean | 5/5 |
+| `used` | boolean | 5/5 |
+| `verifiedAt` | timestamp | 5/5 |
 
 ### `sosAlerts/{documentId}`
 
-Canonical SOS events and their contact delivery summary. Observed documents: **140**.
+Canonical SOS events and their contact delivery summary. Observed documents: **141**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `cloudLogPath` | string | 140/140 |
-| `contactCount` | integer | 140/140 |
-| `dispatches` | array | 140/140 |
-| `failedCount` | integer | 140/140 |
-| `id` | string | 140/140 |
-| `message` | string | 140/140 |
-| `mode` | string | 140/140 |
-| `phoneNumber` | string | 140/140 |
-| `sentCount` | integer | 140/140 |
-| `status` | string | 140/140 |
-| `triggeredAtLocal` | string | 140/140 |
-| `triggeredByPhoneNumber` | string | 140/140 |
-| `triggerLocation` | map | 126/140 |
-| `triggerSource` | string | 42/140 |
-| `updatedAt` | timestamp | 140/140 |
-| `userId` | string | 140/140 |
+| `cloudLogPath` | string | 141/141 |
+| `contactCount` | integer | 141/141 |
+| `dispatches` | array | 141/141 |
+| `failedCount` | integer | 141/141 |
+| `id` | string | 141/141 |
+| `message` | string | 141/141 |
+| `mode` | string | 141/141 |
+| `phoneNumber` | string | 141/141 |
+| `sentCount` | integer | 141/141 |
+| `status` | string | 141/141 |
+| `triggeredAtLocal` | string | 141/141 |
+| `triggeredByPhoneNumber` | string | 141/141 |
+| `triggerLocation` | map | 127/141 |
+| `triggerSource` | string | 43/141 |
+| `updatedAt` | timestamp | 141/141 |
+| `userId` | string | 141/141 |
+
+### `sosMessageRateLimits/{documentId}`
+
+Application data collection. Observed documents: **1**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `sendCount` | integer | 1/1 |
+| `updatedAt` | timestamp | 1/1 |
+| `windowStartedAtMillis` | integer | 1/1 |
 
 ### `sosWhatsAppDispatches/{documentId}`
 
-At-most-once WhatsApp delivery ledger for SOS messages. Observed documents: **60**.
+At-most-once WhatsApp delivery ledger for SOS messages. Observed documents: **61**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `attemptCount` | integer | 60/60 |
-| `attemptNonce` | string | 60/60 |
-| `createdAt` | timestamp | 60/60 |
-| `createdAtLocal` | string | 60/60 |
-| `deliveryUncertain` | boolean | 60/60 |
-| `dispatchId` | string | 60/60 |
-| `isTest` | boolean | 60/60 |
-| `leaseExpiresAtMillis` | integer | 60/60 |
-| `messageType` | string | 60/60 |
-| `mode` | string | 60/60 |
-| `outboundStartedAt` | timestamp | 60/60 |
-| `outboundStartedAtLocal` | string | 60/60 |
-| `ownerUid` | string | 60/60 |
-| `payloadHash` | string | 60/60 |
-| `preferredTimeZone` | string | 42/60 |
-| `providerMessageId` | string | 60/60 |
-| `recipientPhoneNumber` | string | 60/60 |
-| `retryable` | boolean | 60/60 |
-| `senderPhoneNumber` | string | 60/60 |
-| `sentAt` | timestamp | 60/60 |
-| `sentAtLocal` | string | 60/60 |
-| `sourceId` | string | 60/60 |
-| `status` | string | 60/60 |
-| `triggeredAtMillis` | integer | 60/60 |
-| `triggerSource` | string | 42/60 |
-| `updatedAt` | timestamp | 60/60 |
-| `updatedAtLocal` | string | 60/60 |
-| `wasSent` | boolean | 60/60 |
+| `attemptCount` | integer | 61/61 |
+| `attemptNonce` | string | 61/61 |
+| `createdAt` | timestamp | 61/61 |
+| `createdAtLocal` | string | 61/61 |
+| `deliveryUncertain` | boolean | 61/61 |
+| `dispatchId` | string | 61/61 |
+| `isTest` | boolean | 61/61 |
+| `leaseExpiresAtMillis` | integer | 61/61 |
+| `messageType` | string | 61/61 |
+| `mode` | string | 61/61 |
+| `outboundStartedAt` | timestamp | 61/61 |
+| `outboundStartedAtLocal` | string | 61/61 |
+| `ownerUid` | string | 61/61 |
+| `payloadHash` | string | 61/61 |
+| `preferredTimeZone` | string | 43/61 |
+| `providerMessageId` | string | 61/61 |
+| `recipientPhoneNumber` | string | 61/61 |
+| `retryable` | boolean | 61/61 |
+| `senderPhoneNumber` | string | 61/61 |
+| `sentAt` | timestamp | 61/61 |
+| `sentAtLocal` | string | 61/61 |
+| `sourceId` | string | 61/61 |
+| `status` | string | 61/61 |
+| `triggeredAtMillis` | integer | 61/61 |
+| `triggerSource` | string | 43/61 |
+| `updatedAt` | timestamp | 61/61 |
+| `updatedAtLocal` | string | 61/61 |
+| `wasSent` | boolean | 61/61 |
 
 ### `teamHikeSessions/{documentId}`
 
@@ -698,14 +892,14 @@ Saved team definition and member list. Observed documents: **1**.
 
 ### `trailWeatherCache/{documentId}`
 
-Backend weather cache and refresh lease state. Observed documents: **34**.
+Backend weather cache and refresh lease state. Observed documents: **35**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `leaseUntilMs` | integer | 34/34 |
-| `retryAfterMs` | integer | 34/34 |
-| `updatedAtMs` | integer | 34/34 |
-| `weather` | map | 34/34 |
+| `leaseUntilMs` | integer | 35/35 |
+| `retryAfterMs` | integer | 35/35 |
+| `updatedAtMs` | integer | 35/35 |
+| `weather` | map | 35/35 |
 
 ### `trails/{documentId}`
 
@@ -725,11 +919,13 @@ Trail catalogue, Mapbox route, elevation range, media, ratings, and hazards. Obs
 | `createdAtLocal` | string | 35/35 |
 | `createdByAdminId` | string | 15/35 |
 | `createdByAdminPhoneNumber` | string | 15/35 |
-| `dataSource` | string | 31/35 |
-| `dataSourceUrl` | string | 31/35 |
+| `dataSource` | string | 35/35 |
 | `difficulty` | string | 24/35 |
-| `difficultyRatingCount` | integer | 11/35 |
-| `difficultyVoteCounts` | map | 11/35 |
+| `difficultyRatingCount` | integer | 12/35 |
+| `difficultyScoreAverage` | integer | 1/35 |
+| `difficultyUpdatedAt` | timestamp | 1/35 |
+| `difficultyUpdatedAtLocal` | string | 1/35 |
+| `difficultyVoteCounts` | map | 12/35 |
 | `distanceKm` | double \| integer | 35/35 |
 | `elevationGainMeters` | integer | 35/35 |
 | `estimatedDurationMinutes` | integer | 35/35 |
@@ -742,22 +938,18 @@ Trail catalogue, Mapbox route, elevation range, media, ratings, and hazards. Obs
 | `name` | string | 35/35 |
 | `offlineMapAvailable` | boolean | 35/35 |
 | `offlineMapDownloaded` | boolean | 35/35 |
-| `osmRelationId` | string | 22/35 |
 | `ratingAverage` | double \| integer | 35/35 |
 | `ratingCount` | integer | 35/35 |
 | `ratingSum` | double \| integer | 35/35 |
-| `ratingUpdatedAt` | timestamp | 1/35 |
-| `ratingUpdatedAtLocal` | string | 1/35 |
-| `routeActivity` | string | 31/35 |
+| `ratingUpdatedAt` | timestamp | 2/35 |
+| `ratingUpdatedAtLocal` | string | 2/35 |
+| `routeActivity` | string | 32/35 |
 | `routeCheckpointsHash` | string | 4/35 |
 | `routeEncodedPolyline` | string | 35/35 |
 | `routeFilePath` | string | 35/35 |
-| `routeProvider` | string | 31/35 |
-| `routeReferenceName` | string | 31/35 |
-| `routeReferenceNote` | string | 24/35 |
-| `routeReferenceUrl` | string | 31/35 |
-| `routeShape` | string | 31/35 |
-| `routeVerifiedAtLocal` | string | 31/35 |
+| `routeGeometryMetadata` | map | 35/35 |
+| `routeProvider` | string | 35/35 |
+| `routeShape` | string | 32/35 |
 | `seededAtLocal` | string | 20/35 |
 | `state` | string | 35/35 |
 | `trailId` | string | 35/35 |
@@ -801,27 +993,92 @@ Join-request workflow and host notification outcome. Observed documents: **2**.
 | `updatedAt` | timestamp | 2/2 |
 | `updatedAtLocal` | string | 2/2 |
 
-### `userAchievements/{documentId}`
+### `upcomingHikeRateLimits/{documentId}`
 
-Per-user progress and award state for each achievement. Observed documents: **34**.
+Application data collection. Observed documents: **2**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `achievementId` | string | 34/34 |
-| `achievementTitle` | string | 34/34 |
-| `awardedAt` | timestamp | 19/34 |
-| `awardedAtLocal` | string | 19/34 |
-| `condition` | string | 6/34 |
-| `isUnlocked` | boolean | 34/34 |
-| `metricKey` | string | 34/34 |
-| `pointsAwarded` | integer | 15/34 |
-| `progressCount` | integer | 34/34 |
-| `rewardType` | string | 34/34 |
-| `targetCount` | integer | 34/34 |
-| `updatedAt` | timestamp | 34/34 |
-| `updatedAtLocal` | string | 34/34 |
-| `userAchievementId` | string | 34/34 |
-| `userId` | string | 34/34 |
+| `actionCount` | integer | 2/2 |
+| `updatedAt` | timestamp | 2/2 |
+| `windowStartedAtMillis` | integer | 2/2 |
+
+### `upcomingHikes/{documentId}`
+
+Application data collection. Observed documents: **3**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `area` | string | 3/3 |
+| `country` | string | 3/3 |
+| `createdAt` | timestamp | 3/3 |
+| `createdAtLocal` | string | 3/3 |
+| `creationKeyHash` | string | 3/3 |
+| `creatorName` | string | 3/3 |
+| `creatorPhone` | string | 3/3 |
+| `creatorUserId` | string | 3/3 |
+| `deletedAt` | timestamp | 2/3 |
+| `deletedAtLocal` | string | 2/3 |
+| `deletedReason` | string | 2/3 |
+| `departureTimeLocal` | string | 3/3 |
+| `destinationName` | string | 3/3 |
+| `difficulty` | string | 3/3 |
+| `distanceKm` | double | 3/3 |
+| `draft` | map | 3/3 |
+| `durationMinutes` | integer | 3/3 |
+| `expectedArrivalTimeLocal` | string | 3/3 |
+| `expectedReturnTimeLocal` | string | 3/3 |
+| `expired` | boolean | 2/3 |
+| `expiredAt` | timestamp | 2/3 |
+| `expiredAtLocal` | string | 2/3 |
+| `hikeType` | string | 3/3 |
+| `isDeleted` | boolean | 2/3 |
+| `joinPolicy` | string | 3/3 |
+| `latitude` | double | 3/3 |
+| `longitude` | double | 3/3 |
+| `nearbyNotificationDeliveryClaimedAt` | timestamp | 3/3 |
+| `nearbyNotificationDeliveryClaimedAtLocal` | string | 3/3 |
+| `nearbyNotificationDeliveryStatus` | string | 3/3 |
+| `nearbyNotificationEligibleUsers` | integer | 3/3 |
+| `nearbyNotificationFailureCount` | integer | 3/3 |
+| `nearbyNotificationRadiusKm` | integer | 3/3 |
+| `nearbyNotificationSentAt` | timestamp | 3/3 |
+| `nearbyNotificationSentAtLocal` | string | 3/3 |
+| `nearbyNotificationSuccessCount` | integer | 3/3 |
+| `nearbyNotificationTokenCount` | integer | 3/3 |
+| `notificationRadiusKm` | integer | 3/3 |
+| `participantCount` | integer | 3/3 |
+| `participantPhones` | array | 3/3 |
+| `sessionId` | string | 3/3 |
+| `sharedHikePlanPrivacyVersion` | integer | 3/3 |
+| `startPointName` | string | 3/3 |
+| `state` | string | 3/3 |
+| `trailId` | string | 3/3 |
+| `trailName` | string | 3/3 |
+| `updatedAt` | timestamp | 3/3 |
+| `updatedAtLocal` | string | 3/3 |
+
+### `userAchievements/{documentId}`
+
+Per-user progress and award state for each achievement. Observed documents: **38**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `achievementId` | string | 38/38 |
+| `achievementTitle` | string | 38/38 |
+| `awardedAt` | timestamp | 21/38 |
+| `awardedAtLocal` | string | 21/38 |
+| `condition` | string | 6/38 |
+| `isUnlocked` | boolean | 38/38 |
+| `metricKey` | string | 38/38 |
+| `pointsAwarded` | integer | 17/38 |
+| `progressCount` | integer | 38/38 |
+| `rewardType` | string | 38/38 |
+| `targetCount` | integer | 38/38 |
+| `updatedAt` | timestamp | 38/38 |
+| `updatedAtLocal` | string | 38/38 |
+| `userAchievementId` | string | 38/38 |
+| `userId` | string | 38/38 |
 
 ### `users/{documentId}`
 
@@ -835,13 +1092,16 @@ Private account profile, safety settings, MFA summary, devices, and aggregates. 
 | `achievementPoints` | integer | 2/2 |
 | `achievementSummaryUpdatedAt` | timestamp | 2/2 |
 | `achievementSummaryUpdatedAtLocal` | string | 2/2 |
-| `activeFcmAppInstanceId` | string | 1/2 |
-| `activeFcmToken` | string | 1/2 |
+| `activeFcmAppInstanceId` | string | 2/2 |
+| `activeFcmToken` | string | 2/2 |
+| `autoShareLiveLocationOnHikeStart` | boolean | 1/2 |
+| `autoShareLiveLocationPreferenceUpdatedAt` | timestamp | 1/2 |
+| `autoShareLiveLocationPreferenceUpdatedAtLocal` | string | 1/2 |
 | `boundAppInstanceId` | string | 2/2 |
 | `boundAppInstanceUpdatedAt` | timestamp | 2/2 |
 | `boundAppInstanceUpdatedAtLocal` | string | 2/2 |
-| `buddyRequestsIncoming.{phoneKey}` | map | 1/2 |
-| `buddyRequestsOutgoing.{phoneKey}` | map | 1/2 |
+| `buddyRequestsIncoming` | map | 1/2 |
+| `buddyRequestsOutgoing` | map | 1/2 |
 | `buddyRequestsUpdatedAt` | timestamp | 2/2 |
 | `createdAt` | timestamp | 2/2 |
 | `createdAtLocal` | string | 2/2 |
@@ -856,13 +1116,15 @@ Private account profile, safety settings, MFA summary, devices, and aggregates. 
 | `hikerLevelBadge` | string | 2/2 |
 | `hikerLevelName` | string | 2/2 |
 | `isAdmin` | boolean | 1/2 |
-| `lastFcmToken` | string | 1/2 |
+| `lastFcmToken` | string | 2/2 |
 | `lastFcmTokenUpdatedAt` | timestamp | 2/2 |
 | `lastFcmTokenUpdatedAtLocal` | string | 2/2 |
 | `lastFirebaseAuthenticatedAt` | timestamp | 2/2 |
 | `lastFirebaseAuthenticatedAtLocal` | string | 2/2 |
 | `lastMfaAt` | timestamp | 2/2 |
 | `lastMfaAtLocal` | string | 2/2 |
+| `lastPasswordVerifiedAt` | timestamp | 2/2 |
+| `lastPasswordVerifiedAtLocal` | string | 2/2 |
 | `lastSignedInAppInstanceId` | string | 2/2 |
 | `lastSignedInAt` | timestamp | 2/2 |
 | `lastSignedInAtLocal` | string | 2/2 |
@@ -1002,40 +1264,60 @@ Observed documents: **148**.
 
 ### `trails/{trailId}/ratings/{sessionId}`
 
-Observed documents: **1**.
-
-| Field | Firestore type(s) | Presence |
-|---|---|---:|
-| `comment` | string | 1/1 |
-| `createdAt` | timestamp | 1/1 |
-| `rating` | integer | 1/1 |
-| `sessionId` | string | 1/1 |
-| `trailId` | string | 1/1 |
-| `updatedAt` | timestamp | 1/1 |
-| `updatedAtLocal` | string | 1/1 |
-| `userId` | string | 1/1 |
-
-### `upcomingHikes/{hikeId}/reminderPreferences/{userId}`
-
-Observed documents: **0**.
-
-| Field | Firestore type(s) | Presence |
-|---|---|---:|
-| — | Defined but currently empty | 0/0 |
-
-### `nearbySosIncidents/{incidentId}/reports/{reporterHash}`
-
 Observed documents: **2**.
 
 | Field | Firestore type(s) | Presence |
 |---|---|---:|
-| `detectorLocation` | map | 2/2 |
-| `receivedAtLocal` | string | 2/2 |
-| `reportedLocation` | null | 2/2 |
-| `reporterHash` | string | 2/2 |
-| `rssi` | integer | 2/2 |
+| `comment` | string | 2/2 |
+| `createdAt` | timestamp | 2/2 |
+| `difficulty` | string | 1/2 |
+| `rating` | integer | 2/2 |
+| `sessionId` | string | 2/2 |
+| `trailId` | string | 2/2 |
 | `updatedAt` | timestamp | 2/2 |
 | `updatedAtLocal` | string | 2/2 |
+| `userId` | string | 2/2 |
+
+### `upcomingHikes/{hikeId}/reminderPreferences/{userId}`
+
+Observed documents: **5**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `deliveryClaimedAt` | timestamp | 3/5 |
+| `deliveryClaimedAtLocal` | string | 3/5 |
+| `deliveryClaimSequence` | integer | 3/5 |
+| `departureTimeLocal` | string | 3/5 |
+| `enabled` | boolean | 5/5 |
+| `finalReminderMinutesBefore` | integer | 5/5 |
+| `firstReminderMinutesBefore` | integer | 5/5 |
+| `hikeId` | string | 5/5 |
+| `lastDeliveryFailureCount` | integer | 3/5 |
+| `lastDeliveryStatus` | string | 3/5 |
+| `lastDeliverySuccessCount` | integer | 3/5 |
+| `lastSentAt` | timestamp | 3/5 |
+| `lastSentAtLocal` | string | 3/5 |
+| `maximumReminders` | integer | 5/5 |
+| `ownerPhoneNumber` | string | 5/5 |
+| `ownerUserId` | string | 5/5 |
+| `repeatIntervalMinutes` | integer | 5/5 |
+| `sentCount` | integer | 3/5 |
+| `updatedAt` | timestamp | 5/5 |
+| `updatedAtLocal` | string | 5/5 |
+
+### `nearbySosIncidents/{incidentId}/reports/{reporterHash}`
+
+Observed documents: **6**.
+
+| Field | Firestore type(s) | Presence |
+|---|---|---:|
+| `detectorLocation` | map \| null | 6/6 |
+| `receivedAtLocal` | string | 6/6 |
+| `reportedLocation` | map \| null | 6/6 |
+| `reporterHash` | string | 6/6 |
+| `rssi` | integer | 6/6 |
+| `updatedAt` | timestamp | 6/6 |
+| `updatedAtLocal` | string | 6/6 |
 
 ## Canonical nested shapes
 
@@ -1063,13 +1345,12 @@ Server timestamps and `...Local` ISO-8601 mirrors intentionally coexist. Server 
 |---|---:|---|
 | `app_feedback/` | 2 | `app_feedback/{uid}/{reportId}/screenshot.png` — owner/admin read, PNG only, maximum 5 MiB. |
 | `community_hikes/` | 1 | `community_hikes/{uid}/{sessionId}/{file}` — owner-created hike images, supported image formats, maximum 10 MiB. |
-| `first_aid/` | 2 | `first_aid/videos/{topic}_v{version}.mp4` — deployment-managed KKM tutorial media, authenticated read, app-cached. |
 | `group_chats/` | 1 | `group_chats/{chatId}/attachments/{file}` — chat-member media/documents, maximum 25 MiB. |
 | `profile_photos/` | 1 | `profile_photos/{uid}/{file}` — owner/admin managed profile image, maximum 10 MiB. |
 | `releases/` | 1 | `releases/android/beta/{apk}` — APK referenced by `web/site/beta-release.json`. |
 | `trail_covers/` | 51 | `trail_covers/{trailId}/{image}` and deployment-curated variants — trail cover images. |
 
-Total: **59 objects / 221.31 MiB**. All remaining objects are referenced by Firestore or a checked-in application/release manifest.
+Total: **57 objects / 204.84 MiB**. All remaining objects are referenced by Firestore or a checked-in application/release manifest.
 
 Three additional Google-managed Cloud Functions buckets were found (`gcf-v2-sources` in both deployed regions and the `gcf-v2-uploads` bucket). They are deployment infrastructure rather than app Storage and were intentionally preserved.
 
@@ -1092,6 +1373,11 @@ Three additional Google-managed Cloud Functions buckets were found (`gcf-v2-sour
 | `hikeSessions` | COLLECTION | `status` ASCENDING, `distanceKm` ASCENDING |
 | `hikeSessions` | COLLECTION | `status` ASCENDING, `checkIns` ASCENDING |
 | `hikeSessions` | COLLECTION | `status` ASCENDING, `hikeType` ASCENDING |
+| `hikeSessions` | COLLECTION | `userId` ASCENDING, `status` ASCENDING, `endedAtLocal` DESCENDING |
+| `userAchievements` | COLLECTION | `userId` ASCENDING, `isUnlocked` ASCENDING, `awardedAtLocal` DESCENDING |
+| `userAchievements` | COLLECTION | `isUnlocked` ASCENDING, `awardedAtLocal` ASCENDING |
+| `upcomingHikes` | COLLECTION | `creatorUserId` ASCENDING, `departureTimeLocal` DESCENDING, `__name__` DESCENDING |
+| `upcomingHikes` | COLLECTION | `participantPhones` CONTAINS, `departureTimeLocal` DESCENDING, `__name__` DESCENDING |
 
 ## Deployed Cloud Functions
 

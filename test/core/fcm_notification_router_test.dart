@@ -30,8 +30,12 @@ void main() {
     );
   });
 
-  test('routes team countdown and start updates into the live launch', () {
-    for (final type in const ['team_hike_countdown', 'team_hike_started']) {
+  test('routes team readiness, countdown and start into the live launch', () {
+    for (final type in const [
+      'team_hike_ready',
+      'team_hike_countdown',
+      'team_hike_started',
+    ]) {
       expect(
         FcmNotificationRouter.deepLinkFor({
           'type': type,

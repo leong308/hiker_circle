@@ -3599,6 +3599,7 @@ const teamHikeActionLimits = Object.freeze({
   create: [5, 60 * 60 * 1000],
   read: [120, 10 * 60 * 1000],
   accept: [20, 60 * 60 * 1000],
+  beginReadiness: [10, 60 * 60 * 1000],
   ready: [30, 60 * 60 * 1000],
   removePending: [10, 60 * 60 * 1000],
   cancel: [10, 60 * 60 * 1000],
@@ -6855,6 +6856,34 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
       phase = participants.some((participant) => participant.status === 'invited')
         ? 'inviting'
         : 'readyCheck';
+    } else if (action === 'beginReadiness') {
+      if (!isHost) {
+        throw new HttpsError(
+          'permission-denied',
+          'Only the host can start team preparation.'
+        );
+      }
+      if (phase === 'active' || phase === 'completed') {
+        throw new HttpsError(
+          'failed-precondition',
+          'This team hike is no longer preparing to start.'
+        );
+      }
+      if (!team.readinessStartedAt && !team.readinessStartedAtLocal) {
+        teamPatch.readinessStartedAtLocal = nowIso;
+        for (const recipient of participants) {
+          const recipientPhone = teamParticipantPhone(recipient);
+          if (recipientPhone === hostPhone) continue;
+          queueTeamOutbox(transaction, db, {
+            type: 'team_hike_ready',
+            recipientPhone,
+            senderPhone: hostPhone,
+            teamId,
+            nowIso,
+          });
+        }
+        didChange = true;
+      }
     } else if (action === 'ready') {
       if (phase === 'active' || phase === 'completed') {
         throw new HttpsError(
@@ -11032,6 +11061,7 @@ async function deliverFcmOutboxDocument(reference, messageId) {
     const allowedTypes = new Set([
       'team_hike_invite',
       'team_hike_invite_accepted',
+      'team_hike_ready',
       'team_hike_countdown',
       'team_hike_started',
       'team_hike_ping',
@@ -11068,6 +11098,7 @@ async function deliverFcmOutboxDocument(reference, messageId) {
     const recipientIsParticipant = participantPhones.has(recipientPhone);
     const hostOnlyTypes = new Set([
       'team_hike_invite',
+      'team_hike_ready',
       'team_hike_countdown',
       'team_hike_started',
       'team_hike_completed',
@@ -11102,6 +11133,10 @@ async function deliverFcmOutboxDocument(reference, messageId) {
     const templates = {
       team_hike_invite: ['Team hike invite', `You were invited to ${trailName}.`],
       team_hike_invite_accepted: ['Buddy joined', 'A buddy joined your team hike.'],
+      team_hike_ready: [
+        'Team preparation started',
+        `${trailName} is waiting for your READY check.`,
+      ],
       team_hike_countdown: ['Team hike starting', `${trailName} is ready to start.`],
       team_hike_started: ['Team hike started', `${trailName} is now actively tracking.`],
       team_hike_ping: ['Team check ping', 'Your hiking team is asking for an OK response.'],
@@ -11205,6 +11240,117 @@ async function deliverFcmOutboxDocument(reference, messageId) {
 exports.deliverFcmOutboxMessage = onDocumentCreated(
   { document: 'fcmOutbox/{messageId}', retry: true },
   event => deliverFcmOutboxDocument(event.data.ref, event.params.messageId)
+);
+
+exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
+  {
+    document: 'fcmOutbox/{messageId}',
+    secrets: [greenApiInstanceId, greenApiToken],
+  },
+  async (event) => {
+    const initial = event.data?.data() || {};
+    if (String(initial.type || '') !== 'team_hike_ready') return;
+
+    const payload = await claimAtMostOnceDelivery(event.data.ref, {
+      claimPrefix: 'teamReadinessWhatsAppDelivery',
+      processedFields: ['teamReadinessWhatsAppProcessedAtLocal'],
+    });
+    if (!payload) return;
+
+    const recipientPhone = String(payload.recipientPhoneNumber || '').trim();
+    const senderPhone = String(payload.senderPhoneNumber || '').trim();
+    const teamId = String(payload.teamHikeSessionId || '').trim();
+    const finish = async (status, extra = {}) => {
+      await event.data.ref.set(
+        {
+          teamReadinessWhatsAppStatus: status,
+          teamReadinessWhatsAppProcessedAt:
+            admin.firestore.FieldValue.serverTimestamp(),
+          teamReadinessWhatsAppProcessedAtLocal: new Date().toISOString(),
+          ...extra,
+        },
+        { merge: true }
+      );
+    };
+
+    try {
+      if (
+        !/^\+[1-9]\d{7,14}$/.test(recipientPhone)
+        || !/^\+[1-9]\d{7,14}$/.test(senderPhone)
+        || !validFirestoreDocumentId(teamId)
+      ) {
+        await finish('failed', { teamReadinessWhatsAppError: 'invalid_payload' });
+        return;
+      }
+
+      const teamSnapshot = await admin.firestore()
+        .collection('teamHikeSessions')
+        .doc(teamId)
+        .get();
+      const team = teamSnapshot.data() || {};
+      const participantPhones = new Set(
+        validTeamParticipants(team).map(teamParticipantPhone)
+      );
+      if (
+        !teamSnapshot.exists
+        || String(team.hostPhoneNumber || '').trim() !== senderPhone
+        || recipientPhone === senderPhone
+        || !participantPhones.has(recipientPhone)
+        || (!team.readinessStartedAt && !team.readinessStartedAtLocal)
+      ) {
+        await finish('failed', {
+          teamReadinessWhatsAppError: 'unauthorized_or_expired',
+        });
+        return;
+      }
+
+      const trailName = String(team.trailName || 'your team hike')
+        .trim()
+        .slice(0, 100) || 'your team hike';
+      const credentials = greenApiCredentials();
+      const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId: `${recipientPhone.replace(/\D/g, '')}@c.us`,
+          message:
+            `HikerCircle: The host has started team preparation for ${trailName}. `
+            + 'Open HikerCircle to review your preparation and mark READY. '
+            + 'The pending team launch will appear automatically.',
+        }),
+        signal: AbortSignal.timeout(12 * 1000),
+      });
+      const responseData = await response.json().catch(() => null);
+      const providerMessageId = greenApiMessageId(responseData);
+      if (!response.ok || !providerMessageId) {
+        await finish('failed', {
+          teamReadinessWhatsAppError: response.ok
+            ? 'missing_provider_message_id'
+            : `http_${response.status}`,
+        });
+        return;
+      }
+      await finish('sent', {
+        teamReadinessWhatsAppProviderMessageId:
+          providerMessageId.slice(0, 240),
+      });
+    } catch (error) {
+      await finish(
+        providerFailureWasDefinitelyUnsent(error)
+          ? 'failed'
+          : 'delivery_uncertain',
+        {
+          teamReadinessWhatsAppError: String(
+            providerTransportErrorCode(error) || error?.name || 'send_failed'
+          ).slice(0, 160),
+        }
+      ).catch(() => {});
+      logger.error(`Team readiness WhatsApp ${event.params.messageId} failed`, {
+        errorName: String(error?.name || ''),
+        errorCode: providerTransportErrorCode(error),
+      });
+    }
+  }
 );
 
 exports.recoverFcmOutboxDeliveries = onSchedule('every 5 minutes', async () => {
@@ -11774,7 +11920,7 @@ async function monitorActiveHikesTask({db, snapshot, now}) {
   );
 }
 
-exports.monitorActiveHikes = onSchedule('every 1 minutes', async () => {
+exports.monitorActiveHikes = onSchedule('every 2 minutes', async () => {
   const db = admin.firestore();
   const snapshot = await db
     .collection('hikeSessions')

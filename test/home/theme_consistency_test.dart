@@ -30,7 +30,7 @@ void main() {
       const Color(0xFFEAF4EE),
     );
     expect(
-      Theme.of(tester.element(find.byType(TextField))).brightness,
+      Theme.of(tester.element(find.byType(FirstAidGuidePage))).brightness,
       Brightness.dark,
     );
     expect(_decoratedColors(tester), contains(const Color(0xFF141C17)));

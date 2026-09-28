@@ -98,6 +98,7 @@ class _HikerCircleToastSnackBar extends SnackBar {
          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
          dismissDirection: DismissDirection.down,
          clipBehavior: Clip.none,
+         showCloseIcon: false,
        );
 
   final String _message;

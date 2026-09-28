@@ -629,6 +629,7 @@ class TeamHikeSession {
     this.activeHikeSessionId = '',
     this.countdownSeconds = 5,
     this.createdAt,
+    this.readinessStartedAt,
     this.countdownStartedAt,
     this.startedAt,
     this.updatedAt,
@@ -649,6 +650,9 @@ class TeamHikeSession {
       phase: _teamHikePhaseFromName(_modelStringFrom(data['phase'])),
       countdownSeconds: _modelIntFrom(data['countdownSeconds'], fallback: 5),
       createdAt: _modelDateFromValue(data['createdAtLocal']),
+      readinessStartedAt: _modelDateFromValue(
+        data['readinessStartedAtLocal'] ?? data['readinessStartedAt'],
+      ),
       countdownStartedAt: _modelDateFromValue(data['countdownStartedAtLocal']),
       startedAt: _modelDateFromValue(data['startedAtLocal']),
       updatedAt: _modelDateFromValue(data['updatedAtLocal']),
@@ -670,6 +674,7 @@ class TeamHikeSession {
   final TeamHikePhase phase;
   final int countdownSeconds;
   final DateTime? createdAt;
+  final DateTime? readinessStartedAt;
   final DateTime? countdownStartedAt;
   final DateTime? startedAt;
   final DateTime? updatedAt;
@@ -723,6 +728,7 @@ class TeamHikeSession {
     TeamHikePhase? phase,
     int? countdownSeconds,
     DateTime? createdAt,
+    DateTime? readinessStartedAt,
     DateTime? countdownStartedAt,
     DateTime? startedAt,
     DateTime? updatedAt,
@@ -739,6 +745,7 @@ class TeamHikeSession {
       phase: phase ?? this.phase,
       countdownSeconds: countdownSeconds ?? this.countdownSeconds,
       createdAt: createdAt ?? this.createdAt,
+      readinessStartedAt: readinessStartedAt ?? this.readinessStartedAt,
       countdownStartedAt: countdownStartedAt ?? this.countdownStartedAt,
       startedAt: startedAt ?? this.startedAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -764,6 +771,10 @@ class TeamHikeSession {
       if (sharedDraft != null) 'draft': sharedDraft!.toPersistence(),
       if (createdAt != null)
         'createdAtLocal': createdAt!.toUtc().toIso8601String(),
+      if (readinessStartedAt != null)
+        'readinessStartedAtLocal': readinessStartedAt!
+            .toUtc()
+            .toIso8601String(),
       if (countdownStartedAt != null)
         'countdownStartedAtLocal': countdownStartedAt!
             .toUtc()

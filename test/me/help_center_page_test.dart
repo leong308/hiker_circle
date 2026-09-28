@@ -78,6 +78,86 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'plan and track opens a horizontally swipeable seven-step guide',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const MaterialApp(home: HelpCenterPage()));
+      await tester.tap(find.text('Plan & track a hike'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Your hike in 7 clear steps'), findsOneWidget);
+      expect(find.text('At a glance'), findsOneWidget);
+      expect(find.textContaining('Mark this step'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('plan-guide-start')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('plan-guide-overlay')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('plan-guide-step-strip')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('plan-guide-pages')), findsOneWidget);
+      expect(find.text('Step 1 of 7'), findsOneWidget);
+      expect(find.textContaining('Mark this step'), findsNothing);
+
+      final pages = tester.widget<PageView>(
+        find.byKey(const ValueKey('plan-guide-pages')),
+      );
+      expect(pages.childrenDelegate.estimatedChildCount, 7);
+
+      await tester.drag(
+        find.byKey(const ValueKey('plan-guide-pages')),
+        const Offset(-320, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Step 2 of 7'), findsOneWidget);
+      expect(find.text('Read the map'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('plan and track guide remains usable with large text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(1.5)),
+          child: child!,
+        ),
+        home: const HelpCenterPage(),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.text('Plan & track a hike'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Plan & track a hike'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Your hike in 7 clear steps'), findsOneWidget);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -180));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('plan-guide-start')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('plan-guide-overlay')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final brightness in Brightness.values) {
     testWidgets('narrow layout supports large text in $brightness', (
       tester,

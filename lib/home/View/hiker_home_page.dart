@@ -123,6 +123,11 @@ class _HikerHomePageState extends State<HikerHomePage>
   StreamSubscription<NetworkReachabilitySnapshot>?
   _networkReachabilitySubscription;
   StreamSubscription<List<GroupChat>>? _formedTeamChatsSubscription;
+  StreamSubscription<List<TeamHikeSession>>? _teamReadinessSubscription;
+  final Map<String, TeamHikeSession> _pendingTeamReadinessSessions =
+      <String, TeamHikeSession>{};
+  final Set<String> _presentedTeamReadinessKeys = <String>{};
+  bool _isDrainingTeamReadiness = false;
   String? _activeTeamNamingChatId;
   String? _activeUpcomingJoinRequestReviewId;
   final Set<String> _completedUpcomingJoinRequestReviewIds = <String>{};
@@ -376,6 +381,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
     _listenForFormedTeamChats();
+    _listenForTeamReadiness();
     _upcomingPlanningRestoreFuture = _restoreCachedUpcomingPlanningState();
     emergencyContactsRepository = EmergencyContactsRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
@@ -448,6 +454,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       _notificationUiReady = true;
       unawaited(_drainPendingFcmOpens());
       unawaited(_drainPendingBleUiEvents());
+      unawaited(_drainPendingTeamReadiness());
     });
     unawaited(_loadInitialDeepLink());
     if (widget.initialDeepLink != null) {
@@ -488,6 +495,75 @@ class _HikerHomePageState extends State<HikerHomePage>
             // Circle provides a visible retry state if the chat stream fails.
           },
         );
+  }
+
+  void _listenForTeamReadiness() {
+    if (!widget.firebaseBootstrapResult.isAvailable) return;
+    _teamReadinessSubscription = hikerCircleRepository
+        .watchTeamReadinessForParticipant(widget.session.phoneNumber)
+        .listen(
+          (sessions) {
+            for (final teamSession in sessions) {
+              final key = _teamReadinessKey(teamSession);
+              if (key == null || _presentedTeamReadinessKeys.contains(key)) {
+                continue;
+              }
+              final ownParticipant = teamSession.participants
+                  .where(
+                    (participant) => _sameTeamPhone(
+                      participant.phoneNumber,
+                      widget.session.phoneNumber,
+                    ),
+                  )
+                  .firstOrNull;
+              if (ownParticipant == null ||
+                  ownParticipant.status == TeamHikeParticipantStatus.ended) {
+                continue;
+              }
+              _pendingTeamReadinessSessions[key] = teamSession;
+            }
+            unawaited(_drainPendingTeamReadiness());
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            debugPrint('Team readiness updates are unavailable: $error');
+          },
+        );
+  }
+
+  String? _teamReadinessKey(TeamHikeSession teamSession) {
+    final startedAt = teamSession.readinessStartedAt;
+    if (teamSession.id.trim().isEmpty || startedAt == null) return null;
+    return '${teamSession.id}:${startedAt.toUtc().millisecondsSinceEpoch}';
+  }
+
+  Future<void> _drainPendingTeamReadiness() async {
+    if (_isDrainingTeamReadiness ||
+        !mounted ||
+        !_notificationUiReady ||
+        _appLifecycleState != AppLifecycleState.resumed ||
+        _navigatingTeamSessionId != null) {
+      return;
+    }
+    _isDrainingTeamReadiness = true;
+    try {
+      while (mounted &&
+          _appLifecycleState == AppLifecycleState.resumed &&
+          _navigatingTeamSessionId == null &&
+          _pendingTeamReadinessSessions.isNotEmpty) {
+        final entries = _pendingTeamReadinessSessions.entries.toList()
+          ..sort(
+            (left, right) => right.value.readinessStartedAt!.compareTo(
+              left.value.readinessStartedAt!,
+            ),
+          );
+        final entry = entries.first;
+        _pendingTeamReadinessSessions.remove(entry.key);
+        if (_presentedTeamReadinessKeys.contains(entry.key)) continue;
+        await _openTeamHikeInvite(entry.value.id);
+      }
+    } finally {
+      _isDrainingTeamReadiness = false;
+    }
   }
 
   void _promptForFormedTeamChatName(List<GroupChat> chats) {
@@ -3044,6 +3120,25 @@ class _HikerHomePageState extends State<HikerHomePage>
       return null;
     }
 
+    try {
+      teamSession = await hikerCircleRepository.beginTeamHikeReadiness(
+        session: widget.session,
+        teamHikeSessionId: teamSession.id,
+      );
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (mounted) {
+        HikerCircleToast.show(
+          context,
+          error.message,
+          tone: HikerCircleToastTone.error,
+          title: 'Could not alert the team',
+        );
+      }
+      return null;
+    }
+
+    if (!mounted) return null;
+
     _navigatingTeamSessionId = teamSession.id;
     try {
       final launchedSession = await Navigator.of(context).push<TeamHikeSession>(
@@ -3923,6 +4018,11 @@ class _HikerHomePageState extends State<HikerHomePage>
           'This team hike invitation is no longer available.',
         );
       }
+      final readinessKey = _teamReadinessKey(pendingSession);
+      if (readinessKey != null &&
+          !_presentedTeamReadinessKeys.add(readinessKey)) {
+        return;
+      }
       Trail? trail = pendingSession.sharedDraft?.trail;
       for (final candidate in trails) {
         if (candidate.trailId == pendingSession.trailId) {
@@ -4104,6 +4204,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         );
     } finally {
       _navigatingTeamSessionId = null;
+      unawaited(_drainPendingTeamReadiness());
     }
   }
 
@@ -5291,6 +5392,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       setState(_rebuildPlannedHike);
       unawaited(_drainPendingFcmOpens());
       unawaited(_drainPendingBleUiEvents());
+      unawaited(_drainPendingTeamReadiness());
       unawaited(_resumeBleSosMonitor());
       unawaited(_consumePendingNativeSafetyEvent());
       if (hike != null) {
@@ -6795,6 +6897,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     _bleEventSubscription?.cancel();
     _networkReachabilitySubscription?.cancel();
     _formedTeamChatsSubscription?.cancel();
+    _teamReadinessSubscription?.cancel();
     for (final timer in _nearbySosFallbackTimers.values) {
       timer.cancel();
     }

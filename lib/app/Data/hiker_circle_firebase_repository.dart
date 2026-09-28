@@ -2937,6 +2937,36 @@ class HikerCircleFirebaseRepository {
         .map(_teamHikeSessionFromDocument);
   }
 
+  Stream<List<TeamHikeSession>> watchTeamReadinessForParticipant(
+    String phoneNumber,
+  ) {
+    final normalizedPhone = phoneNumber.trim();
+    if (!_firebaseBootstrapResult.isAvailable || normalizedPhone.isEmpty) {
+      return Stream<List<TeamHikeSession>>.value(const []);
+    }
+    return _teamHikeSessions
+        .where('participantPhoneNumbers', arrayContains: normalizedPhone)
+        .snapshots()
+        .map((snapshot) {
+          final sessions = snapshot.docs
+              .map(_teamHikeSessionFromDocument)
+              .whereType<TeamHikeSession>()
+              .where(
+                (teamSession) =>
+                    teamSession.readinessStartedAt != null &&
+                    teamSession.phase != TeamHikePhase.completed &&
+                    teamSession.phase != TeamHikePhase.active &&
+                    teamSession.hostPhoneNumber.trim() != normalizedPhone,
+              )
+              .toList();
+          sessions.sort(
+            (left, right) =>
+                right.readinessStartedAt!.compareTo(left.readinessStartedAt!),
+          );
+          return sessions;
+        });
+  }
+
   Future<TeamHikeSession?> loadTeamHikeSession(String teamHikeSessionId) async {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
       return null;
@@ -2953,6 +2983,16 @@ class HikerCircleFirebaseRepository {
   }) async {
     return _manageTeamHikeAction(
       action: 'accept',
+      teamHikeSessionId: teamHikeSessionId,
+    );
+  }
+
+  Future<TeamHikeSession> beginTeamHikeReadiness({
+    required AppSession session,
+    required String teamHikeSessionId,
+  }) async {
+    return _manageTeamHikeAction(
+      action: 'beginReadiness',
       teamHikeSessionId: teamHikeSessionId,
     );
   }

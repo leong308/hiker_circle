@@ -7,6 +7,9 @@ void main() {
     var actionCount = 0;
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(
+          snackBarTheme: const SnackBarThemeData(showCloseIcon: true),
+        ),
         home: Scaffold(
           body: Builder(
             builder: (context) => Center(
@@ -39,6 +42,7 @@ void main() {
       find.byKey(const ValueKey('hiker-circle-toast-close')),
       findsOneWidget,
     );
+    expect(find.byType(IconButton), findsOneWidget);
     expect(
       find.byKey(const ValueKey('hiker-circle-toast-action')),
       findsOneWidget,
