@@ -5,10 +5,12 @@ const {
   onDocumentCreated,
   onDocumentDeleted,
   onDocumentUpdated,
+  onDocumentWritten,
 } = require('firebase-functions/v2/firestore');
 const { logger } = require('firebase-functions/v2');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
+const {getApp} = require('firebase-admin/app');
 const {
   FieldPath,
   FieldValue,
@@ -94,6 +96,11 @@ const {
   verifyTotp,
 } = require('./mfa_helpers');
 const {runMaintenanceTasks} = require('./scheduled_maintenance');
+const {activeMembershipChanged, createSchedulerClient, reconcileActiveHikeMonitor,
+  withMonitorRunLease} = require('./active_hike_monitor_schedule');
+const {upcomingMembershipChanged, reconcileUpcomingHikeOperations,
+  withUpcomingRunLease} = require('./upcoming_hike_schedule');
+const {syncTrailWeather, latestFcmTokensForUser, historicalForecastProjection, canonicalUsername} = require('./storage_normalization');
 const {
   AssistantError: HikerCircleAssistantError,
   createAssistantHandler,
@@ -120,6 +127,30 @@ const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
 const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
 const geminiApiKey = defineSecret('GEMINI_API_KEY');
+
+exports.checkCommunityContentIntegrity = onSchedule({
+  schedule: 'every 30 minutes', secrets: [geminiApiKey], timeoutSeconds: 240,
+  memory: '256MiB', maxInstances: 1, concurrency: 1,
+}, async () => {
+  const result = await require('./community_moderation').runIntegrityCheck({
+    db: admin.firestore(), apiKey: geminiApiKey.value(), fieldPath: FieldPath.documentId(),
+  });
+  logger.log('Community integrity check finished.', result);
+});
+
+exports.reviewCommunityContentFlag = onCall({timeoutSeconds: 30}, async request => {
+  if (!request.auth?.uid || request.auth.token?.isAdmin !== true) {
+    throw new HttpsError('permission-denied', 'Administrator access is required.');
+  }
+  try {
+    return await require('./community_moderation').reviewContent({db: admin.firestore(),
+      reviewId: request.data?.reviewId, action: request.data?.action, adminId: request.auth.uid});
+  } catch (error) {
+    if (error.message === 'invalid-review') throw new HttpsError('invalid-argument', 'This review is invalid.');
+    logger.error('Community review failed.', {code: String(error.code || 'review-failed')});
+    throw new HttpsError('internal', 'Review could not be saved. Please retry.');
+  }
+});
 
 exports.askHikerCircleAssistant = onCall(
   {
@@ -679,51 +710,6 @@ function isAdminUser(user) {
     role === 'super_admin' ||
     roles.includes('admin')
   );
-}
-
-function latestFcmTokensForUser(user) {
-  const fcmTokenByAppId =
-    user.fcmTokenByAppId && typeof user.fcmTokenByAppId === 'object'
-      ? user.fcmTokenByAppId
-      : {};
-  const latestAppInstanceId = [
-    user.boundAppInstanceId,
-    user.lastSignedInAppInstanceId,
-    user.currentAppId,
-    user.activeFcmAppInstanceId,
-  ]
-    .map((value) => String(value || '').trim())
-    .find((value) => value);
-  const activeAppInstanceId = String(user.activeFcmAppInstanceId || '').trim();
-
-  if (latestAppInstanceId) {
-    const token = fcmTokenByAppId[latestAppInstanceId];
-    if (typeof token === 'string' && token.length > 20) {
-      return [token];
-    }
-
-    const activeToken = String(user.activeFcmToken || '').trim();
-    if (
-      activeAppInstanceId === latestAppInstanceId &&
-      activeToken.length > 20
-    ) {
-      return [activeToken];
-    }
-
-    return [];
-  }
-
-  const lastToken = String(user.lastFcmToken || '').trim();
-  if (lastToken.length > 20) {
-    return [lastToken];
-  }
-
-  const legacyTokens = Array.isArray(user.fcmTokens)
-    ? user.fcmTokens.filter(
-        (token) => typeof token === 'string' && token.length > 20
-      )
-    : [];
-  return legacyTokens.length === 1 ? legacyTokens : [];
 }
 
 async function reserveOtpChallenge({
@@ -1959,7 +1945,7 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
     const shareUrl =
       `https://hiker-circle.web.app/live-location?share=${notification.shareId}`;
     const message = composeLiveLocationStartMessage({
-      hikerName: user.username || user.profile?.username || '',
+      hikerName: canonicalUsername(user),
       ownerPhone,
       trailName: hike.trailName,
       startedAt,
@@ -2135,7 +2121,7 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
         ? owner.profile
         : {};
       const displayName = String(
-        owner.username || profile.username || `Hiker ${ownerKey.slice(-4)}`
+        canonicalUsername(owner, `Hiker ${ownerKey.slice(-4)}`)
       ).slice(0, 80);
       const photoURL = String(owner.photoURL || profile.photoURL || '').slice(
         0,
@@ -2443,7 +2429,7 @@ exports.joinUpcomingHike = onCall({}, async (request) => {
       ? user.profile
       : {};
     const displayName = String(
-      user.username || userProfile.username || `Hiker ${phoneKeyFor(ownerPhone).slice(-4)}`
+      canonicalUsername(user, `Hiker ${phoneKeyFor(ownerPhone).slice(-4)}`)
     ).slice(0, 80);
     const chat = chatSnapshot.data() || {};
     const participantNames =
@@ -2467,6 +2453,7 @@ exports.joinUpcomingHike = onCall({}, async (request) => {
       {
         hikeSessionId,
         trailName: String(hike.trailName || 'Group hike').slice(0, 160),
+        ...(!chatSnapshot.exists ? {isDeleted: false} : {}),
         participantPhones: uniquePhones,
         participantNames,
         creatorPhone,
@@ -2857,6 +2844,7 @@ exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
       {
         hikeSessionId: hikeId,
         trailName: String(hike.trailName || 'Group hike').slice(0, 160),
+        ...(!chatSnapshot.exists ? {isDeleted: false} : {}),
         participantPhones: uniquePhones,
         participantNames,
         creatorPhone: hostPhone,
@@ -3513,7 +3501,7 @@ function publicProfileFromUserDocument(document) {
     return null;
   }
   const points = Math.max(0, Number(data.achievementPoints || 0));
-  const username = String(data.username || profile.username || 'Hiker')
+  const username = String(canonicalUsername(data, 'Hiker'))
     .trim()
     .slice(0, 80);
   const photoURL = String(
@@ -3708,7 +3696,7 @@ function teamBuddyFromUser(phoneNumber, user, isHost, index) {
     0xfff59e0b,
   ];
   const name = String(
-    user?.username || profile.username || `Hiker ${key.slice(-4)}`
+    canonicalUsername(user, `Hiker ${key.slice(-4)}`)
   ).trim().slice(0, 80) || 'Trail buddy';
   const photoURL = String(
     user?.photoURL || user?.profilePhotoURL || profile.photoURL || ''
@@ -4051,7 +4039,7 @@ function canonicalChatProfile(phoneNumber, user) {
     : {};
   const key = phoneKeyFor(phoneNumber);
   const name = String(
-    user?.username || profile.username || `Hiker ${key.slice(-4)}`
+    canonicalUsername(user, `Hiker ${key.slice(-4)}`)
   ).trim().slice(0, 80) || 'Hiker';
   const photoURL = String(
     user?.photoURL || user?.profilePhotoURL || profile.photoURL || ''
@@ -4221,6 +4209,7 @@ async function ensureTeamChatDocument(
           : {}),
         ...(!snapshot.exists
           ? {
+              isDeleted: false,
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
               createdAtLocal: String(team.createdAtLocal || now.toISOString()),
             }
@@ -4448,6 +4437,7 @@ exports.scheduleUpcomingHike = onCall(
         creatorName: ownerProfile.name,
         creationKeyHash: hash,
         notificationRadiusKm: 20,
+        isDeleted: false,
         sharedHikePlanPrivacyVersion: SHARED_HIKE_PLAN_PRIVACY_VERSION,
         draft,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -4470,6 +4460,7 @@ exports.scheduleUpcomingHike = onCall(
             departureTimeLocal: draft.departureTime,
             ...(!existingChatSnapshot.exists
               ? {
+                  isDeleted: false,
                   createdAt: admin.firestore.FieldValue.serverTimestamp(),
                   createdAtLocal: nowIso,
                 }
@@ -5822,14 +5813,26 @@ exports.completeActiveHikeSession = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAtLocal: nowIso,
       };
+      // Keep exact historical route/checkpoints; move only large forecast series
+      // to a private immutable sidecar. Active/offline preparation keeps full weather.
+      const historicalTrail = existingSnapshot.exists ? existing.trail : draft.trail;
+      const forecast = historicalForecastProjection(historicalTrail);
+      if (forecast.changed) {
+        const archive = sessionReference.collection('snapshotArchives').doc('trailForecast');
+        transaction.create(archive, {
+          schemaVersion: 1, weather: forecast.archive, archivedAtLocal: nowIso,
+        });
+        completionPatch.trailForecastArchivePath = archive.path;
+        completionPatch.trailSnapshotVersion = 2;
+      }
       if (existingSnapshot.exists) {
-        transaction.set(
+        transaction.update(
           sessionReference,
           {
             ...completionPatch,
+            ...(forecast.changed ? {'trail.weather': forecast.weather} : {}),
             monitoringFcmToken: admin.firestore.FieldValue.delete(),
-          },
-          { merge: true }
+          }
         );
       } else {
         transaction.create(sessionReference, {
@@ -5844,6 +5847,7 @@ exports.completeActiveHikeSession = onCall(
           }),
           sourceLocalSessionId: requestedSessionId,
           ...completionPatch,
+          ...(forecast.changed ? {trail: {...draft.trail, weather: forecast.weather}} : {}),
         });
       }
       transaction.set(
@@ -8396,128 +8400,12 @@ exports.verifyGreenApiLoginCode = onCall(
 );
 
 exports.registerWithGreenApiAndPassword = onCall(
-  { secrets: [greenApiToken] },
-  async (request) => {
+  {},
+  async () => {
     throw new HttpsError(
       'failed-precondition',
       'This legacy registration path is disabled. Verify WhatsApp and bind Authenticator or a passkey.'
     );
-    /* c8 ignore start -- retained temporarily for rolling-client compatibility */
-    const challengeId = String(request.data?.challengeId || '').trim();
-    const code = String(request.data?.code || '').trim();
-    const password = String(request.data?.password || '');
-    if (
-      !/^[a-f0-9]{64}$/.test(challengeId) ||
-      !/^\d{6}$/.test(code) ||
-      password.length < 8
-    ) {
-      throw new HttpsError(
-        'invalid-argument',
-        'Enter the 6-digit code and a strong password (min 8 characters).'
-      );
-    }
-
-    const challengeReference = admin
-      .firestore()
-      .collection('greenApiLoginChallenges')
-      .doc(challengeId);
-    const verification = await admin.firestore().runTransaction(
-      async (transaction) => {
-        const snapshot = await transaction.get(challengeReference);
-        const challenge = snapshot.data();
-        if (!snapshot.exists || !challenge) {
-          return {
-            errorCode: 'not-found',
-            errorMessage:
-              'This WhatsApp verification request no longer exists.',
-          };
-        }
-        if (
-          challenge.consumed === true ||
-          Date.now() > Number(challenge.expiresAtMillis || 0)
-        ) {
-          return {
-            errorCode: 'deadline-exceeded',
-            errorMessage: 'The WhatsApp verification code has expired.',
-          };
-        }
-        const attemptsRemaining = Number(challenge.attemptsRemaining || 0);
-        if (attemptsRemaining <= 0) {
-          return {
-            errorCode: 'permission-denied',
-            errorMessage: 'Too many incorrect attempts. Request a new code.',
-          };
-        }
-
-        const expected = Buffer.from(String(challenge.codeHash || ''), 'hex');
-        const candidateHash = crypto
-          .createHmac('sha256', greenApiToken.value())
-          .update(`${challengeId}:${code}`)
-          .digest();
-        const matches =
-          expected.length === candidateHash.length &&
-          crypto.timingSafeEqual(expected, candidateHash);
-        if (!matches) {
-          transaction.update(challengeReference, {
-            attemptsRemaining: attemptsRemaining - 1,
-          });
-          return {
-            errorCode: 'permission-denied',
-            errorMessage: 'The WhatsApp verification code is incorrect.',
-          };
-        }
-
-        transaction.update(challengeReference, {
-          consumed: true,
-          verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-          codeHash: admin.firestore.FieldValue.delete(),
-        });
-        return { phoneNumber: String(challenge.phoneNumber || '') };
-      }
-    );
-    if (verification.errorCode) {
-      throw new HttpsError(
-        verification.errorCode,
-        verification.errorMessage
-      );
-    }
-    const phoneNumber = verification.phoneNumber;
-    if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
-      throw new HttpsError('internal', 'Invalid phone number on record.');
-    }
-
-    const userId = userDocumentIdForPhone(phoneNumber);
-    const passwordHash = await argon2.hash(password, {
-      type: argon2.argon2id,
-    });
-
-    const now = new Date();
-    await admin
-      .firestore()
-      .collection('users')
-      .doc(userId)
-      .set(
-        {
-          phoneNumber,
-          passwordHash,
-          requiresOnboarding: true,
-          profileSetupCompleted: false,
-          onboardingVersion: 1,
-          firebaseUid: userId,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          createdAtLocal: now.toISOString(),
-          lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
-          lastSignedInAtLocal: now.toISOString(),
-        },
-        { merge: true }
-      );
-
-    const customToken = await admin.auth().createCustomToken(userId, {
-      phoneNumber,
-      verificationProvider: 'green_api_password',
-    });
-    return { customToken, phoneNumber };
-    /* c8 ignore stop */
   }
 );
 
@@ -9310,113 +9198,12 @@ exports.resetPassword = onCall(
   }
 );
 
-exports.loginWithPassword = onCall({}, async (request) => {
+// Keep rejection stubs for older clients; these paths must never mint tokens.
+exports.loginWithPassword = onCall({}, async () => {
   throw new HttpsError(
     'failed-precondition',
     'Password-only login is disabled. Sign in with WhatsApp and your security method.'
   );
-  /* c8 ignore start -- retained temporarily for rolling-client compatibility */
-  const phoneNumber = String(request.data?.phoneNumber || '').trim();
-  if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
-    throw new HttpsError(
-      'invalid-argument',
-      'Enter a valid international phone number.'
-    );
-  }
-  const password = String(request.data?.password || '');
-  if (!password) {
-    throw new HttpsError('invalid-argument', 'Enter your password.');
-  }
-
-  const userId = userDocumentIdForPhone(phoneNumber);
-  const userRef = admin.firestore().collection('users').doc(userId);
-
-  const now = new Date();
-  const cooldownResult = await admin.firestore().runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(userRef);
-    if (!snapshot.exists) {
-      return { errorCode: 'not-found', errorMessage: 'No account found with this phone number. Please sign up first.' };
-    }
-    const user = snapshot.data() || {};
-
-    // Check cooldown
-    const cooldownUntil = user.loginCooldownUntil;
-    if (cooldownUntil) {
-      const cooldownMillis =
-        typeof cooldownUntil.toDate === 'function'
-          ? cooldownUntil.toDate().getTime()
-          : Date.parse(String(cooldownUntil));
-      if (Number.isFinite(cooldownMillis) && cooldownMillis > now.getTime()) {
-        const expiryDate = new Date(cooldownMillis);
-        const day = String(expiryDate.getDate()).padStart(2, '0');
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const month = months[expiryDate.getMonth()];
-        const year = expiryDate.getFullYear();
-        const hours = expiryDate.getHours();
-        const minutes = String(expiryDate.getMinutes()).padStart(2, '0');
-        const ampm = hours >= 12 ? 'PM' : 'AM';
-        const hour12 = hours % 12 || 12;
-        const formatted = `${day} ${month} ${year}, ${hour12}:${minutes} ${ampm}`;
-        return {
-          errorCode: 'resource-exhausted',
-          errorMessage: `Login is temporary disabled as there are too many attempts at ${formatted}. Please retry later.`,
-          cooldownExpiresAtMillis: cooldownMillis,
-        };
-      }
-    }
-
-    // Check account
-    if (user.accountDisabled === true || user.status === 'disabled') {
-      return { errorCode: 'permission-denied', errorMessage: 'This HikerCircle account has been disabled.' };
-    }
-
-    const storedHash = user.passwordHash;
-    if (!storedHash) {
-      return { errorCode: 'unauthenticated', errorMessage: 'This account does not have a password set. Please sign up via GreenAPI.' };
-    }
-
-    let passwordValid;
-    try {
-      passwordValid = await argon2.verify(storedHash, password);
-    } catch (_) {
-      return { errorCode: 'internal', errorMessage: 'Password verification failed. Please try again.' };
-    }
-
-    if (!passwordValid) {
-      const attempts = (user.loginFailedAttempts || 0) + 1;
-      const updates = { loginFailedAttempts: attempts };
-      if (attempts >= 5) {
-        const cooldownUntilDate = new Date(now.getTime() + 30 * 60 * 1000);
-        updates.loginCooldownUntil = cooldownUntilDate;
-        updates.loginFailedAttempts = 0;
-      }
-      transaction.update(userRef, updates);
-      return { errorCode: 'permission-denied', errorMessage: 'The password is incorrect.' };
-    }
-
-    // Success: reset attempts
-    transaction.update(userRef, {
-      loginFailedAttempts: 0,
-      loginCooldownUntil: admin.firestore.FieldValue.delete(),
-      lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastSignedInAtLocal: now.toISOString(),
-    });
-    return { success: true, user };
-  });
-
-  if (cooldownResult.errorCode) {
-    throw new HttpsError(cooldownResult.errorCode, cooldownResult.errorMessage);
-  }
-
-  const user = cooldownResult.user;
-  const isAdmin = isAdminUser(user);
-  const customToken = await admin.auth().createCustomToken(userId, {
-    phoneNumber,
-    isAdmin,
-    verificationProvider: 'password',
-  });
-  return { customToken, phoneNumber };
-  /* c8 ignore stop */
 });
 
 exports.linkPasswordToAccount = onCall({}, async (request) => {
@@ -9484,122 +9271,15 @@ exports.linkPasswordToAccount = onCall({}, async (request) => {
   return { customToken, phoneNumber };
 });
 
-exports.authenticateAppSession = onCall({}, async (request) => {
+exports.authenticateAppSession = onCall({}, async () => {
   throw new HttpsError(
     'failed-precondition',
     'Saved-device recovery requires a fresh WhatsApp and second-factor sign-in.'
   );
-  /* c8 ignore start -- retained temporarily for rolling-client compatibility */
-  const phoneNumber = String(request.data?.phoneNumber || '').trim();
-  const appInstanceId = String(request.data?.appInstanceId || '').trim();
-  if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber) || appInstanceId.length < 20) {
-    throw new HttpsError(
-      'invalid-argument',
-      'The saved HikerCircle credentials are invalid.'
-    );
-  }
-
-  const userId = userDocumentIdForPhone(phoneNumber);
-  // This callable is the recovery path when Firebase Auth has lost its local
-  // token, so requiring request.auth here makes recovery impossible. App Check
-  // authenticates the genuine mobile app and the cryptographically-random,
-  // device-bound appInstanceId below authenticates the saved device session.
-  // If Firebase Auth is already present, never allow a different signed-in
-  // account to use another device's bound credential.
-  if (
-    request.auth
-    && (
-      request.auth.uid !== userId
-      || authenticatedPhoneClaim(request) !== phoneNumber
-    )
-  ) {
-    throw new HttpsError(
-      'unauthenticated',
-      'The signed-in Firebase account does not match the saved HikerCircle login.'
-    );
-  }
-  const userDocument = await admin
-    .firestore()
-    .collection('users')
-    .doc(userId)
-    .get();
-  if (!userDocument.exists) {
-    throw new HttpsError(
-      'unauthenticated',
-      'This HikerCircle account no longer exists.'
-    );
-  }
-
-  const user = userDocument.data() || {};
-  const boundAppInstanceId = String(user.boundAppInstanceId || '');
-  if (!boundAppInstanceId || boundAppInstanceId !== appInstanceId) {
-    throw new HttpsError(
-      'permission-denied',
-      'This account is bound to another device. Sign in again.'
-    );
-  }
-  if (user.accountDisabled === true || user.status === 'disabled') {
-    throw new HttpsError(
-      'permission-denied',
-      'This HikerCircle account has been disabled.'
-    );
-  }
-
-  const isAdmin = isAdminUser(user);
-  const customToken = await admin.auth().createCustomToken(userId, {
-    phoneNumber,
-    isAdmin,
-    appInstanceId,
-  });
-  await userDocument.ref.set(
-    {
-      firebaseUid: userId,
-      lastFirebaseAuthenticatedAt:
-        admin.firestore.FieldValue.serverTimestamp(),
-      lastFirebaseAuthenticatedAtLocal: new Date().toISOString(),
-    },
-    { merge: true }
-  );
-  return { customToken, userId };
-  /* c8 ignore stop */
 });
 
 // ─── Weather ────────────────────────────────────────────────────
 
-const WMO_MAP = {
-  0: 'Clear sky',
-  1: 'Mainly clear',
-  2: 'Partly cloudy',
-  3: 'Overcast',
-  45: 'Foggy',
-  48: 'Depositing rime fog',
-  51: 'Light drizzle',
-  53: 'Moderate drizzle',
-  55: 'Dense drizzle',
-  56: 'Light freezing drizzle',
-  57: 'Dense freezing drizzle',
-  61: 'Slight rain',
-  63: 'Moderate rain',
-  65: 'Heavy rain',
-  66: 'Light freezing rain',
-  67: 'Heavy freezing rain',
-  71: 'Slight snow',
-  73: 'Moderate snow',
-  75: 'Heavy snow',
-  77: 'Snow grains',
-  80: 'Slight rain showers',
-  81: 'Moderate rain showers',
-  82: 'Violent rain showers',
-  85: 'Slight snow showers',
-  86: 'Heavy snow showers',
-  95: 'Thunderstorm',
-  96: 'Thunderstorm with slight hail',
-  99: 'Thunderstorm with heavy hail',
-};
-
-function wmoSummary(code) {
-  return WMO_MAP[code] || 'Unknown';
-}
 
 exports.fetchWeatherForAllTrails = onSchedule(
   { schedule: 'every 60 minutes', timeoutSeconds: 540 },
@@ -9612,105 +9292,13 @@ exports.fetchWeatherForAllTrails = onSchedule(
           !Number.isFinite(longitude) || Math.abs(longitude) > 180) continue;
       try {
         const weather = await require('./trail_weather').sharedTrailWeather(db, latitude, longitude);
-        await doc.ref.update({ weather });
+        await syncTrailWeather(db, doc.ref, doc.data(), weather);
       } catch (error) {
         logger.warn('Scheduled weather refresh unavailable', { trailId: doc.id, message: error.message });
       }
     }
   }
 );
-function buildWeatherFromApi(body) {
-  const current = body.current || {};
-  const daily = body.daily || {};
-  const hourly = body.hourly || {};
-
-  const currentTemp = current.temperature_2m;
-  const currentCode = current.weather_code || 0;
-  const tempMax = Array.isArray(daily.temperature_2m_max)
-    ? daily.temperature_2m_max[0]
-    : currentTemp;
-  const tempMin = Array.isArray(daily.temperature_2m_min)
-    ? daily.temperature_2m_min[0]
-    : currentTemp;
-  const precipProb = Array.isArray(daily.precipitation_probability_max)
-    ? daily.precipitation_probability_max[0]
-    : 0;
-  const dailyCodes = Array.isArray(daily.weather_code)
-    ? daily.weather_code[0]
-    : currentCode;
-
-  const maxTemp = typeof tempMax === 'number' ? tempMax : 0;
-  const minTemp = typeof tempMin === 'number' ? tempMin : 0;
-  const dailyCode = typeof dailyCodes === 'number' ? dailyCodes : 0;
-  const rainProb =
-    typeof precipProb === 'number'
-      ? Math.max(0, Math.min(100, Math.round(precipProb)))
-      : 0;
-
-  const now = new Date();
-  const hourlyTimes = hourly.time || [];
-  const hourlyTemps = hourly.temperature_2m || [];
-  const hourlyCodes = hourly.weather_code || [];
-  const hourlyPrecipProbs = hourly.precipitation_probability || [];
-  const hourlyForecast = [];
-  let started = false;
-
-  for (let i = 0; i < hourlyTimes.length && hourlyForecast.length < 24; i++) {
-    const timeStr = hourlyTimes[i];
-    const temp = hourlyTemps[i];
-    const code = hourlyCodes[i];
-
-    if (typeof timeStr !== 'string' || typeof temp !== 'number' || typeof code !== 'number') {
-      continue;
-    }
-
-    const time = new Date(timeStr);
-    if (isNaN(time.getTime())) continue;
-
-    if (!started) {
-      if (time <= now) continue;
-      started = true;
-    }
-
-    const precip =
-      Array.isArray(hourlyPrecipProbs) && i < hourlyPrecipProbs.length
-        ? hourlyPrecipProbs[i]
-        : 0;
-
-    hourlyForecast.push({
-      timeLocal: time.toISOString(),
-      temperature: temp,
-      precipitationProbability:
-        typeof precip === 'number'
-          ? Math.max(0, Math.min(100, Math.round(precip)))
-          : 0,
-      weatherCode: code,
-    });
-  }
-
-  return {
-    summary: wmoSummary(dailyCode),
-    temperatureRange: `${Math.round(minTemp)} °C - ${Math.round(maxTemp)} °C`,
-    rainProbability: rainProb,
-    cachedAtLocal: new Date().toISOString(),
-    humidity:
-      typeof current.relative_humidity_2m === 'number'
-        ? current.relative_humidity_2m
-        : null,
-    windSpeed:
-      typeof current.wind_speed_10m === 'number'
-        ? current.wind_speed_10m
-        : null,
-    uvIndex:
-      typeof current.uv_index === 'number' ? current.uv_index : null,
-    feelsLike:
-      typeof current.apparent_temperature === 'number'
-        ? current.apparent_temperature
-        : null,
-    hourlyForecast:
-      hourlyForecast.length > 0 ? hourlyForecast : null,
-  };
-}
 
 exports.fetchWeatherForTrail = onCall(
   {},
@@ -9753,9 +9341,10 @@ exports.fetchWeatherForTrail = onCall(
       logger.warn('Shared weather refresh unavailable', { trailId, message: error.message });
       throw new HttpsError('unavailable', 'Weather refresh unavailable. Please try again shortly.');
     }
-    await db.collection('trails').doc(trailId).update({ weather });
+    const synchronized = await syncTrailWeather(db, doc.ref, data, weather);
+    weather = synchronized.weather;
 
-    logger.log(`Fetched and saved weather for trail ${trailId}`);
+    logger.log('Trail weather synchronized', {trailId, written: synchronized.written});
 
     return { weather };
   }
@@ -10607,9 +10196,10 @@ async function revokeTerminalHikeShare(hike) {
 // start. No preparation metric is emitted until the backend has authoritative
 // offline-map and full-checklist evidence.
 exports.awardAchievementsForStartedHike = onDocumentCreated(
-  { document: 'hikeSessions/{sessionId}', retry: true },
+  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60 },
   async (event) => {
     const hike = event.data.data() || {};
+    if (activeMembershipChanged(null, hike)) await reconcileActiveHikeMonitorSchedule();
     if (hike.status !== 'completed') return;
     await revokeTerminalHikeShare(hike);
     await updateTeamParticipantForHike(hike, 'ended');
@@ -10619,12 +10209,13 @@ exports.awardAchievementsForStartedHike = onDocumentCreated(
 );
 
 exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
-  { document: 'hikeSessions/{sessionId}', retry: true },
+  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60 },
   async (event) => {
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
     const beforeStatus = String(before.status || '');
     const afterStatus = String(after.status || '');
+    if (activeMembershipChanged(before, after)) await reconcileActiveHikeMonitorSchedule();
     if (
       beforeStatus === afterStatus
       || !['completed', 'abandoned'].includes(afterStatus)
@@ -10721,9 +10312,10 @@ exports.awardAchievementForCompletedTeamHike = onDocumentUpdated(
 );
 
 exports.preserveDeletedHikeTerminalState = onDocumentDeleted(
-  'hikeSessions/{sessionId}',
+  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60 },
   async (event) => {
     const hike = event.data.data() || {};
+    if (activeMembershipChanged(hike, null)) await reconcileActiveHikeMonitorSchedule();
     const status = String(hike.status || '');
     if (!['completed', 'abandoned'].includes(status)) {
       return;
@@ -11691,7 +11283,7 @@ async function processUpcomingHikeLifecycleTask({db, snapshot, now}) {
       }
 
       if (departureMillis <= expiredBefore) {
-        if (hike.expired !== true) {
+        if (hike.isDeleted !== true) {
           await document.ref.set(
             {
               expired: true,
@@ -11780,39 +11372,69 @@ async function processUpcomingHikeLifecycleTask({db, snapshot, now}) {
     );
 }
 
+async function reconcileUpcomingHikeOperationsSchedule() {
+  const app = getApp();
+  const scheduler = createSchedulerClient({
+    functionName: 'processUpcomingHikeOperations',
+    projectId: process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || app.options.projectId,
+    accessToken: async () => (await app.options.credential.getAccessToken()).access_token,
+  });
+  const result = await reconcileUpcomingHikeOperations({db: admin.firestore(), scheduler});
+  logger.log('Upcoming hike operations schedule reconciled.', result);
+  return result;
+}
+
+exports.reconcileUpcomingHikeOperationsOnWrite = onDocumentWritten({
+  document: 'upcomingHikes/{hikeId}', region: 'asia-southeast1', retry: true,
+  timeoutSeconds: 60,
+}, async (event) => {
+  if (upcomingMembershipChanged(event.data?.before?.data(), event.data?.after?.data())) {
+    await reconcileUpcomingHikeOperationsSchedule();
+  }
+});
+
 exports.processUpcomingHikeOperations = onSchedule(
-  {schedule: 'every 5 minutes', timeoutSeconds: 540},
-  async () => {
+  {schedule: 'every 5 minutes', timeoutSeconds: 540, maxInstances: 1, concurrency: 1,
+    retryCount: 3, minBackoffSeconds: 30, maxBackoffSeconds: 120},
+  async (event) => {
     const db = admin.firestore();
-    const now = Date.now();
-    const snapshot = await db.collection('upcomingHikes').get();
-    await runMaintenanceTasks(
-      'Upcoming hike operations',
-      [
-        {
-          name: 'lifecycle',
-          run: () => processUpcomingHikeLifecycleTask({db, snapshot, now}),
-        },
-        {
-          name: 'precautions',
-          run: () => require('./hike_precaution_reminders')
-            .sendPrecautionReminders({
-              db,
-              messaging: admin.messaging(),
-              getWeather: require('./trail_weather').sharedTrailWeather,
-              userId: userDocumentIdForPhone,
-              tokensFor: latestFcmTokensForUser,
-              now,
-              hikes: snapshot,
-            }),
-        },
-      ],
-      (task, error) => logger.error(
-        `Upcoming hike ${task} task failed.`,
-        error
-      ),
-      {concurrent: true}
-    );
+    await withUpcomingRunLease(db, async () => {
+      const now = Date.now();
+      const snapshot = await db.collection('upcomingHikes').where('isDeleted', '==', false).get();
+      if (snapshot.empty) {
+        await reconcileUpcomingHikeOperationsSchedule();
+        return;
+      }
+      try {
+        await runMaintenanceTasks(
+          'Upcoming hike operations',
+          [
+            {
+              name: 'lifecycle',
+              run: () => processUpcomingHikeLifecycleTask({db, snapshot, now}),
+            },
+            {
+              name: 'precautions',
+              run: () => require('./hike_precaution_reminders')
+                .sendPrecautionReminders({
+                  db,
+                  messaging: admin.messaging(),
+                  getWeather: require('./trail_weather').sharedTrailWeather,
+                  userId: userDocumentIdForPhone,
+                  tokensFor: latestFcmTokensForUser,
+                  now,
+                  hikes: snapshot,
+                }),
+            },
+          ],
+          (task, error) => logger.error(`Upcoming hike ${task} task failed.`, error),
+          {concurrent: true}
+        );
+      } finally {
+        // Re-read live listings, not the pre-expiry snapshot, even if another task failed.
+        await reconcileUpcomingHikeOperationsSchedule();
+      }
+    }, Date.now, event.scheduleTime);
   }
 );
 
@@ -11918,15 +11540,33 @@ async function monitorActiveHikesTask({db, snapshot, now}) {
   logger.log(
     `Active hike monitor sent ${reminderCount} reminders and cleaned ${cleanedCount} stale sessions.`
   );
+  return {reminderCount, cleanedCount};
 }
 
-exports.monitorActiveHikes = onSchedule('every 2 minutes', async () => {
+async function reconcileActiveHikeMonitorSchedule() {
+  const app = getApp();
+  const scheduler = createSchedulerClient({
+    projectId: process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || app.options.projectId,
+    accessToken: async () => (await app.options.credential.getAccessToken()).access_token,
+  });
+  const result = await reconcileActiveHikeMonitor({db: admin.firestore(), scheduler});
+  logger.log('Active hike monitor schedule reconciled.', result);
+  return result;
+}
+
+exports.monitorActiveHikes = onSchedule({
+  schedule: 'every 2 minutes', timeoutSeconds: 100, maxInstances: 1, concurrency: 1,
+}, async (event) => {
   const db = admin.firestore();
-  const snapshot = await db
-    .collection('hikeSessions')
-    .where('status', '==', 'active')
-    .get();
-  await monitorActiveHikesTask({db, snapshot, now: Date.now()});
+  await withMonitorRunLease(db, async () => {
+    const snapshot = await db.collection('hikeSessions').where('status', '==', 'active').get();
+    if (snapshot.empty) {
+      await reconcileActiveHikeMonitorSchedule();
+      return;
+    }
+    const result = await monitorActiveHikesTask({db, snapshot, now: Date.now()});
+    if (result.cleanedCount > 0) await reconcileActiveHikeMonitorSchedule();
+  }, Date.now, event.scheduleTime);
 });
 
 async function cleanExpiredGroupChatsTask({
@@ -11939,6 +11579,7 @@ async function cleanExpiredGroupChatsTask({
   const snapshot = await db
     .collection('groupChats')
     .where('chatType', '==', 'group')
+    .where('isDeleted', '==', false)
     .get();
 
   let deletedCount = 0;

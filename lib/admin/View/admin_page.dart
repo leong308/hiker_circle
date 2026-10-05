@@ -17,6 +17,7 @@ import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
 import 'button_debugging_page.dart';
 import 'admin_ui.dart';
+import 'community_integrity_panel.dart';
 
 enum _AdminSection { overview, trails, hazards, community, achievements, tools }
 
@@ -686,6 +687,7 @@ class _AdminPageState extends State<AdminPage> {
         onReject: (report) => unawaited(_reviewHazard(report, approved: false)),
       ),
       _AdminSection.community => _CommunityModerationSection(
+        onReviewed: () => unawaited(_loadAdminData()),
         communityPosts: _communityPosts
             .where(
               (row) => row.values.join(' ').toLowerCase().contains(_search),
@@ -1750,6 +1752,7 @@ class _HazardReportsSection extends StatelessWidget {
 
 class _CommunityModerationSection extends StatelessWidget {
   const _CommunityModerationSection({
+    required this.onReviewed,
     required this.communityPosts,
     required this.isSaving,
     required this.onApprove,
@@ -1758,6 +1761,7 @@ class _CommunityModerationSection extends StatelessWidget {
   });
 
   final List<Map<String, dynamic>> communityPosts;
+  final VoidCallback onReviewed;
   final bool isSaving;
   final ValueChanged<Map<String, dynamic>> onApprove;
   final ValueChanged<Map<String, dynamic>> onHide;
@@ -1770,6 +1774,8 @@ class _CommunityModerationSection extends StatelessWidget {
       children: [
         _SectionTitle(label: 'Community Moderation'),
         const SizedBox(height: 8),
+        CommunityIntegrityPanel(onReviewed: onReviewed),
+        const SizedBox(height: 16),
         Column(
           children: [
             if (communityPosts.isEmpty)

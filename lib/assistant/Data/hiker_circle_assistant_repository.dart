@@ -16,10 +16,11 @@ class HikerCircleAssistantTrail {
     required this.distanceKm,
     required this.difficulty,
     required this.estimatedDurationMinutes,
+    this.coverImageUrl = '',
     this.distanceFromUserKm,
   });
 
-  final String id, name, area, state, difficulty;
+  final String id, name, area, state, difficulty, coverImageUrl;
   final double distanceKm;
   final int estimatedDurationMinutes;
   final double? distanceFromUserKm;
@@ -34,6 +35,7 @@ class HikerCircleAssistantTrail {
         distanceKm: (value['distanceKm'] as num?)?.toDouble() ?? 0,
         estimatedDurationMinutes:
             (value['estimatedDurationMinutes'] as num?)?.toInt() ?? 0,
+        coverImageUrl: value['coverImageUrl']?.toString().trim() ?? '',
         distanceFromUserKm: (value['distanceFromUserKm'] as num?)?.toDouble(),
       );
 }

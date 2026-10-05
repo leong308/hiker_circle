@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   AssistantError,
   containsSensitivePersonalData,
+  contextualAction,
   createAssistantHandler,
   isEmergencyQuestion,
   findTrails,
@@ -79,7 +80,23 @@ test('emergency language is detected without calling the model', async () => {
   });
   assert.equal(result.responseMode, 'curated_emergency');
   assert.match(result.answer, /999 or 112/);
+  assert.equal(result.action.destinationId, 'sos');
   assert.equal(databaseUsed, false);
+});
+
+test('informational emergency and medical questions get deterministic actions', () => {
+  assert.deepEqual(
+    contextualAction('Who to contact when I faced emergencies?'),
+    {type: 'navigate', destinationId: 'sos', label: 'Open SOS'}
+  );
+  assert.deepEqual(
+    contextualAction('What should I do for a sprained ankle?'),
+    {
+      type: 'navigate',
+      destinationId: 'first_aid',
+      label: 'Open First-Aid Guide',
+    }
+  );
 });
 
 test('recent context omits sensitive entries before Gemini', () => {
@@ -114,6 +131,23 @@ test('live trail search ranks nearby and longest trails and returns IDs', async 
   assert.ok(nearby.trails[0].distanceFromUserKm < nearby.trails[1].distanceFromUserKm);
   const longest = await findTrails(db, 'what is the longest trail');
   assert.equal(longest.trails[0].id, 'long');
+});
+
+test('Penang trail wording matches trails stored as Pulau Pinang', async () => {
+  const db = {collection(name) {
+    assert.equal(name, 'trails');
+    return {async get() {return {docs: [
+      {id: 'penang-1', data: () => ({name: 'Heritage Trail',
+        state: 'Pulau Pinang', distanceKm: 4.8})},
+      {id: 'selangor-1', data: () => ({name: 'Forest Trail',
+        state: 'Selangor', distanceKm: 3.1})},
+    ]};}};
+  }};
+  const result = await findTrails(
+    db,
+    'What are the available trails in Penang?'
+  );
+  assert.deepEqual(result.trails.map((trail) => trail.id), ['penang-1']);
 });
 
 test('navigation resolves registered destinations without inventing routes', () => {

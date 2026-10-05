@@ -2,7 +2,9 @@
   "name": "hiker-circle-firebase-rules-tests",
   "private": true,
   "scripts": {
-    "test": "node security_rules.test.js"
+    "test": "node security_rules.test.js && node --test feedback_rules.test.cjs",
+    "test:security": "node security_rules.test.js",
+    "test:feedback": "node --test feedback_rules.test.cjs"
   },
   "dependencies": {
     "@firebase/rules-unit-testing": "5.0.1",

@@ -9,8 +9,8 @@
   <meta name="description" content="A visual tour of HikerCircle features for internal presentations.">
   <title>App showcase · HikerCircle internal</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=hc-2">
-  <link rel="stylesheet" href="/internal/app-showcase/showcase.css">
-  <script src="/internal/app-showcase/showcase.js" defer></script>
+  <link rel="stylesheet" href="/internal/app-showcase/showcase.css?v=20261002-presentation">
+  <script src="/internal/app-showcase/showcase.js?v=20261002-presentation" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#highlights">Skip to the showcase</a>
@@ -27,35 +27,40 @@
     </section>
 
     <section class="showcase" id="highlights" aria-labelledby="showcase-title">
-      <div class="section-heading"><div><p class="eyebrow">A LOOK INSIDE</p><h2 id="showcase-title">See the experience.</h2></div><p>Choose a chapter, then a feature.</p></div>
+      <div class="section-heading"><div><p class="eyebrow">A LOOK INSIDE</p><h2 id="showcase-title">See the experience.</h2></div><button id="presentation-toggle" class="presentation-toggle" type="button" aria-pressed="false">Present <span aria-hidden="true">↗</span></button></div>
       <nav id="chapter-nav" class="chapter-nav" aria-label="Showcase chapters"></nav>
       <nav id="feature-nav" class="feature-nav" aria-label="Features in this chapter"></nav>
       <div class="stage" id="stage" tabindex="0" aria-label="Feature highlight; use left and right arrow keys to navigate">
         <div class="stage-media">
           <div class="media-glow" aria-hidden="true"></div>
-          <button id="open-image" class="phone-frame" type="button" aria-label="View screenshot full size"><img id="stage-image" alt="" loading="eager"></button>
+          <button id="open-image" class="phone-frame" type="button" aria-label="View screenshot full size" hidden><img id="stage-image" alt="" loading="eager"></button>
           <video id="stage-video" controls playsinline preload="none" hidden></video>
-          <div id="media-request" class="media-request" hidden><span>SCREEN TO ADD</span><strong id="request-title"></strong><code id="request-file"></code></div>
+          <section id="media-request" class="capture-card" aria-labelledby="request-title" hidden>
+            <div class="capture-topline"><span id="request-kind"></span><span id="request-duration"></span></div>
+            <h4 id="request-title">Capture the current app</h4>
+            <ol id="capture-steps" class="capture-steps"></ol>
+            <p id="capture-setup" class="capture-setup" hidden></p>
+            <code id="request-file" class="capture-file" hidden></code>
+          </section>
           <p id="media-error" class="media-error" hidden>Media is unavailable. Try another highlight.</p>
           <button id="play-recording" class="play-recording" type="button" hidden><span aria-hidden="true">▶</span> Watch recording</button>
+          <div id="media-switcher" class="media-switcher" hidden><button id="media-previous" type="button" aria-label="Previous capture">←</button><span id="media-count"></span><button id="media-next" type="button" aria-label="Next capture">→</button></div>
         </div>
         <div class="stage-copy">
           <div class="stage-topline"><span id="stage-chapter"></span><span id="stage-count"></span></div>
           <h3 id="stage-title" aria-live="polite">Loading the showcase…</h3>
-          <p id="stage-description"></p>
-          <span id="stage-source" class="source-label"></span>
-          <details id="media-brief" class="media-brief"><summary id="media-brief-label">Capture instructions</summary><p id="media-brief-text"></p><code id="media-brief-files"></code></details>
+          <ul id="stage-points" class="feature-points" aria-label="Feature highlights"></ul>
           <div class="stage-spacer"></div>
-          <div class="stage-controls"><button id="previous" type="button" aria-label="Previous highlight">←</button><button id="next" type="button" aria-label="Next highlight">→</button></div>
+          <div class="stage-controls"><button id="previous" type="button" aria-label="Previous highlight">←</button><button id="next" type="button" aria-label="Next highlight">→</button><span>Tap a point for detail</span></div>
         </div>
       </div>
-      <p class="showcase-note">Earlier app media, previews, and staged examples are labelled. Capture instructions appear wherever a screen is missing or needs replacing.</p>
+      <p class="showcase-note">Capture in dark mode. Use full-screen portrait originals from the current build. Recording-only features do not need a separate screenshot.</p>
       <p id="load-error" class="load-error" hidden>The showcase could not load. Please refresh this page.</p>
       <noscript><p class="load-error">Enable JavaScript to view the feature highlights.</p></noscript>
     </section>
   </main>
 
-  <footer><a class="brand" href="/">HikerCircle</a><a href="/internal/app-showcase/capture-manifest.md" download="HikerCircle-media-list.md">Media handoff list ↗</a><span>Unlisted presentation page · Anyone with the link can view it</span></footer>
+  <footer><a class="brand" href="/">HikerCircle</a></footer>
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="image-viewer" aria-label="Full-size app screenshot"><button id="close-image" type="button" aria-label="Close full-size screenshot">✕</button><img id="full-image" alt=""></dialog>
 </body>

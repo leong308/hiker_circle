@@ -449,15 +449,6 @@ class LocalSessionDatabase {
     });
   }
 
-  Future<void> clearSession() async {
-    final database = await _openDatabase();
-    await database.transaction((transaction) async {
-      await transaction.delete('users');
-      await transaction.delete('active_hike_session');
-      await transaction.delete('planned_hike_state');
-    });
-  }
-
   Future<void> clearUserSessionOnly() async {
     final database = await _openDatabase();
     await database.delete('users');
@@ -2804,24 +2795,6 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<void> clearCompletedHikeTelemetry({
-    required String sessionId,
-    bool preserveUnsent = true,
-  }) async {
-    final normalizedSessionId = sessionId.trim();
-    if (normalizedSessionId.isEmpty) {
-      return;
-    }
-    final database = await _openDatabase();
-    await database.transaction((transaction) {
-      return _deleteCompletedHikeTelemetry(
-        transaction,
-        sessionId: normalizedSessionId,
-        preserveUnsent: preserveUnsent,
-      );
-    });
-  }
-
   /// Deletes location/network tracking rows after the canonical route capture
   /// is saved, while deliberately preserving every queued SOS alert.
   Future<void> discardHikeTrackingTelemetry({required String sessionId}) async {
@@ -3394,19 +3367,6 @@ class LocalSessionDatabase {
     await batch.commit(noResult: true);
   }
 
-  Future<void> updatePendingFirestoreDocId({
-    required String localId,
-    required String firestoreDocId,
-  }) async {
-    final database = await _openDatabase();
-    await database.update(
-      'pending_messages',
-      {'firestore_doc_id': firestoreDocId},
-      where: 'local_id = ?',
-      whereArgs: [localId],
-    );
-  }
-
   Future<List<Map<String, dynamic>>> loadPendingMessages({
     String? ownerPhoneNumber,
   }) async {
@@ -3481,16 +3441,6 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<void> markPendingMessageSent(String localId) async {
-    final database = await _openDatabase();
-    await database.update(
-      'pending_messages',
-      {'send_status': 'sent'},
-      where: 'local_id = ?',
-      whereArgs: [localId],
-    );
-  }
-
   Future<void> incrementPendingMessageRetry(String localId) async {
     final database = await _openDatabase();
     await database.rawUpdate(
@@ -3499,38 +3449,6 @@ class LocalSessionDatabase {
              updated_at = ?
          WHERE local_id = ?''',
       [DateTime.now().toUtc().toIso8601String(), localId],
-    );
-  }
-
-  Future<void> deletePendingMessage(String localId) async {
-    final database = await _openDatabase();
-    await database.delete(
-      'pending_messages',
-      where: 'local_id = ?',
-      whereArgs: [localId],
-    );
-  }
-
-  Future<int> countPendingMessages() async {
-    final database = await _openDatabase();
-    final result = await database.rawQuery(
-      'SELECT COUNT(*) AS total FROM pending_messages WHERE send_status = ?',
-      ['pending'],
-    );
-    return Sqflite.firstIntValue(result) ?? 0;
-  }
-
-  Future<void> deleteChatData(String chatId) async {
-    final database = await _openDatabase();
-    await database.delete(
-      'chat_read_receipts',
-      where: 'chat_id = ?',
-      whereArgs: [chatId],
-    );
-    await database.delete(
-      'pending_messages',
-      where: 'chat_id = ?',
-      whereArgs: [chatId],
     );
   }
 
@@ -3587,20 +3505,6 @@ class LocalSessionDatabase {
       return null;
     }
     return rows.first;
-  }
-
-  Future<void> deleteRouteCacheForTrail(String trailId) async {
-    final database = await _openDatabase();
-    await database.delete(
-      'route_cache',
-      where: 'trail_id = ?',
-      whereArgs: [trailId],
-    );
-  }
-
-  Future<void> clearAllRouteCache() async {
-    final database = await _openDatabase();
-    await database.delete('route_cache');
   }
 
   Future<Map<String, List<Map<String, dynamic>>>> dumpAllTables() async {

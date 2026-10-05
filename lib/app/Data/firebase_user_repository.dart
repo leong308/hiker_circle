@@ -280,12 +280,16 @@ class FirebaseUserRepository {
   }
 
   String _username(Map<String, dynamic>? data) {
+    final profile = data?['profile'];
+    final canonical = profile is Map
+        ? _stringFrom(profile['username']).trim()
+        : '';
+    if (canonical.isNotEmpty) return canonical;
     final topLevelUsername = _stringFrom(data?['username']).trim();
     if (topLevelUsername.isNotEmpty) {
       return topLevelUsername;
     }
-    final profile = data?['profile'];
-    return profile is Map ? _stringFrom(profile['username']).trim() : '';
+    return '';
   }
 
   String? _photoURL(Map<String, dynamic>? data) {

@@ -48,6 +48,7 @@ class OnboardingRepository {
           ? Map<String, dynamic>.from(profile)
           : <String, dynamic>{};
       profileData['photoURL'] ??= snapshot.data()?['photoURL'];
+      profileData['username'] ??= snapshot.data()?['username'];
       return OnboardingProfile.fromFirestore(profileData);
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));
@@ -68,6 +69,8 @@ class OnboardingRepository {
       final now = DateTime.now().toUtc();
       await _userDocument(session).set({
         'profile': profile.toFirestore(),
+        // Small compatibility projection for older clients and public profiles.
+        // The profile map remains the canonical source; write both atomically.
         'username': profile.username.trim(),
         'profileSetupCompleted': true,
         'profileUpdatedAt': FieldValue.serverTimestamp(),

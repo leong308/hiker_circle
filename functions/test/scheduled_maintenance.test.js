@@ -100,7 +100,7 @@ test('active hike monitoring runs every two minutes', () => {
   );
   assert.match(
     source,
-    /exports\.monitorActiveHikes\s*=\s*onSchedule\(\s*['"]every 2 minutes['"]/
+    /exports\.monitorActiveHikes\s*=\s*onSchedule\(\s*\{\s*schedule:\s*['"]every 2 minutes['"]/
   );
   assert.doesNotMatch(
     source,

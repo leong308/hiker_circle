@@ -74,7 +74,7 @@ void main() {
   test('Flutter reconciles and awaits stale native monitoring shutdown', () {
     final source = File(
       'lib/home/View/hiker_home_page.dart',
-    ).readAsStringSync();
+    ).readAsStringSync().replaceAll('\r\n', '\n');
 
     expect(
       source,

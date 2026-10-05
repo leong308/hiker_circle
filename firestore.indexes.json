@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "groupChats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "chatType", "order": "ASCENDING"},
+        {"fieldPath": "isDeleted", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "appFeedback",
       "queryScope": "COLLECTION",
       "fields": [

@@ -42,9 +42,9 @@ dependencies:
   mapbox_maps_flutter: ^2.3.0
   liquid_glass_bar: ^0.1.1
   sensors_plus: ^6.1.2
-  firebase_core: ^4.9.0
-  firebase_auth: ^6.5.3
-  cloud_firestore: ^6.5.0
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
+  cloud_firestore: ^6.10.0
   cloud_functions: ^6.2.0
   sqflite: ^2.4.2+1
   sqflite_common_ffi: ^2.4.0+3
@@ -100,13 +100,10 @@ flutter:
     - assets/guides/first_aid_guide.json
     - assets/maps/malaysia_states.geojson
     - assets/animations/hiker_circle_loading.json
-    - assets/animations/processing_checkmark.json
     - assets/animations/loading_spinner.json
     - assets/animations/bluetooth_search.json
     - assets/animations/file_transfer.gif
-    - assets/icons/AppIcon-Default-1024.png
     - assets/icons/AppIcon-Android-1024.png
-    - assets/icons/HikerCircle-Loader-Transparent.png
 
   fonts:
     - family: Inter

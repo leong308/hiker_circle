@@ -606,22 +606,33 @@ class HikerCircleFirebaseRepository {
         .collection('users')
         .doc(_userIdFor(session));
     final now = DateTime.now().toUtc();
-    await userDocument.set({
-      if (appInstanceId.isNotEmpty) ...{
-        'currentAppId': appInstanceId,
-        'activeFcmAppInstanceId': appInstanceId,
-      },
-      'fcmTokens': [token],
-      'activeFcmToken': token,
-      'lastFcmToken': token,
-      'lastFcmTokenUpdatedAt': FieldValue.serverTimestamp(),
-      'lastFcmTokenUpdatedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
-    if (appInstanceId.isNotEmpty) {
-      await userDocument.update({
-        'fcmTokenByAppId': {appInstanceId: token},
-      });
-    }
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(userDocument);
+      final boundAppId = snapshot.data()?['boundAppInstanceId'];
+      if (appInstanceId.isNotEmpty &&
+          boundAppId is String &&
+          boundAppId.isNotEmpty &&
+          boundAppId != appInstanceId) {
+        return; // A stale device must not replace the newly bound phone's token.
+      }
+      transaction.set(userDocument, {
+        if (appInstanceId.isNotEmpty) ...{
+          'currentAppId': appInstanceId,
+          'activeFcmAppInstanceId': appInstanceId,
+          'fcmTokenByAppId': {appInstanceId: token},
+          'fcmTokenSchemaVersion': 2,
+          // Delete redundant old projections atomically with the canonical entry.
+          'fcmTokens': FieldValue.delete(),
+          'activeFcmToken': FieldValue.delete(),
+          'lastFcmToken': FieldValue.delete(),
+        } else ...{
+          // Compatibility for an old session without a device identifier.
+          'lastFcmToken': token,
+        },
+        'lastFcmTokenUpdatedAt': FieldValue.serverTimestamp(),
+        'lastFcmTokenUpdatedAtLocal': now.toIso8601String(),
+      }, SetOptions(merge: true));
+    });
   }
 
   Future<void> removeFcmToken({required AppSession session}) async {
@@ -635,37 +646,42 @@ class HikerCircleFirebaseRepository {
     final userDoc = _resolvedFirestore
         .collection('users')
         .doc(_userIdFor(session));
-    final snapshot = await userDoc.get();
-    if (!snapshot.exists) {
-      return;
-    }
-    final data = snapshot.data()!;
-    final token =
-        (data['fcmTokenByAppId'] as Map<String, dynamic>?)?[appInstanceId]
-            as String?;
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(userDoc);
+      if (!snapshot.exists) {
+        return;
+      }
+      final data = snapshot.data()!;
+      final tokenMap = data['fcmTokenByAppId'];
+      final tokenValue = tokenMap is Map ? tokenMap[appInstanceId] : null;
+      final token = tokenValue is String ? tokenValue : null;
 
-    final updates = <String, dynamic>{
-      'fcmTokenByAppId.$appInstanceId': FieldValue.delete(),
-    };
-    if (data['currentAppId'] == appInstanceId) {
-      updates['currentAppId'] = FieldValue.delete();
-    }
-    if (data['activeFcmAppInstanceId'] == appInstanceId) {
-      updates['activeFcmAppInstanceId'] = FieldValue.delete();
-    }
-    if (data['boundAppInstanceId'] == appInstanceId) {
-      updates['boundAppInstanceId'] = FieldValue.delete();
-    }
-    if (token != null && token.isNotEmpty) {
-      updates['fcmTokens'] = FieldValue.arrayRemove([token]);
-      if (data['activeFcmToken'] == token) {
-        updates['activeFcmToken'] = FieldValue.delete();
+      final updates = <String, dynamic>{
+        'fcmTokenByAppId.$appInstanceId': FieldValue.delete(),
+      };
+      if (data['currentAppId'] == appInstanceId) {
+        updates['currentAppId'] = FieldValue.delete();
       }
-      if (data['lastFcmToken'] == token) {
-        updates['lastFcmToken'] = FieldValue.delete();
+      if (data['activeFcmAppInstanceId'] == appInstanceId) {
+        updates['activeFcmAppInstanceId'] = FieldValue.delete();
       }
-    }
-    await userDoc.update(updates);
+      if (data['boundAppInstanceId'] == appInstanceId) {
+        updates['boundAppInstanceId'] = FieldValue.delete();
+      }
+      if (token != null && token.isNotEmpty) {
+        final legacyTokens = data['fcmTokens'];
+        if (legacyTokens is List && legacyTokens.contains(token)) {
+          updates['fcmTokens'] = FieldValue.arrayRemove([token]);
+        }
+        if (data['activeFcmToken'] == token) {
+          updates['activeFcmToken'] = FieldValue.delete();
+        }
+        if (data['lastFcmToken'] == token) {
+          updates['lastFcmToken'] = FieldValue.delete();
+        }
+      }
+      transaction.update(userDoc, updates);
+    });
   }
 
   Future<void> updateActiveHikeMonitoringHeartbeat({
@@ -721,16 +737,12 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('hazardReports');
   CollectionReference<Map<String, dynamic>> get _upcomingHikes =>
       _resolvedFirestore.collection('upcomingHikes');
-  CollectionReference<Map<String, dynamic>> get _teams =>
-      _resolvedFirestore.collection('teams');
   CollectionReference<Map<String, dynamic>> get _teamHikeSessions =>
       _resolvedFirestore.collection('teamHikeSessions');
   CollectionReference<Map<String, dynamic>> get _communityPosts =>
       _resolvedFirestore.collection('communityPosts');
   CollectionReference<Map<String, dynamic>> get _sosAlerts =>
       _resolvedFirestore.collection('sosAlerts');
-  CollectionReference<Map<String, dynamic>> get _sosWhatsAppDispatches =>
-      _resolvedFirestore.collection('sosWhatsAppDispatches');
   CollectionReference<Map<String, dynamic>> _communityCommentsFor(
     String postId,
   ) {
@@ -743,8 +755,6 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('userAchievements');
   CollectionReference<Map<String, dynamic>> get _networkObservations =>
       _resolvedFirestore.collection('networkObservations');
-  CollectionReference<Map<String, dynamic>> get _downloadedMaps =>
-      _resolvedFirestore.collection('downloadedMaps');
   CollectionReference<Map<String, dynamic>> get _hikeRouteCaptures =>
       _resolvedFirestore.collection('hikeRouteCaptures');
   CollectionReference<Map<String, dynamic>> get _groupChats =>
@@ -1069,13 +1079,6 @@ class HikerCircleFirebaseRepository {
       'accentColorValue': 0xFF00796B,
     },
   };
-  static const Set<String> _legacySeedTrailIds = {
-    'trail_broga_001',
-    'trail_gasing_001',
-    'trail_tabur_001',
-    'trail_penang_001',
-    'trail_angsi_001',
-  };
 
   Future<List<Trail>> loadTrails() async {
     final cached = await _loadCachedTrails();
@@ -1234,33 +1237,6 @@ class HikerCircleFirebaseRepository {
       );
     } catch (_) {
       return null;
-    }
-  }
-
-  Future<Trail> refreshTrailWeather(Trail trail) async {
-    if (_firebaseBootstrapResult.isAvailable) {
-      return refreshTrailWeatherViaCloud(trail);
-    }
-    try {
-      final weather = await _openMeteoService.fetchWeather(
-        latitude: trail.latitude,
-        longitude: trail.longitude,
-      );
-      final updated = trail.copyWith(weather: weather);
-
-      if (_firebaseBootstrapResult.isAvailable) {
-        try {
-          await _trails.doc(trail.trailId).update({
-            'weather': weather.toFirestore(),
-          });
-        } catch (_) {
-          // Cache write is best-effort.
-        }
-      }
-
-      return updated;
-    } catch (_) {
-      return trail;
     }
   }
 
@@ -2781,36 +2757,6 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  @Deprecated('Firebase trails are no longer seeded from local demo models.')
-  Future<void> ensureTrailSeeds() async {
-    return;
-  }
-
-  Future<void> deleteLegacyFirebaseDummyData({
-    required AppSession session,
-  }) async {
-    _throwIfAdminUnavailable(session);
-
-    final dummyPostSnapshots = await Future.wait([
-      _communityPosts.where('isDummyData', isEqualTo: true).limit(100).get(),
-      _communityPosts.where('isSeedData', isEqualTo: true).limit(100).get(),
-      _communityPosts
-          .where('postType', isEqualTo: 'demo_post')
-          .limit(100)
-          .get(),
-    ]);
-    final batch = _resolvedFirestore.batch();
-    for (final trailId in _legacySeedTrailIds) {
-      batch.delete(_trails.doc(trailId));
-    }
-    for (final snapshot in dummyPostSnapshots) {
-      for (final document in snapshot.docs) {
-        batch.delete(document.reference);
-      }
-    }
-    await batch.commit();
-  }
-
   Future<ActiveHikeSession> createActiveHikeSession({
     required AppSession session,
     required HikeSessionDraft draft,
@@ -3090,21 +3036,6 @@ class HikerCircleFirebaseRepository {
     return _manageTeamHikeAction(
       action: 'activate',
       teamHikeSessionId: teamHikeSessionId,
-    );
-  }
-
-  Future<void> attachActiveHikeToTeamSession({
-    required AppSession session,
-    required String teamHikeSessionId,
-    required String activeHikeSessionId,
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
-      return;
-    }
-    await _manageTeamHikeAction(
-      action: 'attach',
-      teamHikeSessionId: teamHikeSessionId,
-      data: {'activeHikeSessionId': activeHikeSessionId},
     );
   }
 
@@ -3390,53 +3321,6 @@ class HikerCircleFirebaseRepository {
       activeHike.sessionId,
       ownerPhoneNumber: session.phoneNumber,
     );
-  }
-
-  Future<void> recordCheckIn({
-    required AppSession session,
-    required ActiveHikeSession activeHike,
-    required SosTriggerLocation? location,
-  }) async {
-    final idempotencyKey =
-        'checkin_${activeHike.sessionId}_${activeHike.checkIns + 1}';
-    final now = DateTime.now().toUtc();
-    final payload = <String, dynamic>{
-      'sessionId': activeHike.sessionId,
-      'idempotencyKey': idempotencyKey,
-      'batteryLevel': activeHike.hasKnownBatteryLevel
-          ? activeHike.batteryLevel
-          : null,
-      if (location != null) 'location': location.toFirestore(),
-    };
-    await _localDatabase.enqueueSyncOperation(
-      LocalSyncOperation(
-        operationId: idempotencyKey,
-        ownerPhoneNumber: session.phoneNumber,
-        operationType: 'callable',
-        entityType: 'active_hike_check_in',
-        entityId: activeHike.sessionId,
-        idempotencyKey: idempotencyKey,
-        payload: payload,
-        status: 'pending',
-        attemptCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
-    if (!_firebaseBootstrapResult.isAvailable) return;
-    try {
-      await _resolvedFunctions
-          .httpsCallable('recordActiveHikeCheckIn')
-          .call(payload)
-          .timeout(_firebaseWriteTimeout);
-      await _localDatabase.deleteSyncOperation(idempotencyKey);
-    } catch (error) {
-      await _localDatabase.markSyncOperationRetry(
-        idempotencyKey,
-        lastError: error.toString(),
-        nextAttemptAt: now.add(const Duration(seconds: 30)),
-      );
-    }
   }
 
   Future<void> flushSyncOutbox({required AppSession session}) async {
@@ -3818,57 +3702,6 @@ class HikerCircleFirebaseRepository {
         .timeout(_firebaseWriteTimeout);
   }
 
-  Future<void> recordOfflineMapDownloaded({
-    required AppSession session,
-    required Trail trail,
-  }) async {
-    await _localDatabase.insertDownloadedMap(
-      trailId: trail.trailId,
-      trailName: trail.name,
-      localFilePath: trail.routeFilePath.isEmpty
-          ? 'mapbox-tile-region://trail-${trail.trailId}'
-          : trail.routeFilePath,
-    );
-
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return;
-    }
-
-    final userId = _userIdFor(session);
-    final mapId = '${userId}_${trail.trailId}';
-    final now = DateTime.now().toUtc();
-    await _downloadedMaps.doc(mapId).set({
-      'downloadedMapId': mapId,
-      'userId': userId,
-      'userPhoneNumber': session.phoneNumber,
-      'trailId': trail.trailId,
-      'trailName': trail.name,
-      'localFilePath': trail.routeFilePath.isEmpty
-          ? 'mapbox-tile-region://trail-${trail.trailId}'
-          : trail.routeFilePath,
-      'downloadedAt': FieldValue.serverTimestamp(),
-      'downloadedAtLocal': now.toIso8601String(),
-    }, SetOptions(merge: true));
-  }
-
-  Future<List<Map<String, dynamic>>> loadTeamSchedules({
-    required AppSession session,
-  }) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
-    }
-
-    try {
-      final snapshot = await _teams
-          .where('memberIds', arrayContains: _userIdFor(session))
-          .limit(20)
-          .get();
-      return snapshot.docs.map((document) => document.data()).toList();
-    } catch (_) {
-      return const [];
-    }
-  }
-
   /// A locally ended hike remains shareable while completion is queued. Retry
   /// the durable completion before publishing, preserving the original end time.
   Future<void> createEndedHikePost({
@@ -4152,22 +3985,6 @@ class HikerCircleFirebaseRepository {
       return hydrated;
     } catch (_) {
       return cached;
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> loadHazardReports() async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      return const [];
-    }
-
-    try {
-      final snapshot = await _hazardReports
-          .orderBy('reportedAtLocal', descending: true)
-          .limit(20)
-          .get();
-      return snapshot.docs.map((document) => document.data()).toList();
-    } catch (_) {
-      return const [];
     }
   }
 
@@ -4466,29 +4283,6 @@ class HikerCircleFirebaseRepository {
     }
   }
 
-  Future<List<Map<String, dynamic>>> loadAdminWhatsAppMessageLogs({
-    required AppSession session,
-  }) async {
-    _throwIfAdminUnavailable(session);
-    try {
-      final snapshot = await _sosWhatsAppDispatches
-          .orderBy('updatedAtLocal', descending: true)
-          .limit(150)
-          .get();
-      return snapshot.docs.map((document) {
-        return {
-          'messageLogId': document.id,
-          'authoritativeServerDispatch': true,
-          ...document.data(),
-        };
-      }).toList();
-    } on FirebaseException catch (error) {
-      throw HikerCircleFirebaseRepositoryException(
-        'Failed to load WhatsApp logs: ${error.message ?? error.code}',
-      );
-    }
-  }
-
   Future<void> reviewHazardReport({
     required AppSession session,
     required Map<String, dynamic> report,
@@ -4573,24 +4367,6 @@ class HikerCircleFirebaseRepository {
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
-
-  Future<void> awardAchievement({
-    required AppSession session,
-    required String achievementId,
-    required String condition,
-  }) async {}
-
-  Future<void> recordAchievementMetric({
-    required AppSession session,
-    required String metricKey,
-    int increment = 1,
-  }) async {}
-
-  Future<void> recordAchievementMetricForUserId({
-    required String userId,
-    required String metricKey,
-    int increment = 1,
-  }) async {}
 
   Future<LocalAchievementProgressCache?> loadCachedAchievementProgress({
     required AppSession session,
@@ -5288,22 +5064,6 @@ class HikerCircleFirebaseRepository {
     } catch (_) {
       // The durable local observation remains available; telemetry cannot fail a pin.
     }
-  }
-
-  Future<void> queueSosPayload({
-    required String ownerPhoneNumber,
-    required ActiveHikeSession activeHike,
-    required SosTriggerLocation triggerLocation,
-    required Map<String, dynamic> payload,
-  }) async {
-    await _localDatabase.insertQueuedAlert(
-      ownerPhoneNumber: ownerPhoneNumber,
-      sessionId: activeHike.sessionId,
-      alertType: payload['alertType'] as String? ?? 'manual_sos',
-      triggerLatitude: triggerLocation.latitude,
-      triggerLongitude: triggerLocation.longitude,
-      payloadJson: jsonEncode(payload),
-    );
   }
 
   /// Forwards a non-owner BLE observation as an explicitly unverified report.

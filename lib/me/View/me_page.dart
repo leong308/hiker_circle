@@ -22,6 +22,7 @@ import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../feedback/feedback_page.dart';
 import '../../home/View/find_hike_page.dart';
+import '../../home/View/first_aid_guide_page.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
 import '../../home/Model/hike_session_models.dart';
@@ -516,6 +517,10 @@ class _MePageState extends State<MePage> {
         Navigator.of(context).pop();
         Navigator.of(context).pop();
         widget.onOpenSos?.call();
+      case 'first_aid':
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const FirstAidGuidePage()),
+        );
       case 'security':
         Navigator.of(context).push(
           MaterialPageRoute<void>(builder: (_) => const SecurityMethodsPage()),

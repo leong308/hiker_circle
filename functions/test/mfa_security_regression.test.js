@@ -74,8 +74,11 @@ test('legacy password and saved-device token bypasses stay disabled', () => {
   const recoveryBlock = exportedBlock('authenticateAppSession', 'fetchWeatherForAllTrails');
   assert.match(passwordBlock, /Password-only login is disabled/);
   assert.match(recoveryBlock, /requires a fresh WhatsApp and second-factor sign-in/);
-  assert.ok(passwordBlock.indexOf('throw new HttpsError') < passwordBlock.indexOf('createCustomToken'));
-  assert.ok(recoveryBlock.indexOf('throw new HttpsError') < recoveryBlock.indexOf('createCustomToken'));
+  assert.doesNotMatch(passwordBlock, /createCustomToken/);
+  assert.doesNotMatch(recoveryBlock, /createCustomToken/);
+  const registrationBlock = exportedBlock('registerWithGreenApiAndPassword', 'registerSafetyQuestions');
+  assert.match(registrationBlock, /legacy registration path is disabled/);
+  assert.doesNotMatch(registrationBlock, /createCustomToken/);
 });
 
 test('mobile post-MFA handoff reuses the authenticated Firebase session', () => {

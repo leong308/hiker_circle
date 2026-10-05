@@ -11,11 +11,11 @@ let other;
 let admin;
 before(async () => {
   env = await initializeTestEnvironment({
-    projectId: 'demo-hikercircle-feedback',
+    projectId: 'demo-hiker-circle',
     firestore: { host: '127.0.0.1', port: 8181,
-      rules: fs.readFileSync(path.resolve(__dirname, '../../firestore.rules'), 'utf8') },
+      rules: fs.readFileSync(path.resolve(__dirname, '../firestore.rules'), 'utf8') },
     storage: { host: '127.0.0.1', port: 9199,
-      rules: fs.readFileSync(path.resolve(__dirname, '../../storage.rules'), 'utf8') },
+      rules: fs.readFileSync(path.resolve(__dirname, '../storage.rules'), 'utf8') },
   });
   owner = env.authenticatedContext('owner', { phoneNumber: '+600000001' }).firestore();
   other = env.authenticatedContext('other', { phoneNumber: '+600000002' }).firestore();

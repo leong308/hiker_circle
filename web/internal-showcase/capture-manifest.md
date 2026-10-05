@@ -1,81 +1,125 @@
-# HikerCircle internal showcase — media handoff list
+# HikerCircle — fresh showcase captures
 
-Prepared 19 September 2026. This is the short, filename-first companion to the [detailed capture guide](capture-guide.md). The [internal showcase](https://hiker-circle.web.app/internal/app-showcase/) presents its 48 catalogued flows one at a time across 10 chapters: 22 have no visual, 4 use rendered previews, 21 have earlier app captures, and 1 is a historical archive item. The route-preview screenshot is also withheld on the page because it shows a different screen, so that flow needs replacement media. No new phone captures are claimed here.
+Updated 2 October 2026. All 48 features await new media. The internal page no longer uses its previous screenshots, recordings or rendered previews.
 
-## How to hand off media
+29 recordings and 39 screenshots cover the full inventory. Recording-only features do not require an extra screenshot; a poster can be extracted when the clip is wired.
 
-- Start with **First capture** below. One portrait screenshot per row makes every currently text-only flow visual. Record the MP4 where listed only when the interaction is clearer in motion; a still is sufficient where the video column says `—`.
-- Use the exact lowercase filenames. Save original full-screen PNGs (JPG is fine if captured that way) and portrait MP4 screen recordings in one folder. A video can be wired without a still, but a matching still gives it a poster and gallery thumbnail.
-- Use a consistent dark theme and a fictional or consenting demo account. Let maps/forecasts load before capturing. Remove names, phone numbers, precise private locations, chat contents, verification codes, secrets and notifications. Include a short note with device, app build, date, and whether data is live, seeded or staged.
-- Do not trigger real SOS, contact dispatch, physical-button presses, nearby alerts, chat messages or community writes just to make media. Safety states marked **isolated demo** require a no-dispatch harness; see the detailed guide. If you cannot safely produce one, leave it uncaptured.
-- Supply in batches if easier. The filenames, not their folder order, determine which walkthrough each file belongs to. Fresh captures replace older media only after review.
+Use dark mode and the full portrait screen of the current app. Send originals with the filenames below, plus the device, build, capture date and whether the data is live or staged. The archive feature is the one exception: capture its original build and supply that build date.
 
-## First capture — no visual yet (22 flows)
+## Join & set up
 
-| Chapter / flow | Screenshot(s) | Recording if useful | What to show |
+| Feature | Media | Filename | What to show |
 | --- | --- | --- | --- |
-| Join · Phone sign-in | `sign-in.png` | `sign-in.mp4` | Prepared form to Home; hide codes and credentials. |
-| Join · Create your hiker profile | `onboarding.png`, `onboarding-city.png` | `onboarding.mp4` | Profile fields and city-level picker. |
-| Join · Account recovery | `account-recovery.png` | — | Recovery entry and method selection; no real reset. |
-| Join · Trusted contacts | `emergency-contacts.png` | — | Fictional contacts and editor. |
-| Trails · Weather on the map | `weather-map.png`, `weather-map-wind.png`, `weather-map-temperature.png` | `weather-map.mp4` | Loaded rain, wind and temperature layers; change opacity. |
-| Prepare · Build the itinerary | `checkpoints.png` | `checkpoints.mp4` | Ordered checkpoints and map picker in a draft. |
-| On trail · Check in & save a place | `check-ins-pins.png` | `check-ins-pins.mp4` | Check-in and pin confirmation in an isolated hike. |
-| On trail · Stay aware of your team | `team-tools.png` | `team-tools.mp4` | Demo roster, check-ins and timestamped map. |
-| On trail · Conditions & optional live sharing | `active-weather-sharing.png`, `location-sharing.png` | `active-weather-sharing.mp4` | Active weather and demo sharing controls; stop sharing afterward. |
-| Safety · Manual SOS countdown | `sos-countdown.png` | `sos-countdown.mp4` | Countdown then cancellation in an **isolated no-dispatch demo**. |
-| Safety · Alert status & notes | `sos-queue-notes.png`, `sos-notes.png` | — | Seeded queued/partial state and fictional notes; **isolated demo**. |
-| Safety · Button tests & event history | `button-test-logs.png` | `button-test-logs.mp4` | Armed authenticated test mode only; sanitize identifiers. |
-| Safety · Nearby SOS context | `nearby-help.png`, `nearby-help-map.png` | — | Seeded incident list and map; no real broadcast. |
-| Circle · Discover & join a group | `join-group.png` | `join-group.mp4` | Open and approval-required test groups. |
-| Circle · Stories & buddies | `stories-buddies.png`, `buddy-requests.png` | — | Sample stories and controlled request review. |
-| Circle · Conversations | `chat.png` | `chat.mp4` | Consented demo chat and attachment choices; do not send. |
-| After hike · Replay & share | `team-replay-share.png` | `team-replay-share.mp4` | Team replay and recap preview; stop at share chooser. |
-| App · Profile & preferences | `profile-settings.png`, `profile-qr.png`, `app-settings.png` | — | Fictional profile, theme/language, notifications. |
-| App · Offline resources | `offline-resources.png` | `offline-resources.mp4` | Downloaded guide/status and offline opening. |
-| App · Feedback with context | `feedback.png` | `feedback.mp4` | Annotation and review with harmless demo text; do not submit. |
-| Admin · Trail & community quality | `admin-trails-moderation.png`, `admin-review-queue.png` | — | Seeded draft and moderation queue; no live edits. |
-| Admin · Support & diagnostics | `admin-feedback.png`, `admin-diagnostics.png` | — | Sanitized inbox and button debugging; no raw secrets. |
+| Phone sign-in | Recording · 10–15 sec | `sign-in.mp4` | Show the prepared phone sign-in screen. → Complete the demo sign-in; omit codes and passwords. → Finish on the current Home screen. Use a demo account. Exclude credential entry from the recording. |
+| Create your profile | Screenshot | `onboarding.png` | Profile form: name, hiking experience and frequency. Use fictional profile details and a city-level location. |
+| Create your profile | Screenshot | `onboarding-city.png` | City picker: city-level map and selected city. Use fictional profile details and a city-level location. |
+| Protect your account | Screenshot | `login-security.png` | Login security overview with available methods. Show the methods list. Keep setup secrets, QR codes and verification codes out of the capture. |
+| Recover access | Screenshot | `account-recovery.png` | Forgot password entry and recovery method choices. Use a test account; capture before requesting a code or resetting its password. |
+| Recover access | Screenshot | `account-recovery-verification.png` | Recovery verification prompt, with no codes or credentials. Use a test account; capture before requesting a code or resetting its password. |
+| Trusted contacts | Screenshot | `emergency-contacts.png` | Contact list: three fictional names, relationships and count. Use fictional contacts in a demo account. |
+| Trusted contacts | Screenshot | `emergency-contact-editor.png` | Contact editor: name, phone and relationship fields. Use fictional contacts in a demo account. |
 
-**Also needed now:** `route-preview.png` and ideally `route-preview.mp4`. The older image only shows trail details, not the route preview, so the presentation deliberately does not display it. Capture checkpoint selection and first-person playback on the current route map.
+## Explore trails
 
-## Replace rendered previews with actual phone captures (4 flows)
-
-| Flow | Screenshot(s) | Recording if useful | What to show |
+| Feature | Media | Filename | What to show |
 | --- | --- | --- | --- |
-| Your next hike | `upcoming-home.png` | `upcoming-home.mp4` | Full current Home screen with Next Hike card and countdown. |
-| Required gear | `required-gear.png` | `required-gear.mp4` | Two guided packing questions and responses. |
-| Final preparation review | `preparation-extras.png`, `preparation-safety.png`, `preparation-review.png` | `preparation-review.mp4` | Extras, safety prompt, blocked/ready review in a demo plan. |
-| Admin overview | `admin-overview.png` | — | Mobile admin overview with demo-only records. |
+| Find a trail | Recording · 15–20 sec | `trail-discovery.mp4` | Show the current Home trail list. → Change the region or distance filter. → Open a matching trail. |
+| Know the route | Screenshot | `trail-detail.png` | Trail hero: loaded photo, distance, elevation, time and difficulty. Let trail photos and map data finish loading. |
+| Know the route | Screenshot | `trail-detail-checkpoints.png` | Trail details with the route and ordered checkpoint section. Let trail photos and map data finish loading. |
+| Preview the path | Recording · 20–30 sec | `route-preview.mp4` | Open the fully loaded route map. → Select a checkpoint and show its location. → Start the first-person route preview. → Change the view; include the rain estimate if available. |
+| Choose your weather window | Recording · 20–25 sec | `trail-forecast.mp4` | Open Conditions and Safety. → Switch day and chart metric. → Select an hour on the chart. → Show daylight times and weather cautions. |
+| Weather on the map | Recording · 15–20 sec | `weather-map.mp4` | Open the route map and cloud control. → Show loaded rain, wind and temperature layers. → Show the legend and change overlay opacity. |
+| Trail cautions | Screenshot | `hazard-report-list.png` | Reported trail hazards with categories and location context. Prepare a demo report and leave it unsubmitted. |
+| Trail cautions | Screenshot | `hazard-report.png` | Prepared report: trail, category, location, severity and sample text. Prepare a demo report and leave it unsubmitted. |
 
-## Refresh earlier captures if you want the current build throughout (21 flows)
+## Prepare a hike
 
-Existing references already make these walkthroughs viewable. Fresh screenshots are valuable; record only the moving interactions listed below. Earlier assets will stay until a replacement is reviewed.
-
-| Flow | Screenshot(s) | Recording if useful | What to show |
+| Feature | Media | Filename | What to show |
 | --- | --- | --- | --- |
-| Login security | `login-security.png` | — | Methods list only; never QR or secret. |
-| Find your next trail | `trail-discovery.png` | `trail-discovery.mp4` | Filter and open a trail. |
-| Trail detail | `trail-detail.png` | `trail-detail.mp4` | Loaded trail image, metrics and checkpoints. |
-| Route preview | `route-preview.png` | `route-preview.mp4` | Checkpoint selection and first-person preview. |
-| Weather window | `trail-forecast.png` | `trail-forecast.mp4` | Change day/metric and inspect an hour. |
-| Trail cautions | `hazard-report.png` | — | Prepared report; do not submit a false hazard. |
-| Solo or team | `create-hike.png` | `create-hike.mp4` | Select hike mode and route; do not start. |
-| Timing & reminders | `schedule-reminders.png` | — | Demo date/time and reminders. |
-| Safety before departure | `hike-safety-settings.png` | — | Current safety options in a demo draft. |
-| Team launch | `team-launch.png` | `team-launch.mp4` | Controlled participant readiness and countdown. |
-| Active hike | `active-tracking.png` | `active-tracking.mp4` | Current full-map Home and controls in a demo session. |
-| Emergency controls | `sos-center.png` | — | Idle page only; never dispatch a live alert. |
-| Duress demonstration | `duress-demo.png` | `duress-demo.mp4` | **Isolated no-dispatch** widget-to-result flow. |
-| Physical button | `physical-button.png` | `physical-button.mp4` | Guided pairing and ready state with test hardware. |
-| First aid & gear | `first-aid-gear.png` | — | Guide topic and standalone checklist; do not call services. |
-| Find hikers | `find-hikers.png` | — | Demo/consenting profile. |
-| Finish & rate | `finish-rating.png` | — | Isolated hike summary and rating; avoid live writes. |
-| Hike history | `hike-history.png` | — | Completed/expired tabs and populated demo list. |
-| Hike analysis | `hike-analysis.png`, `hike-analysis-pace.png` | `hike-analysis.mp4` | Overview, pace and checkpoint tabs. |
-| Achievements | `achievements.png` | — | Roadmap and demo leaderboard. |
-| Widgets & Live Activity | `native-widgets.png` | `native-widgets.mp4` | Current widget and active Live Activity; no production SOS action. |
+| Your next hike | Recording · 15–20 sec | `upcoming-home.mp4` | Show the full current Home screen. → Focus the Next Hike card: date, countdown and return. → Show trail difficulty and the forecast. → Open preparation from the card. Use a planned demo hike. Keep the entire Home screen visible. |
+| Plan your way | Recording · 15–20 sec | `create-hike.mp4` | Open Create Hike. → Show the Solo and Team choices. → Select a mode and trail. → Stop at the checkpoint planning screen. Use a draft plan. |
+| Build the itinerary | Recording · 15–20 sec | `checkpoints.mp4` | Open the checkpoint timeline. → Select or add a stop using the map picker. → Return to the itinerary and show its position. Use a demo draft route. |
+| Timing & reminders | Screenshot | `schedule-timing.png` | Timing screen: start-now/scheduled choice, date, time and duration. Use a demo draft; avoid sending team invitations. |
+| Timing & reminders | Screenshot | `schedule-reminders.png` | Check-in and preparation reminder settings with their preview. Use a demo draft; avoid sending team invitations. |
+| Set up safety | Screenshot | `hike-safety-settings.png` | Hike safety settings: live sharing, fall and stillness options. Use the current safety screen in a demo draft. |
+| Set up safety | Screenshot | `hike-route-alerts.png` | Route-deviation alerts, sensitivity and rest controls. Use the current safety screen in a demo draft. |
+| Pack with confidence | Recording · 15–20 sec | `required-gear.mp4` | Open Get ready to hike. → Show a required item and its reason. → Choose Yes, packed or Not yet. → Continue through a second item. Use a demo plan. |
+| The final check | Recording · 25–30 sec | `preparation-review.mp4` | Show optional gear choices. → Review contacts, battery, sharing and conditions. → Show final review with a missing required item. → Resolve it and show the ready-to-start state. Use a demo plan; stop before starting a real hike. |
+| Leave together | Recording · 20–25 sec | `team-launch.mp4` | Open a team hike with two demo participants. → Show preparation and Ready status. → Show the ready roster. → Show the organizer's launch and shared countdown. Use controlled demo participants in a test session. |
 
-**Historical archive:** The original safety interface already has a dated capture. No replacement is needed. If you want another historical version, name it `original-sos.png` and include its build date.
+## On the trail
 
-For each supplied file, the matching item in `catalog.json` must be reviewed and wired to `/internal/app-showcase/media/<filename>`. The page is unlisted, **not access-controlled**: do not provide anything you would not permit a person with the link to view.
+| Feature | Media | Filename | What to show |
+| --- | --- | --- | --- |
+| Follow your hike | Recording · 15–20 sec | `active-tracking.mp4` | Show the current full-map active Home. → Keep the elapsed time and status strip visible. → Show recorded movement on the map. → Open the safety-health status. Use a controlled demo walk or simulated demo movement. |
+| Check in & pin | Recording · 15–20 sec | `check-ins-pins.mp4` | Open an active demo hike. → Tap Check In and show confirmation. → Pin a location and show its saved marker. Use a test location in an isolated demo hike. |
+| Keep your team in view | Recording · 20–25 sec | `team-tools.mp4` | Open Team Tools with at least two participants. → Show roster status and check-in timestamps. → Select a teammate on the map. → Show a seeded route or separation notice. Use controlled demo participants and seeded notices. |
+| Conditions & sharing | Recording · 20–25 sec | `active-weather-sharing.mp4` | Open active-hike weather and route conditions. → Open Location sharing. → Show demo link controls. → Stop the demo sharing session. Use a test location and a demo sharing link. |
+
+## Safety
+
+| Feature | Media | Filename | What to show |
+| --- | --- | --- | --- |
+| Safety close at hand | Screenshot | `sos-center.png` | Idle SOS page: all three modes, guidance, contacts and status. Keep the SOS page idle. |
+| Time to cancel | Recording · 10–15 sec | `sos-countdown.mp4` | Open the isolated SOS demo. → Tap Manual SOS. → Show the countdown near five seconds. → Cancel and show the idle state. Use an isolated SOS demo with real contact dispatch disabled. |
+| Discreet duress | Recording · 15–20 sec | `duress-demo.mp4` | Start from the final home-screen page with the widget. → Tap the demo Duress action. → Show the app opening and duress status. → Show the sample contact result. Use an isolated no-dispatch build with fictional contacts. Label the result as a demo. |
+| Know the alert status | Screenshot | `sos-queue-notes.png` | Seeded queued or partial alert with per-contact outcomes. Use seeded alert data in an isolated demo. |
+| Know the alert status | Screenshot | `sos-notes.png` | Emergency message-note settings with fictional text. Use seeded alert data in an isolated demo. |
+| Pair your SOS button | Recording · 20–30 sec | `physical-button.mp4` | Open Paired SOS button and Add button. → Discover the test button. → Complete physical ownership confirmation. → Show paired status and monitoring readiness. Use your test hardware; keep device secrets and identifiers out of view. |
+| Test your button | Recording · 15–20 sec | `button-test-logs.mp4` | Open the paired button's test mode. → Show Test mode active. → Press during the armed test window. → Show Button press detected and its event history. Use authenticated test mode, with emergency dispatch disabled. |
+| Nearby SOS context | Screenshot | `nearby-help.png` | Seeded nearby incident list with time and context. Use seeded incidents; avoid publishing a live incident. |
+| Nearby SOS context | Screenshot | `nearby-help-map.png` | Selected demo incident on the map. Use seeded incidents; avoid publishing a live incident. |
+| Guidance within reach | Recording · 20–25 sec | `first-aid-gear.mp4` | Open First-Aid Guide and choose a topic. → Show its steps and saved tutorial controls. → Open an offline tutorial. → Show the standalone Gear Checklist. Keep emergency-call controls inactive. |
+| Beyond the open app | Recording · 20–25 sec | `native-widgets.mp4` | Start on your final home-screen page with the small widget. → Add the large HikerCircle widget. → Show the current upcoming or active hike status. → Show an active Live Activity and open the app from it. Use a demo hike. Show safety entry points without activating production SOS. |
+
+## Your circle
+
+| Feature | Media | Filename | What to show |
+| --- | --- | --- | --- |
+| Meet your circle | Screenshot | `find-hikers.png` | Find Hikers list with demo profiles. Use fictional or consenting profiles. |
+| Meet your circle | Screenshot | `hiker-public-profile.png` | Demo public profile with hiking experience and visible details. Use fictional or consenting profiles. |
+| Find a group hike | Recording · 20–25 sec | `join-group.mp4` | Open Find a Hike and a scheduled demo group. → Show an open group's joining option. → Show an approval-required group's request. → Show acceptance by the demo host. Use controlled demo hosts and participants. |
+| Stories & buddies | Screenshot | `stories-buddies.png` | Stories feed with sample hike posts and connection controls. Use demo stories and requests. |
+| Stories & buddies | Screenshot | `buddy-requests.png` | Buddy request list and a controlled request review. Use demo stories and requests. |
+| Keep the conversation | Recording · 15–20 sec | `chat.mp4` | Show a demo direct chat and group chat. → Open the attachment choices. → Show mute and conversation controls. → Return to the sample conversation. Use consented demo conversations; leave messages and attachments unsent. |
+
+## After the hike
+
+| Feature | Media | Filename | What to show |
+| --- | --- | --- | --- |
+| Finish & rate | Recording · 15–20 sec | `finish-rating.mp4` | End an isolated demo hike. → Show finish confirmation and team outcome. → Show the completed summary. → Open route difficulty feedback. Use an isolated test hike; avoid changing real ratings. |
+| Revisit your hikes | Screenshot | `hike-history.png` | Populated Completed hikes tab with saved route details. Use populated demo history. |
+| Revisit your hikes | Screenshot | `hike-history-expired.png` | Expired plans tab with a sample expired outing. Use populated demo history. |
+| Your day in detail | Recording · 20–25 sec | `hike-analysis.mp4` | Open a completed demo hike. → Show distance and pace analysis. → Show checkpoint progress and safety events. → Open the original plan. |
+| Replay & share | Recording · 15–20 sec | `team-replay-share.mp4` | Open a completed team hike. → Play its movement replay. → Open Share Hike and show the recap. → Stop at the system share chooser. Use demo team history. |
+| See your progress | Recording · 15–20 sec | `achievements.mp4` | Open Achievements and change its status view. → Show hiking level and the level roadmap. → Open the leaderboard and change its period. Use demo or consenting leaderboard entries. |
+
+## Your app
+
+| Feature | Media | Filename | What to show |
+| --- | --- | --- | --- |
+| Make it yours | Screenshot | `profile-settings.png` | Profile details using a fictional account. Use a fictional account and demo notifications. |
+| Make it yours | Screenshot | `profile-qr.png` | Profile QR screen for that demo account. Use a fictional account and demo notifications. |
+| Make it yours | Screenshot | `app-settings.png` | Appearance, language and notification controls. Use a fictional account and demo notifications. |
+| Make it yours | Screenshot | `notification-history.png` | Notification history with demo content. Use a fictional account and demo notifications. |
+| Ready for limited coverage | Recording · 15–20 sec | `offline-resources.mp4` | Show Malaysia offline map download status. → Show cached guidance and storage usage. → Turn off connectivity for the demo. → Open an already downloaded guide. Download the demo resources first. |
+| Show the issue | Recording · 15–20 sec | `feedback.mp4` | Open Send feedback. → Capture a harmless screen and draw an annotation. → Review the message and image. → Show a seeded My feedback status. Use harmless demo text; stop before submitting feedback. |
+
+## Operations
+
+| Feature | Media | Filename | What to show |
+| --- | --- | --- | --- |
+| Manage the system | Screenshot | `admin-overview.png` | Current mobile Admin overview with all management areas. Use a demo administrator dataset. |
+| Manage the system | Screenshot | `admin-collection.png` | A collection view with demo records and visible status. Use a demo administrator dataset. |
+| Maintain trail quality | Screenshot | `admin-trails-moderation.png` | Trail draft editor with route and checkpoint controls. Use demo records; leave live content unchanged. |
+| Maintain trail quality | Screenshot | `admin-safety-reports.png` | Seeded safety-report review queue. Use demo records; leave live content unchanged. |
+| Maintain trail quality | Screenshot | `admin-review-queue.png` | Seeded community moderation queue and decision controls. Use demo records; leave live content unchanged. |
+| Support & diagnostics | Screenshot | `admin-feedback.png` | Sanitized feedback inbox with statuses. Use sanitized demo diagnostics. |
+| Support & diagnostics | Screenshot | `admin-diagnostics.png` | Button Debugging screen with decoded demo events. Use sanitized demo diagnostics. |
+| Support & diagnostics | Screenshot | `admin-diagnostics-status.png` | Cloud and local diagnostics summary with secrets removed. Use sanitized demo diagnostics. |
+
+## Archive
+
+| Feature | Media | Filename | What to show |
+| --- | --- | --- | --- |
+| The first safety design | Screenshot | `original-sos.png` | New full-screen capture of the original safety layout, including modes and contacts. Restore the original milestone build and include its date with the file. Keep this labelled as historical. |

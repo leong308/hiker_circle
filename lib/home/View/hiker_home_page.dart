@@ -3231,10 +3231,6 @@ class _HikerHomePageState extends State<HikerHomePage>
       queuedUpdates: queuedUpdates,
       batteryLevel: batteryLevel,
     ).copyWith(manualPins: nextPins.length, manualPinLocations: nextPins);
-    await hikerCircleRepository.recordAchievementMetric(
-      session: widget.session,
-      metricKey: 'manual_pin_added',
-    );
     _syncTeamHikeLocation(updatedHike, location);
     return PinLocationResult(
       hike: updatedHike,
@@ -3976,21 +3972,6 @@ class _HikerHomePageState extends State<HikerHomePage>
         ),
       ),
     );
-  }
-
-  void openJoinTeamHike() {
-    setState(() {
-      selectedTabIndex = 2;
-    });
-    tabController.animateTo(2);
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('Team hike invitations are in Circle > Teams.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
   }
 
   String? _navigatingTeamSessionId;

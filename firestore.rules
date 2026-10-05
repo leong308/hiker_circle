@@ -461,6 +461,10 @@ service cloud.firestore {
     }
 
     match /hikeSessions/{sessionId} {
+      match /snapshotArchives/{archiveId} {
+        // Archived forecast series are private maintenance data, not public history.
+        allow read, write: if false;
+      }
       allow read: if ownHike(resource.data) || admin();
       // Session creation is a callable transaction so a client cannot forge
       // lifecycle state or server monitoring fields.
@@ -560,6 +564,16 @@ service cloud.firestore {
 
     match /hikeSessionTerminalStates/{sessionId} {
       allow read, write: if false;
+    }
+
+    match /communityModerationReviews/{reviewId} {
+      allow read: if admin();
+      allow write: if false;
+    }
+
+    match /communityModerationStatus/{statusId} {
+      allow read: if admin();
+      allow write: if false;
     }
 
     match /communityPosts/{postId} {

@@ -11,6 +11,7 @@ const DESTINATIONS = Object.freeze([
   {id: 'find_hike', title: 'Find a Hike', keywords: ['find hike', 'upcoming hike', 'join hike']},
   {id: 'emergency_contacts', title: 'Emergency contacts', keywords: ['emergency contact', 'sos contact']},
   {id: 'sos', title: 'SOS', keywords: ['sos', 'safety']},
+  {id: 'first_aid', title: 'First-Aid Guide', keywords: ['first aid', 'medical', 'injury', 'bleeding']},
   {id: 'security', title: 'Login security', keywords: ['passkey', 'login security', 'authenticator', '2fa']},
   {id: 'hike_history', title: 'Hike history', keywords: ['hike history', 'past hike']},
   {id: 'achievements', title: 'Achievements', keywords: ['achievement', 'badge', 'leaderboard']},
@@ -206,6 +207,20 @@ function navigationAction(question) {
   return {type: 'navigate', destinationId: item.id, label: `Open ${item.title}`};
 }
 
+function contextualAction(question) {
+  if (/\b(?:first[ -]?aid|medical|injur(?:y|ies|ed)|bleed(?:ing)?|wounds?|nosebleed|fracture|sprain(?:ed|s)?|burn|scald|bite|sting|choking|cpr|faint(?:ing)?|heatstroke|heat exhaustion|hypothermia)\b/i.test(question)) {
+    return {
+      type: 'navigate',
+      destinationId: 'first_aid',
+      label: 'Open First-Aid Guide',
+    };
+  }
+  if (/\b(?:sos|emergenc(?:y|ies)|danger|rescue|who (?:do|should|can) i contact|who to contact)\b/i.test(question)) {
+    return {type: 'navigate', destinationId: 'sos', label: 'Open SOS'};
+  }
+  return null;
+}
+
 function distanceKm(a, b, c, d) {
   const radians = (value) => value * Math.PI / 180;
   const x = Math.sin(radians(c - a) / 2) ** 2
@@ -231,16 +246,21 @@ async function findTrails(db, question, location) {
   }
   const longest = /\b(?:longest|furthest|most distance)\b/i.test(question);
   const shortest = /\b(?:shortest|easiest)\b/i.test(question);
-  const terms = [...tokenize(question)].filter((token) => !new Set([
+  const normalizeSearchText = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/\bpulau\s+pinang\b/g, 'penang');
+  const terms = [...tokenize(normalizeSearchText(question))].filter((token) => !new Set([
     'trail', 'trails', 'hiking', 'route', 'routes', 'find', 'show', 'search', 'which',
     'where', 'near', 'nearby', 'nearest', 'closest', 'longest', 'shortest', 'the',
-    'around', 'from', 'with', 'distance', 'mountain',
+    'around', 'from', 'with', 'distance', 'mountain', 'what', 'are', 'available',
   ]).has(token));
   const ranked = trails.map((trail) => {
     const distance = hasLocation && Number.isFinite(Number(trail.latitude))
       && Number.isFinite(Number(trail.longitude))
       ? distanceKm(lat, lng, Number(trail.latitude), Number(trail.longitude)) : null;
-    const name = `${trail.name} ${trail.area || ''} ${trail.state || ''}`.toLowerCase();
+    const name = normalizeSearchText(
+      `${trail.name} ${trail.area || ''} ${trail.state || ''} ${trail.country || ''}`
+    );
     return {trail, distance, score: terms.filter((term) => name.includes(term)).length};
   });
   if (nearby) ranked.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
@@ -249,7 +269,7 @@ async function findTrails(db, question, location) {
   else ranked.sort((a, b) => b.score - a.score);
   const matches = ranked.filter((item) => nearby ? item.distance != null :
     longest || shortest || terms.length === 0 || item.score > 0)
-    .slice(0, nearby ? 3 : longest || shortest ? 1 : 5);
+    .slice(0, nearby ? 3 : longest || shortest ? 1 : 8);
   return {
     answer: matches.length ? (nearby ? 'Here are the closest trails I found.' :
       longest ? 'Here are the longest trails I found.' : 'Here are matching trails.') :
@@ -258,7 +278,10 @@ async function findTrails(db, question, location) {
       id: trail.id, name: trail.name, area: trail.area || '', state: trail.state || '',
       distanceKm: Number(trail.distanceKm || 0), difficulty: trail.difficulty || '',
       estimatedDurationMinutes: Number(trail.estimatedDurationMinutes || 0),
-      coverImageUrl: trail.coverImageUrl || (trail.coverImageUrls || [])[0] || '',
+      coverImageUrl: [trail.coverImageUrl, trail.coverImageUrls]
+        .flatMap((value) => Array.isArray(value) ? value : [value])
+        .map((value) => String(value || '').trim())
+        .find(Boolean) || '',
       distanceFromUserKm: nearby ? Math.round(distance * 10) / 10 : null,
     })),
     responseMode: 'trail_search',
@@ -271,6 +294,7 @@ function emergencyResponse() {
       'If this is happening now, call Malaysia emergency services on 999 or 112 first when possible. Move only if staying there is unsafe, use HikerCircle SOS to alert your configured contacts, and share your precise location with responders. Do not wait for this assistant in an emergency.',
     sources: [{id: 'sos_safety', title: 'SOS and emergency safety'}],
     responseMode: 'curated_emergency',
+    action: {type: 'navigate', destinationId: 'sos', label: 'Open SOS'},
   };
 }
 
@@ -526,7 +550,7 @@ function createAssistantHandler({db, apiKey, fetchImpl = fetch, now = Date.now})
       return findTrails(db, question, request?.data?.location);
     }
     const history = normalizeHistory(request?.data?.history);
-    const action = navigationAction(question);
+    const action = navigationAction(question) || contextualAction(question);
     if (action && /\b(?:open|go to|navigate|take me|show me)\b/i.test(question)) {
       return {answer: `Open ${action.label.slice(5)}.`, action,
         sources: [], responseMode: 'curated_navigation'};
@@ -562,6 +586,7 @@ module.exports = {
   buildPrompt,
   callGemini,
   containsSensitivePersonalData,
+  contextualAction,
   createAssistantHandler,
   curatedFallbackResponse,
   emergencyResponse,

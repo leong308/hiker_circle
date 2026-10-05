@@ -220,6 +220,8 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
           )
           .timeout(const Duration(seconds: 30));
       if (!mounted) return;
+      final action =
+          answer.action ?? _contextualActionFor(question, answer.isEmergency);
       setState(() {
         _messages.add(
           _AssistantMessage.newEntry(
@@ -229,7 +231,7 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
             isEmergency: answer.isEmergency,
             notice: answer.notice,
             trails: answer.trails,
-            action: answer.action,
+            action: action,
           ),
         );
       });
@@ -248,6 +250,37 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
         _scrollToEnd();
       }
     }
+  }
+
+  HikerCircleAssistantAction? _contextualActionFor(
+    String question,
+    bool isEmergency,
+  ) {
+    if (isEmergency) {
+      return const HikerCircleAssistantAction(
+        destinationId: 'sos',
+        label: 'Open SOS',
+      );
+    }
+    if (RegExp(
+      r'\b(first[ -]?aid|medical|injur(y|ies|ed)|bleed(ing)?|wounds?|nosebleed|fracture|sprain(ed|s)?|burn|scald|bite|sting|choking|cpr|faint(ing)?|heatstroke|heat exhaustion|hypothermia)\b',
+      caseSensitive: false,
+    ).hasMatch(question)) {
+      return const HikerCircleAssistantAction(
+        destinationId: 'first_aid',
+        label: 'Open First-Aid Guide',
+      );
+    }
+    if (RegExp(
+      r'\b(sos|emergenc(y|ies)|danger|rescue|who (do|should|can) i contact|who to contact)\b',
+      caseSensitive: false,
+    ).hasMatch(question)) {
+      return const HikerCircleAssistantAction(
+        destinationId: 'sos',
+        label: 'Open SOS',
+      );
+    }
+    return null;
   }
 
   void _addError(String message) {
@@ -490,6 +523,8 @@ class _AssistantMessage {
             'difficulty': trail.difficulty,
             'distanceKm': trail.distanceKm,
             'estimatedDurationMinutes': trail.estimatedDurationMinutes,
+            if (trail.coverImageUrl.isNotEmpty)
+              'coverImageUrl': trail.coverImageUrl,
             if (trail.distanceFromUserKm != null)
               'distanceFromUserKm': trail.distanceFromUserKm,
           },
@@ -869,44 +904,71 @@ class _MessageBubble extends StatelessWidget {
               Card(
                 margin: EdgeInsets.zero,
                 color: surface,
+                clipBehavior: Clip.antiAlias,
                 child: InkWell(
                   key: Key('assistant-trail-${trail.id}'),
                   onTap: onOpenTrail == null
                       ? null
                       : () => unawaited(onOpenTrail!(trail.id)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          trail.name,
-                          style: TextStyle(
-                            color: text,
-                            fontWeight: FontWeight.bold,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (trail.coverImageUrl.isNotEmpty)
+                        SizedBox(
+                          width: double.infinity,
+                          height: 108,
+                          child: Image.network(
+                            trail.coverImageUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                ColoredBox(
+                                  color: _HikerCircleAssistantPageState._green
+                                      .withValues(alpha: 0.1),
+                                  child: const Center(
+                                    child: Icon(
+                                      Icons.landscape_rounded,
+                                      color:
+                                          _HikerCircleAssistantPageState._green,
+                                    ),
+                                  ),
+                                ),
                           ),
                         ),
-                        Text(
-                          [
-                            trail.area,
-                            trail.state,
-                          ].where((s) => s.isNotEmpty).join(', '),
-                          style: TextStyle(color: secondary),
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              trail.name,
+                              style: TextStyle(
+                                color: text,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              [
+                                trail.area,
+                                trail.state,
+                              ].where((s) => s.isNotEmpty).join(', '),
+                              style: TextStyle(color: secondary),
+                            ),
+                            Text(
+                              '${trail.distanceKm.toStringAsFixed(1)} km trail'
+                              '${trail.difficulty.isNotEmpty ? ' · ${trail.difficulty}' : ''}'
+                              '${trail.estimatedDurationMinutes > 0 ? ' · ${trail.estimatedDurationMinutes} min' : ''}'
+                              '${trail.distanceFromUserKm != null ? ' · ${trail.distanceFromUserKm!.toStringAsFixed(1)} km away' : ''}',
+                              style: TextStyle(color: secondary),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'View trail →',
+                              style: TextStyle(color: Color(0xFF34A853)),
+                            ),
+                          ],
                         ),
-                        Text(
-                          '${trail.distanceKm.toStringAsFixed(1)} km trail'
-                          '${trail.difficulty.isNotEmpty ? ' · ${trail.difficulty}' : ''}'
-                          '${trail.estimatedDurationMinutes > 0 ? ' · ${trail.estimatedDurationMinutes} min' : ''}'
-                          '${trail.distanceFromUserKm != null ? ' · ${trail.distanceFromUserKm!.toStringAsFixed(1)} km away' : ''}',
-                          style: TextStyle(color: secondary),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'View trail →',
-                          style: TextStyle(color: Color(0xFF34A853)),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),

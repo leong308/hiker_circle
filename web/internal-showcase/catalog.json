@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-19",
+  "updated": "2026-10-02",
   "chapters": [
     {
       "id": "access",
@@ -49,7 +49,7 @@
     {
       "id": "archive",
       "title": "Product archive",
-      "subtitle": "Earlier interface references and staged demonstrations."
+      "subtitle": "A newly captured look at where HikerCircle began."
     }
   ],
   "items": [
@@ -65,14 +65,37 @@
         "Arrive at Home"
       ],
       "source": "needed",
-      "capture": "Capture the sign-in screen with a fictional phone number. Record 10–15 seconds from the prepared form to Home using a demo account; omit passwords and verification codes.",
-      "captureFile": "sign-in.png",
-      "notes": "Sign-in may send a real WhatsApp verification message; use a controlled demo account."
+      "capture": "sign-in.mp4 (10–15 sec): Show the prepared phone sign-in screen. Complete the demo sign-in; omit codes and passwords. Finish on the current Home screen. Use a demo account. Exclude credential entry from the recording.",
+      "captureFile": "sign-in.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Phone access",
+          "detail": "Return to your account with your phone number."
+        },
+        {
+          "label": "Account verification",
+          "detail": "Complete the verification method configured for your account."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "sign-in.mp4",
+          "duration": "10–15 sec",
+          "steps": [
+            "Show the prepared phone sign-in screen.",
+            "Complete the demo sign-in; omit codes and passwords.",
+            "Finish on the current Home screen."
+          ]
+        },
+        "setup": "Use a demo account. Exclude credential entry from the recording."
+      }
     },
     {
       "id": "onboarding",
       "chapter": "access",
-      "title": "Create your hiker profile",
+      "title": "Create your profile",
       "description": "Set your name, hiking experience, frequency and residential city.",
       "flow": [
         "Verify demo account",
@@ -81,29 +104,75 @@
         "Continue to contacts"
       ],
       "source": "needed",
-      "capture": "Capture the profile form and city-level map picker as onboarding.png and onboarding-city.png. Record scrolling through the fields without revealing a password or exact home address.",
-      "captureFile": "onboarding.png"
+      "capture": "onboarding.png: Profile form: name, hiking experience and frequency. onboarding-city.png: City picker: city-level map and selected city. Use fictional profile details and a city-level location.",
+      "captureFile": "onboarding.png",
+      "points": [
+        {
+          "label": "Name & experience",
+          "detail": "Set your name and hiking experience."
+        },
+        {
+          "label": "Hiking frequency",
+          "detail": "Choose how often you hike."
+        },
+        {
+          "label": "Your city",
+          "detail": "Select your residential city on the map."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "onboarding.png",
+            "show": "Profile form: name, hiking experience and frequency."
+          },
+          {
+            "file": "onboarding-city.png",
+            "show": "City picker: city-level map and selected city."
+          }
+        ],
+        "setup": "Use fictional profile details and a city-level location."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "login-security",
       "chapter": "access",
-      "title": "Login security",
+      "title": "Protect your account",
       "description": "Review Authenticator and supported passkey methods for account protection.",
       "flow": [
         "Open profile settings",
         "Choose login security",
         "Review methods"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/10-security-device-20260908.png",
-      "capture": "Refresh the Login security overview using a demo account. Capture only the methods list, never setup QR codes, secret keys or one-time codes.",
+      "source": "needed",
+      "capture": "login-security.png: Login security overview with available methods. Show the methods list. Keep setup secrets, QR codes and verification codes out of the capture.",
       "captureFile": "login-security.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build. Native iOS passkeys require supported signing; Personal Team builds use Authenticator."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Authenticator",
+          "detail": "Review the Authenticator sign-in option."
+        },
+        {
+          "label": "Supported passkeys",
+          "detail": "Review passkey options available on the device."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "login-security.png",
+            "show": "Login security overview with available methods."
+          }
+        ],
+        "setup": "Show the methods list. Keep setup secrets, QR codes and verification codes out of the capture."
+      }
     },
     {
       "id": "account-recovery",
       "chapter": "access",
-      "title": "Account recovery",
+      "title": "Recover access",
       "description": "Recover access and review the extra verification used for sensitive account changes.",
       "flow": [
         "Open Forgot password",
@@ -112,8 +181,32 @@
         "Set new password"
       ],
       "source": "needed",
-      "capture": "Capture the recovery entry and method selection in a test account. A short recording may show navigation only; stop before requesting codes or changing credentials.",
-      "captureFile": "account-recovery.png"
+      "capture": "account-recovery.png: Forgot password entry and recovery method choices. account-recovery-verification.png: Recovery verification prompt, with no codes or credentials. Use a test account; capture before requesting a code or resetting its password.",
+      "captureFile": "account-recovery.png",
+      "points": [
+        {
+          "label": "Account recovery",
+          "detail": "Choose a recovery method to regain access."
+        },
+        {
+          "label": "Extra verification",
+          "detail": "Review verification for sensitive account changes."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "account-recovery.png",
+            "show": "Forgot password entry and recovery method choices."
+          },
+          {
+            "file": "account-recovery-verification.png",
+            "show": "Recovery verification prompt, with no codes or credentials."
+          }
+        ],
+        "setup": "Use a test account; capture before requesting a code or resetting its password."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "emergency-contacts",
@@ -127,13 +220,37 @@
         "Save controlled demo data"
       ],
       "source": "needed",
-      "capture": "Capture three fictional contacts with relationships and an open editor. Use a demo repository or controlled test account; do not show real numbers or change production contacts.",
-      "captureFile": "emergency-contacts.png"
+      "capture": "emergency-contacts.png: Contact list: three fictional names, relationships and count. emergency-contact-editor.png: Contact editor: name, phone and relationship fields. Use fictional contacts in a demo account.",
+      "captureFile": "emergency-contacts.png",
+      "points": [
+        {
+          "label": "Up to three people",
+          "detail": "Choose up to three trusted emergency contacts."
+        },
+        {
+          "label": "Emergency messages",
+          "detail": "These contacts can receive your emergency messages."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "emergency-contacts.png",
+            "show": "Contact list: three fictional names, relationships and count."
+          },
+          {
+            "file": "emergency-contact-editor.png",
+            "show": "Contact editor: name, phone and relationship fields."
+          }
+        ],
+        "setup": "Use fictional contacts in a demo account."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "trail-discovery",
       "chapter": "discover",
-      "title": "Find your next trail",
+      "title": "Find a trail",
       "description": "Browse trails and narrow choices by region or distance.",
       "flow": [
         "Open Home",
@@ -141,17 +258,37 @@
         "Adjust region or radius",
         "Open a trail"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/plan-home.jpeg",
-      "video": "/site-assets/evolution/02-companion-device-20260907.mp4",
-      "capture": "Capture the current Home trail list, then record 15–20 seconds selecting a filter and opening a trail.",
-      "captureFile": "trail-discovery.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build."
+      "source": "needed",
+      "capture": "trail-discovery.mp4 (15–20 sec): Show the current Home trail list. Change the region or distance filter. Open a matching trail.",
+      "captureFile": "trail-discovery.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Browse routes",
+          "detail": "Explore the available hiking trails."
+        },
+        {
+          "label": "Region & distance",
+          "detail": "Narrow the list by region or distance."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "trail-discovery.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Show the current Home trail list.",
+            "Change the region or distance filter.",
+            "Open a matching trail."
+          ]
+        }
+      }
     },
     {
       "id": "trail-detail",
       "chapter": "discover",
-      "title": "A trail at a glance",
+      "title": "Know the route",
       "description": "See trail imagery, distance, elevation, expected time and community difficulty.",
       "flow": [
         "Select trail",
@@ -159,17 +296,42 @@
         "Browse imagery",
         "Open route preview"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/11-trail-device-20260908.png",
-      "video": "/site-assets/evolution/11-trail-device-20260908.mp4",
-      "capture": "Capture the trail hero with real loaded imagery and metrics; record a slow scroll through route and checkpoint sections.",
+      "source": "needed",
+      "capture": "trail-detail.png: Trail hero: loaded photo, distance, elevation, time and difficulty. trail-detail-checkpoints.png: Trail details with the route and ordered checkpoint section. Let trail photos and map data finish loading.",
       "captureFile": "trail-detail.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Trail imagery",
+          "detail": "View the trail's loaded photos."
+        },
+        {
+          "label": "Distance, elevation & time",
+          "detail": "See route distance, elevation and expected hiking time."
+        },
+        {
+          "label": "Community difficulty",
+          "detail": "Review the difficulty reported by hikers."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "trail-detail.png",
+            "show": "Trail hero: loaded photo, distance, elevation, time and difficulty."
+          },
+          {
+            "file": "trail-detail-checkpoints.png",
+            "show": "Trail details with the route and ordered checkpoint section."
+          }
+        ],
+        "setup": "Let trail photos and map data finish loading."
+      }
     },
     {
       "id": "route-preview",
       "chapter": "discover",
-      "title": "Follow the route before departure",
+      "title": "Preview the path",
       "description": "Explore route geometry, ordered checkpoints and the animated first-person preview.",
       "flow": [
         "Open route preview",
@@ -177,16 +339,38 @@
         "Start route preview",
         "Change view"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/trail-detail.jpeg",
-      "capture": "Record 20–30 seconds of the current route map, one highlighted checkpoint and first-person playback. Include the rain estimate label if available.",
-      "captureFile": "route-preview.png",
-      "notes": "Existing website screenshot. A new recording is needed for the current first-person controls."
+      "source": "needed",
+      "capture": "route-preview.mp4 (20–30 sec): Open the fully loaded route map. Select a checkpoint and show its location. Start the first-person route preview. Change the view; include the rain estimate if available.",
+      "captureFile": "route-preview.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Route & checkpoints",
+          "detail": "Explore the route geometry and ordered checkpoints."
+        },
+        {
+          "label": "First-person preview",
+          "detail": "Watch the animated route before departure."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "route-preview.mp4",
+          "duration": "20–30 sec",
+          "steps": [
+            "Open the fully loaded route map.",
+            "Select a checkpoint and show its location.",
+            "Start the first-person route preview.",
+            "Change the view; include the rain estimate if available."
+          ]
+        }
+      }
     },
     {
       "id": "trail-forecast",
       "chapter": "discover",
-      "title": "Choose a weather window",
+      "title": "Choose your weather window",
       "description": "Compare forecast days, hourly conditions, daylight and weather cautions.",
       "flow": [
         "Open Conditions and Safety",
@@ -194,12 +378,37 @@
         "Explore hourly chart",
         "Read cautions"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/12-weather-device-20260908.png",
-      "video": "/site-assets/evolution/12-weather-route-device-20260908.mp4",
-      "capture": "Capture the expanded forecast and record changing day/metric, selecting an hour and reading cautions.",
-      "captureFile": "trail-forecast.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build."
+      "source": "needed",
+      "capture": "trail-forecast.mp4 (20–25 sec): Open Conditions and Safety. Switch day and chart metric. Select an hour on the chart. Show daylight times and weather cautions.",
+      "captureFile": "trail-forecast.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Days & hourly conditions",
+          "detail": "Compare forecast days and hourly conditions."
+        },
+        {
+          "label": "Daylight",
+          "detail": "Review sunrise, sunset and daylight."
+        },
+        {
+          "label": "Weather cautions",
+          "detail": "Read the cautions before setting out."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "trail-forecast.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Open Conditions and Safety.",
+            "Switch day and chart metric.",
+            "Select an hour on the chart.",
+            "Show daylight times and weather cautions."
+          ]
+        }
+      }
     },
     {
       "id": "weather-map",
@@ -213,14 +422,36 @@
         "Inspect legend and opacity"
       ],
       "source": "needed",
-      "capture": "Capture rain, wind and temperature overlays after loading, named weather-map.png, weather-map-wind.png and weather-map-temperature.png. Record 15 seconds changing layer and opacity.",
-      "captureFile": "weather-map.png",
-      "notes": "Requires configured weather service. Regional layers are not measurements at every point on the trail."
+      "capture": "weather-map.mp4 (15–20 sec): Open the route map and cloud control. Show loaded rain, wind and temperature layers. Show the legend and change overlay opacity.",
+      "captureFile": "weather-map.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Rain, wind & temperature",
+          "detail": "Switch between the regional weather layers."
+        },
+        {
+          "label": "Keep the trail visible",
+          "detail": "See the route beneath each weather overlay."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "weather-map.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open the route map and cloud control.",
+            "Show loaded rain, wind and temperature layers.",
+            "Show the legend and change overlay opacity."
+          ]
+        }
+      }
     },
     {
       "id": "hazard-report",
       "chapter": "discover",
-      "title": "Community trail cautions",
+      "title": "Trail cautions",
       "description": "Review reported hazards and describe a caution at a trail location.",
       "flow": [
         "Open trail or active hike",
@@ -228,11 +459,33 @@
         "Select category and detail",
         "Review report"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/hazard-report.jpeg",
-      "capture": "Capture the category picker and a prepared report with sample text. Record navigation without submitting a false live hazard.",
-      "captureFile": "hazard-report.png",
-      "notes": "Existing website capture. Submitting a report writes community data."
+      "source": "needed",
+      "capture": "hazard-report-list.png: Reported trail hazards with categories and location context. hazard-report.png: Prepared report: trail, category, location, severity and sample text. Prepare a demo report and leave it unsubmitted.",
+      "captureFile": "hazard-report-list.png",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Reported hazards",
+          "detail": "Review cautions reported by other hikers."
+        },
+        {
+          "label": "Location & details",
+          "detail": "Describe a caution at a specific trail location."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "hazard-report-list.png",
+            "show": "Reported trail hazards with categories and location context."
+          },
+          {
+            "file": "hazard-report.png",
+            "show": "Prepared report: trail, category, location, severity and sample text."
+          }
+        ],
+        "setup": "Prepare a demo report and leave it unsubmitted."
+      }
     },
     {
       "id": "upcoming-home",
@@ -245,16 +498,47 @@
         "Open forecast",
         "Open preparation"
       ],
-      "source": "preview",
-      "image": "/internal/app-showcase/media/upcoming-home-preview.png",
-      "capture": "Capture the current Next Hike card with date, departure/return, difficulty and preparation action. Record the countdown briefly; use a planned demo hike.",
-      "captureFile": "upcoming-home.png",
-      "notes": "Rendered interface preview using demo data; not a new phone capture. Shows the Next Hike card in isolation; capture the full Home carousel for the complete experience."
+      "source": "needed",
+      "capture": "upcoming-home.mp4 (15–20 sec): Show the full current Home screen. Focus the Next Hike card: date, countdown and return. Show trail difficulty and the forecast. Open preparation from the card. Use a planned demo hike. Keep the entire Home screen visible.",
+      "captureFile": "upcoming-home.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Departure & return",
+          "detail": "See departure timing and planned return together."
+        },
+        {
+          "label": "Current difficulty",
+          "detail": "Check the current difficulty of the planned trail."
+        },
+        {
+          "label": "Hike forecast",
+          "detail": "Review the forecast for your outing."
+        },
+        {
+          "label": "Preparation progress",
+          "detail": "See progress and open your preparation actions."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "upcoming-home.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Show the full current Home screen.",
+            "Focus the Next Hike card: date, countdown and return.",
+            "Show trail difficulty and the forecast.",
+            "Open preparation from the card."
+          ]
+        },
+        "setup": "Use a planned demo hike. Keep the entire Home screen visible."
+      }
     },
     {
       "id": "create-hike",
       "chapter": "prepare",
-      "title": "Solo or team",
+      "title": "Plan your way",
       "description": "Choose your hiking mode and select a route for the outing.",
       "flow": [
         "Choose Create Hike",
@@ -262,11 +546,34 @@
         "Select trail",
         "Continue to checkpoints"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/create-session.jpeg",
-      "capture": "Capture solo/team selection and record 15–20 seconds choosing a mode and trail without starting a real session.",
-      "captureFile": "create-hike.png",
-      "notes": "Existing website capture. Longer routes apply HikerCircle-specific solo distance rules."
+      "source": "needed",
+      "capture": "create-hike.mp4 (15–20 sec): Open Create Hike. Show the Solo and Team choices. Select a mode and trail. Stop at the checkpoint planning screen. Use a draft plan.",
+      "captureFile": "create-hike.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Solo or team",
+          "detail": "Choose how this hiking session will work."
+        },
+        {
+          "label": "Choose a trail",
+          "detail": "Select the route for your outing."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "create-hike.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open Create Hike.",
+            "Show the Solo and Team choices.",
+            "Select a mode and trail.",
+            "Stop at the checkpoint planning screen."
+          ]
+        },
+        "setup": "Use a draft plan."
+      }
     },
     {
       "id": "checkpoints",
@@ -280,9 +587,32 @@
         "Review itinerary"
       ],
       "source": "needed",
-      "capture": "Capture the current checkpoint timeline and map picker. Record highlighting a stop and returning to its place in the route.",
-      "captureFile": "checkpoints.png",
-      "notes": "Use a demo draft; do not save modifications to shared production trails."
+      "capture": "checkpoints.mp4 (15–20 sec): Open the checkpoint timeline. Select or add a stop using the map picker. Return to the itinerary and show its position. Use a demo draft route.",
+      "captureFile": "checkpoints.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Checkpoint order",
+          "detail": "Review the stops in route order."
+        },
+        {
+          "label": "Adjust planned stops",
+          "detail": "Add or change the stops for your plan."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "checkpoints.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open the checkpoint timeline.",
+            "Select or add a stop using the map picker.",
+            "Return to the itinerary and show its position."
+          ]
+        },
+        "setup": "Use a demo draft route."
+      }
     },
     {
       "id": "schedule-reminders",
@@ -295,16 +625,42 @@
         "Review duration",
         "Choose reminders"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/hike-reminders.jpeg",
-      "capture": "Capture date/time and reminder controls. Record a prepared demo schedule without sending team invitations.",
-      "captureFile": "schedule-reminders.png",
-      "notes": "Existing website capture."
+      "source": "needed",
+      "capture": "schedule-timing.png: Timing screen: start-now/scheduled choice, date, time and duration. schedule-reminders.png: Check-in and preparation reminder settings with their preview. Use a demo draft; avoid sending team invitations.",
+      "captureFile": "schedule-timing.png",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Now or later",
+          "detail": "Start now or choose a scheduled departure."
+        },
+        {
+          "label": "Check-in reminders",
+          "detail": "Set reminders to check in during the hike."
+        },
+        {
+          "label": "Preparation reminders",
+          "detail": "Choose reminders to prepare before departure."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "schedule-timing.png",
+            "show": "Timing screen: start-now/scheduled choice, date, time and duration."
+          },
+          {
+            "file": "schedule-reminders.png",
+            "show": "Check-in and preparation reminder settings with their preview."
+          }
+        ],
+        "setup": "Use a demo draft; avoid sending team invitations."
+      }
     },
     {
       "id": "hike-safety-settings",
       "chapter": "prepare",
-      "title": "Safety before departure",
+      "title": "Set up safety",
       "description": "Review live sharing, fall and stillness monitoring, and route-deviation alerts.",
       "flow": [
         "Open Safety Settings",
@@ -312,17 +668,42 @@
         "Adjust detection options",
         "Review route alerts"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/07-safety-settings-device-20260908.png",
-      "video": "/site-assets/evolution/07-safety-device-20260908.mp4",
-      "capture": "Capture the current safety settings and record changing a demo draft's sensitivity and rest settings.",
+      "source": "needed",
+      "capture": "hike-safety-settings.png: Hike safety settings: live sharing, fall and stillness options. hike-route-alerts.png: Route-deviation alerts, sensitivity and rest controls. Use the current safety screen in a demo draft.",
       "captureFile": "hike-safety-settings.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build. Warning behavior is platform-specific; the screenshot does not validate detection reliability."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Live sharing",
+          "detail": "Choose whether to share your location."
+        },
+        {
+          "label": "Fall & stillness",
+          "detail": "Review monitoring sensitivity and rest settings."
+        },
+        {
+          "label": "Route deviation",
+          "detail": "Choose alerts for moving away from the route."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "hike-safety-settings.png",
+            "show": "Hike safety settings: live sharing, fall and stillness options."
+          },
+          {
+            "file": "hike-route-alerts.png",
+            "show": "Route-deviation alerts, sensitivity and rest controls."
+          }
+        ],
+        "setup": "Use the current safety screen in a demo draft."
+      }
     },
     {
       "id": "required-gear",
       "chapter": "prepare",
-      "title": "One packing question at a time",
+      "title": "Pack with confidence",
       "description": "Pack the required items for the route and understand why each item matters.",
       "flow": [
         "Open Final preparation review",
@@ -330,16 +711,39 @@
         "Choose Yes, packed or Not yet",
         "Continue guide"
       ],
-      "source": "preview",
-      "capture": "Capture the current Get ready to hike required-item question showing its reason and response buttons. Record 15 seconds answering two items in a demo plan.",
-      "captureFile": "required-gear.png",
-      "notes": "Rendered interface preview using demo data; not a new phone capture. Current guided flow supersedes older preparation tabs. A saved tick records the answer, not physical verification.",
-      "image": "/internal/app-showcase/media/required-gear-preview.png"
+      "source": "needed",
+      "capture": "required-gear.mp4 (15–20 sec): Open Get ready to hike. Show a required item and its reason. Choose Yes, packed or Not yet. Continue through a second item. Use a demo plan.",
+      "captureFile": "required-gear.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Required route gear",
+          "detail": "Check the items needed for this route."
+        },
+        {
+          "label": "Why it matters",
+          "detail": "Read the reason for each required item."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "required-gear.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open Get ready to hike.",
+            "Show a required item and its reason.",
+            "Choose Yes, packed or Not yet.",
+            "Continue through a second item."
+          ]
+        },
+        "setup": "Use a demo plan."
+      }
     },
     {
       "id": "preparation-review",
       "chapter": "prepare",
-      "title": "Extras, safety & final review",
+      "title": "The final check",
       "description": "Review optional gear, contacts, battery, sharing and conditions before the final start check.",
       "flow": [
         "Review optional extras",
@@ -347,16 +751,47 @@
         "Read final review",
         "Resolve missing required items"
       ],
-      "source": "preview",
-      "capture": "Provide preparation-review.png at final review plus preparation-extras.png and preparation-safety.png. Record 20–30 seconds through extras, a safety prompt and a blocked/ready final state in a demo plan.",
-      "captureFile": "preparation-review.png",
-      "image": "/internal/app-showcase/media/preparation-review-preview.png",
-      "notes": "Rendered interface preview using demo data; not a new phone capture. "
+      "source": "needed",
+      "capture": "preparation-review.mp4 (25–30 sec): Show optional gear choices. Review contacts, battery, sharing and conditions. Show final review with a missing required item. Resolve it and show the ready-to-start state. Use a demo plan; stop before starting a real hike.",
+      "captureFile": "preparation-review.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Optional gear",
+          "detail": "Review the extras you may want to bring."
+        },
+        {
+          "label": "Contacts & battery",
+          "detail": "Check your contacts and phone battery."
+        },
+        {
+          "label": "Sharing & conditions",
+          "detail": "Review sharing choices and trail conditions."
+        },
+        {
+          "label": "Ready to start",
+          "detail": "Resolve required items before the final start check."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "preparation-review.mp4",
+          "duration": "25–30 sec",
+          "steps": [
+            "Show optional gear choices.",
+            "Review contacts, battery, sharing and conditions.",
+            "Show final review with a missing required item.",
+            "Resolve it and show the ready-to-start state."
+          ]
+        },
+        "setup": "Use a demo plan; stop before starting a real hike."
+      }
     },
     {
       "id": "team-launch",
       "chapter": "prepare",
-      "title": "Get everyone ready",
+      "title": "Leave together",
       "description": "Coordinate team preparation, participant readiness and a shared departure.",
       "flow": [
         "Open team invitation",
@@ -364,17 +799,43 @@
         "Send Ready",
         "Organizer starts group"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/team-launch.jpeg",
-      "video": "/site-assets/evolution/04-coordination-team-flow-iphone.mp4",
-      "capture": "Record host and participant readiness with controlled demo accounts. Capture the roster and shared countdown; use isolated test sessions.",
-      "captureFile": "team-launch.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build. Starting creates an active session and may notify invited participants."
+      "source": "needed",
+      "capture": "team-launch.mp4 (20–25 sec): Open a team hike with two demo participants. Show preparation and Ready status. Show the ready roster. Show the organizer's launch and shared countdown. Use controlled demo participants in a test session.",
+      "captureFile": "team-launch.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Team preparation",
+          "detail": "Each participant completes their preparation."
+        },
+        {
+          "label": "Ready together",
+          "detail": "Review participant readiness before departure."
+        },
+        {
+          "label": "Shared start",
+          "detail": "Start the team from one coordinated launch."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "team-launch.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Open a team hike with two demo participants.",
+            "Show preparation and Ready status.",
+            "Show the ready roster.",
+            "Show the organizer's launch and shared countdown."
+          ]
+        },
+        "setup": "Use controlled demo participants in a test session."
+      }
     },
     {
       "id": "active-tracking",
       "chapter": "hike",
-      "title": "Your active hike",
+      "title": "Follow your hike",
       "description": "Follow the route with elapsed time, recorded positions and safety status.",
       "flow": [
         "Start prepared demo hike",
@@ -382,16 +843,43 @@
         "Review hike progress",
         "Inspect safety health"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/active-team-hike.jpeg",
-      "capture": "Capture the current full-map active Home with status strip and bottom controls. Record a short controlled walk or simulated demo movement.",
-      "captureFile": "active-tracking.png",
-      "notes": "Existing website capture. GPS and background behavior depend on platform, permissions and app state."
+      "source": "needed",
+      "capture": "active-tracking.mp4 (15–20 sec): Show the current full-map active Home. Keep the elapsed time and status strip visible. Show recorded movement on the map. Open the safety-health status. Use a controlled demo walk or simulated demo movement.",
+      "captureFile": "active-tracking.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Route & elapsed time",
+          "detail": "Follow your route and time on the trail."
+        },
+        {
+          "label": "Recorded positions",
+          "detail": "See your recorded movement on the map."
+        },
+        {
+          "label": "Safety status",
+          "detail": "Review the active hike's safety status."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "active-tracking.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Show the current full-map active Home.",
+            "Keep the elapsed time and status strip visible.",
+            "Show recorded movement on the map.",
+            "Open the safety-health status."
+          ]
+        },
+        "setup": "Use a controlled demo walk or simulated demo movement."
+      }
     },
     {
       "id": "check-ins-pins",
       "chapter": "hike",
-      "title": "Check in & save a place",
+      "title": "Check in & pin",
       "description": "Record a check-in or mark a point worth returning to.",
       "flow": [
         "Open active hike",
@@ -400,13 +888,37 @@
         "Review saved status"
       ],
       "source": "needed",
-      "capture": "Record one check-in and one pin in an isolated demo hike; capture confirmation with a non-sensitive location.",
-      "captureFile": "check-ins-pins.png"
+      "capture": "check-ins-pins.mp4 (15–20 sec): Open an active demo hike. Tap Check In and show confirmation. Pin a location and show its saved marker. Use a test location in an isolated demo hike.",
+      "captureFile": "check-ins-pins.mp4",
+      "points": [
+        {
+          "label": "Record a check-in",
+          "detail": "Save a check-in during your hike."
+        },
+        {
+          "label": "Mark a place",
+          "detail": "Pin a point worth returning to."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "check-ins-pins.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open an active demo hike.",
+            "Tap Check In and show confirmation.",
+            "Pin a location and show its saved marker."
+          ]
+        },
+        "setup": "Use a test location in an isolated demo hike."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "team-tools",
       "chapter": "hike",
-      "title": "Stay aware of your team",
+      "title": "Keep your team in view",
       "description": "Review teammate positions, check-ins and route or separation notices.",
       "flow": [
         "Open team hike",
@@ -415,14 +927,42 @@
         "Inspect teammate on map"
       ],
       "source": "needed",
-      "capture": "Capture Team Tools with at least two test participants and a timestamped map. Record switching between roster/check-ins and the map.",
-      "captureFile": "team-tools.png",
-      "notes": "Use controlled participants. Stale updates and route warnings do not prove an emergency."
+      "capture": "team-tools.mp4 (20–25 sec): Open Team Tools with at least two participants. Show roster status and check-in timestamps. Select a teammate on the map. Show a seeded route or separation notice. Use controlled demo participants and seeded notices.",
+      "captureFile": "team-tools.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Teammate positions",
+          "detail": "Review where teammates are on the map."
+        },
+        {
+          "label": "Team check-ins",
+          "detail": "See participant check-ins and timestamps."
+        },
+        {
+          "label": "Route & separation notices",
+          "detail": "Review route or teammate-separation notices."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "team-tools.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Open Team Tools with at least two participants.",
+            "Show roster status and check-in timestamps.",
+            "Select a teammate on the map.",
+            "Show a seeded route or separation notice."
+          ]
+        },
+        "setup": "Use controlled demo participants and seeded notices."
+      }
     },
     {
       "id": "active-weather-sharing",
       "chapter": "hike",
-      "title": "Conditions & optional live sharing",
+      "title": "Conditions & sharing",
       "description": "Review weather along the hike and manage a location link for trusted people.",
       "flow": [
         "Open active weather",
@@ -431,14 +971,38 @@
         "Review link controls"
       ],
       "source": "needed",
-      "capture": "Capture active weather and Location sharing as active-weather-sharing.png and location-sharing.png. Record only demo link controls; use a test location and stop sharing afterward.",
-      "captureFile": "active-weather-sharing.png",
-      "notes": "Creating a live link exposes its location to people holding that link; use a demo session."
+      "capture": "active-weather-sharing.mp4 (20–25 sec): Open active-hike weather and route conditions. Open Location sharing. Show demo link controls. Stop the demo sharing session. Use a test location and a demo sharing link.",
+      "captureFile": "active-weather-sharing.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Weather along the hike",
+          "detail": "Review conditions while hiking."
+        },
+        {
+          "label": "Trusted location link",
+          "detail": "Manage a location link for trusted people."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "active-weather-sharing.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Open active-hike weather and route conditions.",
+            "Open Location sharing.",
+            "Show demo link controls.",
+            "Stop the demo sharing session."
+          ]
+        },
+        "setup": "Use a test location and a demo sharing link."
+      }
     },
     {
       "id": "sos-center",
       "chapter": "safety",
-      "title": "Emergency controls",
+      "title": "Safety close at hand",
       "description": "Keep manual, medical and discreet duress actions within reach.",
       "flow": [
         "Open SOS",
@@ -446,16 +1010,38 @@
         "Review contact readiness",
         "Inspect alert status"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/sos-center.jpeg",
-      "capture": "Capture the current SOS page while idle, including mode guidance. Use the isolated showcase entry point for any activated state.",
+      "source": "needed",
+      "capture": "sos-center.png: Idle SOS page: all three modes, guidance, contacts and status. Keep the SOS page idle.",
       "captureFile": "sos-center.png",
-      "notes": "Existing website capture. Production SOS can message contacts and activate sound, vibration or flashlight."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Manual SOS",
+          "detail": "Review the manual emergency action."
+        },
+        {
+          "label": "Medical assistance",
+          "detail": "Review the medical emergency option."
+        },
+        {
+          "label": "Discreet duress",
+          "detail": "Review the discreet duress action."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "sos-center.png",
+            "show": "Idle SOS page: all three modes, guidance, contacts and status."
+          }
+        ],
+        "setup": "Keep the SOS page idle."
+      }
     },
     {
       "id": "sos-countdown",
       "chapter": "safety",
-      "title": "Time to cancel a manual alert",
+      "title": "Time to cancel",
       "description": "A manual SOS countdown offers a chance to cancel before contact dispatch.",
       "flow": [
         "Open isolated safety demo",
@@ -464,14 +1050,38 @@
         "Cancel SOS"
       ],
       "source": "needed",
-      "capture": "Record a 10–15 second manual countdown and cancellation using lib/showcase_safety_main.dart or another isolated no-dispatch harness. Capture countdown at five seconds.",
-      "captureFile": "sos-countdown.png",
-      "notes": "Do not demonstrate against live emergency contacts. Cancelling before dispatch differs from stopping a local alarm afterward."
+      "capture": "sos-countdown.mp4 (10–15 sec): Open the isolated SOS demo. Tap Manual SOS. Show the countdown near five seconds. Cancel and show the idle state. Use an isolated SOS demo with real contact dispatch disabled.",
+      "captureFile": "sos-countdown.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Manual countdown",
+          "detail": "A manual SOS starts with a countdown."
+        },
+        {
+          "label": "Cancel before dispatch",
+          "detail": "Cancel within the countdown before contacts are notified."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "sos-countdown.mp4",
+          "duration": "10–15 sec",
+          "steps": [
+            "Open the isolated SOS demo.",
+            "Tap Manual SOS.",
+            "Show the countdown near five seconds.",
+            "Cancel and show the idle state."
+          ]
+        },
+        "setup": "Use an isolated SOS demo with real contact dispatch disabled."
+      }
     },
     {
       "id": "duress-demo",
       "chapter": "safety",
-      "title": "A discreet duress demonstration",
+      "title": "Discreet duress",
       "description": "A staged example shows the duress interface and sample contact result.",
       "flow": [
         "Open demo SOS widget",
@@ -479,17 +1089,39 @@
         "Review demo status",
         "Return to safety screen"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/03-safety-device-20260907.jpg",
-      "video": "/site-assets/evolution/03-safety-device-20260907.mp4",
-      "capture": "For a replacement, record only the no-dispatch showcase build with fictional contacts. Show widget entry, mode and result in 15 seconds.",
-      "captureFile": "duress-demo.png",
-      "notes": "Existing staged demonstration with sample contacts. It does not establish real WhatsApp delivery or invisible operation."
+      "source": "needed",
+      "capture": "duress-demo.mp4 (15–20 sec): Start from the final home-screen page with the widget. Tap the demo Duress action. Show the app opening and duress status. Show the sample contact result. Use an isolated no-dispatch build with fictional contacts. Label the result as a demo.",
+      "captureFile": "duress-demo.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Discreet interface",
+          "detail": "Show the duress interface in a staged demo."
+        },
+        {
+          "label": "Sample contact result",
+          "detail": "Review the fictional contact result after the demo alert."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "duress-demo.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Start from the final home-screen page with the widget.",
+            "Tap the demo Duress action.",
+            "Show the app opening and duress status.",
+            "Show the sample contact result."
+          ]
+        },
+        "setup": "Use an isolated no-dispatch build with fictional contacts. Label the result as a demo."
+      }
     },
     {
       "id": "sos-queue-notes",
       "chapter": "safety",
-      "title": "Clear alert status & notes",
+      "title": "Know the alert status",
       "description": "Review queued alerts, per-contact outcomes and optional emergency message notes.",
       "flow": [
         "Open SOS status",
@@ -498,13 +1130,41 @@
         "Open message-note settings"
       ],
       "source": "needed",
-      "capture": "Provide sos-queue-notes.png showing a seeded queued/partial alert and sos-notes.png showing fictional text. Record inspecting details in an isolated demo; never enqueue a real SOS for media.",
-      "captureFile": "sos-queue-notes.png"
+      "capture": "sos-queue-notes.png: Seeded queued or partial alert with per-contact outcomes. sos-notes.png: Emergency message-note settings with fictional text. Use seeded alert data in an isolated demo.",
+      "captureFile": "sos-queue-notes.png",
+      "points": [
+        {
+          "label": "Queued alerts",
+          "detail": "Review alerts waiting to be sent."
+        },
+        {
+          "label": "Each contact's outcome",
+          "detail": "See the result for each emergency contact."
+        },
+        {
+          "label": "Message notes",
+          "detail": "Add optional notes to the emergency message."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "sos-queue-notes.png",
+            "show": "Seeded queued or partial alert with per-contact outcomes."
+          },
+          {
+            "file": "sos-notes.png",
+            "show": "Emergency message-note settings with fictional text."
+          }
+        ],
+        "setup": "Use seeded alert data in an isolated demo."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "physical-button",
       "chapter": "safety",
-      "title": "Pair a physical SOS button",
+      "title": "Pair your SOS button",
       "description": "Discover a button, confirm ownership and review its monitoring readiness.",
       "flow": [
         "Open Paired SOS button",
@@ -512,17 +1172,43 @@
         "Confirm physical ownership",
         "Review readiness"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/06-button-setup-device-20260908.png",
-      "video": "/site-assets/evolution/06-button-pairing-device-20260908.mp4",
-      "capture": "Record guided pairing with the owner's test hardware and capture the paired ready state. Keep device secrets and identifiers out of close-up exports.",
-      "captureFile": "physical-button.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build. Button operation depends on the phone/app and supported firmware."
+      "source": "needed",
+      "capture": "physical-button.mp4 (20–30 sec): Open Paired SOS button and Add button. Discover the test button. Complete physical ownership confirmation. Show paired status and monitoring readiness. Use your test hardware; keep device secrets and identifiers out of view.",
+      "captureFile": "physical-button.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Find the button",
+          "detail": "Discover a nearby supported button."
+        },
+        {
+          "label": "Confirm ownership",
+          "detail": "Complete physical ownership confirmation."
+        },
+        {
+          "label": "Monitoring readiness",
+          "detail": "Review its paired and ready status."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "physical-button.mp4",
+          "duration": "20–30 sec",
+          "steps": [
+            "Open Paired SOS button and Add button.",
+            "Discover the test button.",
+            "Complete physical ownership confirmation.",
+            "Show paired status and monitoring readiness."
+          ]
+        },
+        "setup": "Use your test hardware; keep device secrets and identifiers out of view."
+      }
     },
     {
       "id": "button-test-logs",
       "chapter": "safety",
-      "title": "Safe button tests & event history",
+      "title": "Test your button",
       "description": "Check a paired button using its armed test mode and read its event log.",
       "flow": [
         "Open paired button",
@@ -531,9 +1217,33 @@
         "Review test result or log"
       ],
       "source": "needed",
-      "capture": "Capture the Test mode active and Button press detected states, then event history with identifiers removed. Record only an authenticated mode-0x02 test inside its active arm window.",
-      "captureFile": "button-test-logs.png",
-      "notes": "Ordinary physical presses can trigger production SOS. Do not use an unarmed button press as a demo."
+      "capture": "button-test-logs.mp4 (15–20 sec): Open the paired button's test mode. Show Test mode active. Press during the armed test window. Show Button press detected and its event history. Use authenticated test mode, with emergency dispatch disabled.",
+      "captureFile": "button-test-logs.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Armed test mode",
+          "detail": "Check the paired button in its explicit test mode."
+        },
+        {
+          "label": "Event history",
+          "detail": "Review the detected test and button event log."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "button-test-logs.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open the paired button's test mode.",
+            "Show Test mode active.",
+            "Press during the armed test window.",
+            "Show Button press detected and its event history."
+          ]
+        },
+        "setup": "Use authenticated test mode, with emergency dispatch disabled."
+      }
     },
     {
       "id": "nearby-help",
@@ -547,14 +1257,37 @@
         "Review timestamp and context"
       ],
       "source": "needed",
-      "capture": "Capture a seeded incident list and map as nearby-help.png and nearby-help-map.png. Use repository fixtures; do not broadcast a fake live emergency.",
+      "capture": "nearby-help.png: Seeded nearby incident list with time and context. nearby-help-map.png: Selected demo incident on the map. Use seeded incidents; avoid publishing a live incident.",
       "captureFile": "nearby-help.png",
-      "notes": "Nearby observations are not verified rescue responses. Test phone broadcasts can reach other devices."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Reported incidents",
+          "detail": "Inspect the nearby incident list."
+        },
+        {
+          "label": "Location context",
+          "detail": "Review the available map, time and incident context."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "nearby-help.png",
+            "show": "Seeded nearby incident list with time and context."
+          },
+          {
+            "file": "nearby-help-map.png",
+            "show": "Selected demo incident on the map."
+          }
+        ],
+        "setup": "Use seeded incidents; avoid publishing a live incident."
+      }
     },
     {
       "id": "first-aid-gear",
       "chapter": "safety",
-      "title": "Prepared guidance",
+      "title": "Guidance within reach",
       "description": "Browse first-aid topics, offline tutorial media and the standalone gear checklist.",
       "flow": [
         "Open First-Aid Guide",
@@ -562,16 +1295,43 @@
         "Review steps and saved video",
         "Open Gear Checklist"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/first-aid.jpeg",
-      "capture": "Capture a guide topic and current checklist. Record 15–20 seconds browsing guidance and offline video controls; do not dial emergency services.",
-      "captureFile": "first-aid-gear.png",
-      "notes": "Existing website capture. Use app guidance as presented; emergency dialing and Open SOS are real actions."
+      "source": "needed",
+      "capture": "first-aid-gear.mp4 (20–25 sec): Open First-Aid Guide and choose a topic. Show its steps and saved tutorial controls. Open an offline tutorial. Show the standalone Gear Checklist. Keep emergency-call controls inactive.",
+      "captureFile": "first-aid-gear.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "First-aid topics",
+          "detail": "Browse practical first-aid topics and steps."
+        },
+        {
+          "label": "Offline tutorials",
+          "detail": "Open saved tutorial media."
+        },
+        {
+          "label": "Gear checklist",
+          "detail": "Review the standalone gear checklist."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "first-aid-gear.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Open First-Aid Guide and choose a topic.",
+            "Show its steps and saved tutorial controls.",
+            "Open an offline tutorial.",
+            "Show the standalone Gear Checklist."
+          ]
+        },
+        "setup": "Keep emergency-call controls inactive."
+      }
     },
     {
       "id": "find-hikers",
       "chapter": "circle",
-      "title": "Meet your hiking circle",
+      "title": "Meet your circle",
       "description": "Browse community hikers and review public profiles before connecting.",
       "flow": [
         "Open Circle",
@@ -579,17 +1339,38 @@
         "Open demo profile",
         "Review hiking experience"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/09-discover-device-20260908.png",
-      "video": "/site-assets/evolution/09-community-device-20260908.mp4",
-      "capture": "Capture discovery and a consenting/demo public profile; record navigation without sending unsolicited requests.",
+      "source": "needed",
+      "capture": "find-hikers.png: Find Hikers list with demo profiles. hiker-public-profile.png: Demo public profile with hiking experience and visible details. Use fictional or consenting profiles.",
       "captureFile": "find-hikers.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Discover hikers",
+          "detail": "Browse the community's hikers."
+        },
+        {
+          "label": "Public profiles",
+          "detail": "Review public profiles before connecting."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "find-hikers.png",
+            "show": "Find Hikers list with demo profiles."
+          },
+          {
+            "file": "hiker-public-profile.png",
+            "show": "Demo public profile with hiking experience and visible details."
+          }
+        ],
+        "setup": "Use fictional or consenting profiles."
+      }
     },
     {
       "id": "join-group",
       "chapter": "circle",
-      "title": "Discover & join a group",
+      "title": "Find a group hike",
       "description": "Explore scheduled group hikes and follow open or approval-based joining.",
       "flow": [
         "Open Find a Hike",
@@ -598,8 +1379,37 @@
         "Join demo or request approval"
       ],
       "source": "needed",
-      "capture": "Capture one open group and one approval-required group using test hosts. Record request and acceptance only with controlled consenting demo accounts.",
-      "captureFile": "join-group.png"
+      "capture": "join-group.mp4 (20–25 sec): Open Find a Hike and a scheduled demo group. Show an open group's joining option. Show an approval-required group's request. Show acceptance by the demo host. Use controlled demo hosts and participants.",
+      "captureFile": "join-group.mp4",
+      "points": [
+        {
+          "label": "Scheduled group hikes",
+          "detail": "Explore upcoming group outings."
+        },
+        {
+          "label": "Open joining",
+          "detail": "Join a group that is open to hikers."
+        },
+        {
+          "label": "Approval-based joining",
+          "detail": "Request a place when host approval is required."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "join-group.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Open Find a Hike and a scheduled demo group.",
+            "Show an open group's joining option.",
+            "Show an approval-required group's request.",
+            "Show acceptance by the demo host."
+          ]
+        },
+        "setup": "Use controlled demo hosts and participants."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "stories-buddies",
@@ -613,13 +1423,41 @@
         "Review a demo request"
       ],
       "source": "needed",
-      "capture": "Provide stories-buddies.png with sample stories and buddy-requests.png. Record scrolling and request review; do not publish posts or send requests to real users for the capture.",
-      "captureFile": "stories-buddies.png"
+      "capture": "stories-buddies.png: Stories feed with sample hike posts and connection controls. buddy-requests.png: Buddy request list and a controlled request review. Use demo stories and requests.",
+      "captureFile": "stories-buddies.png",
+      "points": [
+        {
+          "label": "Hike stories",
+          "detail": "Read stories shared from hikes."
+        },
+        {
+          "label": "Connect with hikers",
+          "detail": "Discover people to hike with."
+        },
+        {
+          "label": "Buddy requests",
+          "detail": "Review incoming buddy requests."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "stories-buddies.png",
+            "show": "Stories feed with sample hike posts and connection controls."
+          },
+          {
+            "file": "buddy-requests.png",
+            "show": "Buddy request list and a controlled request review."
+          }
+        ],
+        "setup": "Use demo stories and requests."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "chat",
       "chapter": "circle",
-      "title": "Conversations around the hike",
+      "title": "Keep the conversation",
       "description": "Use direct or group conversations with attachments and notification controls.",
       "flow": [
         "Open a demo conversation",
@@ -628,13 +1466,42 @@
         "Review mute or pin controls"
       ],
       "source": "needed",
-      "capture": "Capture a consented demo chat and attachment picker. Record navigation through image/video/document options and mute settings without transmitting a real message.",
-      "captureFile": "chat.png"
+      "capture": "chat.mp4 (15–20 sec): Show a demo direct chat and group chat. Open the attachment choices. Show mute and conversation controls. Return to the sample conversation. Use consented demo conversations; leave messages and attachments unsent.",
+      "captureFile": "chat.mp4",
+      "points": [
+        {
+          "label": "Direct & group chats",
+          "detail": "Keep conversations around the hike together."
+        },
+        {
+          "label": "Attachments",
+          "detail": "Review image, video and document options."
+        },
+        {
+          "label": "Notification controls",
+          "detail": "Manage conversation notification settings."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "chat.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Show a demo direct chat and group chat.",
+            "Open the attachment choices.",
+            "Show mute and conversation controls.",
+            "Return to the sample conversation."
+          ]
+        },
+        "setup": "Use consented demo conversations; leave messages and attachments unsent."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "finish-rating",
       "chapter": "reflect",
-      "title": "Close the hike & rate the route",
+      "title": "Finish & rate",
       "description": "End a session, confirm the team outcome and share route difficulty feedback.",
       "flow": [
         "Choose End hike",
@@ -642,16 +1509,43 @@
         "Review summary",
         "Rate route in demo"
       ],
-      "source": "device",
-      "image": "/site-assets/screens/route-rating.jpeg",
-      "capture": "Capture the completion summary and route rating. Record ending an isolated test hike only; avoid changing real hike histories or ratings.",
-      "captureFile": "finish-rating.png",
-      "notes": "Existing website capture. Completing or rating a live hike writes account/community records."
+      "source": "needed",
+      "capture": "finish-rating.mp4 (15–20 sec): End an isolated demo hike. Show finish confirmation and team outcome. Show the completed summary. Open route difficulty feedback. Use an isolated test hike; avoid changing real ratings.",
+      "captureFile": "finish-rating.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "End the session",
+          "detail": "Finish the hike with confirmation."
+        },
+        {
+          "label": "Team outcome",
+          "detail": "Review how the team's outing ended."
+        },
+        {
+          "label": "Difficulty feedback",
+          "detail": "Share feedback on the route's difficulty."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "finish-rating.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "End an isolated demo hike.",
+            "Show finish confirmation and team outcome.",
+            "Show the completed summary.",
+            "Open route difficulty feedback."
+          ]
+        },
+        "setup": "Use an isolated test hike; avoid changing real ratings."
+      }
     },
     {
       "id": "hike-history",
       "chapter": "reflect",
-      "title": "Your hike history",
+      "title": "Revisit your hikes",
       "description": "Revisit completed hikes and expired plans with their saved route details.",
       "flow": [
         "Open Hike history",
@@ -659,17 +1553,42 @@
         "Open a saved outing",
         "Review expired plans"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/05-history-device-20260908.jpg",
-      "video": "/site-assets/evolution/05-history-device-20260908.mp4",
-      "capture": "Capture the current completed/expired navigation and a populated demo list. Record opening one completed hike.",
+      "source": "needed",
+      "capture": "hike-history.png: Populated Completed hikes tab with saved route details. hike-history-expired.png: Expired plans tab with a sample expired outing. Use populated demo history.",
       "captureFile": "hike-history.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Completed hikes",
+          "detail": "Revisit your completed outings."
+        },
+        {
+          "label": "Expired plans",
+          "detail": "Review plans that have expired."
+        },
+        {
+          "label": "Saved route details",
+          "detail": "Open the route details saved with a hike."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "hike-history.png",
+            "show": "Populated Completed hikes tab with saved route details."
+          },
+          {
+            "file": "hike-history-expired.png",
+            "show": "Expired plans tab with a sample expired outing."
+          }
+        ],
+        "setup": "Use populated demo history."
+      }
     },
     {
       "id": "hike-analysis",
       "chapter": "reflect",
-      "title": "The details of your day",
+      "title": "Your day in detail",
       "description": "Review recorded distance, pace, checkpoints, safety events and the original plan.",
       "flow": [
         "Open completed hike",
@@ -677,17 +1596,46 @@
         "Open analysis",
         "Review safety timeline"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/08-hike-summary-device-20260908.png",
-      "video": "/site-assets/evolution/08-hike-summary-device-20260908.mp4",
-      "capture": "Capture overview and pace/checkpoint analysis as hike-analysis.png and hike-analysis-pace.png. Record switching the history tabs with demo data.",
-      "captureFile": "hike-analysis.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build."
+      "source": "needed",
+      "capture": "hike-analysis.mp4 (20–25 sec): Open a completed demo hike. Show distance and pace analysis. Show checkpoint progress and safety events. Open the original plan.",
+      "captureFile": "hike-analysis.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Distance & pace",
+          "detail": "Review recorded distance and pace."
+        },
+        {
+          "label": "Checkpoints",
+          "detail": "See progress through the planned stops."
+        },
+        {
+          "label": "Safety events",
+          "detail": "Review the outing's safety timeline."
+        },
+        {
+          "label": "Original plan",
+          "detail": "Compare the saved outing with its original plan."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "hike-analysis.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Open a completed demo hike.",
+            "Show distance and pace analysis.",
+            "Show checkpoint progress and safety events.",
+            "Open the original plan."
+          ]
+        }
+      }
     },
     {
       "id": "team-replay-share",
       "chapter": "reflect",
-      "title": "Replay & share the journey",
+      "title": "Replay & share",
       "description": "Revisit team movement and prepare a shareable hike recap.",
       "flow": [
         "Open team history",
@@ -696,13 +1644,38 @@
         "Review share preview"
       ],
       "source": "needed",
-      "capture": "Capture team replay and the recap preview, then record 15–20 seconds of playback. Stop at the system share chooser; no external posting is required.",
-      "captureFile": "team-replay-share.png"
+      "capture": "team-replay-share.mp4 (15–20 sec): Open a completed team hike. Play its movement replay. Open Share Hike and show the recap. Stop at the system share chooser. Use demo team history.",
+      "captureFile": "team-replay-share.mp4",
+      "points": [
+        {
+          "label": "Team movement",
+          "detail": "Replay the team's recorded journey."
+        },
+        {
+          "label": "Hike recap",
+          "detail": "Prepare a shareable recap of the outing."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "team-replay-share.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open a completed team hike.",
+            "Play its movement replay.",
+            "Open Share Hike and show the recap.",
+            "Stop at the system share chooser."
+          ]
+        },
+        "setup": "Use demo team history."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "achievements",
       "chapter": "reflect",
-      "title": "Progress worth revisiting",
+      "title": "See your progress",
       "description": "Explore achievements, hiking levels, the level roadmap and leaderboard.",
       "flow": [
         "Open Achievements",
@@ -710,16 +1683,42 @@
         "Open level roadmap",
         "Review leaderboard"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/05-achievements-device-20260908.png",
-      "capture": "Capture current Achievements, level roadmap and a consenting/demo leaderboard. Record switching status and period controls.",
-      "captureFile": "achievements.png",
-      "notes": "Existing website media; recorded before this showcase. Interface may differ from the current build."
+      "source": "needed",
+      "capture": "achievements.mp4 (15–20 sec): Open Achievements and change its status view. Show hiking level and the level roadmap. Open the leaderboard and change its period. Use demo or consenting leaderboard entries.",
+      "captureFile": "achievements.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Achievements",
+          "detail": "Explore hiking achievements."
+        },
+        {
+          "label": "Levels & roadmap",
+          "detail": "Review your level and the path ahead."
+        },
+        {
+          "label": "Leaderboard",
+          "detail": "Compare progress on the leaderboard."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "achievements.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open Achievements and change its status view.",
+            "Show hiking level and the level roadmap.",
+            "Open the leaderboard and change its period."
+          ]
+        },
+        "setup": "Use demo or consenting leaderboard entries."
+      }
     },
     {
       "id": "profile-settings",
       "chapter": "settings",
-      "title": "Your profile & preferences",
+      "title": "Make it yours",
       "description": "Manage profile details, profile QR, appearance, language and device notifications.",
       "flow": [
         "Open Me",
@@ -728,13 +1727,49 @@
         "Review notification history"
       ],
       "source": "needed",
-      "capture": "Provide profile-settings.png, profile-qr.png and app-settings.png with a fictional account. Record theme/language controls and notification history without private messages.",
-      "captureFile": "profile-settings.png"
+      "capture": "profile-settings.png: Profile details using a fictional account. profile-qr.png: Profile QR screen for that demo account. app-settings.png: Appearance, language and notification controls. notification-history.png: Notification history with demo content. Use a fictional account and demo notifications.",
+      "captureFile": "profile-settings.png",
+      "points": [
+        {
+          "label": "Profile & QR",
+          "detail": "Manage profile details and your profile QR."
+        },
+        {
+          "label": "Appearance & language",
+          "detail": "Choose the app's look and language."
+        },
+        {
+          "label": "Device notifications",
+          "detail": "Manage notifications and review their history."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "profile-settings.png",
+            "show": "Profile details using a fictional account."
+          },
+          {
+            "file": "profile-qr.png",
+            "show": "Profile QR screen for that demo account."
+          },
+          {
+            "file": "app-settings.png",
+            "show": "Appearance, language and notification controls."
+          },
+          {
+            "file": "notification-history.png",
+            "show": "Notification history with demo content."
+          }
+        ],
+        "setup": "Use a fictional account and demo notifications."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "offline-resources",
       "chapter": "settings",
-      "title": "Prepare for limited coverage",
+      "title": "Ready for limited coverage",
       "description": "Manage the Malaysia offline map, cached guidance and app storage.",
       "flow": [
         "Open App Settings",
@@ -743,14 +1778,42 @@
         "Open downloaded guidance"
       ],
       "source": "needed",
-      "capture": "Capture offline download/status and storage usage. Record opening already downloaded guidance without connectivity; downloading may use network data.",
-      "captureFile": "offline-resources.png",
-      "notes": "Offline resources do not imply offline contact-message delivery. Verify availability on the captured build."
+      "capture": "offline-resources.mp4 (15–20 sec): Show Malaysia offline map download status. Show cached guidance and storage usage. Turn off connectivity for the demo. Open an already downloaded guide. Download the demo resources first.",
+      "captureFile": "offline-resources.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Malaysia offline map",
+          "detail": "Manage the downloaded Malaysia map."
+        },
+        {
+          "label": "Cached guidance",
+          "detail": "Open guidance saved for offline use."
+        },
+        {
+          "label": "App storage",
+          "detail": "Review offline downloads and storage use."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "offline-resources.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Show Malaysia offline map download status.",
+            "Show cached guidance and storage usage.",
+            "Turn off connectivity for the demo.",
+            "Open an already downloaded guide."
+          ]
+        },
+        "setup": "Download the demo resources first."
+      }
     },
     {
       "id": "feedback",
       "chapter": "settings",
-      "title": "Feedback with context",
+      "title": "Show the issue",
       "description": "Capture a screen, mark the issue and review feedback before sending.",
       "flow": [
         "Open Send feedback",
@@ -759,13 +1822,38 @@
         "View My feedback"
       ],
       "source": "needed",
-      "capture": "Capture annotation mode and final review with harmless demo text. Record drawing and reviewing; use seeded My feedback for status examples instead of submitting a live report.",
-      "captureFile": "feedback.png"
+      "capture": "feedback.mp4 (15–20 sec): Open Send feedback. Capture a harmless screen and draw an annotation. Review the message and image. Show a seeded My feedback status. Use harmless demo text; stop before submitting feedback.",
+      "captureFile": "feedback.mp4",
+      "points": [
+        {
+          "label": "Capture & annotate",
+          "detail": "Capture a screen and mark the issue."
+        },
+        {
+          "label": "Review before sending",
+          "detail": "Review your message and image before sending feedback."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "feedback.mp4",
+          "duration": "15–20 sec",
+          "steps": [
+            "Open Send feedback.",
+            "Capture a harmless screen and draw an annotation.",
+            "Review the message and image.",
+            "Show a seeded My feedback status."
+          ]
+        },
+        "setup": "Use harmless demo text; stop before submitting feedback."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "admin-overview",
       "chapter": "admin",
-      "title": "Administration workspace",
+      "title": "Manage the system",
       "description": "Review the trail library, safety reports, community content and achievement rules.",
       "flow": [
         "Open Admin",
@@ -773,16 +1861,42 @@
         "Choose collection",
         "Inspect a demo record"
       ],
-      "source": "preview",
-      "capture": "Capture the current mobile admin overview and one collection. Use a demo administrator dataset; crop all real user data and do not approve, remove or edit live records.",
+      "source": "needed",
+      "capture": "admin-overview.png: Current mobile Admin overview with all management areas. admin-collection.png: A collection view with demo records and visible status. Use a demo administrator dataset.",
       "captureFile": "admin-overview.png",
-      "image": "/internal/app-showcase/media/admin-overview-preview.png",
-      "notes": "Rendered interface preview using demo data; not a new phone capture. Collection counts shown are sample data."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Trails & safety reports",
+          "detail": "Review the trail library and safety reports."
+        },
+        {
+          "label": "Community content",
+          "detail": "Review community content."
+        },
+        {
+          "label": "Achievement rules",
+          "detail": "Inspect the achievement rules."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "admin-overview.png",
+            "show": "Current mobile Admin overview with all management areas."
+          },
+          {
+            "file": "admin-collection.png",
+            "show": "A collection view with demo records and visible status."
+          }
+        ],
+        "setup": "Use a demo administrator dataset."
+      }
     },
     {
       "id": "admin-trails-moderation",
       "chapter": "admin",
-      "title": "Maintain trail & community quality",
+      "title": "Maintain trail quality",
       "description": "Inspect trail editing, route checkpoints and moderation decisions.",
       "flow": [
         "Open Trail library",
@@ -791,13 +1905,45 @@
         "Review community queue"
       ],
       "source": "needed",
-      "capture": "Provide admin-trails-moderation.png for a trail draft and admin-review-queue.png for seeded moderation. Record editor/navigation without saving, deleting, approving or hiding live content.",
-      "captureFile": "admin-trails-moderation.png"
+      "capture": "admin-trails-moderation.png: Trail draft editor with route and checkpoint controls. admin-safety-reports.png: Seeded safety-report review queue. admin-review-queue.png: Seeded community moderation queue and decision controls. Use demo records; leave live content unchanged.",
+      "captureFile": "admin-trails-moderation.png",
+      "points": [
+        {
+          "label": "Trail editing",
+          "detail": "Inspect the trail editor."
+        },
+        {
+          "label": "Route checkpoints",
+          "detail": "Review the route and its checkpoints."
+        },
+        {
+          "label": "Moderation decisions",
+          "detail": "Review safety and community moderation queues."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "admin-trails-moderation.png",
+            "show": "Trail draft editor with route and checkpoint controls."
+          },
+          {
+            "file": "admin-safety-reports.png",
+            "show": "Seeded safety-report review queue."
+          },
+          {
+            "file": "admin-review-queue.png",
+            "show": "Seeded community moderation queue and decision controls."
+          }
+        ],
+        "setup": "Use demo records; leave live content unchanged."
+      },
+      "notes": "Awaiting a new capture for this internal showcase."
     },
     {
       "id": "admin-diagnostics",
       "chapter": "admin",
-      "title": "Support & button diagnostics",
+      "title": "Support & diagnostics",
       "description": "Review feedback, decoded button events and cloud or local diagnostics.",
       "flow": [
         "Open Support and diagnostics",
@@ -806,43 +1952,119 @@
         "Review sanitized session"
       ],
       "source": "needed",
-      "capture": "Capture sanitized feedback inbox and Button Debugging screens, named admin-feedback.png and admin-diagnostics.png. Record a safe armed button test using test hardware; exclude payload secrets and personal records.",
-      "captureFile": "admin-diagnostics.png",
-      "notes": "Diagnostics may contain raw packets, account data or identifiers; inspect every exported frame."
+      "capture": "admin-feedback.png: Sanitized feedback inbox with statuses. admin-diagnostics.png: Button Debugging screen with decoded demo events. admin-diagnostics-status.png: Cloud and local diagnostics summary with secrets removed. Use sanitized demo diagnostics.",
+      "captureFile": "admin-feedback.png",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "User feedback",
+          "detail": "Review feedback and its status."
+        },
+        {
+          "label": "Decoded button events",
+          "detail": "Inspect decoded button events."
+        },
+        {
+          "label": "Cloud & local diagnostics",
+          "detail": "Review cloud and local diagnostic information."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "admin-feedback.png",
+            "show": "Sanitized feedback inbox with statuses."
+          },
+          {
+            "file": "admin-diagnostics.png",
+            "show": "Button Debugging screen with decoded demo events."
+          },
+          {
+            "file": "admin-diagnostics-status.png",
+            "show": "Cloud and local diagnostics summary with secrets removed."
+          }
+        ],
+        "setup": "Use sanitized demo diagnostics."
+      }
     },
     {
       "id": "native-widgets",
       "chapter": "archive",
-      "title": "Widgets & Live Activity",
-      "description": "Earlier captures show hike status and safety entry points outside the open app.",
+      "title": "Beyond the open app",
+      "description": "See hike status, widgets, Live Activity and safety entry points outside the open app.",
       "flow": [
         "View home-screen widget",
         "Review active hike status",
         "Open app from status",
         "Return to demo session"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/03-active-safety-surfaces-iphone.png",
-      "video": "/site-assets/evolution/03-active-safety-response-iphone.mp4",
-      "capture": "Refresh with current widgets: capture the upcoming-hikes widget and an active Live Activity using a demo account. Avoid activating SOS actions on the production build.",
-      "captureFile": "native-widgets.png",
-      "notes": "Historical/staged presentation. Platform behavior and background reliability must be validated separately."
+      "source": "needed",
+      "capture": "native-widgets.mp4 (20–25 sec): Start on your final home-screen page with the small widget. Add the large HikerCircle widget. Show the current upcoming or active hike status. Show an active Live Activity and open the app from it. Use a demo hike. Show safety entry points without activating production SOS.",
+      "captureFile": "native-widgets.mp4",
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Home-screen widgets",
+          "detail": "See hike status on the home screen."
+        },
+        {
+          "label": "Live Activity",
+          "detail": "Review active hike updates outside the open app."
+        },
+        {
+          "label": "Safety entry points",
+          "detail": "Show where safety actions can be reached."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [],
+        "recording": {
+          "file": "native-widgets.mp4",
+          "duration": "20–25 sec",
+          "steps": [
+            "Start on your final home-screen page with the small widget.",
+            "Add the large HikerCircle widget.",
+            "Show the current upcoming or active hike status.",
+            "Show an active Live Activity and open the app from it."
+          ]
+        },
+        "setup": "Use a demo hike. Show safety entry points without activating production SOS."
+      }
     },
     {
       "id": "original-sos",
       "chapter": "archive",
-      "title": "The original safety interface",
+      "title": "The first safety design",
       "description": "An archived view records the early emergency-control design.",
       "flow": [
         "View original layout",
         "Compare emergency modes",
         "Review contact area"
       ],
-      "source": "device",
-      "image": "/site-assets/evolution/01-foundation-first-sos-iphone.png",
-      "capture": "No replacement required for this archive item. Supply a dated original capture only if adding another historical version.",
+      "source": "needed",
+      "capture": "original-sos.png: New full-screen capture of the original safety layout, including modes and contacts. Restore the original milestone build and include its date with the file. Keep this labelled as historical.",
       "captureFile": "original-sos.png",
-      "notes": "Historical interface, labeled 28 May 2026 in existing website metadata; not the current product screen."
+      "notes": "Awaiting a new capture for this internal showcase.",
+      "points": [
+        {
+          "label": "Early emergency controls",
+          "detail": "Review the original emergency-control layout."
+        },
+        {
+          "label": "Product archive",
+          "detail": "Show the early design with its build date."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "original-sos.png",
+            "show": "New full-screen capture of the original safety layout, including modes and contacts."
+          }
+        ],
+        "setup": "Restore the original milestone build and include its date with the file. Keep this labelled as historical."
+      }
     }
-  ]
+  ],
+  "mediaPolicy": "fresh-captures-only"
 }

@@ -77,6 +77,7 @@ void main() {
     (tester) async {
       String? openedTrail;
       String? openedPage;
+      final navigatorKey = GlobalKey<NavigatorState>();
       final repository = HikerCircleAssistantRepository(
         callable: (_, location, history) async => {
           'answer': 'Here is a trail and a page.',
@@ -102,10 +103,18 @@ void main() {
       );
       await tester.pumpWidget(
         MaterialApp(
+          navigatorKey: navigatorKey,
           home: HikerCircleAssistantPage(
             repository: repository,
             onOpenTrail: (id) async {
               openedTrail = id;
+              await navigatorKey.currentState!.push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => const Scaffold(
+                    body: Center(child: Text('Trail details')),
+                  ),
+                ),
+              );
             },
             onNavigate: (id) {
               openedPage = id;
@@ -115,7 +124,7 @@ void main() {
       );
       await tester.enterText(
         find.byKey(const Key('hiker-circle-assistant-question')),
-        'Show me trails',
+        'What are the available trails in Penang?',
       );
       await tester.tap(find.byKey(const Key('hiker-circle-assistant-send')));
       await tester.pumpAndSettle();
@@ -124,11 +133,60 @@ void main() {
         find.byKey(const Key('assistant-trail-ridge-1')),
       );
       await tester.tap(find.byKey(const Key('assistant-trail-ridge-1')));
+      await tester.pumpAndSettle();
       expect(openedTrail, 'ridge-1');
+      expect(find.text('Trail details'), findsOneWidget);
+      navigatorKey.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.text('HikerCircle Assistant'), findsOneWidget);
+      expect(find.text('Ridge Walk'), findsOneWidget);
       await tester.tap(find.text('Open Explore trails'));
       expect(openedPage, 'trails');
     },
   );
+
+  testWidgets('adds SOS and First-Aid buttons from the question context', (
+    tester,
+  ) async {
+    final destinations = <String>[];
+    final repository = HikerCircleAssistantRepository(
+      callable: (question, location, history) async => {
+        'answer': question.contains('medical')
+            ? 'Review the matching first-aid guidance.'
+            : 'Call 999 or 112 when there is immediate danger.',
+        'responseMode': 'gemini_free_tier',
+        'sources': <Map<String, dynamic>>[],
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HikerCircleAssistantPage(
+          repository: repository,
+          onNavigate: destinations.add,
+        ),
+      ),
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('hiker-circle-assistant-question')),
+      'Who to contact when I faced emergencies?',
+    );
+    await tester.tap(find.byKey(const Key('hiker-circle-assistant-send')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Open SOS'));
+    await tester.tap(find.text('Open SOS'));
+    expect(destinations, ['sos']);
+
+    await tester.enterText(
+      find.byKey(const Key('hiker-circle-assistant-question')),
+      'Where is the medical first-aid guide?',
+    );
+    await tester.tap(find.byKey(const Key('hiker-circle-assistant-send')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Open First-Aid Guide'));
+    await tester.tap(find.text('Open First-Aid Guide'));
+    expect(destinations, ['sos', 'first_aid']);
+  });
 
   testWidgets('shows the AI thinking bubble and then the reviewed answer', (
     tester,

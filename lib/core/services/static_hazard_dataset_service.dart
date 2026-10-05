@@ -56,10 +56,6 @@ class StaticHazardDatasetService {
   static final Map<String, Future<List<LocalTrailHazardMatch>>>
   _automaticDownloads = {};
 
-  Future<LocalHazardDatasetSummary> loadSummary() {
-    return _database.loadStaticHazardDatasetSummary();
-  }
-
   /// Returns cached hazards immediately when this trail was scanned recently.
   /// Otherwise it performs a compact background download for this trail only.
   /// Network failures leave the existing offline data untouched.

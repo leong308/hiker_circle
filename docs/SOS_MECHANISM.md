@@ -2,6 +2,8 @@
 
 Reviewed against repository source on **10 September 2026**.
 
+The cloud monitoring scheduler subsection was updated on **4 October 2026** for demand-driven pause/resume; this is not a new whole-document or physical-device review.
+
 This document describes implemented behaviour, not a proposed design, certification, clinical fall-detection validation or guarantee of rescue. It consolidates the mobile, native, BLE, local-storage and Firebase paths. Existing firmware-specific documents remain relevant; see the source map at the end.
 
 **Scope of this review:** static inspection of Flutter, Android Kotlin, iOS Swift, Firebase functions/rules and existing test coverage. No real SOS was triggered, no emergency contact was messaged, and no physical button or native background reliability test was performed to prepare this document. Source code does not prove that every installed app or deployed function matches this checkout.
@@ -344,7 +346,7 @@ Manifest/background declarations show configured capabilities, not granted permi
 
 ## 12. Adjacent safety features — not automatic SOS
 
-- **Monitoring heartbeat watchdog:** Firebase `checkActiveHikeMonitoringHeartbeats` runs every minute. For active hikes expecting monitoring, a heartbeat older than **5 minutes** triggers revalidation, participant offline update and a reopen-reminder path. This is not a confirmed accident.
+- **Monitoring heartbeat watchdog:** Firebase `monitorActiveHikes` runs every **2 minutes only while at least one hike is active system-wide**. Existing hike create/status-change/delete triggers resume or pause the single shared Scheduler job; ordinary GPS/heartbeat updates do not toggle it. For active hikes expecting monitoring, missing activity beyond the configured location-recording interval plus **5 minutes** triggers revalidation, participant offline update and an FCM reopen-reminder path (at most once per 10 minutes). Fresh GPS activity counts as activity even if an app heartbeat is missing. This is not a confirmed accident and does not automatically dispatch SOS. See [the scheduler lifecycle specification](ACTIVE_HIKE_MONITOR_SCHEDULER.md) for races, retries, idle pausing and stale-session closure.
 - **iOS local termination watchdog:** approximately 120 seconds without refresh can produce “Hike monitoring stopped,” asking the user to reopen.
 - **Scheduled check-ins:** `sendScheduledActiveHikeCheckIns` is backend-driven so a reminder does not depend solely on Flutter timers. Do not equate a reminder to dispatched SOS.
 - **Route deviation:** distance beyond `max(75 m, 2 × accuracy)` for **2 minutes**, with a **15-minute** notification cooldown, produces map/retrace advice and a local notification. The inspected handler does not send a contact SOS.

@@ -2,6 +2,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const firebase = require('firebase/compat/app');
+require('firebase/compat/firestore');
+const {FieldValue} = firebase.firestore;
 const {
   assertFails,
   assertSucceeds,
@@ -191,6 +194,78 @@ async function run() {
       await assertSucceeds(adminDb.doc(`users/${OWNER_UID}`).get());
       await assertFails(memberDb.doc(`users/${OWNER_UID}`).get());
       await assertFails(anonymousDb.doc(`users/${OWNER_UID}`).get());
+    });
+
+    test('canonical push token registration and revocation are atomic and owner-only', async () => {
+      const reference = ownerDb.doc(`users/${OWNER_UID}`);
+      await environment.withSecurityRulesDisabled(async context => {
+        await context.firestore().doc(reference.path).update({
+          fcmTokens: ['legacy-token'], activeFcmToken: 'legacy-token', lastFcmToken: 'legacy-token',
+        });
+      });
+      await assertSucceeds(ownerDb.runTransaction(async transaction => {
+        await transaction.get(reference);
+        transaction.set(reference, {
+          currentAppId: 'phone-1', activeFcmAppInstanceId: 'phone-1',
+          fcmTokenByAppId: {'phone-1': 'current-device-token'}, fcmTokenSchemaVersion: 2,
+          fcmTokens: FieldValue.delete(), activeFcmToken: FieldValue.delete(),
+          lastFcmToken: FieldValue.delete(),
+        }, {merge: true});
+      }));
+      const registered = (await reference.get()).data();
+      if (registered.fcmTokenSchemaVersion !== 2 || registered.fcmTokens !== undefined
+          || registered.activeFcmToken !== undefined || registered.lastFcmToken !== undefined) {
+        throw new Error('Canonical registration did not remove redundant token aliases.');
+      }
+      await assertFails(outsiderDb.doc(reference.path).update({fcmTokenSchemaVersion: 2}));
+      await assertSucceeds(ownerDb.runTransaction(async transaction => {
+        await transaction.get(reference);
+        transaction.update(reference, {
+          'fcmTokenByAppId.phone-1': FieldValue.delete(), currentAppId: FieldValue.delete(),
+          activeFcmAppInstanceId: FieldValue.delete(),
+        });
+      }));
+      if (Object.keys((await reference.get()).data().fcmTokenByAppId).length) {
+        throw new Error('Revoked device token remains registered.');
+      }
+    });
+
+    test('historical forecast archives are backend-only while hike history stays readable', async () => {
+      const archive = 'hikeSessions/hike-1/snapshotArchives/trailForecast';
+      await environment.withSecurityRulesDisabled(async context => {
+        await context.firestore().doc(archive).set({schemaVersion: 1, weather: {hourly: [1, 2]}});
+      });
+      await assertSucceeds(ownerDb.doc('hikeSessions/hike-1').get());
+      await assertSucceeds(adminDb.doc('hikeSessions/hike-1').get());
+      for (const db of [ownerDb, memberDb, adminDb, anonymousDb]) {
+        await assertFails(db.doc(archive).get());
+        await assertFails(db.doc(archive).set({schemaVersion: 2}));
+        await assertFails(db.doc(archive).delete());
+      }
+    });
+
+    test('community AI review queue and check status are administrator-read-only', async () => {
+      const reviewPath = 'communityModerationReviews/test-review';
+      const statusPath = 'communityModerationStatus/current';
+      const internalPaths = ['communityModerationChecks/test-check', 'maintenanceState/communityModerationQuota',
+        'maintenanceState/communityModerationModels', 'maintenanceState/communityModerationRun'];
+      await environment.withSecurityRulesDisabled(async context => {
+        for (const path of [reviewPath, statusPath, ...internalPaths]) await context.firestore().doc(path).set({status: 'pending'});
+      });
+      for (const path of [reviewPath, statusPath]) {
+        await assertSucceeds(adminDb.doc(path).get());
+        for (const db of [ownerDb, memberDb, outsiderDb, anonymousDb]) await assertFails(db.doc(path).get());
+        for (const db of [ownerDb, adminDb, anonymousDb]) {
+          await assertFails(db.doc(path).set({status: 'dismissed'}));
+          await assertFails(db.doc(path).delete());
+        }
+      }
+      for (const path of internalPaths) {
+        await assertFails(adminDb.doc(path).get());
+        await assertFails(ownerDb.doc(path).set({forged: true}));
+      }
+      await assertSucceeds(adminDb.collection('communityModerationReviews').where('status', '==', 'pending').limit(50).get());
+      await assertFails(ownerDb.collection('communityModerationReviews').get());
     });
 
     test('assistant conversation and messages are account-private', async () => {
@@ -615,6 +690,21 @@ async function run() {
         await assertFails(ownerDb.doc(`${collection}/client`).get());
         await assertFails(ownerDb.doc(`${collection}/client`).set({forged: true}));
         await assertFails(adminDb.doc(`${collection}/admin`).set({forged: true}));
+      }
+    });
+
+    test('scheduler controller and execution leases are backend-only', async () => {
+      const paths = ['maintenanceState/activeHikeMonitorSchedule', 'maintenanceState/activeHikeMonitorRun',
+        'maintenanceState/upcomingHikeOperationsSchedule', 'maintenanceState/upcomingHikeOperationsRun'];
+      await environment.withSecurityRulesDisabled(async context => {
+        for (const path of paths) await context.firestore().doc(path).set({leaseOwner: null, leaseExpiresAtMillis: 0});
+      });
+      for (const db of [ownerDb, memberDb, adminDb, anonymousDb]) {
+        for (const path of paths) {
+          await assertFails(db.doc(path).get());
+          await assertFails(db.doc(path).set({leaseOwner: 'forged'}));
+          await assertFails(db.doc(path).delete());
+        }
       }
     });
 

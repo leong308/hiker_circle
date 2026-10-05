@@ -57,10 +57,8 @@ flutter analyze lib/feedback lib/app/View/hiker_circle_app.dart lib/me/Data/me_r
 Run isolated rules tests (never targets production; Java 21+ may be required by the emulator):
 
 ```powershell
-Push-Location test/firebase
-npm ci
-Pop-Location
-firebase emulators:exec --config firebase.feedback-test.json --project demo-hikercircle-feedback --only firestore,storage "node --test test/firebase/feedback-rules.test.cjs"
+npm --prefix firebase_rules_tests ci
+firebase emulators:exec --config firebase.feedback-test.json --project demo-hiker-circle --only firestore,storage "npm --prefix firebase_rules_tests run test:feedback"
 ```
 
 Before distributing, rebuild and smoke-test on physical Android and iOS: text submission, capture/annotation, screenshot removal, offline timeout/retry, personal history, and admin status update. Flutter-rendered screenshots may omit native Mapbox/video surfaces. Device screenshot fidelity has not been verified by desktop widget tests.
