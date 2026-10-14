@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -952,10 +953,7 @@ class _PairedSosButtonPageState extends State<PairedSosButtonPage> {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: scheme.surface,
-      appBar: AppBar(
-        title: const Text('Paired SOS button'),
-        scrolledUnderElevation: 0,
-      ),
+      appBar: PageHeaderAppBar(title: const Text('Paired SOS button')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [

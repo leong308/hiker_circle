@@ -23,8 +23,10 @@
   let toastTimer;
   let mediaIndex = 0;
   const video = $('#stage-video');
+  const videoFrame = $('#video-frame');
   const image = $('#stage-image');
   const imageButton = $('#open-image');
+  const imageGallery = $('#image-gallery');
   const viewer = $('#image-viewer');
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -63,7 +65,12 @@
         media.push({ kind: 'image', src: capture.src, alt: capture.alt || item.title });
       }
     }
-    if (isNewCapture(item.video)) media.push({ kind: 'video', src: item.video });
+    if (isNewCapture(item.video)) media.push({ kind: 'video', src: item.video, poster: isNewCapture(item.poster) ? item.poster : null });
+    for (const capture of item.videos || []) {
+      if (isNewCapture(capture.src) && !media.some((entry) => entry.src === capture.src)) {
+        media.push({ kind: 'video', src: capture.src, poster: isNewCapture(capture.poster) ? capture.poster : null, alt: capture.alt || item.title });
+      }
+    }
     return media;
   }
 
@@ -136,6 +143,14 @@
     video.removeAttribute('poster');
     video.load();
     video.hidden = true;
+    videoFrame.hidden = true;
+  }
+
+  function openScreenshot(src, alt) {
+    $('#full-image').src = src;
+    $('#full-image').alt = alt;
+    viewer.showModal();
+    $('#close-image').focus();
   }
 
   function showMedia(index) {
@@ -144,12 +159,29 @@
     const media = mediaFor(slide.item);
     stopVideo();
     imageButton.hidden = true;
+    imageGallery.hidden = true;
+    imageGallery.replaceChildren();
     image.removeAttribute('src');
     $('#play-recording').hidden = true;
     $('#media-error').hidden = true;
     $('#media-request').hidden = media.length > 0;
     $('#media-switcher').hidden = media.length < 2;
     if (!media.length) return;
+    if (media.length > 1 && media.every((entry) => entry.kind === 'image')) {
+      $('#media-switcher').hidden = true;
+      imageGallery.replaceChildren(...media.map((capture) => {
+        const button = makeButton('', 'phone-frame', () => openScreenshot(capture.src, capture.alt + ' in HikerCircle'));
+        button.setAttribute('aria-label', 'View ' + capture.alt + ' screenshot full size');
+        const shot = element('img');
+        shot.alt = capture.alt + ' in HikerCircle';
+        shot.src = capture.src;
+        shot.addEventListener('error', () => { $('#media-error').hidden = false; });
+        button.append(shot);
+        return button;
+      }));
+      imageGallery.hidden = false;
+      return;
+    }
     mediaIndex = (index + media.length) % media.length;
     const selected = media[mediaIndex];
     $('#media-count').textContent = String(mediaIndex + 1) + ' / ' + media.length;
@@ -160,10 +192,15 @@
     } else {
       video.src = selected.src;
       const poster = media.find((entry) => entry.kind === 'image');
-      if (poster) video.poster = poster.src;
-      video.setAttribute('aria-label', slide.item.title + ' screen recording');
+      if (selected.poster || poster) video.poster = selected.poster || poster.src;
+      video.setAttribute('aria-label', (selected.alt || slide.item.title) + ' screen recording');
       video.hidden = false;
-      $('#play-recording').hidden = false;
+      videoFrame.hidden = false;
+      video.muted = true;
+      const playbackSrc = video.src;
+      video.play().catch(() => {
+        if (video.src === playbackSrc && !video.hidden && !video.error) $('#play-recording').hidden = false;
+      });
     }
   }
 
@@ -212,11 +249,11 @@
     $('#media-error').hidden = false;
   });
   video.addEventListener('error', () => {
-    if (!video.getAttribute('src')) return;
-    stopVideo();
+    // A queued event from a previous source must not hide the current capture.
+    if (!video.getAttribute('src') || !video.error) return;
+    video.pause();
     $('#play-recording').hidden = true;
     $('#media-request').hidden = false;
-    $('#media-switcher').hidden = true;
     $('#media-error').hidden = false;
   });
   $('#play-recording').addEventListener('click', async () => {
@@ -227,10 +264,7 @@
 
   imageButton.addEventListener('click', () => {
     if (!image.getAttribute('src')) return;
-    $('#full-image').src = image.src;
-    $('#full-image').alt = image.alt;
-    viewer.showModal();
-    $('#close-image').focus();
+    openScreenshot(image.src, image.alt);
   });
   $('#close-image').addEventListener('click', () => viewer.close());
   viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); });

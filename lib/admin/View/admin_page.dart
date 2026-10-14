@@ -17,7 +17,10 @@ import '../../trail/Model/trail_models.dart';
 import '../../trail/View/trail_page.dart';
 import 'button_debugging_page.dart';
 import 'admin_ui.dart';
+import 'admin_analytics_dashboard.dart';
+import 'recorded_trail_requests_page.dart';
 import 'community_integrity_panel.dart';
+import 'community_post_management_page.dart';
 
 enum _AdminSection { overview, trails, hazards, community, achievements, tools }
 
@@ -60,6 +63,40 @@ class _AdminPageState extends State<AdminPage> {
   final _pageScroll = ScrollController();
   String _search = '';
   DateTime? _lastLoadedAt;
+  Map<String, dynamic>? _analytics;
+  String? _analyticsError;
+  bool _analyticsLoading = false;
+  int _analyticsRevision = 0;
+
+  Future<void> _loadAnalytics({bool forceRefresh = false}) async {
+    final revision = ++_analyticsRevision;
+    setState(() {
+      _analyticsLoading = true;
+      _analyticsError = null;
+    });
+    try {
+      final data = await _repository.loadAdminDashboardAnalytics(
+        session: widget.session,
+        forceRefresh: forceRefresh,
+      );
+      if (mounted && revision == _analyticsRevision) {
+        setState(() => _analytics = data);
+      }
+    } catch (error) {
+      if (mounted && revision == _analyticsRevision) {
+        setState(
+          () =>
+              _analyticsError = error is HikerCircleFirebaseRepositoryException
+              ? error.message
+              : 'Statistics could not load. Refresh to retry.',
+        );
+      }
+    } finally {
+      if (mounted && revision == _analyticsRevision) {
+        setState(() => _analyticsLoading = false);
+      }
+    }
+  }
 
   void _selectSection(_AdminSection section) {
     if (_pageScroll.hasClients) _pageScroll.jumpTo(0);
@@ -90,6 +127,7 @@ class _AdminPageState extends State<AdminPage> {
   }
 
   Future<void> _loadAdminData() async {
+    unawaited(_loadAnalytics(forceRefresh: _analytics != null));
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -131,6 +169,19 @@ class _AdminPageState extends State<AdminPage> {
         });
       }
     }
+  }
+
+  Future<void> _openTrailRequests() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RecordedTrailRequestsPage(
+          session: widget.session,
+          repository: _repository,
+        ),
+      ),
+    );
+    if (mounted) unawaited(_loadAdminData());
   }
 
   Future<void> _addTrail() async {
@@ -270,20 +321,16 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
-  Future<void> _moderatePost(
-    Map<String, dynamic> post, {
-    required String status,
-  }) async {
-    await _runAdminAction(
-      successMessage: 'Community post marked $status.',
-      action: () async {
-        await _repository.moderateCommunityPost(
+  Future<void> _openCommunityPosts() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CommunityPostManagementPage(
           session: widget.session,
-          postId: _stringFrom(post['postId']),
-          moderationStatus: status,
-        );
-      },
+          repository: _repository,
+        ),
+      ),
     );
+    if (mounted) unawaited(_loadAdminData());
   }
 
   Future<void> _runAdminAction({
@@ -614,17 +661,6 @@ class _AdminPageState extends State<AdminPage> {
       return const _AdminLockedState();
     }
 
-    final verifiedTrails = _trails
-        .where((trail) => trail.isVerifiedTrail)
-        .length;
-    final pendingHazards = _hazardReports.where((report) {
-      final status = _stringFrom(report['status']).toLowerCase();
-      return status.isEmpty || status == 'unverified' || status == 'pending';
-    }).length;
-    final moderatedPosts = _communityPosts.where((post) {
-      final visibility = _stringFrom(post['visibility']).toLowerCase();
-      return visibility == 'hidden' || visibility == 'removed';
-    }).length;
     final title = switch (_selectedSection) {
       _AdminSection.overview => 'Dashboard',
       _AdminSection.trails => 'Trail Management',
@@ -635,46 +671,67 @@ class _AdminPageState extends State<AdminPage> {
     };
     final subtitle = switch (_selectedSection) {
       _AdminSection.overview =>
-        'Your workspace for trails, safety and community.',
+        'System statistics and your management workspace.',
       _AdminSection.trails =>
         'Manage routes, checkpoints and trail verification.',
       _AdminSection.hazards => 'Verify or reject community safety reports.',
-      _AdminSection.community => 'Review public community posts.',
+      _AdminSection.community =>
+        'Review detected flags and manage community content.',
       _AdminSection.achievements =>
         'Create rewards and milestones for your hikers.',
       _AdminSection.tools => 'Support hikers and inspect app activity.',
     };
     final content = switch (_selectedSection) {
-      _AdminSection.overview => _AdminOverviewDashboard(
-        dataReady: !_isLoading && _errorMessage == null,
-        onOpenTools: () => _selectSection(_AdminSection.tools),
-        trailCount: _trails.length,
-        verifiedTrailCount: verifiedTrails,
-        pendingHazardCount: pendingHazards,
-        communityPostCount: _communityPosts.length,
-        moderatedPostCount: moderatedPosts,
-        achievementCount: _achievements.length,
-        onOpenTrails: () => _selectSection(_AdminSection.trails),
-        onOpenHazards: () => _selectSection(_AdminSection.hazards),
-        onOpenCommunity: () => _selectSection(_AdminSection.community),
-        onOpenAchievements: () => _selectSection(_AdminSection.achievements),
+      _AdminSection.overview => AdminAnalyticsDashboard(
+        data: _analytics,
+        loading: _analyticsLoading,
+        error: _analyticsError,
+        onRetry: () => unawaited(_loadAnalytics(forceRefresh: true)),
+        onTools: () => _selectSection(_AdminSection.tools),
+        onTrails: () => _selectSection(_AdminSection.trails),
+        onTrailRequests: () => unawaited(_openTrailRequests()),
+        onSafety: () => _selectSection(_AdminSection.hazards),
+        onCommunity: () => _selectSection(_AdminSection.community),
+        onRewards: () => _selectSection(_AdminSection.achievements),
       ),
-      _AdminSection.trails => _TrailManagementSection(
-        trails: _trails
-            .where(
-              (trail) => '${trail.name} ${trail.locationLabel}'
-                  .toLowerCase()
-                  .contains(_search),
-            )
-            .toList(),
-        isLoading: _isLoading,
-        isSaving: _isSaving,
-        onAddTrail: () => unawaited(_addTrail()),
-        onOpenTrail: (trail) => unawaited(_openTrail(trail)),
-        onEditTrail: _editTrail,
-        onDeleteTrail: _deleteTrail,
-        onToggleVerification: (trail) =>
-            unawaited(_toggleTrailVerification(trail)),
+      _AdminSection.trails => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AdminPanel(
+            onTap: () => unawaited(_openTrailRequests()),
+            child: const Row(
+              children: [
+                Icon(Icons.add_road_rounded),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Review recorded trail requests',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          _TrailManagementSection(
+            trails: _trails
+                .where(
+                  (trail) => '${trail.name} ${trail.locationLabel}'
+                      .toLowerCase()
+                      .contains(_search),
+                )
+                .toList(),
+            isLoading: _isLoading,
+            isSaving: _isSaving,
+            onAddTrail: () => unawaited(_addTrail()),
+            onOpenTrail: (trail) => unawaited(_openTrail(trail)),
+            onEditTrail: _editTrail,
+            onDeleteTrail: _deleteTrail,
+            onToggleVerification: (trail) =>
+                unawaited(_toggleTrailVerification(trail)),
+          ),
+        ],
       ),
       _AdminSection.hazards => _HazardReportsSection(
         hazardReports: _hazardReports
@@ -688,15 +745,7 @@ class _AdminPageState extends State<AdminPage> {
       ),
       _AdminSection.community => _CommunityModerationSection(
         onReviewed: () => unawaited(_loadAdminData()),
-        communityPosts: _communityPosts
-            .where(
-              (row) => row.values.join(' ').toLowerCase().contains(_search),
-            )
-            .toList(),
-        isSaving: _isSaving,
-        onApprove: (post) => unawaited(_moderatePost(post, status: 'approved')),
-        onHide: (post) => unawaited(_moderatePost(post, status: 'hidden')),
-        onRemove: (post) => unawaited(_moderatePost(post, status: 'removed')),
+        onManagePosts: () => unawaited(_openCommunityPosts()),
       ),
       _AdminSection.achievements => _AchievementManagementSection(
         achievements: _achievements
@@ -844,7 +893,8 @@ class _AdminPageState extends State<AdminPage> {
                                 ),
                           ),
                           if (_selectedSection != _AdminSection.overview &&
-                              _selectedSection != _AdminSection.tools) ...[
+                              _selectedSection != _AdminSection.tools &&
+                              _selectedSection != _AdminSection.community) ...[
                             const SizedBox(height: 18),
                             TextField(
                               key: ValueKey(
@@ -1133,20 +1183,13 @@ class _AdminNavigation extends StatelessWidget {
 
 /// Natural-height tiles avoid clipping when system text size is increased.
 class _AdminTileGrid extends StatelessWidget {
-  const _AdminTileGrid({required this.children, this.compact = false});
+  const _AdminTileGrid({required this.children});
   final List<Widget> children;
-  final bool compact;
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-      final columns = compact
-          ? (constraints.maxWidth >= 760 && scale < 1.5
-                ? 4
-                : constraints.maxWidth >= 310 && scale < 1.5
-                ? 2
-                : 1)
-          : (constraints.maxWidth >= 640 && scale < 1.5 ? 2 : 1);
+      final columns = constraints.maxWidth >= 640 && scale < 1.5 ? 2 : 1;
       return Wrap(
         spacing: 12,
         runSpacing: 12,
@@ -1159,229 +1202,6 @@ class _AdminTileGrid extends StatelessWidget {
         ],
       );
     },
-  );
-}
-
-class _AdminOverviewDashboard extends StatelessWidget {
-  const _AdminOverviewDashboard({
-    required this.trailCount,
-    required this.verifiedTrailCount,
-    required this.pendingHazardCount,
-    required this.communityPostCount,
-    required this.moderatedPostCount,
-    required this.achievementCount,
-    required this.onOpenTrails,
-    required this.onOpenHazards,
-    required this.onOpenCommunity,
-    required this.onOpenAchievements,
-    required this.onOpenTools,
-    required this.dataReady,
-  });
-  final int trailCount,
-      verifiedTrailCount,
-      pendingHazardCount,
-      communityPostCount,
-      moderatedPostCount,
-      achievementCount;
-  final bool dataReady;
-  final VoidCallback onOpenTrails,
-      onOpenHazards,
-      onOpenCommunity,
-      onOpenAchievements,
-      onOpenTools;
-  @override
-  Widget build(BuildContext context) {
-    String count(int value) => dataReady ? '$value' : '—';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const AdminSectionHeading(
-          title: 'Workspace overview',
-          subtitle: 'Select a collection to manage it.',
-        ),
-        const SizedBox(height: 14),
-        _AdminTileGrid(
-          compact: true,
-          children: [
-            _AdminCollectionTile(
-              title: 'Trail library',
-              value: count(trailCount),
-              detail: '${count(verifiedTrailCount)} verified',
-              icon: Icons.route_rounded,
-              tint: AdminUi.green(context),
-              onTap: onOpenTrails,
-            ),
-            _AdminCollectionTile(
-              title: 'Safety reports',
-              value: count(pendingHazardCount),
-              detail: 'Pending · latest 50',
-              icon: Icons.shield_outlined,
-              tint: _AdminColors.orangeFor(context),
-              onTap: onOpenHazards,
-            ),
-            _AdminCollectionTile(
-              title: 'Community',
-              value: count(communityPostCount),
-              detail: '${count(moderatedPostCount)} moderated · latest 50',
-              icon: Icons.forum_outlined,
-              tint: AdminUi.blue(context),
-              onTap: onOpenCommunity,
-            ),
-            _AdminCollectionTile(
-              title: 'Achievements',
-              value: count(achievementCount),
-              detail: 'Reward rules',
-              icon: Icons.emoji_events_outlined,
-              tint: Theme.of(context).colorScheme.tertiary,
-              onTap: onOpenAchievements,
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        const AdminSectionHeading(
-          title: 'Review queue',
-          subtitle: 'Safety reports from your community.',
-        ),
-        const SizedBox(height: 12),
-        AdminPanel(
-          onTap: onOpenHazards,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _AdminColors.orangeFor(context).withValues(alpha: .1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.fact_check_outlined,
-                  size: 22,
-                  color: _AdminColors.orangeFor(context),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      !dataReady
-                          ? 'Safety review queue'
-                          : pendingHazardCount == 0
-                          ? 'No pending reports in the latest batch'
-                          : '$pendingHazardCount safety ${pendingHazardCount == 1 ? 'report needs' : 'reports need'} review',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Review reports before publishing hazards to trails.',
-                      style: TextStyle(
-                        color: AdminUi.muted(context),
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Open safety reports →',
-                      style: TextStyle(
-                        color: AdminUi.green(context),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 24),
-        const AdminSectionHeading(
-          title: 'Support & diagnostics',
-          subtitle: 'Feedback, device activity and data inspection.',
-        ),
-        const SizedBox(height: 12),
-        _AdminDashboardCard(
-          title: 'Admin tools',
-          subtitle: 'Feedback inbox, button debugging and data inspection.',
-          metric: '3 tools',
-          detail: 'Open toolkit',
-          icon: Icons.tune_rounded,
-          onTap: onOpenTools,
-        ),
-      ],
-    );
-  }
-}
-
-class _AdminCollectionTile extends StatelessWidget {
-  const _AdminCollectionTile({
-    required this.title,
-    required this.value,
-    required this.detail,
-    required this.icon,
-    required this.tint,
-    required this.onTap,
-  });
-  final String title, value, detail;
-  final IconData icon;
-  final Color tint;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) => AdminPanel(
-    onTap: onTap,
-    padding: const EdgeInsets.all(16),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: tint.withValues(alpha: .1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: tint, size: 21),
-            ),
-            const Spacer(),
-            Icon(
-              Icons.north_east_rounded,
-              size: 16,
-              color: AdminUi.muted(context),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 30,
-            fontWeight: FontWeight.w700,
-            height: 1,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          title,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          detail,
-          style: TextStyle(
-            color: AdminUi.muted(context),
-            fontSize: 11,
-            height: 1.5,
-          ),
-        ),
-      ],
-    ),
   );
 }
 
@@ -1753,53 +1573,30 @@ class _HazardReportsSection extends StatelessWidget {
 class _CommunityModerationSection extends StatelessWidget {
   const _CommunityModerationSection({
     required this.onReviewed,
-    required this.communityPosts,
-    required this.isSaving,
-    required this.onApprove,
-    required this.onHide,
-    required this.onRemove,
+    required this.onManagePosts,
   });
 
-  final List<Map<String, dynamic>> communityPosts;
   final VoidCallback onReviewed;
-  final bool isSaving;
-  final ValueChanged<Map<String, dynamic>> onApprove;
-  final ValueChanged<Map<String, dynamic>> onHide;
-  final ValueChanged<Map<String, dynamic>> onRemove;
+  final VoidCallback onManagePosts;
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _SectionTitle(label: 'Community Moderation'),
-        const SizedBox(height: 8),
-        CommunityIntegrityPanel(onReviewed: onReviewed),
-        const SizedBox(height: 16),
-        Column(
-          children: [
-            if (communityPosts.isEmpty)
-              const _EmptyState(message: 'No community posts to moderate.')
-            else
-              for (var index = 0; index < communityPosts.length; index++) ...[
-                AdminPanel(
-                  padding: EdgeInsets.zero,
-                  child: _PostAdminRow(
-                    post: communityPosts[index],
-                    isSaving: isSaving,
-                    onApprove: () => onApprove(communityPosts[index]),
-                    onHide: () => onHide(communityPosts[index]),
-                    onRemove: () => onRemove(communityPosts[index]),
-                  ),
-                ),
-                if (index != communityPosts.length - 1)
-                  const SizedBox(height: 12),
-              ],
-          ],
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      CommunityIntegrityPanel(onReviewed: onReviewed),
+      const SizedBox(height: 16),
+      AdminPanel(
+        onTap: onManagePosts,
+        child: const ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.edit_note_rounded),
+          title: Text('Manage community posts'),
+          subtitle: Text('Browse, edit, restore, hide or remove posts.'),
+          trailing: Icon(Icons.chevron_right_rounded),
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 }
 
 class _AchievementManagementSection extends StatelessWidget {
@@ -2312,76 +2109,6 @@ class _HazardAdminRow extends StatelessWidget {
                 onPressed: isSaving ? null : onReject,
                 icon: const Icon(Icons.block_rounded),
                 label: const Text('Reject'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PostAdminRow extends StatelessWidget {
-  const _PostAdminRow({
-    required this.post,
-    required this.isSaving,
-    required this.onApprove,
-    required this.onHide,
-    required this.onRemove,
-  });
-
-  final Map<String, dynamic> post;
-  final bool isSaving;
-  final VoidCallback onApprove;
-  final VoidCallback onHide;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    final visibility = _stringFrom(post['visibility']).isEmpty
-        ? 'public'
-        : _stringFrom(post['visibility']);
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _CircleIcon(icon: Icons.forum_rounded),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _AdminTextBlock(
-                  title: _stringFrom(post['authorHandle']).isEmpty
-                      ? _stringFrom(post['authorPhoneNumber'])
-                      : _stringFrom(post['authorHandle']),
-                  subtitle:
-                      '${_stringFrom(post['trailName']).isEmpty ? 'General' : _stringFrom(post['trailName'])} - $visibility',
-                  body: _stringFrom(post['caption']),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.icon(
-                onPressed: isSaving ? null : onApprove,
-                icon: const Icon(Icons.check_circle_rounded),
-                label: const Text('Approve'),
-              ),
-              OutlinedButton.icon(
-                onPressed: isSaving ? null : onHide,
-                icon: const Icon(Icons.visibility_off_rounded),
-                label: const Text('Hide'),
-              ),
-              OutlinedButton.icon(
-                onPressed: isSaving ? null : onRemove,
-                icon: const Icon(Icons.delete_rounded),
-                label: const Text('Remove'),
               ),
             ],
           ),

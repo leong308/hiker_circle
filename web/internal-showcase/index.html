@@ -33,8 +33,9 @@
       <div class="stage" id="stage" tabindex="0" aria-label="Feature highlight; use left and right arrow keys to navigate">
         <div class="stage-media">
           <div class="media-glow" aria-hidden="true"></div>
-          <button id="open-image" class="phone-frame" type="button" aria-label="View screenshot full size" hidden><img id="stage-image" alt="" loading="eager"></button>
-          <video id="stage-video" controls playsinline preload="none" hidden></video>
+          <button id="open-image" class="phone-frame" type="button" aria-label="View screenshot full size, shown in an iPhone 15 Pro Max mockup" hidden><img id="stage-image" alt="" loading="eager"></button>
+          <div id="image-gallery" class="image-gallery" aria-label="Feature screenshots" hidden></div>
+          <div id="video-frame" class="phone-frame video-phone" hidden><video id="stage-video" controls autoplay muted playsinline preload="metadata" hidden></video></div>
           <section id="media-request" class="capture-card" aria-labelledby="request-title" hidden>
             <div class="capture-topline"><span id="request-kind"></span><span id="request-duration"></span></div>
             <h4 id="request-title">Capture the current app</h4>

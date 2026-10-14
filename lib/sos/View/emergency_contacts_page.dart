@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
@@ -324,73 +325,22 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final enabled = !onboardingRequired || canContinue;
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
-      child: Row(
-        children: [
-          Tooltip(
-            message: onboardingRequired ? 'Continue' : 'Back',
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size.square(36),
-              onPressed: onboardingRequired && !canContinue ? null : onAction,
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: _ContactsColors.surfaceFor(context),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  onboardingRequired
-                      ? CupertinoIcons.check_mark
-                      : CupertinoIcons.chevron_back,
-                  color: onboardingRequired && !canContinue
-                      ? _ContactsColors.secondaryTextFor(context)
-                      : _ContactsColors.green,
-                  size: 20,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Emergency Contacts',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _ContactsColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Add up to 3 people for SOS alerts',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _ContactsColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w400,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (onboardingRequired) ...[
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: canContinue ? onAction : null,
-              child: const Text('Continue'),
-            ),
-          ],
-        ],
+      child: PageHeader(
+        title: 'Emergency Contacts',
+        subtitle: 'Add up to 3 people for SOS alerts',
+        leading: PageHeaderAction(
+          tooltip: onboardingRequired ? 'Continue' : 'Back',
+          icon: onboardingRequired
+              ? CupertinoIcons.check_mark
+              : CupertinoIcons.chevron_back,
+          onPressed: enabled ? onAction : null,
+          color: enabled ? colors.primary : colors.onSurfaceVariant,
+          surface: colors.surface,
+        ),
       ),
     );
   }

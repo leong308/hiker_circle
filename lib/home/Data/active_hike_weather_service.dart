@@ -59,6 +59,86 @@ class ActiveHikeWeatherSnapshot {
 
   ActiveHikeWeatherSample? get current =>
       samples.isEmpty ? null : samples.first;
+
+  Map<String, dynamic> toPersistence() => {
+    'fetchedAt': fetchedAt.toUtc().toIso8601String(),
+    'isCachedFallback': isCachedFallback,
+    'samples': [
+      for (final sample in samples)
+        {
+          'label': sample.label,
+          'shortLabel': sample.shortLabel,
+          'distanceAheadMeters': sample.distanceAheadMeters,
+          'coordinate': sample.coordinate.toFirestore(),
+          'temperatureCelsius': sample.temperatureCelsius,
+          'apparentTemperatureCelsius': sample.apparentTemperatureCelsius,
+          'humidityPercent': sample.humidityPercent,
+          'windSpeedKph': sample.windSpeedKph,
+          'precipitationMillimeters': sample.precipitationMillimeters,
+          'weatherCode': sample.weatherCode,
+          'observedAt': sample.observedAt.toUtc().toIso8601String(),
+          'isCached': sample.isCached,
+        },
+    ],
+  };
+
+  factory ActiveHikeWeatherSnapshot.fromPersistence(Map<String, dynamic> data) {
+    DateTime date(Object? value) {
+      final parsed = value is String ? DateTime.tryParse(value) : null;
+      if (parsed == null) {
+        throw const FormatException('Invalid weather timestamp');
+      }
+      return parsed;
+    }
+
+    double number(Map sample, String key) {
+      final value = sample[key];
+      if (value is! num || !value.isFinite) {
+        throw const FormatException('Invalid weather measurement');
+      }
+      return value.toDouble();
+    }
+
+    final rows = data['samples'];
+    if (rows is! List || rows.isEmpty) {
+      throw const FormatException('No cached weather samples');
+    }
+    return ActiveHikeWeatherSnapshot(
+      fetchedAt: date(data['fetchedAt']),
+      isCachedFallback: data['isCachedFallback'] == true,
+      samples: [
+        for (final row in rows)
+          (() {
+            if (row is! Map || row['coordinate'] is! Map) {
+              throw const FormatException('Invalid weather sample');
+            }
+            final coordinate = HikeCoordinate.tryFromFirestore(
+              Map<String, dynamic>.from(row['coordinate'] as Map),
+            );
+            if (coordinate == null) {
+              throw const FormatException('Invalid weather position');
+            }
+            return ActiveHikeWeatherSample(
+              label: row['label'] as String,
+              shortLabel: row['shortLabel'] as String,
+              distanceAheadMeters: number(row, 'distanceAheadMeters').toInt(),
+              coordinate: coordinate,
+              temperatureCelsius: number(row, 'temperatureCelsius'),
+              apparentTemperatureCelsius: number(
+                row,
+                'apparentTemperatureCelsius',
+              ),
+              humidityPercent: number(row, 'humidityPercent').toInt(),
+              windSpeedKph: number(row, 'windSpeedKph'),
+              precipitationMillimeters: number(row, 'precipitationMillimeters'),
+              weatherCode: number(row, 'weatherCode').toInt(),
+              observedAt: date(row['observedAt']),
+              isCached: row['isCached'] == true,
+            );
+          })(),
+      ],
+    );
+  }
 }
 
 class ActiveHikeWeatherService {
@@ -81,11 +161,23 @@ class ActiveHikeWeatherService {
         ? latestLocation!
         : route.first;
     final currentProgress = _progressAlongRoute(route, current);
-    const targets = <({String label, String shortLabel, int meters})>[
-      (label: 'Your location', shortLabel: 'Now', meters: 0),
-      (label: '200 m upcoming', shortLabel: '200m', meters: 200),
-      (label: '500 m upcoming', shortLabel: '500m', meters: 500),
-      (label: '1 km upcoming', shortLabel: '1km', meters: 1000),
+    final targets = <({String label, String shortLabel, int meters})>[
+      (
+        label:
+            activeHike.trail.isUnlisted &&
+                DateTime.now().toUtc().difference(current.capturedAt.toUtc()) >
+                    const Duration(minutes: 2)
+            ? 'Last recorded location'
+            : 'Your location',
+        shortLabel: 'Now',
+        meters: 0,
+      ),
+      if (!activeHike.trail.isUnlisted)
+        (label: '200 m upcoming', shortLabel: '200m', meters: 200),
+      if (!activeHike.trail.isUnlisted)
+        (label: '500 m upcoming', shortLabel: '500m', meters: 500),
+      if (!activeHike.trail.isUnlisted)
+        (label: '1 km upcoming', shortLabel: '1km', meters: 1000),
     ];
 
     final positions = targets.map((target) {
@@ -112,11 +204,13 @@ class ActiveHikeWeatherService {
         fetchedAt: DateTime.now(),
       );
     } catch (error) {
-      final cachedSnapshot = _cachedTrailWeatherSnapshot(
-        activeHike: activeHike,
-        targets: targets,
-        positions: positions,
-      );
+      final cachedSnapshot = activeHike.trail.isUnlisted
+          ? null
+          : _cachedTrailWeatherSnapshot(
+              activeHike: activeHike,
+              targets: targets,
+              positions: positions,
+            );
       if (cachedSnapshot != null) {
         return cachedSnapshot;
       }
@@ -167,6 +261,21 @@ class ActiveHikeWeatherService {
         );
       }
       final current = Map<String, dynamic>.from(decoded['current'] as Map);
+      for (final key in [
+        'temperature_2m',
+        'apparent_temperature',
+        'relative_humidity_2m',
+        'wind_speed_10m',
+        'precipitation',
+        'weather_code',
+      ]) {
+        final value = current[key];
+        if (value is! num || !value.isFinite) {
+          throw const ActiveHikeWeatherException(
+            'Weather service returned incomplete current conditions.',
+          );
+        }
+      }
       return ActiveHikeWeatherSample(
         label: label,
         shortLabel: shortLabel,
@@ -195,6 +304,19 @@ class ActiveHikeWeatherService {
   }
 
   List<HikeCoordinate> _routeCoordinates(ActiveHikeSession activeHike) {
+    if (activeHike.trail.isUnlisted) {
+      final latest = activeHike.latestLocation;
+      return [
+        if (latest?.hasValidPosition == true)
+          latest!
+        else
+          HikeCoordinate(
+            latitude: activeHike.trail.latitude,
+            longitude: activeHike.trail.longitude,
+            capturedAt: DateTime.now(),
+          ),
+      ];
+    }
     final encoded = activeHike.trail.routeEncodedPolyline;
     if (encoded != null && encoded.isNotEmpty) {
       final decoded = _decodePolyline(encoded);

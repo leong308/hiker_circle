@@ -36,6 +36,7 @@ test('shared hike projection removes every personal safety field', () => {
     fallDetectionEnabled: true,
     fallDetectionSettings: { sensorSensitivity: 10 },
     pathDeviationEnabled: true,
+    pathDeviationDistanceMeters: 17,
     offlinePhysicalAlertEnabled: true,
     duressEnabled: true,
     completedChecklistItems: ['Medication'],

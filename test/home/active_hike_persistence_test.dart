@@ -99,6 +99,7 @@ void main() {
     );
     final draft = HikeSessionDraft.fromTrail(trail).copyWith(
       hikeType: HikeType.team,
+      pathDeviationDistanceMeters: 37,
       fallDetectionSettings: const FallDetectionSettings(
         sensorSensitivity: 7,
         fallResponseDuration: Duration(minutes: 2),
@@ -185,6 +186,7 @@ void main() {
     expect(restored.teamHikeSession?.sourceUpcomingHikeId, 'upcoming-1');
     expect(restored.sourceUpcomingHikeId, 'upcoming-1');
     expect(restored.draft.hikeType, HikeType.team);
+    expect(restored.draft.pathDeviationDistanceMeters, 37);
     expect(
       restored.draft.fallDetectionSettings.fallResponseDuration,
       const Duration(minutes: 2),

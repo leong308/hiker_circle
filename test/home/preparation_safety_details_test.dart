@@ -210,7 +210,16 @@ void main() {
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Every 1 minute'));
       await guide.tap(tester, 'Every 1 minute');
-      await tester.ensureVisible(find.text('Save and return'));
+      await tester.scrollUntilVisible(
+        find.text('Save and return'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byType(PreparationSharingPage),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       await guide.tap(tester, 'Save and return');
       await tester.pumpAndSettle();
@@ -256,7 +265,16 @@ void main() {
       await revealAndTap(tester, 'Modify sharing');
       await tester.tap(find.byType(SwitchListTile));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Save and return'));
+      await tester.scrollUntilVisible(
+        find.text('Save and return'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byType(PreparationSharingPage),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       await guide.tap(tester, 'Save and return');
       await tester.pumpAndSettle();
@@ -423,7 +441,16 @@ void main() {
       await guide.tap(tester, 'Review sharing choices');
       expect(find.text('How will you share your location?'), findsOneWidget);
       await revealAndTap(tester, 'Modify sharing');
-      await tester.ensureVisible(find.text('Save and return'));
+      await tester.scrollUntilVisible(
+        find.text('Save and return'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byType(PreparationSharingPage),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       await guide.tap(tester, 'Save and return');
       await tester.pumpAndSettle();

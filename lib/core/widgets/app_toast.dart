@@ -82,7 +82,7 @@ class _HikerCircleToastSnackBar extends SnackBar {
        _onTap = onTap,
        _duration = duration,
        super(
-         content: _HikerCircleToastContent(
+         content: HikerCircleToastCard(
            message: message,
            tone: tone,
            title: title,
@@ -125,15 +125,19 @@ class _HikerCircleToastSnackBar extends SnackBar {
   }
 }
 
-class _HikerCircleToastContent extends StatelessWidget {
-  const _HikerCircleToastContent({
+/// The shared notice surface, also used by warnings whose lifetime is owned by
+/// playback rather than ScaffoldMessenger's short snackbar timer.
+class HikerCircleToastCard extends StatelessWidget {
+  const HikerCircleToastCard({
+    super.key,
     required this.message,
-    required this.tone,
-    required this.title,
-    required this.actionLabel,
-    required this.onAction,
-    required this.onTap,
-    required this.animation,
+    this.tone = HikerCircleToastTone.info,
+    this.title,
+    this.actionLabel,
+    this.onAction,
+    this.onTap,
+    this.animation,
+    this.onDismiss,
   });
 
   final String message;
@@ -143,6 +147,7 @@ class _HikerCircleToastContent extends StatelessWidget {
   final VoidCallback? onAction;
   final VoidCallback? onTap;
   final Animation<double>? animation;
+  final VoidCallback? onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -153,7 +158,11 @@ class _HikerCircleToastContent extends StatelessWidget {
     final messenger = ScaffoldMessenger.of(context);
 
     void dismiss() {
-      messenger.hideCurrentSnackBar(reason: SnackBarClosedReason.dismiss);
+      if (onDismiss != null) {
+        onDismiss!();
+      } else {
+        messenger.hideCurrentSnackBar(reason: SnackBarClosedReason.dismiss);
+      }
     }
 
     void performAction() {

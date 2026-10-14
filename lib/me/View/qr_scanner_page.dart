@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -273,9 +274,8 @@ class _QrScannerPageState extends State<QrScannerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: PageHeaderAppBar(
         backgroundColor: Colors.black87,
-        iconTheme: const IconThemeData(color: Colors.white),
         title: const Text('Scan QR', style: TextStyle(color: Colors.white)),
       ),
       body: Stack(

@@ -24,6 +24,7 @@ void main() {
 
     var startAttempts = 0;
     bool? submittedShareLiveLocation;
+    int? submittedDeviationDistance;
     await tester.pumpWidget(
       MaterialApp(
         home: StartHikeWizardPage(
@@ -31,6 +32,7 @@ void main() {
           onStartNow: (draft) async {
             startAttempts += 1;
             submittedShareLiveLocation = draft.shareLiveLocation;
+            submittedDeviationDistance = draft.pathDeviationDistanceMeters;
             return false;
           },
         ),
@@ -44,6 +46,12 @@ void main() {
       await tester.pump();
     }
 
+    final distanceSlider = find.byKey(
+      const ValueKey('path-deviation-distance-slider'),
+    );
+    expect(distanceSlider, findsOneWidget);
+    tester.widget<Slider>(distanceSlider).onChanged!(35);
+    await tester.pump();
     final startButton = find.widgetWithText(
       FilledButton,
       'Start Hiking Session',
@@ -63,6 +71,7 @@ void main() {
 
     expect(startAttempts, 1);
     expect(submittedShareLiveLocation, isFalse);
+    expect(submittedDeviationDistance, 35);
     expect(find.text('Safety Settings'), findsOneWidget);
     expect(
       find.text('Share live location with SOS contacts when hike starts'),

@@ -109,9 +109,36 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _communityHazardSubscription;
   StreamSubscription<User?>? _communityHazardAuthSubscription;
+  final _cautionMarkerSizer = CautionMarkerSizer();
+  late final _communityCautionLayer = CommunityCautionMapLayer(
+    onTap: (cluster) {
+      if (mounted) {
+        unawaited(
+          showCommunityHazardDetails(
+            context,
+            cluster,
+            allowFeedback: widget.interactive,
+          ),
+        );
+      }
+    },
+  );
+  Timer? _cautionExpiryTimer;
+  void _expireCommunityCautions() {
+    if (!mounted) return;
+    final remaining = _communityHazards
+        .expand((c) => c.reports)
+        .where((r) => r.isActiveAt(DateTime.now()))
+        .toList();
+    if (remaining.length ==
+        _communityHazards.fold<int>(0, (total, c) => total + c.count)) {
+      return;
+    }
+    _communityHazards = clusterCommunityHazards(remaining);
+    _communityCautionLayer.setReports(_communityHazards);
+  }
+
   List<CommunityHazardCluster> _communityHazards = const [];
-  final Map<String, CommunityHazardCluster> _communityHazardsByAnnotationId =
-      {};
   List<Offset?> _weatherScreenPositions = const [];
   Map<String, Offset?> _teamScreenPositions = const {};
   var _weatherProjectionScheduled = false;
@@ -151,6 +178,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         : mapPointCoordinatesOrNull(initialCenter)?.latitude ?? 0;
     unawaited(_loadStaticHazards());
     _watchCommunityHazards();
+    _cautionExpiryTimer ??= Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _expireCommunityCautions(),
+    );
     if (Firebase.apps.isNotEmpty) {
       _communityHazardAuthSubscription = FirebaseAuth.instance
           .authStateChanges()
@@ -161,7 +192,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   void _watchCommunityHazards() {
     _communityHazardSubscription?.cancel();
     _communityHazards = const [];
-    _communityHazardsByAnnotationId.clear();
+    _communityCautionLayer.setReports(const []);
     _routeRendered = false;
     unawaited(_renderRouteIfReady());
     if (Firebase.apps.isEmpty || FirebaseAuth.instance.currentUser == null) {
@@ -183,11 +214,8 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
             final reports = snapshot.docs
                 .map((doc) => CommunityHazard.fromMap(doc.id, doc.data()))
                 .whereType<CommunityHazard>();
-            setState(() {
-              _communityHazards = clusterCommunityHazards(reports);
-              _routeRendered = false;
-            });
-            unawaited(_renderRouteIfReady());
+            _communityHazards = clusterCommunityHazards(reports);
+            _communityCautionLayer.setReports(_communityHazards);
           },
           onError: (Object error) {
             debugPrint('Community cautions unavailable: $error');
@@ -235,6 +263,8 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     WidgetsBinding.instance.removeObserver(this);
     _communityHazardSubscription?.cancel();
     _communityHazardAuthSubscription?.cancel();
+    _cautionExpiryTimer?.cancel();
+    _communityCautionLayer.dispose();
     _hazardLoadGeneration++;
     _pointTapEvents?.cancel();
     _navigationRefocusTimer?.cancel();
@@ -244,8 +274,9 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     _polylineManager = null;
     _circleManager = null;
     _pointManager = null;
+    _communityCautionLayer.reset();
     _hazardsByAnnotationId.clear();
-    _communityHazardsByAnnotationId.clear();
+    _cautionMarkerSizer.clear();
     _annotationManagersFuture = null;
     super.dispose();
   }
@@ -395,7 +426,8 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         : latestPoint ?? _validTrailCenterPoint();
     _startPoint = fallbackPoint ?? _zeroPoint;
     _endPoint = fallbackPoint ?? _zeroPoint;
-    _hasReferenceEndpoints = fallbackPoint != null;
+    _hasReferenceEndpoints =
+        !widget.activeHike.trail.isUnlisted && fallbackPoint != null;
     _routePoints = const [];
   }
 
@@ -603,10 +635,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         _polylineManager = null;
         _circleManager = null;
         _pointManager = null;
+        _communityCautionLayer.reset();
         _pointTapEvents?.cancel();
         _pointTapEvents = null;
         _hazardsByAnnotationId.clear();
-        _communityHazardsByAnnotationId.clear();
+        _cautionMarkerSizer.clear();
         _annotationManagersFuture = null;
         _weatherScreenPositions = const [];
         _teamScreenPositions = const {};
@@ -634,11 +667,6 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   }
 
   void _onPointAnnotationTapped(mapbox.PointAnnotation annotation) {
-    final cluster = _communityHazardsByAnnotationId[annotation.id];
-    if (cluster != null && mounted) {
-      unawaited(showCommunityHazardDetails(context, cluster));
-      return;
-    }
     final match = _hazardsByAnnotationId[annotation.id];
     if (match == null || !mounted) return;
     unawaited(showStaticHazardDetails(context, match));
@@ -661,10 +689,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _communityCautionLayer.reset();
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
-      _communityHazardsByAnnotationId.clear();
+      _cautionMarkerSizer.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -709,10 +738,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _communityCautionLayer.reset();
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
-      _communityHazardsByAnnotationId.clear();
+      _cautionMarkerSizer.clear();
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
@@ -773,6 +803,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _polylineManager = polylineManager;
       _circleManager = circleManager;
       _pointManager = pointManager;
+      unawaited(_communityCautionLayer.attach(map, generation));
       return true;
     } catch (error) {
       if (_isCurrentMap(map, generation)) {
@@ -847,7 +878,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     await circleManager.deleteAll();
     await pointManager.deleteAll();
     _hazardsByAnnotationId.clear();
-    _communityHazardsByAnnotationId.clear();
+    _cautionMarkerSizer.clear();
     if (!_isCurrentMap(map, mapGeneration) ||
         renderGeneration != _renderGeneration) {
       return;
@@ -980,28 +1011,6 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       created = true;
     }
 
-    if (_communityHazards.isNotEmpty) {
-      final clusters = List<CommunityHazardCluster>.of(_communityHazards);
-      final images = await Future.wait(
-        clusters.map((c) => communityHazardMarkerImage(c.count)),
-      );
-      if (!_isCurrentMap(map, mapGeneration) ||
-          renderGeneration != _renderGeneration) {
-        return;
-      }
-      final annotations = await pointManager.createMulti([
-        for (var i = 0; i < clusters.length; i++)
-          communityHazardAnnotation(clusters[i], images[i]),
-      ]);
-      for (var i = 0; i < annotations.length; i++) {
-        final annotation = annotations[i];
-        if (annotation != null) {
-          _communityHazardsByAnnotationId[annotation.id] = clusters[i];
-        }
-      }
-      created = true;
-    }
-
     if (_staticHazards.isNotEmpty) {
       final hazardMarkers = await Future.wait([
         for (final match in _staticHazards) staticHazardMarkerImageFor(match),
@@ -1012,12 +1021,20 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       }
       final annotations = await pointManager.createMulti([
         for (var index = 0; index < _staticHazards.length; index++)
-          staticHazardAnnotation(_staticHazards[index], hazardMarkers[index]),
+          staticHazardAnnotation(
+            _staticHazards[index],
+            hazardMarkers[index],
+            scaleFactor: cautionMarkerScale(_currentZoom, _scaleLatitude) / .65,
+          ),
       ]);
       for (var index = 0; index < annotations.length; index++) {
         final annotation = annotations[index];
         if (annotation != null && index < _staticHazards.length) {
           _hazardsByAnnotationId[annotation.id] = _staticHazards[index];
+          _cautionMarkerSizer.add(
+            annotation,
+            _staticHazards[index].hazard.severity == 'warning' ? .72 : .64,
+          );
         }
       }
       created = true;
@@ -1263,10 +1280,11 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
+      _communityCautionLayer.reset();
       _pointTapEvents?.cancel();
       _pointTapEvents = null;
       _hazardsByAnnotationId.clear();
-      _communityHazardsByAnnotationId.clear();
+      _cautionMarkerSizer.clear();
       _annotationManagersFuture = null;
       _weatherScreenPositions = const [];
       _teamScreenPositions = const {};
@@ -1306,6 +1324,13 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         _currentZoom = nextZoom;
         _scaleLatitude = coordinates.latitude;
       });
+      _communityCautionLayer.setScale(_currentZoom, _scaleLatitude);
+      unawaited(
+        _cautionMarkerSizer.resize(
+          _pointManager,
+          cautionMarkerScale(_currentZoom, _scaleLatitude) / .65,
+        ),
+      );
       _scheduleWeatherProjection();
       _scheduleTeamProjection();
     } catch (_) {
@@ -1326,6 +1351,13 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _currentZoom = nextZoom;
       _scaleLatitude = nextLatitude;
     });
+    _communityCautionLayer.setScale(_currentZoom, _scaleLatitude);
+    unawaited(
+      _cautionMarkerSizer.resize(
+        _pointManager,
+        cautionMarkerScale(_currentZoom, _scaleLatitude) / .65,
+      ),
+    );
   }
 
   @override
@@ -1453,7 +1485,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
               backgroundColor: const Color(0xFFFFC857),
               foregroundColor: const Color(0xFF342500),
               onPressed: widget.onReportHazard,
-              child: const Icon(Icons.add_alert_rounded),
+              child: const Icon(Icons.warning_amber_rounded),
             ),
           ),
         if (widget.showLegend)

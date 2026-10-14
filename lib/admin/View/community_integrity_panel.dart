@@ -73,7 +73,7 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Community integrity',
+                  'Flagged content',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
@@ -92,7 +92,7 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
           ),
           const SizedBox(height: 6),
           Text(
-            'AI suggestions only. Content stays visible until you take action.',
+            'Local sensitive-data checks and existing manual-review flags appear here. Content stays visible until you take action.',
             style: TextStyle(color: AdminUi.muted(context)),
           ),
           const SizedBox(height: 12),
@@ -115,9 +115,12 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
               final local = MaterialLocalizations.of(context);
               final time =
                   '${local.formatMediumDate(date)} · ${local.formatTimeOfDay(TimeOfDay.fromDateTime(date))}';
-              final deferred = data?['status'] == 'deferred';
+              final deferred =
+                  data?['status'] == 'deferred' || data?['status'] == 'failed';
+              const errorReason =
+                  'Content scan failed. Review existing flags manually; some posts may not have been checked.';
               return Text(
-                '${deferred ? 'AI check deferred; content remains queued' : 'Last check completed'}\n$time',
+                '${deferred ? 'Check incomplete; ${data?["deferred"] ?? 0} items remain queued' : 'Last check completed'}\n$time\n${data?["checked"] ?? 0} checked · ${data?["flagged"] ?? 0} flags detected in this run${deferred ? "\n$errorReason\nUnchecked content has not passed moderation." : ""}',
                 style: TextStyle(
                   color: deferred
                       ? Colors.orange.shade700
@@ -146,7 +149,9 @@ class _CommunityIntegrityPanelState extends State<CommunityIntegrityPanel> {
                       .compareTo((a.data()['flaggedAtMillis'] as num?) ?? 0),
                 );
               if (reviews.isEmpty) {
-                return const Text('No content currently needs review.');
+                return const Text(
+                  'No detected flags awaiting review. Pending or failed checks may still contain inappropriate content.',
+                );
               }
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,

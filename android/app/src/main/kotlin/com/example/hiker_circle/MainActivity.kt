@@ -24,6 +24,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.provider.ContactsContract
 import com.google.firebase.auth.FirebaseAuth
 import io.flutter.FlutterInjector
@@ -58,6 +59,11 @@ class MainActivity : FlutterActivity() {
     private var activeAlarmAsset: String? = null
     private var textToSpeech: TextToSpeech? = null
     private var pendingSpeechMessage: String? = null
+    private var speechReady = false
+    private var hikeSpeechRequestId: String? = null
+    private var hikeSpeechResult: MethodChannel.Result? = null
+    private var safetySpeechRequestId: String? = null
+    private var speechSequence = 0L
     private var cameraManager: CameraManager? = null
     private var torchCameraId: String? = null
     private var isTorchPatternActive = false
@@ -209,6 +215,24 @@ class MainActivity : FlutterActivity() {
                     }
                     "stopSpokenPrompt" -> {
                         stopSpokenPrompt()
+                        result.success(null)
+                    }
+                    "speakHikePrecaution" -> {
+                        val requestId = call.argument<String>("requestId")
+                        val message = call.argument<String>("message")
+                        if (requestId.isNullOrBlank() || message.isNullOrBlank()) {
+                            result.success(false)
+                        } else {
+                            speakHikePrecaution(requestId, message, result)
+                        }
+                    }
+                    "stopHikePrecaution" -> {
+                        val requestId = call.argument<String>("requestId")
+                        if (!requestId.isNullOrBlank() && requestId == hikeSpeechRequestId) {
+                            pendingSpeechMessage = null
+                            completeHikeSpeech(false)
+                            textToSpeech?.stop()
+                        }
                         result.success(null)
                     }
                     "getBatteryLevel" -> getBatteryLevel(result)
@@ -744,34 +768,95 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun speakFallStillnessPrompt(message: String) {
+        completeHikeSpeech(false)
+        textToSpeech?.stop()
+        safetySpeechRequestId = "fall_stillness_prompt_${++speechSequence}"
+        queueSpeech(message)
+    }
+
+    private fun speakHikePrecaution(requestId: String, message: String, result: MethodChannel.Result) {
+        // A routine forecast must never flush an urgent safety prompt.
+        if (hikeSpeechResult != null || safetySpeechRequestId != null ||
+            pendingSpeechMessage != null || textToSpeech?.isSpeaking == true) {
+            result.success(false)
+            return
+        }
+        hikeSpeechRequestId = requestId
+        hikeSpeechResult = result
+        queueSpeech(message)
+    }
+
+    private fun queueSpeech(message: String) {
         val currentSpeaker = textToSpeech
-        if (currentSpeaker != null) {
+        if (currentSpeaker != null && speechReady) {
             speakWith(currentSpeaker, message)
             return
         }
 
         pendingSpeechMessage = message
+        if (currentSpeaker != null) return
         textToSpeech = TextToSpeech(this) { status ->
-            val speaker = textToSpeech ?: return@TextToSpeech
-            if (status == TextToSpeech.SUCCESS) {
-                speaker.language = Locale.getDefault()
-                speakWith(speaker, pendingSpeechMessage ?: message)
-                pendingSpeechMessage = null
+            mainHandler.post {
+                val speaker = textToSpeech ?: return@post
+                if (status == TextToSpeech.SUCCESS) {
+                    speechReady = true
+                    speaker.language = Locale.getDefault()
+                    speaker.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) = Unit
+                        override fun onDone(utteranceId: String?) {
+                            mainHandler.post {
+                                if (utteranceId == safetySpeechRequestId) safetySpeechRequestId = null
+                                if (utteranceId == hikeSpeechRequestId) completeHikeSpeech(true)
+                            }
+                        }
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(utteranceId: String?) {
+                            mainHandler.post {
+                                if (utteranceId == safetySpeechRequestId) safetySpeechRequestId = null
+                                if (utteranceId == hikeSpeechRequestId) completeHikeSpeech(false)
+                            }
+                        }
+                        override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                            mainHandler.post {
+                                if (utteranceId == safetySpeechRequestId) safetySpeechRequestId = null
+                                if (utteranceId == hikeSpeechRequestId) completeHikeSpeech(false)
+                            }
+                        }
+                    })
+                    val pending = pendingSpeechMessage
+                    pendingSpeechMessage = null
+                    if (pending != null) speakWith(speaker, pending)
+                } else {
+                    pendingSpeechMessage = null
+                    safetySpeechRequestId = null
+                    completeHikeSpeech(false)
+                    textToSpeech?.shutdown()
+                    textToSpeech = null
+                    speechReady = false
+                }
             }
         }
     }
 
-    @Suppress("DEPRECATION")
     private fun speakWith(speaker: TextToSpeech, message: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            speaker.speak(message, TextToSpeech.QUEUE_FLUSH, null, "fall_stillness_prompt")
-        } else {
-            speaker.speak(message, TextToSpeech.QUEUE_FLUSH, null)
+        val utteranceId = hikeSpeechRequestId ?: safetySpeechRequestId ?: "fall_stillness_prompt"
+        if (speaker.speak(message, TextToSpeech.QUEUE_FLUSH, null, utteranceId) == TextToSpeech.ERROR) {
+            safetySpeechRequestId = null
+            completeHikeSpeech(false)
         }
+    }
+
+    private fun completeHikeSpeech(finished: Boolean) {
+        val result = hikeSpeechResult
+        hikeSpeechResult = null
+        hikeSpeechRequestId = null
+        result?.success(finished)
     }
 
     private fun stopSpokenPrompt() {
         pendingSpeechMessage = null
+        safetySpeechRequestId = null
+        completeHikeSpeech(false)
         textToSpeech?.stop()
     }
 

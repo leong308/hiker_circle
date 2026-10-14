@@ -19,6 +19,7 @@ import '../../me/Model/hike_history_models.dart';
 import '../../sos/Model/sos_models.dart';
 import '../../sos/Model/nearby_sos_event.dart';
 import '../../trail/Model/trail_models.dart';
+import '../../trail/Data/trail_caution_service.dart';
 import '../Model/app_session.dart';
 import '../Model/preferred_time_zone.dart';
 import 'firebase_bootstrap.dart';
@@ -61,18 +62,28 @@ const Set<String> _upcomingHikePreviewFields = {
 
 @visibleForTesting
 List<UpcomingHike> parseUpcomingHikePreviewPayload(Object? payload) {
-  if (payload is! Map) return const [];
+  if (payload is! Map) {
+    return const [];
+  }
   final rawHikes = payload['hikes'];
-  if (rawHikes is! List) return const [];
+  if (rawHikes is! List) {
+    return const [];
+  }
 
   final hikes = <UpcomingHike>[];
   final seenIds = <String>{};
   for (final rawHike in rawHikes) {
-    if (rawHike is! Map) continue;
+    if (rawHike is! Map) {
+      continue;
+    }
     final rawId = rawHike['id'];
-    if (rawId is! String) continue;
+    if (rawId is! String) {
+      continue;
+    }
     final id = rawId.trim();
-    if (id.isEmpty || seenIds.contains(id)) continue;
+    if (id.isEmpty || seenIds.contains(id)) {
+      continue;
+    }
 
     final data = <String, dynamic>{};
     for (final entry in rawHike.entries) {
@@ -434,7 +445,9 @@ List<HikeCoordinate> downsampleHikeRouteForCloud(
   Iterable<HikeCoordinate> routePoints, {
   int maxPoints = 1200,
 }) {
-  if (maxPoints <= 0) return const [];
+  if (maxPoints <= 0) {
+    return const [];
+  }
   final points = routePoints.where((point) => point.hasValidPosition).toList()
     ..sort((left, right) => left.capturedAt.compareTo(right.capturedAt));
   return _evenlyDownsample(points, maxPoints: maxPoints);
@@ -462,8 +475,12 @@ bool _isValidCloudDocumentId(String value) {
 }
 
 List<T> _evenlyDownsample<T>(List<T> values, {required int maxPoints}) {
-  if (values.length <= maxPoints) return List<T>.unmodifiable(values);
-  if (maxPoints == 1) return List<T>.unmodifiable([values.last]);
+  if (values.length <= maxPoints) {
+    return List<T>.unmodifiable(values);
+  }
+  if (maxPoints == 1) {
+    return List<T>.unmodifiable([values.last]);
+  }
   final lastIndex = values.length - 1;
   final step = lastIndex / (maxPoints - 1);
   return List<T>.unmodifiable([
@@ -1115,7 +1132,9 @@ class HikerCircleFirebaseRepository {
     if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
       yield cached;
     }
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
     yield* _trails
         .orderBy('isVerifiedTrail', descending: true)
         .orderBy('ratingAverage', descending: true)
@@ -1255,7 +1274,9 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<List<UpcomingHike>> loadUpcomingHikes() async {
-    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const [];
+    }
     try {
       final response = await _resolvedFunctions
           .httpsCallable('listUpcomingHikePreviews')
@@ -1301,7 +1322,9 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<List<UpcomingHike>> loadMyUpcomingHikes(String phoneNumber) async {
-    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const [];
+    }
     try {
       final createdQuery = await _upcomingHikes
           .where('creatorPhone', isEqualTo: phoneNumber)
@@ -1335,7 +1358,9 @@ class HikerCircleFirebaseRepository {
       List<UpcomingHike>? joined;
 
       void emit() {
-        if (created == null || joined == null) return;
+        if (created == null || joined == null) {
+          return;
+        }
         final seen = <String>{};
         final results = <UpcomingHike>[];
         for (final hike in [...created!, ...joined!]) {
@@ -1375,7 +1400,9 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<bool> joinUpcomingHike({required String hikeId}) async {
-    if (!_firebaseBootstrapResult.isAvailable) return false;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return false;
+    }
     try {
       final callable = _resolvedFunctions.httpsCallable('joinUpcomingHike');
       final result = await callable.call(<String, dynamic>{'hikeId': hikeId});
@@ -1430,7 +1457,9 @@ class HikerCircleFirebaseRepository {
       final data = result.data;
       if (data is Map) {
         final status = _stringFrom(data['status']).trim();
-        if (status.isNotEmpty) return status;
+        if (status.isNotEmpty) {
+          return status;
+        }
       }
       throw const HikerCircleFirebaseRepositoryException(
         'The hike server returned an invalid join-request status.',
@@ -1513,7 +1542,9 @@ class HikerCircleFirebaseRepository {
 
   Future<List<GroupChat>> loadUserGroupChats(String phoneNumber) async {
     final cached = await _loadCachedGroupChats(phoneNumber);
-    if (!_firebaseBootstrapResult.isAvailable) return cached;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return cached;
+    }
     try {
       final snapshot = await _groupChats
           .where('participantPhones', arrayContains: phoneNumber)
@@ -1561,7 +1592,9 @@ class HikerCircleFirebaseRepository {
     if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
       yield cached;
     }
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
     yield* _groupChats
         .where('participantPhones', arrayContains: phoneNumber)
         .orderBy('createdAtLocal', descending: true)
@@ -2085,7 +2118,9 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<Set<String>> loadPinnedChats({required AppSession session}) async {
-    if (!_firebaseBootstrapResult.isAvailable) return {};
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return {};
+    }
     try {
       final snapshot = await _users
           .doc(_userIdFor(session))
@@ -2111,7 +2146,9 @@ class HikerCircleFirebaseRepository {
   }) async {
     _throwIfFirebaseUnavailable();
     final normalizedChatId = chatId.trim();
-    if (normalizedChatId.isEmpty) return;
+    if (normalizedChatId.isEmpty) {
+      return;
+    }
     await _users.doc(_userIdFor(session)).set({
       'pinnedChats': {
         normalizedChatId: pinned
@@ -2362,7 +2399,9 @@ class HikerCircleFirebaseRepository {
     required String messageId,
     required String phoneNumber,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
     try {
       await _groupChatMessagesFor(chatId).doc(messageId).update({
         'seenBy': FieldValue.arrayUnion([phoneNumber]),
@@ -2376,14 +2415,18 @@ class HikerCircleFirebaseRepository {
   }) async {
     final now = DateTime.now().toUtc();
     final phoneKey = _phoneKeyFor(phoneNumber);
-    if (phoneKey.isEmpty) return;
+    if (phoneKey.isEmpty) {
+      return;
+    }
     await _localDatabase.saveChatReadReceipt(
       chatId,
       now,
       ownerPhoneNumber: phoneNumber,
       synced: false,
     );
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
     try {
       await _groupChats.doc(chatId).set({
         'lastReadAt': {phoneKey: now.toIso8601String()},
@@ -2397,20 +2440,28 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<void> syncPendingReadReceipts({required String phoneNumber}) async {
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
     final chatIds = await _localDatabase.loadUnsyncedReadReceiptChatIds(
       ownerPhoneNumber: phoneNumber,
     );
-    if (chatIds.isEmpty) return;
+    if (chatIds.isEmpty) {
+      return;
+    }
     for (final chatId in chatIds) {
       try {
         final localReadAt = await _localDatabase.loadChatReadReceipt(
           chatId,
           ownerPhoneNumber: phoneNumber,
         );
-        if (localReadAt == null) continue;
+        if (localReadAt == null) {
+          continue;
+        }
         final phoneKey = _phoneKeyFor(phoneNumber);
-        if (phoneKey.isEmpty) continue;
+        if (phoneKey.isEmpty) {
+          continue;
+        }
         await _groupChats.doc(chatId).set({
           'lastReadAt': {phoneKey: localReadAt.toUtc().toIso8601String()},
           'unreadCount': {phoneKey: 0},
@@ -2529,7 +2580,9 @@ class HikerCircleFirebaseRepository {
     final owner = ownerPhoneNumber?.trim().isNotEmpty == true
         ? ownerPhoneNumber!.trim()
         : (await _localDatabase.loadSession())?.phoneNumber.trim() ?? '';
-    if (owner.isEmpty) return;
+    if (owner.isEmpty) {
+      return;
+    }
     final rows = await _localDatabase.loadPendingMessages(
       ownerPhoneNumber: owner,
     );
@@ -2626,10 +2679,14 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<UpcomingHike?> loadUpcomingHikeForChat(String hikeSessionId) async {
-    if (!_firebaseBootstrapResult.isAvailable) return null;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return null;
+    }
     try {
       final doc = await _upcomingHikes.doc(hikeSessionId).get();
-      if (!doc.exists) return null;
+      if (!doc.exists) {
+        return null;
+      }
       return UpcomingHike.fromFirestore(doc.id, doc.data()!);
     } catch (_) {
       return null;
@@ -2998,7 +3055,9 @@ class HikerCircleFirebaseRepository {
         error,
         requestedSessionId: activeHike.sessionId,
       );
-      if (terminalResult != null) return terminalResult;
+      if (terminalResult != null) {
+        return terminalResult;
+      }
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to restore this hike in the cloud.',
       );
@@ -3090,23 +3149,33 @@ class HikerCircleFirebaseRepository {
     String? sessionId,
   }) async {
     final uid = _captureAccountUid(session);
-    if (uid == null) return;
+    if (uid == null) {
+      return;
+    }
     const native = ActiveHikeLiveStatusService();
     final sessions = sessionId == null
         ? await native.getNativeLocationBufferSessions().timeout(
             _firebaseWriteTimeout,
           )
         : [sessionId];
-    if (!_accountStillMatches(session, uid)) return;
+    if (!_accountStillMatches(session, uid)) {
+      return;
+    }
     for (final id in sessions) {
       final seen = <String>{};
       while (true) {
-        if (!_accountStillMatches(session, uid)) return;
+        if (!_accountStillMatches(session, uid)) {
+          return;
+        }
         final rows = await native
             .getPendingNativeLocationSamples(id)
             .timeout(_firebaseWriteTimeout);
-        if (!_accountStillMatches(session, uid)) return;
-        if (rows.isEmpty) break;
+        if (!_accountStillMatches(session, uid)) {
+          return;
+        }
+        if (rows.isEmpty) {
+          break;
+        }
         final transferred = <String>[];
         for (final row in rows) {
           final lat = row['latitude'];
@@ -3119,9 +3188,15 @@ class HikerCircleFirebaseRepository {
               sampleId is! String) {
             continue;
           }
-          if (row['ownerUid'] != null && row['ownerUid'] != uid) continue;
-          if (!seen.add(sampleId)) continue;
-          if (!_accountStillMatches(session, uid)) return;
+          if (row['ownerUid'] != null && row['ownerUid'] != uid) {
+            continue;
+          }
+          if (!seen.add(sampleId)) {
+            continue;
+          }
+          if (!_accountStillMatches(session, uid)) {
+            return;
+          }
           await _localDatabase.insertLocationPoint(
             ownerPhoneNumber: session.phoneNumber,
             sessionId: id,
@@ -3144,12 +3219,18 @@ class HikerCircleFirebaseRepository {
           );
           transferred.add(sampleId);
         }
-        if (transferred.isEmpty) break;
-        if (!_accountStillMatches(session, uid)) return;
+        if (transferred.isEmpty) {
+          break;
+        }
+        if (!_accountStillMatches(session, uid)) {
+          return;
+        }
         await native
             .acknowledgeNativeLocationSamples(id, transferred)
             .timeout(_firebaseWriteTimeout);
-        if (rows.length < 500) break;
+        if (rows.length < 500) {
+          break;
+        }
       }
     }
   }
@@ -3215,7 +3296,9 @@ class HikerCircleFirebaseRepository {
   }) {
     final key = '${session.phoneNumber}:${activeHike.sessionId}';
     final pending = _locationUploads[key];
-    if (pending != null) return pending;
+    if (pending != null) {
+      return pending;
+    }
     final future = _flushLocationPoints(
       session: session,
       activeHike: activeHike,
@@ -3248,7 +3331,9 @@ class HikerCircleFirebaseRepository {
     final cutoff = DateTime.now().toUtc();
     try {
       while (true) {
-        if (!_accountStillMatches(session, uid)) break;
+        if (!_accountStillMatches(session, uid)) {
+          break;
+        }
         final points =
             (await _localDatabase.loadUnsentLocationPoints(
                   sessionId: activeHike.sessionId,
@@ -3261,7 +3346,9 @@ class HikerCircleFirebaseRepository {
                       !p.recordedAt.isAfter(cutoff),
                 )
                 .toList();
-        if (points.isEmpty || !_accountStillMatches(session, uid)) break;
+        if (points.isEmpty || !_accountStillMatches(session, uid)) {
+          break;
+        }
         final response = await _resolvedFunctions
             .httpsCallable('recordHikeLocationBatch')
             .call({
@@ -3288,7 +3375,9 @@ class HikerCircleFirebaseRepository {
                   .toList(),
             })
             .timeout(_firebaseWriteTimeout);
-        if (!_accountStillMatches(session, uid)) break;
+        if (!_accountStillMatches(session, uid)) {
+          break;
+        }
         final acked = acknowledgedLocationSampleTimes(
           response.data,
           sessionId: activeHike.sessionId,
@@ -3299,11 +3388,15 @@ class HikerCircleFirebaseRepository {
         final committed = points
             .where((p) => acked.contains(p.recordedAt.millisecondsSinceEpoch))
             .toList();
-        if (committed.isEmpty) break;
+        if (committed.isEmpty) {
+          break;
+        }
         await _localDatabase.markLocationPointsSynced(
           committed.map((p) => p.id),
         );
-        if (!_accountStillMatches(session, uid)) break;
+        if (!_accountStillMatches(session, uid)) {
+          break;
+        }
         await const ActiveHikeLiveStatusService()
             .markNativeLocationSamplesCloudAcknowledged(
               activeHike.sessionId,
@@ -3312,7 +3405,9 @@ class HikerCircleFirebaseRepository {
                   .toList(),
             )
             .timeout(_firebaseWriteTimeout);
-        if (committed.length != points.length) break;
+        if (committed.length != points.length) {
+          break;
+        }
       }
     } catch (_) {
       // No committed response means retry later, including an uncertain commit.
@@ -3324,12 +3419,16 @@ class HikerCircleFirebaseRepository {
   }
 
   Future<void> flushSyncOutbox({required AppSession session}) async {
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
     final operations = await _localDatabase.loadDueSyncOperations(
       ownerPhoneNumber: session.phoneNumber,
     );
     for (final operation in operations) {
-      if (operation.entityType != 'active_hike_check_in') continue;
+      if (operation.entityType != 'active_hike_check_in') {
+        continue;
+      }
       try {
         await _resolvedFunctions
             .httpsCallable('recordActiveHikeCheckIn')
@@ -3358,7 +3457,9 @@ class HikerCircleFirebaseRepository {
     required HikeCoordinate coordinate,
     required double distanceMeters,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return;
+    }
     if (activeHike.teamHikeSessionId.isNotEmpty) {
       await _manageTeamHikeAction(
         action: 'pathDeviation',
@@ -3419,12 +3520,18 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
     int limit = 20,
   }) {
-    if (!_firebaseBootstrapResult.isAvailable) return Future.value(0);
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return Future.value(0);
+    }
     final uid = _captureAccountUid(session);
-    if (uid == null) return Future.value(0);
+    if (uid == null) {
+      return Future.value(0);
+    }
     final key = '${session.phoneNumber}:$uid';
     final pending = _pendingEndUploads[key];
-    if (pending != null) return pending;
+    if (pending != null) {
+      return pending;
+    }
     final future = _flushPendingHikeEnds(
       session: session,
       limit: limit,
@@ -3439,7 +3546,9 @@ class HikerCircleFirebaseRepository {
     required int limit,
     required String uid,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return 0;
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return 0;
+    }
     _requireSameAccount(session, uid);
     await drainNativeLocationSamples(session: session);
     _requireSameAccount(session, uid);
@@ -3620,7 +3729,9 @@ class HikerCircleFirebaseRepository {
         error,
         requestedSessionId: activeHike.sessionId,
       );
-      if (terminalResult != null) return terminalResult;
+      if (terminalResult != null) {
+        return terminalResult;
+      }
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to complete this hike in the cloud.',
       );
@@ -3674,32 +3785,33 @@ class HikerCircleFirebaseRepository {
     required String severity,
     SosTriggerLocation? location,
     String? reportId,
+    List<PendingCautionMedia> media = const [],
   }) async {
     _throwIfFirebaseUnavailable();
-
-    final now = DateTime.now().toUtc();
-    final document = _hazardReports.doc(reportId);
-    await document
-        .set({
-          'hazardId': document.id,
-          'trailId': trail.trailId,
-          'trailName': trail.name,
-          'reportedBy': _userIdFor(session),
-          'reportedByPhoneNumber': session.phoneNumber,
-          'hazardType': hazardType,
-          'description': description.trim(),
-          'severity': severity.toLowerCase(),
-          if (location != null) ...{
-            'latitude': location.latitude,
-            'longitude': location.longitude,
-            'location': location.toFirestore(),
-          },
-          'status': 'unverified',
-          'reportLabel': 'Community Report - Not Officially Verified',
-          'reportedAt': FieldValue.serverTimestamp(),
-          'reportedAtLocal': now.toIso8601String(),
-        })
-        .timeout(_firebaseWriteTimeout);
+    if (location?.hasValidPosition != true) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'A current GPS location is needed.',
+      );
+    }
+    final hazardId =
+        reportId ?? 'report_${DateTime.now().microsecondsSinceEpoch}';
+    try {
+      final uploaded = await TrailCautionService().upload(hazardId, media);
+      await _resolvedFunctions.httpsCallable('submitTrailCaution').call({
+        'hazardId': hazardId,
+        'trailId': trail.trailId,
+        'trailName': trail.name,
+        'hazardType': hazardType,
+        'description': description.trim(),
+        'latitude': location!.latitude,
+        'longitude': location.longitude,
+        'media': uploaded,
+      });
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Unable to submit this caution.',
+      );
+    }
   }
 
   /// A locally ended hike remains shareable while completion is queued. Retry
@@ -4026,6 +4138,33 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  Future<Map<String, dynamic>> loadAdminDashboardAnalytics({
+    required AppSession session,
+    bool forceRefresh = false,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable(
+            'getAdminDashboardAnalytics',
+            options: HttpsCallableOptions(
+              timeout: const Duration(seconds: 120),
+            ),
+          )
+          .call({'forceRefresh': forceRefresh});
+      if (response.data is! Map) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'Statistics returned an invalid response.',
+        );
+      }
+      return Map<String, dynamic>.from(response.data as Map);
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ?? 'Statistics could not load. Refresh to retry.',
+      );
+    }
+  }
+
   Future<List<Trail>> loadAdminTrails({required AppSession session}) async {
     _throwIfAdminUnavailable(session);
     try {
@@ -4078,27 +4217,244 @@ class HikerCircleFirebaseRepository {
         ? _newTrailId(trail.name)
         : trail.trailId;
     final trailToSave = trail.copyWith(trailId: trailId);
-    await _saveTrailWithGeometry(trailToSave, {
-      ...trailToSave.toFirestore(),
-      'ratingAverage': 0,
-      'ratingCount': 0,
-      'ratingSum': 0,
-      'difficultyVoteCounts': const {'easy': 0, 'moderate': 0, 'hard': 0},
-      'difficultyRatingCount': 0,
-      'createdByAdminId': _userIdFor(session),
-      'createdByAdminPhoneNumber': session.phoneNumber,
-      'createdAt': FieldValue.serverTimestamp(),
-      'createdAtLocal': DateTime.now().toUtc().toIso8601String(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+    await _saveTrailWithGeometry(
+      trailToSave,
+      _adminTrailCreationData(session, trailToSave),
+    );
+  }
+
+  Map<String, dynamic> _adminTrailCreationData(
+    AppSession session,
+    Trail trail,
+  ) => {
+    ...trail.toFirestore(),
+    'ratingAverage': 0,
+    'ratingCount': 0,
+    'ratingSum': 0,
+    'difficultyVoteCounts': const {'easy': 0, 'moderate': 0, 'hard': 0},
+    'difficultyRatingCount': 0,
+    'createdByAdminId': _userIdFor(session),
+    'createdByAdminPhoneNumber': session.phoneNumber,
+    'createdAt': FieldValue.serverTimestamp(),
+    'createdAtLocal': DateTime.now().toUtc().toIso8601String(),
+    'updatedAt': FieldValue.serverTimestamp(),
+    'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+  };
+
+  Future<void> approveRecordedTrailRequest({
+    required AppSession session,
+    required String requestId,
+    required Trail trail,
+    required List<HikeCoordinate> points,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    final geometry = TrailGeometryStorage.fromCoordinates([
+      for (final p in points)
+        {
+          'lat': p.latitude,
+          'lon': p.longitude,
+          if (p.altitudeMeters?.isFinite == true) 'ele': p.altitudeMeters!,
+        },
+    ]);
+    final saved = trail.copyWith(
+      trailId: 'trail_request_$requestId',
+      routeEncodedPolyline: geometry.encodedPolyline,
+      routeCheckpointsHash: HikingRouteService.checkpointsHash(
+        trail.checkpoints,
+      ),
+      routeProvider: 'stored-polyline',
+    );
+    await _saveTrailWithGeometry(
+      saved,
+      _adminTrailCreationData(session, saved),
+      recordedGeometry: geometry,
+      trailRequestId: requestId,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> loadAdminTrailRequests({
+    required AppSession session,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    final query = await _resolvedFirestore
+        .collection('trailRequests')
+        .where('status', isEqualTo: 'pending')
+        .get();
+    final rows = query.docs
+        .map((d) => {'requestId': d.id, ...d.data()})
+        .toList();
+    rows.sort(
+      (a, b) => ((b['submittedAtMillis'] as num?) ?? 0).compareTo(
+        (a['submittedAtMillis'] as num?) ?? 0,
+      ),
+    );
+    return rows;
+  }
+
+  Future<List<HikeCoordinate>> loadRecordedTrailRequestPoints({
+    required AppSession session,
+    required String requestId,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    final ref = _resolvedFirestore.collection('trailRequests').doc(requestId);
+    final meta = await ref.get();
+    final chunks = await ref.collection('routeChunks').orderBy('index').get();
+    final raw = <Map<String, dynamic>>[
+      for (final chunk in chunks.docs) ..._listOfMaps(chunk.data()['points']),
+    ];
+    if (raw.length != meta.data()?['pointCount'] ||
+        _recordedRequestHash(raw) != meta.data()?['routeHash']) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The recorded route is incomplete. Refresh before reviewing.',
+      );
+    }
+    return [
+      for (final p in raw)
+        HikeCoordinate(
+          latitude: _doubleFrom(p['lat']),
+          longitude: _doubleFrom(p['lon']),
+          capturedAt: DateTime.parse(p['time'] as String),
+          accuracyMeters: (p['accuracyMeters'] as num?)?.toDouble(),
+          altitudeMeters: (p['altitudeMeters'] as num?)?.toDouble(),
+        ),
+    ];
+  }
+
+  Future<void> rejectRecordedTrailRequest({
+    required AppSession session,
+    required String requestId,
+    required String note,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    await _resolvedFirestore.collection('trailRequests').doc(requestId).update({
+      'status': 'rejected',
+      'reviewNote': note.trim(),
+      'reviewedAt': FieldValue.serverTimestamp(),
+      'reviewedAtLocal': DateTime.now().toUtc().toIso8601String(),
+      'reviewedByAdminId': _userIdFor(session),
     });
+  }
+
+  String _recordedRequestHash(List<Map<String, dynamic>> points) => crypto
+      .sha256
+      .convert(
+        utf8.encode(
+          points
+              .map(
+                (p) =>
+                    '${(p['lat'] as num).toStringAsFixed(8)},${(p['lon'] as num).toStringAsFixed(8)},${p['time']}',
+              )
+              .join('\n'),
+        ),
+      )
+      .toString();
+
+  Future<Map<String, dynamic>> _recordedTrailCallable(
+    String name,
+    Map<String, dynamic> data, {
+    int timeoutSeconds = 30,
+  }) async {
+    try {
+      final response = await _resolvedFunctions
+          .httpsCallable(
+            name,
+            options: HttpsCallableOptions(
+              timeout: Duration(seconds: timeoutSeconds),
+            ),
+          )
+          .call(data);
+      if (response.data is! Map) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'The trail request response was incomplete. Retry to recover the saved request.',
+        );
+      }
+      return Map<String, dynamic>.from(response.data as Map);
+    } on FirebaseFunctionsException catch (error) {
+      throw HikerCircleFirebaseRepositoryException(
+        error.message ??
+            'The trail request could not sync. Reconnect and retry.',
+      );
+    }
+  }
+
+  Future<String> submitRecordedTrailRequest({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    required HikeSummaryReport report,
+    required Map<String, String> proposed,
+    required List<Map<String, dynamic>> checkpointSelections,
+    ValueChanged<double>? onProgress,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    final uid = FirebaseBootstrap.requireAuthenticatedUser().uid;
+    _requireSameAccount(session, uid);
+    final points = HikeSummaryReport.recordedRoutePointsFor(activeHike);
+    final raw = [
+      for (final p in points)
+        <String, dynamic>{
+          'lat': p.latitude,
+          'lon': p.longitude,
+          'time': p.capturedAt.toUtc().toIso8601String(),
+          if (p.altitudeMeters?.isFinite == true)
+            'altitudeMeters': p.altitudeMeters,
+          if (p.accuracyMeters?.isFinite == true)
+            'accuracyMeters': p.accuracyMeters,
+        },
+    ];
+    final completion = await _completeActiveHikeSession(
+      activeHike: activeHike,
+      endedAt: report.endedAt,
+      summary: report,
+    );
+    _requireSameAccount(session, uid);
+    if (!completion.completed) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Your hike completion must sync before this route can be submitted. Your GPS track remains saved on this phone.',
+      );
+    }
+    final data = await _recordedTrailCallable('beginRecordedTrailRequest', {
+      'sessionId': completion.sessionId,
+      'pointCount': points.length,
+      'routeHash': _recordedRequestHash(raw),
+      'proposed': proposed,
+      'checkpoints': checkpointSelections,
+    });
+    final id = data['requestId'] as String;
+    if (data['status'] == 'pending' || data['status'] == 'approved') {
+      return id;
+    }
+    if (data['status'] != 'uploading') {
+      throw const HikerCircleFirebaseRepositoryException(
+        'This hike already has a reviewed trail request.',
+      );
+    }
+    final ref = _resolvedFirestore.collection('trailRequests').doc(id);
+    for (var offset = 0; offset < raw.length; offset += 5000) {
+      _requireSameAccount(session, uid);
+      final batch = _resolvedFirestore.batch();
+      for (var i = offset; i < raw.length && i < offset + 5000; i += 500) {
+        batch.set(ref.collection('routeChunks').doc('${i ~/ 500}'), {
+          'index': i ~/ 500,
+          'points': raw.sublist(i, math.min(i + 500, raw.length)),
+        });
+      }
+      await batch.commit().timeout(const Duration(seconds: 30));
+      onProgress?.call(math.min(offset + 5000, raw.length) / raw.length);
+    }
+    _requireSameAccount(session, uid);
+    await _recordedTrailCallable('finalizeRecordedTrailRequest', {
+      'requestId': id,
+    }, timeoutSeconds: 120);
+    return id;
   }
 
   /// Commit the main route and full coordinates together, or neither.
   Future<void> _saveTrailWithGeometry(
     Trail trail,
-    Map<String, dynamic> trailData,
-  ) async {
+    Map<String, dynamic> trailData, {
+    TrailGeometryStorage? recordedGeometry,
+    String? trailRequestId,
+  }) async {
     final encoded = trail.routeEncodedPolyline?.trim() ?? '';
     if (encoded.isEmpty ||
         !HikingRouteService.savedRouteMatchesCheckpoints(trail)) {
@@ -4108,7 +4464,7 @@ class HikerCircleFirebaseRepository {
     }
     late TrailGeometryStorage geometry;
     try {
-      geometry = TrailGeometryStorage.fromPolyline(encoded);
+      geometry = recordedGeometry ?? TrailGeometryStorage.fromPolyline(encoded);
     } catch (_) {
       throw const HikerCircleFirebaseRepositoryException(
         'The route geometry is invalid or too large. Refetch the route before saving.',
@@ -4116,7 +4472,24 @@ class HikerCircleFirebaseRepository {
     }
     final reference = _trails.doc(trail.trailId);
     await _resolvedFirestore.runTransaction((transaction) async {
+      final requestReference = trailRequestId == null
+          ? null
+          : _resolvedFirestore.collection('trailRequests').doc(trailRequestId);
+      if (requestReference != null) {
+        final request = await transaction.get(requestReference);
+        if (!request.exists || request.data()?['status'] != 'pending') {
+          throw const HikerCircleFirebaseRepositoryException(
+            'This trail request has already been reviewed.',
+          );
+        }
+      }
       final existing = await transaction.get(reference);
+      if (requestReference != null && existing.exists) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'A trail already exists for this request. Refresh before reviewing.',
+        );
+      }
+      var writeGeometry = false;
       final previous = existing.data();
       final previousMetadata = previous?['routeGeometryMetadata'];
       final priorPath = previousMetadata is Map
@@ -4149,11 +4522,28 @@ class HikerCircleFirebaseRepository {
           metadata = Map<String, dynamic>.from(previousMetadata);
         } else {
           metadata = geometry.metadata(geometryReference.path, now);
+          writeGeometry = true;
           transaction.set(geometryReference, geometry.document(now));
         }
       } else {
         metadata = geometry.metadata(geometryReference.path, now);
+        writeGeometry = true;
         transaction.set(geometryReference, geometry.document(now));
+      }
+      for (var i = 0; writeGeometry && i < geometry.chunks.length; i++) {
+        transaction.set(geometryReference.collection('chunks').doc('$i'), {
+          'index': i,
+          'points': geometry.chunks[i],
+        });
+      }
+      if (requestReference != null) {
+        transaction.update(requestReference, {
+          'status': 'approved',
+          'publishedTrailId': trail.trailId,
+          'reviewedByAdminId': trailData['createdByAdminId'],
+          'reviewedAt': FieldValue.serverTimestamp(),
+          'reviewedAtLocal': now,
+        });
       }
       transaction.set(reference, {
         ...trailData,
@@ -4336,6 +4726,72 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  Future<List<Map<String, dynamic>>> loadMoreAdminCommunityPosts({
+    required AppSession session,
+    required String afterPostId,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    final cursor = await _communityPosts.doc(afterPostId).get();
+    if (!cursor.exists) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'The last post changed. Refresh the list before loading more.',
+      );
+    }
+    final page = await _communityPosts
+        .orderBy('createdAtLocal', descending: true)
+        .startAfterDocument(cursor)
+        .limit(50)
+        .get();
+    return page.docs.map((doc) => {'postId': doc.id, ...doc.data()}).toList();
+  }
+
+  Future<void> editAdminCommunityPost({
+    required AppSession session,
+    required Map<String, dynamic> original,
+    required String caption,
+    required List<String> imageUrls,
+  }) async {
+    _throwIfAdminUnavailable(session);
+    final postId = _stringFrom(original['postId']);
+    if (postId.isEmpty || caption.length > 5000) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Invalid post details.',
+      );
+    }
+    final originalImages = List<String>.from(
+      original['imageUrls'] as List? ?? const [],
+    );
+    if (imageUrls.any((url) => !originalImages.contains(url))) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Only existing post photos can be retained.',
+      );
+    }
+    await _resolvedFirestore.runTransaction((transaction) async {
+      final ref = _communityPosts.doc(postId);
+      final snapshot = await transaction.get(ref);
+      final current = snapshot.data();
+      if (current == null ||
+          current['caption'] != original['caption'] ||
+          !listEquals(
+            List<String>.from(current['imageUrls'] as List? ?? const []),
+            originalImages,
+          )) {
+        throw const HikerCircleFirebaseRepositoryException(
+          'This post changed. Refresh it before editing again.',
+        );
+      }
+      transaction.update(ref, {
+        'caption': caption.trim(),
+        'imageUrls': imageUrls,
+        'moderatedByAdminId': _userIdFor(session),
+        'moderatedByAdminPhoneNumber': session.phoneNumber,
+        'moderatedAt': FieldValue.serverTimestamp(),
+        'moderatedAtLocal': DateTime.now().toUtc().toIso8601String(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
   Future<void> moderateCommunityPost({
     required AppSession session,
     required String postId,
@@ -4391,14 +4847,18 @@ class HikerCircleFirebaseRepository {
   Future<String> loadAchievementProgressHash({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return '';
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return '';
+    }
     try {
       final response = await _resolvedFunctions
           .httpsCallable('getMyAchievementProgressHash')
           .call()
           .timeout(_firebaseReadTimeout);
       final data = response.data;
-      if (data is! Map) return '';
+      if (data is! Map) {
+        return '';
+      }
       return _stringFrom(data['hash']);
     } catch (_) {
       return '';
@@ -4470,7 +4930,9 @@ class HikerCircleFirebaseRepository {
   Future<List<Map<String, dynamic>>> loadCommunityPostsForUser({
     required AppSession session,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const [];
+    }
     try {
       final snapshot = await _communityPosts
           .where('authorPhoneNumber', isEqualTo: session.phoneNumber.trim())
@@ -4494,7 +4956,9 @@ class HikerCircleFirebaseRepository {
   Future<List<Map<String, dynamic>>> loadAchievementLeaderboard({
     String period = 'month',
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable) return const [];
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return const [];
+    }
     try {
       final response = await _resolvedFunctions
           .httpsCallable('loadAchievementLeaderboard')
@@ -4544,12 +5008,16 @@ class HikerCircleFirebaseRepository {
       );
       return parseHikeHistoryList(response.data);
     } on FirebaseFunctionsException catch (error) {
-      if (cached != null) return parseHikeHistoryList(cached.payload);
+      if (cached != null) {
+        return parseHikeHistoryList(cached.payload);
+      }
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to load your hike history.',
       );
     } on TimeoutException {
-      if (cached != null) return parseHikeHistoryList(cached.payload);
+      if (cached != null) {
+        return parseHikeHistoryList(cached.payload);
+      }
       throw const HikerCircleFirebaseRepositoryException(
         'Unable to load your hike history.',
       );
@@ -4574,7 +5042,9 @@ class HikerCircleFirebaseRepository {
       includeExpired: true,
     );
     if (!_firebaseBootstrapResult.isAvailable) {
-      if (cached != null) return parseHikeHistoryDetail(cached.payload);
+      if (cached != null) {
+        return parseHikeHistoryDetail(cached.payload);
+      }
       throw const HikerCircleFirebaseRepositoryException(
         'This hike has not been cached on this device yet.',
       );
@@ -4596,12 +5066,16 @@ class HikerCircleFirebaseRepository {
       );
       return parseHikeHistoryDetail(response.data);
     } on FirebaseFunctionsException catch (error) {
-      if (cached != null) return parseHikeHistoryDetail(cached.payload);
+      if (cached != null) {
+        return parseHikeHistoryDetail(cached.payload);
+      }
       throw HikerCircleFirebaseRepositoryException(
         error.message ?? 'Unable to load this completed hike.',
       );
     } on TimeoutException {
-      if (cached != null) return parseHikeHistoryDetail(cached.payload);
+      if (cached != null) {
+        return parseHikeHistoryDetail(cached.payload);
+      }
       throw const HikerCircleFirebaseRepositoryException(
         'Unable to load this completed hike.',
       );
@@ -4865,11 +5339,15 @@ class HikerCircleFirebaseRepository {
   Future<List<GroupChat>> _hydrateGroupChatsWithPhotos(
     List<GroupChat> chats,
   ) async {
-    if (chats.isEmpty) return chats;
+    if (chats.isEmpty) {
+      return chats;
+    }
     final resolved = await _photoURLsForPhones(
       chats.expand((chat) => chat.participantPhones),
     );
-    if (resolved.isEmpty) return chats;
+    if (resolved.isEmpty) {
+      return chats;
+    }
     return chats
         .map(
           (chat) => chat.copyWith(
@@ -4934,8 +5412,12 @@ class HikerCircleFirebaseRepository {
       if (value == null || value is String || value is num || value is bool) {
         return value;
       }
-      if (value is Timestamp) return value.toDate().toUtc().toIso8601String();
-      if (value is DateTime) return value.toUtc().toIso8601String();
+      if (value is Timestamp) {
+        return value.toDate().toUtc().toIso8601String();
+      }
+      if (value is DateTime) {
+        return value.toUtc().toIso8601String();
+      }
       if (value is GeoPoint) {
         return {'latitude': value.latitude, 'longitude': value.longitude};
       }
@@ -4944,7 +5426,9 @@ class HikerCircleFirebaseRepository {
           (key, nested) => MapEntry(key.toString(), convert(nested)),
         );
       }
-      if (value is Iterable) return value.map(convert).toList();
+      if (value is Iterable) {
+        return value.map(convert).toList();
+      }
       return value.toString();
     }
 
@@ -5643,9 +6127,15 @@ class HikerCircleFirebaseRepository {
 
   String _contentTypeForFileName(String fileName) {
     final lower = fileName.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.webp')) return 'image/webp';
-    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (lower.endsWith('.gif')) {
+      return 'image/gif';
+    }
     if (lower.endsWith('.heic') || lower.endsWith('.heif')) {
       return 'image/heic';
     }

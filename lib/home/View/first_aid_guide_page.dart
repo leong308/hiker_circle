@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -388,48 +389,11 @@ class _Header extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'First-Aid Guide',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _GuideColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-              Text(
-                'Scenario-based emergency guidance',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _GuideColors.secondaryTextFor(context),
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => PageHeader(
+    title: 'First-Aid Guide',
+    subtitle: 'Scenario-based emergency guidance',
+    onBack: onBack,
+  );
 }
 
 class _FirstAidCategoryPage extends StatelessWidget {
@@ -1411,49 +1375,8 @@ class _DetailHeader extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _GuideColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _GuideColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: title, subtitle: subtitle, onBack: onBack);
 }
 
 class _EmergencyShortcut extends StatelessWidget {
@@ -1566,24 +1489,7 @@ class _InfoPill extends StatelessWidget {
   }
 }
 
-class _CircleIcon extends StatelessWidget {
-  const _CircleIcon({required this.icon});
 
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: _GuideColors.surfaceFor(context),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: _GuideColors.green, size: 20),
-    );
-  }
-}
 
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon, this.color = _GuideColors.green});

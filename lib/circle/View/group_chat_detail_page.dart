@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -1167,11 +1168,8 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: _bgFor(context),
-      appBar: AppBar(
+      appBar: PageHeaderAppBar(
         backgroundColor: _surfaceFor(context),
-        elevation: 0,
-        scrolledUnderElevation: 0.5,
-        surfaceTintColor: Colors.transparent,
         title: _isSearching
             ? Row(
                 children: [
@@ -2461,9 +2459,8 @@ class _SharedMediaPageState extends State<_SharedMediaPage>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: isDark ? _darkBackground : _background,
-      appBar: AppBar(
+      appBar: PageHeaderAppBar(
         backgroundColor: isDark ? _darkSurface : Colors.white,
-        surfaceTintColor: Colors.transparent,
         title: Text(
           'Media, links, docs',
           style: TextStyle(

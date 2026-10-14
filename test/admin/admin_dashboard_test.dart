@@ -16,6 +16,19 @@ class DashboardTestRepository extends HikerCircleFirebaseRepository {
   final bool fail;
   int loads = 0;
   @override
+  Future<Map<String, dynamic>> loadAdminDashboardAnalytics({
+    required AppSession session,
+    bool forceRefresh = false,
+  }) async {
+    if (fail) throw Exception('Offline');
+    return {
+      'totals': {'users': 12, 'trails': 2, 'posts': 1},
+      'safety': {'pendingHazards': 1},
+      'generatedAtMillis': 1791792000000,
+    };
+  }
+
+  @override
   Future<List<Trail>> loadAdminTrails({required AppSession session}) async {
     loads++;
     if (fail) throw Exception('Offline');
@@ -58,7 +71,7 @@ class DashboardTestRepository extends HikerCircleFirebaseRepository {
   }) async => [
     {
       'postId': 'a',
-      'content': 'Morning on Penang Hill',
+      'caption': 'Morning on Penang Hill',
       'visibility': 'public',
     },
   ];
@@ -109,7 +122,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(dashboardTestApp());
       await tester.pumpAndSettle();
-      expect(find.text('1 safety report needs review'), findsOneWidget);
+      expect(find.text('Registered users'), findsOneWidget);
       expect(find.text('HikerCircle is operational'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('admin-nav-trails')));
       await tester.pumpAndSettle();
@@ -173,6 +186,28 @@ void main() {
       },
     );
   }
+
+  testWidgets('moderation shows flags separately from post management', (
+    tester,
+  ) async {
+    await tester.pumpWidget(dashboardTestApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('admin-nav-community')));
+    await tester.pumpAndSettle();
+    expect(find.text('Morning on Penang Hill'), findsNothing);
+    expect(find.text('Approve'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+    await tester.ensureVisible(find.text('Manage community posts'));
+    await tester.tap(find.text('Manage community posts'));
+    await tester.pumpAndSettle();
+    expect(find.text('Community posts'), findsOneWidget);
+    expect(find.text('Morning on Penang Hill'), findsOneWidget);
+    expect(find.text('Edit post'), findsOneWidget);
+    expect(find.text('Approve'), findsNothing);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Morning on Penang Hill'), findsNothing);
+  });
 
   testWidgets('load error does not claim a healthy empty queue', (
     tester,

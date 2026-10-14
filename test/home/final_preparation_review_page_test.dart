@@ -20,6 +20,7 @@ Future<void> openPage(
   Future<void> Function(PlannedHike)? save,
   PlannedHike? initialPlan,
   ValueChanged<PlannedHike>? ready,
+  ValueChanged<String?>? onFinished,
   Future<TrailWeather> Function()? weather,
   Future<RouteGearAssessment> Function(bool)? route,
   List<EmergencyContact> contacts = const [],
@@ -49,30 +50,32 @@ Future<void> openPage(
       home: Scaffold(
         body: Builder(
           builder: (context) => TextButton(
-            onPressed: () => Navigator.of(context).push<String>(
-              MaterialPageRoute(
-                builder: (_) => FinalPreparationReviewPage(
-                  hike: hike,
-                  isHost: host,
-                  canStart: host || joiningTeam,
-                  primaryActionLabel: joiningTeam
-                      ? 'Continue to team readiness'
-                      : null,
-                  plan: plan,
-                  onCancel: cancel,
-                  onPlanChanged: save,
-                  onReady: ready,
-                  loadWeather: weather,
-                  loadRouteAnalysis: route,
-                  initialContacts: contacts,
-                  loadContacts: loadContacts,
-                  onEditContacts: editContacts,
-                  loadBatteryLevel: battery,
-                  loadSharing: loadSharing,
-                  saveSharing: saveSharing,
-                ),
-              ),
-            ),
+            onPressed: () => Navigator.of(context)
+                .push<String>(
+                  MaterialPageRoute(
+                    builder: (_) => FinalPreparationReviewPage(
+                      hike: hike,
+                      isHost: host,
+                      canStart: host || joiningTeam,
+                      primaryActionLabel: joiningTeam
+                          ? 'Continue to team readiness'
+                          : null,
+                      plan: plan,
+                      onCancel: cancel,
+                      onPlanChanged: save,
+                      onReady: ready,
+                      loadWeather: weather,
+                      loadRouteAnalysis: route,
+                      initialContacts: contacts,
+                      loadContacts: loadContacts,
+                      onEditContacts: editContacts,
+                      loadBatteryLevel: battery,
+                      loadSharing: loadSharing,
+                      saveSharing: saveSharing,
+                    ),
+                  ),
+                )
+                .then((result) => onFinished?.call(result)),
             child: const Text('Open'),
           ),
         ),
@@ -180,6 +183,143 @@ Future<void> openCancelMenu(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'one Start hike tap survives a conditions refresh beginning during the tap',
+    (tester) async {
+      final refresh = Completer<TrailWeather>();
+      var weatherCalls = 0, starts = 0;
+      String? result;
+      final oldWeather = TrailWeather(
+        summary: '',
+        temperatureRange: '',
+        rainProbability: 0,
+        cachedAt: DateTime.now().subtract(const Duration(minutes: 20)),
+      );
+      final base = testPlan(packed: true);
+      await openPage(
+        tester,
+        initialPlan: base.copyWith(
+          trail: base.trail.copyWith(weather: oldWeather),
+        ),
+        save: (_) async {},
+        ready: (_) => starts++,
+        onFinished: (value) => result = value,
+        weather: () => ++weatherCalls == 1
+            ? Future.error(StateError('Weather refresh failed'))
+            : refresh.future,
+        route: (_) => Future.error(StateError('Route unavailable')),
+      );
+      await tester.pumpAndSettle();
+      await finishGuide(tester);
+      final button = find.byKey(const ValueKey('preparation-continue'));
+      await tester.ensureVisible(button);
+      final originalStart = continueButton(tester).onPressed!;
+      final gesture = await tester.startGesture(tester.getCenter(button));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await gesture.up();
+      originalStart();
+      originalStart();
+      await tester.pump();
+      expect(weatherCalls, 2);
+      expect(starts, 0);
+      refresh.completeError(StateError('Weather refresh failed'));
+      await tester.pumpAndSettle();
+      expect(starts, 1);
+      expect(result, 'start');
+      expect(find.byType(FinalPreparationReviewPage), findsNothing);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'a queued start still requires new gear from the latest forecast',
+    (tester) async {
+      final refresh = Completer<TrailWeather>();
+      var weatherCalls = 0;
+      PlannedHike? reviewed;
+      final base = testPlan(packed: true);
+      final oldWeather = TrailWeather(
+        summary: '',
+        temperatureRange: '',
+        rainProbability: 0,
+        cachedAt: DateTime.now().subtract(const Duration(minutes: 20)),
+      );
+      await openPage(
+        tester,
+        initialPlan: base.copyWith(
+          trail: base.trail.copyWith(weather: oldWeather),
+        ),
+        save: (_) async {},
+        ready: (value) => reviewed = value,
+        weather: () => ++weatherCalls == 1
+            ? Future.error(StateError('Weather unavailable'))
+            : refresh.future,
+      );
+      await tester.pumpAndSettle();
+      await finishGuide(tester);
+      final button = find.byKey(const ValueKey('preparation-continue'));
+      final gesture = await tester.startGesture(tester.getCenter(button));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await gesture.up();
+      await tester.pump();
+      final forecast = fixtures.testForecast(base.plannedStartTime);
+      final hourly = forecast.forecastData['hourly'] as Map;
+      hourly['temperature_2m'] = List.filled(96, 14);
+      hourly['precipitation_probability'] = List.filled(96, 0);
+      refresh.complete(forecast);
+      await tester.pumpAndSettle();
+      expect(reviewed, isNull);
+      expect(find.text('Pack 1 missing item'), findsOneWidget);
+      expect(
+        find.textContaining('latest checks require more gear'),
+        findsOneWidget,
+      );
+      await tap(tester, 'Pack 1 missing item');
+      expect(find.text('Emergency blanket'), findsOneWidget);
+      await tap(tester, 'Yes, packed');
+      await tester.tap(find.byKey(const ValueKey('preparation-continue')));
+      await tester.pumpAndSettle();
+      expect(
+        reviewed!.completedChecklistItems,
+        containsAll([
+          'Drinking water',
+          'Energy snack',
+          'First-aid kit',
+          'Emergency blanket',
+        ]),
+      );
+      expect(reviewed!.requiredGearReady, isTrue);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'a failed preparation handoff shows an error and retains the completed pack',
+    (tester) async {
+      var calls = 0;
+      await openPage(
+        tester,
+        initialPlan: testPlan(packed: true),
+        save: (_) async {},
+        ready: (_) {
+          calls++;
+          if (calls == 1) throw StateError('Handoff unavailable');
+        },
+      );
+      await finishGuide(tester);
+      await tester.tap(find.byKey(const ValueKey('preparation-continue')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Your preparation is kept'), findsOneWidget);
+      expect(find.text('Your pack is ready'), findsOneWidget);
+      expect(calls, 1);
+      await tester.tap(find.byKey(const ValueKey('preparation-continue')));
+      await tester.pumpAndSettle();
+      expect(calls, 2);
+      expect(find.byType(FinalPreparationReviewPage), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('rapid repeated start submits the reviewed pack only once', (
     tester,
   ) async {

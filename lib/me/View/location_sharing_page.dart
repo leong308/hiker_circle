@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -230,66 +231,14 @@ class _Header extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
-      child: Row(
-        children: [
-          Tooltip(
-            message: 'Back',
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size.square(36),
-              onPressed: onBack,
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: _LocationColors.surfaceFor(context),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  CupertinoIcons.chevron_back,
-                  color: _LocationColors.green,
-                  size: 20,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Location Sharing',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: _LocationColors.textFor(context),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Live GPS position with map pin',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _LocationColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w400,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+    child: PageHeader(
+      title: 'Location Sharing',
+      subtitle: 'Live GPS position with map pin',
+      onBack: onBack,
+    ),
+  );
 }
 
 class _MapPanel extends StatelessWidget {

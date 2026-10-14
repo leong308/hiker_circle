@@ -73,8 +73,15 @@ void main() {
     await tester.ensureVisible(find.text('Team hike basics'));
     await tester.tap(find.text('Team hike basics'));
     await tester.pumpAndSettle();
-    expect(find.text('Create or join a hike'), findsOneWidget);
-    expect(find.text('Get ready together'), findsOneWidget);
+    expect(find.text('One team. One shared plan.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('team-guide-start')));
+    await tester.pumpAndSettle();
+    expect(find.text('Create or join a hike'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('team-guide-next')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('team-guide-next')));
+    await tester.pumpAndSettle();
+    expect(find.text('Get ready together'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

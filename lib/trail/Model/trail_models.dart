@@ -391,6 +391,10 @@ class Trail {
   final String country;
   final double latitude;
   final double longitude;
+  bool get isUnlisted =>
+      routeProvider == 'recorded-location-hike' &&
+      trailId.startsWith('unlisted_');
+
   final double distanceKm;
   final String difficulty;
   final int estimatedDurationMinutes;

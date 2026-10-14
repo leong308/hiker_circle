@@ -457,6 +457,7 @@ service cloud.firestore {
       match /routeGeometry/{geometryId} {
         allow read: if signedIn();
         allow write: if admin();
+        match /chunks/{chunkId} { allow read: if signedIn(); allow write: if admin(); }
       }
     }
 
@@ -493,13 +494,27 @@ service cloud.firestore {
 
     match /hazardReports/{hazardId} {
       allow read: if signedIn();
+      // Installed older clients may submit their original text-only report.
+      // They cannot manufacture votes, media, resolutions or expiry metadata.
       allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['hazardId','trailId','trailName','reportedBy','reportedByPhoneNumber','hazardType','description','severity','latitude','longitude','location','status','reportLabel','reportedAt','reportedAtLocal'])
         && request.resource.data.hazardId == hazardId
         && request.resource.data.reportedBy == request.auth.uid
         && request.resource.data.reportedByPhoneNumber == phoneNumber()
         && request.resource.data.status == 'unverified'
-        && hasNoHazardReviewFields(request.resource.data);
+        && request.resource.data.reportedAt == request.time
+        && request.resource.data.latitude is number && request.resource.data.latitude >= -90 && request.resource.data.latitude <= 90
+        && request.resource.data.longitude is number && request.resource.data.longitude >= -180 && request.resource.data.longitude <= 180
+        && request.resource.data.description is string && request.resource.data.description.size() <= 1000;
       allow update, delete: if admin();
+      match /updates/{updateId} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
+      match /votes/{voteId} {
+        allow read: if signedIn() && resource.data.uid == request.auth.uid;
+        allow write: if false;
+      }
     }
 
     match /teams/{teamId} {
@@ -564,6 +579,28 @@ service cloud.firestore {
 
     match /hikeSessionTerminalStates/{sessionId} {
       allow read, write: if false;
+    }
+
+    match /trailRequests/{requestId} {
+      allow read: if signedIn() && (admin() || resource.data.ownerId == request.auth.uid);
+      allow create, delete: if false;
+      allow update: if admin() && resource.data.status == 'pending'
+        && request.resource.data.status in ['approved', 'rejected']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+          ['status', 'reviewedAt', 'reviewedAtLocal', 'reviewedByAdminId', 'publishedTrailId', 'reviewNote']);
+      match /routeChunks/{chunkId} {
+        function parentRequest() { return get(/databases/$(database)/documents/trailRequests/$(requestId)); }
+        allow read: if signedIn() && (admin() || parentRequest().data.ownerId == request.auth.uid);
+        allow create, update: if signedIn() && parentRequest().data.ownerId == request.auth.uid
+          && parentRequest().data.status == 'uploading'
+          && request.resource.data.keys().hasOnly(['index','points'])
+          && request.resource.data.index is int && request.resource.data.index >= 0
+          && request.resource.data.index < parentRequest().data.chunkCount
+          && chunkId == string(request.resource.data.index)
+          && request.resource.data.points is list && request.resource.data.points.size() > 0
+          && request.resource.data.points.size() <= 500;
+        allow delete: if false;
+      }
     }
 
     match /communityModerationReviews/{reviewId} {

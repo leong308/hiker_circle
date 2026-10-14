@@ -1055,63 +1055,30 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Circle',
-                  style: PageHeaderStyle.title(
-                    context,
-                    _CircleColors.textFor(context),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Community, buddies, teams',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: PageHeaderStyle.subtitle(
-                    context,
-                    _CircleColors.secondaryTextFor(context),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Tooltip(
-            message: 'Friend requests',
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size.square(44),
+      child: PageHeader(
+        title: 'Circle',
+        subtitle: 'Community, buddies, teams',
+        actions: [
+          Badge(
+            isLabelVisible: requestCount > 0,
+            label: Text(requestCount > 9 ? '9+' : '$requestCount'),
+            child: PageHeaderAction(
+              tooltip: 'Friend requests',
+              icon: Icons.person_add_alt_1_rounded,
               onPressed: onOpenFriendRequests,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const _CircleIcon(icon: Icons.person_add_alt_1_rounded),
-                  if (requestCount > 0)
-                    Positioned(
-                      right: -2,
-                      top: -2,
-                      child: _RequestBadge(count: requestCount),
-                    ),
-                ],
-              ),
+              color: colors.primary,
+              surface: colors.surface,
             ),
           ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: 'Circle settings',
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size.square(44),
-              onPressed: onOpenSettings,
-              child: const _CircleIcon(icon: CupertinoIcons.gear_alt_fill),
-            ),
+          PageHeaderAction(
+            tooltip: 'Circle settings',
+            icon: CupertinoIcons.gear_alt_fill,
+            onPressed: onOpenSettings,
+            color: colors.primary,
+            surface: colors.surface,
           ),
         ],
       ),
@@ -3913,58 +3880,8 @@ class _DetailHeader extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 38,
-          height: 38,
-          decoration: BoxDecoration(
-            color: _CircleColors.surfaceFor(context),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
-            ),
-          ),
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            onPressed: onBack,
-            child: Icon(
-              CupertinoIcons.chevron_back,
-              color: _CircleColors.green,
-              size: 20,
-            ),
-          ),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.title(
-                  context,
-                  _CircleColors.textFor(context),
-                ),
-              ),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.subtitle(
-                  context,
-                  _CircleColors.secondaryTextFor(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: title, subtitle: subtitle, onBack: onBack);
 }
 
 class _Avatar extends StatelessWidget {
@@ -4046,54 +3963,6 @@ class _Avatar extends StatelessWidget {
                 ),
               ),
             ),
-    );
-  }
-}
-
-class _CircleIcon extends StatelessWidget {
-  const _CircleIcon({required this.icon});
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: _CircleColors.surfaceFor(context),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: _CircleColors.green, size: 19),
-    );
-  }
-}
-
-class _RequestBadge extends StatelessWidget {
-  const _RequestBadge({required this.count});
-
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: _CircleColors.red,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _CircleColors.surfaceFor(context), width: 1),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        count > 9 ? '9+' : '$count',
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0,
-        ),
-      ),
     );
   }
 }

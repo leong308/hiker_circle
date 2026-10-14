@@ -138,22 +138,6 @@ class HomeDashboardPage extends StatelessWidget {
   }
 
   Future<void> _startHikeFromDashboard(BuildContext context) async {
-    if (trails.isEmpty) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              isLoadingTrails
-                  ? 'Trails are still loading. Try again shortly.'
-                  : 'No trails are available to start yet.',
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      return;
-    }
-
     await _requestStartHike(context, null);
   }
 
@@ -716,9 +700,7 @@ class _BestMatchesSectionState extends State<_BestMatchesSection>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _BestMatchesHeader(
-          onAddTrailByAdmin: widget.onAddTrailByAdmin,
-        ),
+        _BestMatchesHeader(onAddTrailByAdmin: widget.onAddTrailByAdmin),
         const SizedBox(height: 8),
         Material(
           type: MaterialType.transparency,
@@ -1674,47 +1656,8 @@ class _DetailHeader extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.title(
-                  context,
-                  _HomeColors.textFor(context),
-                ),
-              ),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.subtitle(
-                  context,
-                  _HomeColors.secondaryTextFor(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: title, subtitle: subtitle, onBack: onBack);
 }
 
 class _ActiveHikeDashboard extends StatelessWidget {
@@ -3009,24 +2952,7 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
-class _CircleIcon extends StatelessWidget {
-  const _CircleIcon({required this.icon});
 
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: _HomeColors.surfaceFor(context),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: _HomeColors.green, size: 19),
-    );
-  }
-}
 
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon, this.color = _HomeColors.green});

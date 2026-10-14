@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -718,43 +719,10 @@ class _Header extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
-      child: Row(
-        children: [
-          CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(38),
-            onPressed: onBack,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: _ProfileColors.surfaceFor(context),
-                shape: BoxShape.circle,
-              ),
-              child: const SizedBox.square(
-                dimension: 38,
-                child: Icon(
-                  CupertinoIcons.chevron_back,
-                  color: _ProfileColors.green,
-                  size: 20,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            'Personal Profile',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: _ProfileColors.textFor(context),
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+    child: PageHeader(title: 'Personal Profile', onBack: onBack),
+  );
 }
 
 class _IdentityCard extends StatelessWidget {

@@ -72,6 +72,7 @@ class SosPage extends StatefulWidget {
   final SosAlertRepository? sosAlertRepository;
   final EmergencyContactsRepository? emergencyContactsRepository;
   final int nearbySosRevision;
+
   /// Optional presentation state for isolated previews; dispatch is unchanged.
   final NetworkReachabilitySnapshot? networkStatusOverride;
   final FirebaseBootstrapResult firebaseBootstrapResult;
@@ -729,13 +730,16 @@ class _SosPageState extends State<SosPage> {
                   _NetworkSosStatusCard(
                     isNetworkAvailable:
                         widget.firebaseBootstrapResult.isAvailable &&
-                        (widget.networkStatusOverride ?? _networkSnapshot).isOnline,
+                        (widget.networkStatusOverride ?? _networkSnapshot)
+                            .isOnline,
                     isCheckingNetwork:
-                        (widget.networkStatusOverride ?? _networkSnapshot).state ==
+                        (widget.networkStatusOverride ?? _networkSnapshot)
+                            .state ==
                         NetworkReachabilityState.checking,
                     errorMessage:
                         widget.firebaseBootstrapResult.errorMessage ??
-                        (widget.networkStatusOverride ?? _networkSnapshot).message,
+                        (widget.networkStatusOverride ?? _networkSnapshot)
+                            .message,
                   ),
                   const SizedBox(height: 14),
                   _MetricsGroup(
@@ -4103,59 +4107,8 @@ class _SosDetailHeader extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: _SosColors.surfaceFor(context),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                CupertinoIcons.chevron_back,
-                color: _SosColors.green,
-                size: 20,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.title(
-                  context,
-                  _SosColors.textFor(context),
-                ),
-              ),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.subtitle(
-                  context,
-                  _SosColors.secondaryTextFor(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: title, subtitle: subtitle, onBack: onBack);
 }
 
 class _StatusRow extends StatelessWidget {

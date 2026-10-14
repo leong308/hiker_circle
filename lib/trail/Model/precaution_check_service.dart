@@ -49,6 +49,8 @@ class PrecautionCheckService {
           3,
           'Conditions could not be checked',
           'Weather refresh failed. Check official warnings and conditions before continuing; previous information may be outdated.',
+          quickAction: 'Check local conditions and official alerts.',
+          quickFacts: ['Forecast unavailable'],
         ),
       ];
     }

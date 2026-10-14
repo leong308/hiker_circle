@@ -1,4 +1,5 @@
-import '../Model/trail_hazard_categories.dart';
+export 'hazard_report_page.dart';
+import 'trail_caution_details.dart';
 import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -25,7 +26,6 @@ import '../../core/widgets/route_preview_map.dart';
 import '../../core/widgets/route_checkpoint_progress.dart';
 import '../../core/widgets/worldwide_region_picker.dart';
 import '../../onboarding/Data/google_city_geocoding_service.dart';
-import '../../sos/Data/location_snapshot_service.dart';
 import '../Model/trail_models.dart';
 import '../Model/malaysia_map_region.dart';
 import 'trail_weather_panel.dart';
@@ -595,18 +595,6 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
     });
   }
 
-  void _reportHazard() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => HazardReportPage(
-          session: widget.session,
-          hikerCircleRepository: widget.hikerCircleRepository,
-          trail: _trail,
-        ),
-      ),
-    );
-  }
-
   void _startTrailHike(Trail trail) {
     if (trail.checkpoints.length < 2) {
       ScaffoldMessenger.of(context)
@@ -665,7 +653,6 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                     _RoutePreview(
                       key: _routePreviewKey,
                       trail: trail,
-                      onReportHazard: _reportHazard,
                       departureTime: _previewDepartureTime,
                       onAnimationProgress: (value) =>
                           _checkpointPlayback.value = value,
@@ -710,215 +697,12 @@ class _TrailDetailPageState extends State<TrailDetailPage> {
                           setState(() => _previewDepartureTime = time),
                     ),
                   ],
-                  const SizedBox(height: 10),
-                  _SafetyInfoCard(trail: trail),
-                  if (trail.hazards.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    for (final hazard in trail.hazards) ...[
-                      _HazardCard(hazard: hazard),
-                      const SizedBox(height: 12),
-                    ],
-                  ] else
-                    const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _reportHazard,
-                    icon: const Icon(Icons.report_rounded),
-                    label: const Text('Report Hazard'),
-                  ),
+                  const SizedBox(height: 24),
+                  TrailCautionsHistory(trailId: trail.trailId),
                 ],
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class HazardReportPage extends StatefulWidget {
-  const HazardReportPage({
-    super.key,
-    required this.session,
-    required this.hikerCircleRepository,
-    required this.trail,
-  });
-
-  final AppSession session;
-  final HikerCircleFirebaseRepository hikerCircleRepository;
-  final Trail trail;
-
-  @override
-  State<HazardReportPage> createState() => _HazardReportPageState();
-}
-
-class _HazardReportPageState extends State<HazardReportPage> {
-  final TextEditingController _descriptionController = TextEditingController();
-  static const _categories = trailHazardReportCategories;
-  String? _category;
-  String? _selected;
-  String? _error;
-  bool _isSubmitting = false;
-  late final String _reportId =
-      'report_${DateTime.now().microsecondsSinceEpoch}_${widget.session.phoneNumber.replaceAll(RegExp(r'[^0-9]'), '')}';
-
-  @override
-  void dispose() {
-    _descriptionController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (_isSubmitting || _selected == null) return;
-    setState(() {
-      _isSubmitting = true;
-      _error = null;
-    });
-    try {
-      final location = await LocationSnapshotService.instance.refresh().timeout(
-        const Duration(seconds: 4),
-        onTimeout: () => LocationSnapshotService.instance.latestLocation,
-      );
-      if (location == null ||
-          location.capturedAt == null ||
-          DateTime.now().toUtc().difference(location.capturedAt!.toUtc()) >
-              const Duration(seconds: 30)) {
-        throw StateError(
-          'Waiting for a current GPS location. Try again when your location is available.',
-        );
-      }
-      await widget.hikerCircleRepository.submitHazardReport(
-        session: widget.session,
-        trail: widget.trail,
-        hazardType: _selected!,
-        description: _descriptionController.text,
-        severity: 'moderate',
-        location: location,
-        reportId: _reportId,
-      );
-      if (!mounted) return;
-      final messenger = ScaffoldMessenger.of(context);
-      Navigator.of(context).pop();
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Caution reported. Other hikers can see it on the map.',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-          _error = '$error';
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final category = _category;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(category ?? 'Report a caution'),
-        leading: BackButton(
-          onPressed: () {
-            if (_isSubmitting) return;
-            if (category != null) {
-              setState(() {
-                _category = null;
-                _selected = null;
-              });
-            } else {
-              Navigator.of(context).pop();
-            }
-          },
-        ),
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            Text(
-              category == null
-                  ? 'What is on the trail?'
-                  : 'Choose what you see',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 20),
-            if (category == null)
-              GridView.count(
-                crossAxisCount: 2,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 1.35,
-                children: [
-                  for (final entry in _categories.entries)
-                    OutlinedButton(
-                      onPressed: () => setState(() => _category = entry.key),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(entry.value.$1, size: 34),
-                          const SizedBox(height: 10),
-                          Text(entry.key, textAlign: TextAlign.center),
-                        ],
-                      ),
-                    ),
-                ],
-              )
-            else ...[
-              for (final item in _categories[category]!.$2)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _selected == item
-                      ? FilledButton.icon(
-                          onPressed: _isSubmitting
-                              ? null
-                              : () => setState(() => _selected = item),
-                          icon: const Icon(Icons.check_rounded),
-                          label: Text(item),
-                        )
-                      : OutlinedButton(
-                          onPressed: _isSubmitting
-                              ? null
-                              : () => setState(() => _selected = item),
-                          child: Text(item),
-                        ),
-                ),
-              if (_selected != null) ...[
-                ExpansionTile(
-                  title: const Text('Add a note (optional)'),
-                  children: [
-                    TextField(
-                      controller: _descriptionController,
-                      maxLength: 300,
-                      maxLines: 2,
-                      decoration: const InputDecoration(
-                        hintText: 'Anything hikers should know?',
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: _isSubmitting ? null : _submit,
-                  icon: const Icon(Icons.near_me_rounded),
-                  label: Text(_isSubmitting ? 'Reporting…' : 'Report here'),
-                ),
-              ],
-            ],
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-          ],
         ),
       ),
     );
@@ -1228,7 +1012,8 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
       MaterialPageRoute(
         builder: (_) => Scaffold(
           backgroundColor: _TrailColors.backgroundFor(context),
-          appBar: AppBar(
+          appBar: PageHeaderAppBar(
+            title: const Text('Select checkpoints'),
             leading: IconButton(
               icon: const Icon(Icons.close_rounded),
               onPressed: () => Navigator.of(context).pop(),
@@ -3335,61 +3120,8 @@ class _DetailHeader extends StatelessWidget {
   final String? subtitle;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Row(
-        children: [
-          Tooltip(
-            message: 'Back',
-            child: CupertinoButton(
-              padding: EdgeInsets.zero,
-              minimumSize: const Size.square(36),
-              onPressed: onBack,
-              child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: subtitle == null
-                ? Text(
-                    title,
-                    style: PageHeaderStyle.title(
-                      context,
-                      _TrailColors.textFor(context),
-                    ),
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(
-                              color: _TrailColors.textFor(context),
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                      Text(
-                        subtitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: PageHeaderStyle.subtitle(
-                          context,
-                          _TrailColors.secondaryTextFor(context),
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: title, subtitle: subtitle, onBack: onBack);
 }
 
 class _FilterChips extends StatelessWidget {
@@ -3941,7 +3673,8 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       MaterialPageRoute(
         builder: (_) => Scaffold(
           backgroundColor: _TrailColors.backgroundFor(context),
-          appBar: AppBar(
+          appBar: PageHeaderAppBar(
+            title: const Text('Select checkpoints'),
             leading: IconButton(
               icon: const Icon(Icons.close_rounded),
               onPressed: () => Navigator.of(context).pop(),
@@ -4062,7 +3795,8 @@ class _EditTrailPageState extends State<_EditTrailPage> {
       MaterialPageRoute(
         builder: (_) => Scaffold(
           backgroundColor: _TrailColors.backgroundFor(context),
-          appBar: AppBar(
+          appBar: PageHeaderAppBar(
+            title: const Text('Move checkpoint'),
             leading: IconButton(
               icon: const Icon(Icons.close_rounded),
               onPressed: () => Navigator.of(context).pop(),
@@ -4323,7 +4057,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _TrailColors.backgroundFor(context),
-      appBar: AppBar(
+      appBar: PageHeaderAppBar(
         title: const Text('Edit Trail'),
         leading: IconButton(
           icon: const Icon(Icons.close_rounded),
@@ -4826,13 +4560,11 @@ class _RoutePreview extends StatefulWidget {
     this.localDatabase,
     this.departureTime,
     this.onAnimationProgress,
-    this.onReportHazard,
     this.onRouteLoaded,
   });
 
   final ValueChanged<HikingRouteResult>? onRouteLoaded;
   final ValueChanged<RouteCheckpointProgress>? onAnimationProgress;
-  final VoidCallback? onReportHazard;
   final DateTime? departureTime;
   final Trail trail;
   final int? highlightedCheckpointIndex;
@@ -5020,7 +4752,6 @@ class _RoutePreviewState extends State<_RoutePreview> {
                     route: _route,
                     departureTime: widget.departureTime,
                     onAnimationProgress: widget.onAnimationProgress,
-                    onReportHazard: widget.onReportHazard,
                     previewMode: _previewMode,
                     highlightedCheckpointIndex:
                         widget.highlightedCheckpointIndex,
@@ -5518,86 +5249,6 @@ class _WeatherCard extends StatelessWidget {
   }
 }
 
-class _SafetyInfoCard extends StatelessWidget {
-  const _SafetyInfoCard({required this.trail});
-
-  final Trail trail;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          children: [
-            _StatusRow(
-              label: 'Recent hazards',
-              value: '${trail.hazards.length} reports',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HazardCard extends StatelessWidget {
-  const _HazardCard({required this.hazard});
-
-  final TrailHazard hazard;
-
-  @override
-  Widget build(BuildContext context) {
-    return _InsetGroup(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const _Glyph(
-              icon: Icons.warning_amber_rounded,
-              color: _TrailColors.orange,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    hazard.description,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: _TrailColors.textFor(context),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Community Report - Not Officially Verified',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TrailColors.orange,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Reported ${_formatDate(hazard.reportedAt)} at ${hazard.locationLabel}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TrailColors.secondaryTextFor(context),
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _StatusRow extends StatelessWidget {
   const _StatusRow({required this.label, required this.value});
 
@@ -5716,30 +5367,10 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
-class _CircleIcon extends StatelessWidget {
-  const _CircleIcon({required this.icon});
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: _TrailColors.surfaceFor(context),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: _TrailColors.green, size: 20),
-    );
-  }
-}
-
 class _Glyph extends StatelessWidget {
-  const _Glyph({required this.icon, this.color = _TrailColors.green});
+  const _Glyph({required this.icon});
 
   final IconData icon;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
@@ -5747,7 +5378,7 @@ class _Glyph extends StatelessWidget {
       width: 32,
       height: 32,
       decoration: BoxDecoration(
-        color: color,
+        color: _TrailColors.green,
         borderRadius: BorderRadius.circular(7),
       ),
       child: Icon(icon, color: Colors.white, size: 18),
@@ -5848,24 +5479,6 @@ class _TrailCoverPainter extends CustomPainter {
   bool shouldRepaint(covariant _TrailCoverPainter oldDelegate) {
     return oldDelegate.color != color;
   }
-}
-
-String _formatDate(DateTime dateTime) {
-  const months = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
-  ];
-  return '${dateTime.day} ${months[dateTime.month - 1]} ${dateTime.year}';
 }
 
 String _planSummary(Trail trail) {

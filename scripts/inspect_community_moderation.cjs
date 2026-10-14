@@ -1,5 +1,5 @@
 'use strict';
-// Read-only by default. --run invokes existing maintenance; --gemini-smoke submits synthetic non-personal text.
+// Read-only by default. --run invokes the existing local-rule maintenance.
 const {firebaseAccessToken, projectId} = require('./seed_malaysia_trails');
 async function main() {
   if (projectId !== 'hiker-circle') throw new Error('Unexpected project.');
@@ -21,18 +21,6 @@ async function main() {
   if (jobs.nextPageToken) throw new Error('Inventory requires pagination.');
   const matches = (jobs.jobs || []).filter(j => j.name.includes('firebase-schedule-checkCommunityContentIntegrity-'));
   if (matches.length !== 1 || functions.some(f => f.state !== 'ACTIVE')) throw new Error('Deployment is not ready.');
-  if (process.argv.includes('--gemini-smoke')) {
-    const secret = await api(`https://secretmanager.googleapis.com/v1/projects/${projectId}/secrets/GEMINI_API_KEY/versions/latest:access`);
-    const apiKey = Buffer.from(secret.payload.data, 'base64').toString('utf8').trim();
-    const rows = new Map();
-    const ref = path => ({get: async () => ({data: () => rows.get(path)}),
-      set: async (patch, options) => rows.set(path, options?.merge ? {...rows.get(path), ...patch} : patch)});
-    const db = {doc: ref, runTransaction: fn => fn({get: reference => reference.get(), set: (reference, patch) => reference.set(patch)})};
-    const results = await require('../functions/community_moderation').classifyBatch({db, apiKey,
-      items: [{id: 'synthetic-connection-check', text: 'Enjoyed a pleasant walk on the trail today.', hasExternalLink: false}]});
-    console.log(JSON.stringify({geminiSmoke: 'passed', model: results[0].model, flag: results[0].flag,
-      note: 'Synthetic text only; no live community content or Firestore records used.'}));
-  }
   if (process.argv.includes('--run')) {
     await api(`https://cloudscheduler.googleapis.com/v1/${matches[0].name}:run`, 'POST');
     console.log('Requested one execution of the existing community integrity job. No fake post created.');

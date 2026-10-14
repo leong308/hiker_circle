@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import '../../core/widgets/map_controls.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/state_boundary_overlay.dart';
+import '../../trail/Model/malaysia_map_region.dart';
 import '../Data/google_city_geocoding_service.dart';
 
 class ResidentialCityPickerPage extends StatefulWidget {
@@ -28,16 +31,32 @@ class ResidentialCityPickerPage extends StatefulWidget {
 }
 
 class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
-  static const _defaultLatitude = 3.1390;
-  static const _defaultLongitude = 101.6869;
+  static final _defaultLatitude = MalaysiaMapRegion.peninsula.latitude;
+  static final _defaultLongitude = MalaysiaMapRegion.peninsula.longitude;
+  final _stateBoundary = StateBoundaryOverlay();
+  MalaysiaMapRegion _focusRegion = MalaysiaMapRegion.peninsula;
+  int _focusRevision = 0;
+  bool _hasSelectedRegion = false;
+  bool get _hasInitialLocation =>
+      widget.initialLatitude != null &&
+      widget.initialLongitude != null &&
+      mapPointCoordinatesOrNull(
+            mapbox.Point(
+              coordinates: mapbox.Position(
+                widget.initialLongitude!,
+                widget.initialLatitude!,
+              ),
+            ),
+          ) !=
+          null;
 
   late mapbox.Point _selected;
-  double _currentZoom = 10.5;
+  late final mapbox.CameraOptions _initialCameraOptions;
+  double _currentZoom = 5.4;
   double _scaleLatitude = _defaultLatitude;
   late final GoogleCityGeocodingService _geocodingService =
       widget.geocodingService ?? GoogleCityGeocodingService();
   mapbox.MapboxMap? _mapboxMap;
-  mapbox.CircleAnnotationManager? _circleManager;
   bool _isResolving = false;
   String? _errorMessage;
 
@@ -46,8 +65,8 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
     super.initState();
     final candidate = mapbox.Point(
       coordinates: mapbox.Position(
-        widget.initialLongitude ?? _defaultLongitude,
-        widget.initialLatitude ?? _defaultLatitude,
+        _hasInitialLocation ? widget.initialLongitude! : _defaultLongitude,
+        _hasInitialLocation ? widget.initialLatitude! : _defaultLatitude,
       ),
     );
     final coordinates = mapPointCoordinatesOrNull(candidate);
@@ -62,12 +81,23 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
             ),
           );
     _scaleLatitude = coordinates?.latitude ?? _defaultLatitude;
+    _currentZoom = _hasInitialLocation ? 14 : 5.4;
+    _initialCameraOptions = mapbox.CameraOptions(
+      center: _selected,
+      zoom: _currentZoom,
+    );
+    unawaited(
+      StateBoundaryOverlay.prewarm()
+          .then<void>((_) {})
+          .catchError((Object _) {}),
+    );
   }
 
   @override
   void dispose() {
+    _focusRevision++;
+    _stateBoundary.dispose();
     _mapboxMap = null;
-    _circleManager = null;
     super.dispose();
   }
 
@@ -78,7 +108,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
 
   void _movePin(mapbox.Point coordinate) {
     final values = mapPointCoordinatesOrNull(coordinate);
-    if (!mounted || values == null) return;
+    if (!mounted || _isResolving || values == null) return;
     final safeCoordinate = mapbox.Point(
       coordinates: mapbox.Position(values.longitude, values.latitude),
     );
@@ -86,7 +116,6 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
       _selected = safeCoordinate;
       _errorMessage = null;
     });
-    unawaited(_syncPin());
     unawaited(_centerMapOn(safeCoordinate));
   }
 
@@ -168,6 +197,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
 
   void _onCameraChange(mapbox.CameraChangedEventData data) {
     if (!mounted ||
+        _isResolving ||
         mapPointCoordinatesOrNull(data.cameraState.center) == null) {
       return;
     }
@@ -205,13 +235,81 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
     });
   }
 
+  void _selectFocusRegion(MalaysiaMapRegion? region) {
+    if (region == null || _isResolving) return;
+    setState(() {
+      _focusRegion = region;
+      _hasSelectedRegion = true;
+      _selected = mapbox.Point(
+        coordinates: mapbox.Position(region.longitude, region.latitude),
+      );
+      _errorMessage = null;
+    });
+    unawaited(_updateStateBoundary(_stateBoundary.select(region)));
+    unawaited(_focusOnRegion());
+  }
+
+  Future<void> _focusOnRegion({int duration = 450}) async {
+    final map = _mapboxMap;
+    if (map == null) return;
+    final region = _focusRegion;
+    final revision = ++_focusRevision;
+    try {
+      final camera = await map.cameraForCoordinateBounds(
+        mapbox.CoordinateBounds(
+          southwest: mapbox.Point(
+            coordinates: mapbox.Position(region.west, region.south),
+          ),
+          northeast: mapbox.Point(
+            coordinates: mapbox.Position(region.east, region.north),
+          ),
+          infiniteBounds: false,
+        ),
+        mapbox.MbxEdgeInsets(top: 32, left: 32, bottom: 32, right: 32),
+        0,
+        0,
+        null,
+        null,
+      );
+      if (!mounted ||
+          !identical(map, _mapboxMap) ||
+          revision != _focusRevision) {
+        return;
+      }
+      // The fixed pointer selects the camera center, so retain the precise
+      // region center instead of a padding-adjusted bounds-fitting center.
+      camera.center = mapbox.Point(
+        coordinates: mapbox.Position(region.longitude, region.latitude),
+      );
+      await map.flyTo(camera, mapbox.MapAnimationOptions(duration: duration));
+    } catch (_) {
+      // A replaced or disposed native map can invalidate the camera request.
+    }
+  }
+
+  Future<void> _updateStateBoundary(Future<void> update) async {
+    try {
+      await update;
+    } catch (error) {
+      debugPrint('Residential city boundary failed: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'State outline could not load. You can still choose your city.',
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
     if (!mounted) return;
     _mapboxMap = mapboxMap;
+    mapboxMap.addInteraction(
+      mapbox.TapInteraction.onMap((context) => _movePin(context.point)),
+    );
     try {
-      mapboxMap.addInteraction(
-        mapbox.TapInteraction.onMap((context) => _movePin(context.point)),
-      );
       await mapboxMap.compass.updateSettings(
         mapbox.CompassSettings(enabled: true),
       );
@@ -227,35 +325,24 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
       await mapboxMap.setBounds(
         mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 18),
       );
-      final manager = await mapboxMap.annotations
-          .createCircleAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      _circleManager = manager;
-      await _syncPin();
-      await _syncScaleFromCamera();
     } catch (_) {
-      // A platform map can be replaced while it is still initializing.
+      // Camera framing remains available if an optional control fails to initialize.
     }
-  }
-
-  Future<void> _syncPin() async {
-    final manager = _circleManager;
-    if (!mounted || manager == null) return;
+    if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
+    if (_hasInitialLocation && !_hasSelectedRegion) {
+      await _fitToPin();
+    } else {
+      await _focusOnRegion(duration: 0);
+    }
+    if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
     try {
-      await manager.deleteAll();
-      if (!mounted || !identical(manager, _circleManager)) return;
-      await manager.create(
-        mapbox.CircleAnnotationOptions(
-          geometry: _selected,
-          circleColor: const Color(0xFFE11D48).toARGB32(),
-          circleRadius: 8,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 3,
-        ),
-      );
+      if (await mapboxMap.style.isStyleLoaded()) {
+        await _updateStateBoundary(_stateBoundary.onStyleLoaded(mapboxMap));
+      }
     } catch (_) {
-      // Style replacement invalidates the previous annotation manager.
+      // The style-loaded event can initialize the boundary once the style is ready.
     }
+    await _syncScaleFromCamera();
   }
 
   @override
@@ -263,12 +350,47 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
     return PopScope(
       canPop: widget.allowCancel,
       child: Scaffold(
-        appBar: AppBar(
+        appBar: PageHeaderAppBar(
           automaticallyImplyLeading: widget.allowCancel,
           title: const Text('Choose residential city'),
         ),
         body: Column(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DropdownButtonFormField<MalaysiaMapRegion>(
+                    key: const Key('residential-state-focus'),
+                    initialValue: _focusRegion,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Focus on a state',
+                      prefixIcon: Icon(Icons.map_outlined),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final region in MalaysiaMapRegion.values)
+                        DropdownMenuItem(
+                          value: region,
+                          child: Text(
+                            region.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: _isResolving ? null : _selectFocusRegion,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Move the map until the pin is over your city. Exact home address is not required.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
             Expanded(
               child: Stack(
                 fit: StackFit.expand,
@@ -277,40 +399,40 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                     child: mapbox.MapWidget(
                       key: const ValueKey('city-picker'),
                       styleUri: mapStyleUrls[0],
+                      // ignore: deprecated_member_use
+                      cameraOptions: _initialCameraOptions,
                       gestureRecognizers: mapGestureRecognizers,
                       onMapCreated: _onMapCreated,
                       onCameraChangeListener: _onCameraChange,
+                      onStyleLoadedListener: (_) {
+                        final map = _mapboxMap;
+                        if (map != null) {
+                          unawaited(
+                            _updateStateBoundary(
+                              _stateBoundary.onStyleLoaded(map),
+                            ),
+                          );
+                        }
+                      },
                       onMapIdleListener: (_) =>
                           unawaited(_syncScaleFromCamera()),
                     ),
                   ),
-                  const Center(
+                  Center(
                     child: IgnorePointer(
-                      child: Icon(
-                        Icons.location_pin,
-                        size: 50,
-                        color: Color(0xFFE11D48),
-                        shadows: [
-                          Shadow(
-                            color: Color(0x66000000),
-                            blurRadius: 8,
-                            offset: Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 14,
-                    right: 14,
-                    top: 14,
-                    child: Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          'Move the map until the pin is over your city. Exact home address is not required.',
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyMedium,
+                      child: Transform.translate(
+                        offset: const Offset(0, -24),
+                        child: const Icon(
+                          Icons.location_pin,
+                          size: 50,
+                          color: Color(0xFFE11D48),
+                          shadows: [
+                            Shadow(
+                              color: Color(0x66000000),
+                              blurRadius: 8,
+                              offset: Offset(0, 3),
+                            ),
+                          ],
                         ),
                       ),
                     ),

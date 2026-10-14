@@ -620,7 +620,7 @@ class _AiThinkingBubbleState extends State<_AiThinkingBubble>
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return Semantics(
-      label: 'HikerCircle AI is thinking',
+      label: 'Finding reviewed guidance',
       liveRegion: true,
       child: Align(
         alignment: Alignment.centerLeft,
@@ -784,7 +784,7 @@ class _AssistantIntroCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Gemini free tier · chat synced to your account',
+                      'Reviewed app guides · chat synced to your account',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: secondary,
                         fontWeight: FontWeight.w600,
@@ -802,7 +802,7 @@ class _AssistantIntroCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(99),
                 ),
                 child: const Text(
-                  'UNPAID',
+                  'GUIDES',
                   style: TextStyle(
                     color: _HikerCircleAssistantPageState._green,
                     fontSize: 10,

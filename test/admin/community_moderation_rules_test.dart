@@ -18,7 +18,7 @@ void main() {
     ).firstMatch(backend)!.group(1)!;
     expect(communitySensitivePhrases, orderedEquals(phrases));
     expect(
-      communityAiCategories.keys,
+      communityReviewCategories.keys,
       orderedEquals(
         RegExp(r"'([^']+)'").allMatches(categories).map((m) => m.group(1)!),
       ),
@@ -63,15 +63,15 @@ void main() {
       expect(find.text('Phone-like numbers'), findsOneWidget);
       expect(find.text('Coordinate pairs'), findsOneWidget);
       await tester.scrollUntilVisible(
-        find.text('Gemini contextual checks'),
+        find.text('Manual review categories'),
         150,
         scrollable: find.byType(Scrollable),
       );
       expect(
-        find.textContaining('There is no fixed keyword list'),
+        find.textContaining('Administrators review meaning and context'),
         findsOneWidget,
       );
-      for (final category in communityAiCategories.values) {
+      for (final category in communityReviewCategories.values) {
         expect(find.text(category), findsOneWidget);
       }
       await tester.scrollUntilVisible(

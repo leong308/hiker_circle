@@ -1,6 +1,7 @@
 import 'route_gear_assessment.dart';
 import 'hike_shirt_color.dart';
 import 'trail_gear_plan.dart';
+import 'path_deviation_policy.dart';
 import 'dart:math' as math;
 
 import '../../sos/Model/sos_models.dart';
@@ -806,6 +807,8 @@ class HikeSessionDraft {
     required this.offlinePhysicalAlertEnabled,
     required this.duressEnabled,
     required this.completedChecklistItems,
+    this.pathDeviationDistanceMeters =
+        PathDeviationPolicy.defaultDistanceMeters,
     this.teamBuddies = const [],
     this.customCheckpoints,
     this.soloDistanceAcknowledgedKm,
@@ -857,7 +860,7 @@ class HikeSessionDraft {
         fallResponseDuration: Duration(seconds: 30),
         longestRestDuration: Duration(minutes: 3),
       ),
-      pathDeviationEnabled: true,
+      pathDeviationEnabled: !trail.isUnlisted,
       offlinePhysicalAlertEnabled: true,
       duressEnabled: true,
       completedChecklistItems: const {},
@@ -968,6 +971,9 @@ class HikeSessionDraft {
         ),
       ),
       pathDeviationEnabled: data['pathDeviationEnabled'] == true,
+      pathDeviationDistanceMeters: PathDeviationPolicy.normalizeDistance(
+        data['pathDeviationDistanceMeters'],
+      ),
       offlinePhysicalAlertEnabled: data['offlinePhysicalAlertEnabled'] == true,
       duressEnabled: data['duressEnabled'] == true,
       completedChecklistItems: _modelStringList(
@@ -997,6 +1003,7 @@ class HikeSessionDraft {
   final bool fallDetectionEnabled;
   final FallDetectionSettings fallDetectionSettings;
   final bool pathDeviationEnabled;
+  final int pathDeviationDistanceMeters;
   final bool offlinePhysicalAlertEnabled;
   final bool duressEnabled;
   final Set<String> completedChecklistItems;
@@ -1032,6 +1039,9 @@ class HikeSessionDraft {
             fallDetectionSettings.fallResponseDuration.inSeconds,
       },
       'pathDeviationEnabled': pathDeviationEnabled,
+      'pathDeviationDistanceMeters': PathDeviationPolicy.normalizeDistance(
+        pathDeviationDistanceMeters,
+      ),
       'offlinePhysicalAlertEnabled': offlinePhysicalAlertEnabled,
       'duressEnabled': duressEnabled,
       'completedChecklistItems': completedChecklistItems.toList(),
@@ -1132,6 +1142,7 @@ class HikeSessionDraft {
     bool? fallDetectionEnabled,
     FallDetectionSettings? fallDetectionSettings,
     bool? pathDeviationEnabled,
+    int? pathDeviationDistanceMeters,
     bool? offlinePhysicalAlertEnabled,
     bool? duressEnabled,
     Set<String>? completedChecklistItems,
@@ -1164,6 +1175,9 @@ class HikeSessionDraft {
       fallDetectionSettings:
           fallDetectionSettings ?? this.fallDetectionSettings,
       pathDeviationEnabled: pathDeviationEnabled ?? this.pathDeviationEnabled,
+      pathDeviationDistanceMeters: PathDeviationPolicy.normalizeDistance(
+        pathDeviationDistanceMeters ?? this.pathDeviationDistanceMeters,
+      ),
       offlinePhysicalAlertEnabled:
           offlinePhysicalAlertEnabled ?? this.offlinePhysicalAlertEnabled,
       duressEnabled: duressEnabled ?? this.duressEnabled,

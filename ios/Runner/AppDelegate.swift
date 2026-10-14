@@ -15,7 +15,7 @@ import ActivityKit
 #endif
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, CLLocationManagerDelegate {
+@objc class AppDelegate: FlutterAppDelegate, CLLocationManagerDelegate, AVSpeechSynthesizerDelegate {
   private let sosDeviceAlertChannel = "hiker_circle/sos_device_alerts"
   private let deepLinkChannelName = "hiker_circle/deeplinks"
   private let activeHikeLiveStatusChannelName = "hiker_circle/active_hike_live_status"
@@ -30,6 +30,10 @@ import ActivityKit
   private var activeAlarmAsset: String?
   private var isOutputVolumeMonitoringActive = false
   private let speechSynthesizer = AVSpeechSynthesizer()
+  private var hikeSpeechUtterance: AVSpeechUtterance?
+  private var hikeSpeechRequestId: String?
+  private var hikeSpeechResult: FlutterResult?
+  private var safetySpeechUtterance: AVSpeechUtterance?
   private var torchTimer: Timer?
   private var fallStillnessVibrationTimer: Timer?
   private var torchPatternIndex = 0
@@ -106,6 +110,7 @@ import ActivityKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
+    speechSynthesizer.delegate = self
     if let registrar = registrar(forPlugin: "QrScannerPlugin") {
       let factory = QrScannerPlatformViewFactory(messenger: registrar.messenger())
       registrar.register(factory, withId: "hiker_circle/qr_scanner")
@@ -259,6 +264,22 @@ import ActivityKit
         result(nil)
       case "stopSpokenPrompt":
         self.stopSpokenPrompt()
+        result(nil)
+      case "speakHikePrecaution":
+        let arguments = call.arguments as? [String: Any]
+        guard let requestId = arguments?["requestId"] as? String,
+              let message = arguments?["message"] as? String else {
+          result(false)
+          return
+        }
+        self.speakHikePrecaution(requestId, message: message, result: result)
+      case "stopHikePrecaution":
+        let arguments = call.arguments as? [String: Any]
+        if let requestId = arguments?["requestId"] as? String,
+           requestId == self.hikeSpeechRequestId {
+          self.completeHikeSpeech(false)
+          self.speechSynthesizer.stopSpeaking(at: .immediate)
+        }
         result(nil)
       case "getOutputVolumeStatus":
         self.getOutputVolumeStatus(call, result)
@@ -1055,19 +1076,57 @@ import ActivityKit
   }
 
   private func speakFallStillnessPrompt(_ message: String) {
-    if speechSynthesizer.isSpeaking {
-      speechSynthesizer.stopSpeaking(at: .immediate)
-    }
+    // Urgent safety speech may interrupt a routine warning, never the reverse.
+    completeHikeSpeech(false)
+    speechSynthesizer.stopSpeaking(at: .immediate)
 
     let utterance = AVSpeechUtterance(string: message)
     utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
     utterance.volume = 1.0
+    safetySpeechUtterance = utterance
     speechSynthesizer.speak(utterance)
   }
 
   private func stopSpokenPrompt() {
-    if speechSynthesizer.isSpeaking {
-      speechSynthesizer.stopSpeaking(at: .immediate)
+    completeHikeSpeech(false)
+    safetySpeechUtterance = nil
+    speechSynthesizer.stopSpeaking(at: .immediate)
+  }
+
+  private func speakHikePrecaution(_ requestId: String, message: String, result: @escaping FlutterResult) {
+    guard !speechSynthesizer.isSpeaking, hikeSpeechResult == nil,
+          safetySpeechUtterance == nil else {
+      result(false)
+      return
+    }
+    let utterance = AVSpeechUtterance(string: message)
+    utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
+    utterance.volume = 1.0
+    hikeSpeechRequestId = requestId
+    hikeSpeechUtterance = utterance
+    hikeSpeechResult = result
+    speechSynthesizer.speak(utterance)
+  }
+
+  private func completeHikeSpeech(_ finished: Bool) {
+    let result = hikeSpeechResult
+    hikeSpeechResult = nil
+    hikeSpeechRequestId = nil
+    hikeSpeechUtterance = nil
+    result?(finished)
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    if utterance === safetySpeechUtterance { safetySpeechUtterance = nil }
+    if utterance === hikeSpeechUtterance {
+      completeHikeSpeech(true)
+    }
+  }
+
+  func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+    if utterance === safetySpeechUtterance { safetySpeechUtterance = nil }
+    if utterance === hikeSpeechUtterance {
+      completeHikeSpeech(false)
     }
   }
 

@@ -23,7 +23,7 @@ const communitySensitivePhrases = <String>[
   'passport',
 ];
 
-const communityAiCategories = <String, String>{
+const communityReviewCategories = <String, String>{
   'spam_scam': 'Spam & scams',
   'harassment': 'Targeted harassment',
   'hate': 'Hate speech',
@@ -95,7 +95,7 @@ class _ModerationRulesSheet extends StatelessWidget {
                   icon: Icons.privacy_tip_outlined,
                   title: 'Sensitive phrases',
                   description:
-                      'These exact phrases are checked without regard to letter case, at word boundaries. Matches go to manual review; their text is not sent to Gemini. They are not banned words.',
+                      'These exact phrases are checked without regard to letter case, at word boundaries. Matches go to manual review; their text stays within the app backend. They are not banned words.',
                   child: _SensitivePhraseList(),
                 ),
                 const SizedBox(height: 16),
@@ -127,10 +127,10 @@ class _ModerationRulesSheet extends StatelessWidget {
                 const SizedBox(height: 16),
                 const _RuleSection(
                   icon: Icons.auto_awesome_outlined,
-                  title: 'Gemini contextual checks',
+                  title: 'Manual review categories',
                   description:
-                      'There is no fixed keyword list here. Gemini considers meaning and context in public captions and comments. These are the configured review categories:',
-                  child: _AiCategoryList(),
+                      'Administrators review meaning and context. Local checks identify sensitive data and malformed records; these categories describe issues an administrator may review:',
+                  child: _ReviewCategoryList(),
                 ),
                 const SizedBox(height: 16),
                 const _RuleSection(
@@ -139,7 +139,7 @@ class _ModerationRulesSheet extends StatelessWidget {
                   description:
                       'Missing authors, mismatched record IDs, invalid text, empty comments and oversized content require manual review. Empty post captions are allowed.',
                   child: Text(
-                    'Normal hiking experiences, safety discussions, injury reports and respectful disagreement are not intended as AI violations. Sensitive-pattern checks may still send them to manual review.\n\nChecks cover public text only, not images or private chats. Gemini can miss issues or flag harmless content; always read the original before deciding. No rule automatically removes content.',
+                    'Normal hiking experiences, safety discussions, injury reports and respectful disagreement are not automatically considered violations. Sensitive-pattern checks may still send them to manual review.\n\nChecks cover public text only, not images or private chats. Local checks do not understand context and may flag harmless content; always read the original before deciding. No rule automatically removes content.',
                     style: TextStyle(height: 1.5),
                   ),
                 ),
@@ -173,14 +173,14 @@ class _SensitivePhraseList extends StatelessWidget {
   );
 }
 
-class _AiCategoryList extends StatelessWidget {
-  const _AiCategoryList();
+class _ReviewCategoryList extends StatelessWidget {
+  const _ReviewCategoryList();
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      for (final category in communityAiCategories.values)
+      for (final category in communityReviewCategories.values)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Row(

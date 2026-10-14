@@ -83,6 +83,16 @@ service firebase.storage {
         && supportedImage(request.resource.contentType, imageName);
       allow delete: if admin();
     }
+    match /trail_cautions/{uid}/{hazardId}/{fileName} {
+      allow read: if signedIn();
+      allow create: if resource == null && signedIn() && request.auth.uid == uid
+        && request.resource.metadata.ownerUid == uid
+        && request.resource.metadata.hazardId == hazardId
+        && request.resource.size > 0 && request.resource.size <= 50 * 1024 * 1024
+        && (supportedImage(request.resource.contentType, fileName) || supportedVideo(request.resource.contentType, fileName));
+      allow update: if false;
+      allow delete: if admin();
+    }
 
     match /profile_photos/{userId}/{fileName} {
       allow read: if signedIn();

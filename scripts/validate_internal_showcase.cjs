@@ -45,8 +45,8 @@ for (const item of catalog.items) {
     captureFiles.add(filename);
   }
   assert(declared.includes(item.captureFile), `Primary capture file not in plan: ${item.id}`);
-  assert(item.source !== 'needed' || (!item.image && !item.video && !(item.images || []).length), `Capture-needed feature already has media: ${item.id}`);
-  for (const asset of [item.image, item.video, ...(item.images || []).map((image) => image.src)].filter(Boolean)) {
+  assert(item.source !== 'needed' || (!item.image && !item.video && !(item.images || []).length && !(item.videos || []).length), `Capture-needed feature already has media: ${item.id}`);
+  for (const asset of [item.image, item.video, item.poster, ...(item.images || []).map((image) => image.src), ...(item.videos || []).flatMap((video) => [video.src, video.poster])].filter(Boolean)) {
     assert(asset.startsWith('/internal/app-showcase/media/'), `Only fresh internal captures are allowed: ${asset}`);
     const local = path.join(pageRoot, asset.slice('/internal/app-showcase/'.length));
     assert(fs.existsSync(local), `Missing asset: ${asset}`);

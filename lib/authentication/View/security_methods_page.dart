@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -161,7 +162,7 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Login security')),
+      appBar: PageHeaderAppBar(title: const Text('Login security')),
       body: SafeArea(
         child: Stack(
           children: [
@@ -386,7 +387,7 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
   Widget build(BuildContext context) {
     final enrollment = widget.enrollment;
     return Scaffold(
-      appBar: AppBar(title: const Text('Add Authenticator')),
+      appBar: PageHeaderAppBar(title: const Text('Add Authenticator')),
       body: SafeArea(
         child: Stack(
           children: [

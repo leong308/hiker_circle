@@ -1022,8 +1022,8 @@ async function run() {
       }));
     });
 
-    test('hazard creation binds reporter identity and unverified status', async () => {
-      await assertSucceeds(ownerDb.doc('hazardReports/hazard-valid').set({
+    test('caution creation, counters and votes are server-owned', async () => {
+      await assertFails(ownerDb.doc('hazardReports/hazard-valid').set({
         hazardId: 'hazard-valid',
         reportedBy: OWNER_UID,
         reportedByPhoneNumber: OWNER_PHONE,
@@ -1048,6 +1048,15 @@ async function run() {
         status: 'unverified',
         reviewedByAdminId: ADMIN_UID,
       }));
+      const legacy = {hazardId:'legacy-caution',trailId:'trail-1',trailName:'Ridge',reportedBy:OWNER_UID,
+        reportedByPhoneNumber:OWNER_PHONE,status:'unverified',hazardType:'Fallen tree',description:'Across the path',
+        latitude:5.1,longitude:100.2,reportedAt:FieldValue.serverTimestamp()};
+      await assertSucceeds(ownerDb.doc('hazardReports/legacy-caution').set(legacy));
+      await assertFails(ownerDb.doc('hazardReports/forged-counter').set({...legacy,hazardId:'forged-counter',reportCount:999}));
+      await assertFails(ownerDb.doc('hazardReports/forged-expiry').set({...legacy,hazardId:'forged-expiry',expiresAt:'2099-01-01'}));
+      await assertFails(ownerDb.doc('hazardReports/legacy-caution').update({status:'resolved',resolutionCount:3}));
+      await assertFails(ownerDb.doc('hazardReports/legacy-caution/votes/forged').set({uid:OWNER_UID,kind:'resolution'}));
+      await assertFails(ownerDb.doc('hazardReports/legacy-caution/updates/forged').set({uid:OWNER_UID,action:'resolve'}));
     });
 
     const ownerStorage = owner.storage(BUCKET);
@@ -1060,6 +1069,17 @@ async function run() {
         contentType,
         customMetadata: senderPhone ? {senderPhone} : undefined,
       });
+    test('caution media enforces owner, immutable files, MIME and fifty MB limit',async () => {
+      const path=`trail_cautions/${OWNER_UID}/legacy-caution/proof.jpg`;
+      const metadata={contentType:'image/jpeg',customMetadata:{ownerUid:OWNER_UID,hazardId:'legacy-caution'}};
+      await assertSucceeds(ownerStorage.ref(path).put(new Uint8Array([0xff,0xd8,0xff]),metadata));
+      await assertSucceeds(memberStorage.ref(path).getDownloadURL());
+      await assertFails(ownerStorage.ref(path).put(new Uint8Array([1]),metadata));
+      await assertFails(memberStorage.ref(`trail_cautions/${OWNER_UID}/legacy-caution/forged.jpg`).put(new Uint8Array([1]),metadata));
+      await assertFails(ownerStorage.ref(`trail_cautions/${OWNER_UID}/legacy-caution/bad.jpg`).put(new Uint8Array([1]),{...metadata,contentType:'video/mp4'}));
+      await assertFails(ownerStorage.ref(`trail_cautions/${OWNER_UID}/legacy-caution/large.jpg`).put(new Uint8Array(50*1024*1024+1),metadata));
+      await assertSucceeds(ownerStorage.ref(`trail_cautions/${OWNER_UID}/legacy-caution/video.mp4`).put(new Uint8Array([1]),{...metadata,contentType:'video/mp4'}));
+    });
 
     test('chat attachment upload enforces membership, sender, MIME, extension, and size', async () => {
       await assertSucceeds(
@@ -1243,6 +1263,7 @@ async function run() {
       throw new Error(`${failures} Firebase security-rule test(s) failed.`);
     }
     console.log(`PASS ${tests.length} Firebase security-rule groups`);
+    await require('./caution_transaction_emulator.cjs').run();
   } finally {
     await environment.cleanup();
   }

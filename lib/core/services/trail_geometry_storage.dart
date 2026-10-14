@@ -25,9 +25,9 @@ class TrailGeometryStorage {
       for (final p in decoded)
         <String, double>{'lat': p.latitude, 'lon': p.longitude},
     ];
-    if (utf8.encode(jsonEncode(points)).length > 700000) {
+    if (points.length > 100000 || polyline.length > 650000) {
       throw const FormatException(
-        'This route is too large to save in one geometry document.',
+        'This route exceeds the supported trail size.',
       );
     }
     return TrailGeometryStorage._(
@@ -37,13 +37,60 @@ class TrailGeometryStorage {
     );
   }
 
+  factory TrailGeometryStorage.fromCoordinates(
+    List<Map<String, double>> coordinates,
+  ) {
+    if (coordinates.length < 3 ||
+        coordinates.map((p) => '${p["lat"]},${p["lon"]}').toSet().length < 2 ||
+        coordinates.length > 100000 ||
+        coordinates.any(
+          (p) =>
+              p['lat'] == null ||
+              p['lon'] == null ||
+              p.values.any((n) => !n.isFinite) ||
+              p['lat']!.abs() > 90 ||
+              p['lon']!.abs() > 180,
+        )) {
+      throw const FormatException(
+        'The recording must contain valid GPS coordinates.',
+      );
+    }
+    final encoded = PolylineCodec.encode([
+      for (final p in coordinates) LatLng(p['lat']!, p['lon']!),
+    ]);
+    if (encoded.length > 650000) {
+      throw const FormatException(
+        'This route exceeds the trail record size limit.',
+      );
+    }
+    return TrailGeometryStorage._(
+      encoded,
+      sha256.convert(utf8.encode(encoded)).toString(),
+      List.unmodifiable(
+        coordinates.map((p) => Map<String, double>.unmodifiable(p)),
+      ),
+    );
+  }
+
+  late final bool isChunked = utf8.encode(jsonEncode(points)).length > 700000;
+  late final List<List<Map<String, double>>> chunks = !isChunked
+      ? const []
+      : [
+          for (var i = 0; i < points.length; i += 500)
+            points.sublist(
+              i,
+              i + 500 > points.length ? points.length : i + 500,
+            ),
+        ];
+
   final String encodedPolyline;
   final String checksum;
   final List<Map<String, double>> points;
 
   Map<String, dynamic> document(String updatedAt) => {
     'coordinateSystem': 'WGS84',
-    'points': points,
+    if (!isChunked) 'points': points,
+    if (isChunked) 'chunkCount': chunks.length,
     'pointCount': points.length,
     'updatedAt': updatedAt,
   };
@@ -54,6 +101,7 @@ class TrailGeometryStorage {
     'geometryDocument': documentPath,
     'pointCount': points.length,
     'polylinePrecision': 5,
+    if (isChunked) 'chunkCount': chunks.length,
     'updatedAt': updatedAt,
   };
 }

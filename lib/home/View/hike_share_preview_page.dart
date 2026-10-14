@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -159,15 +160,13 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
       canPop: !isBusy,
       child: Scaffold(
         backgroundColor: _ShareColors.backgroundFor(context),
-        appBar: AppBar(
+        appBar: PageHeaderAppBar(
           backgroundColor: _ShareColors.backgroundFor(context),
-          surfaceTintColor: Colors.transparent,
           leading: CupertinoButton(
             padding: EdgeInsets.zero,
             onPressed: isBusy ? null : () => Navigator.of(context).pop(),
             child: const Icon(CupertinoIcons.xmark, size: 20),
           ),
-          titleSpacing: 4,
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

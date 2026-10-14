@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -342,30 +343,8 @@ class _NearbyMapHeader extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 4, 16, 4),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: onBack,
-            icon: const Icon(Icons.arrow_back_ios_new_rounded),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              'Nearby SOS route',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: _NearbyMapColors.textFor(context),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          const Icon(Icons.sos_rounded, color: Color(0xFFFF3B30)),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: 'Nearby SOS route', onBack: onBack);
 }
 
 class _WalkingRouteStatusCard extends StatelessWidget {

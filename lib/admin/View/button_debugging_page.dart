@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -422,7 +423,7 @@ class _ButtonDebuggingPageState extends State<ButtonDebuggingPage> {
   Widget build(BuildContext context) {
     if (!widget.session.isAdmin) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Button Debugging')),
+        appBar: PageHeaderAppBar(title: const Text('Button Debugging')),
         body: const Center(child: Text('Administrator access required.')),
       );
     }

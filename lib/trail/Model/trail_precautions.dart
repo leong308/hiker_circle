@@ -1,11 +1,20 @@
 import 'trail_models.dart';
 
 class TrailPrecaution {
-  const TrailPrecaution(this.id, this.priority, this.title, this.message);
+  const TrailPrecaution(
+    this.id,
+    this.priority,
+    this.title,
+    this.message, {
+    this.quickAction,
+    this.quickFacts = const [],
+  });
   final String id;
   final int priority;
   final String title;
   final String message;
+  final String? quickAction;
+  final List<String> quickFacts;
 }
 
 /// Pure rules; missing values never become zero or a safety clearance.
@@ -20,8 +29,23 @@ List<TrailPrecaution> trailPrecautions({
   DateTime? assessmentEnd,
 }) {
   final result = <TrailPrecaution>[];
-  void add(String id, int priority, String title, String message) =>
-      result.add(TrailPrecaution(id, priority, title, message));
+  void add(
+    String id,
+    int priority,
+    String title,
+    String message, {
+    String? quickAction,
+    List<String> quickFacts = const [],
+  }) => result.add(
+    TrailPrecaution(
+      id,
+      priority,
+      title,
+      message,
+      quickAction: quickAction,
+      quickFacts: quickFacts,
+    ),
+  );
   final data = weather.forecastData;
   final daily = data['daily'] is Map ? data['daily'] as Map : const {};
   final hourly = data['hourly'] is Map ? data['hourly'] as Map : const {};
@@ -107,6 +131,11 @@ List<TrailPrecaution> trailPrecautions({
       3,
       'Conditions could not be fully assessed',
       '${stale ? 'Forecast is over four hours old. ' : ''}${incomplete ? 'Some forecast hours or measurements are unavailable. ' : ''}Refresh weather and check official warnings before departure.',
+      quickAction: 'Refresh weather and check official alerts.',
+      quickFacts: [
+        if (stale) 'Forecast >4h old',
+        if (incomplete) 'Incomplete forecast',
+      ],
     );
   }
   final thunder = any(
@@ -124,6 +153,7 @@ List<TrailPrecaution> trailPrecautions({
       3,
       'Thunderstorms forecast — consider postponing',
       'Avoid exposed ridges, summits and water. Seek a substantial building or enclosed vehicle, not an isolated tree.',
+      quickAction: 'Consider postponing. Avoid exposed areas and water.',
     );
   }
   if (heavy) {
@@ -132,6 +162,8 @@ List<TrailPrecaution> trailPrecautions({
       3,
       'Heavy rain may affect trail access',
       'Peak forecast rainfall: ${metric('precipitation', ' mm/h')}. Consider postponing; avoid streams, gullies and unstable slopes. Check closures.',
+      quickAction: 'Consider postponing; avoid streams and unstable slopes.',
+      quickFacts: ['Peak rain ${metric('precipitation', ' mm/h')}'],
     );
   } else if (rain) {
     add(
@@ -139,6 +171,8 @@ List<TrailPrecaution> trailPrecautions({
       1,
       'Wet trail expected',
       'Peak rain chance: ${metric('precipitation_probability', '%')}. Expect slippery roots and rocks; protect essential gear. Rain chance is not rainfall intensity.',
+      quickAction: 'Watch slippery footing; protect your gear.',
+      quickFacts: ['Peak chance ${metric('precipitation_probability', '%')}'],
     );
   }
   final humidHeat = any(
@@ -157,6 +191,12 @@ List<TrailPrecaution> trailPrecautions({
       2,
       humidHeat ? 'Heat and humidity increase strain' : 'Heat stress risk',
       'Peak temperature: ${metric('temperature_2m', '°C')}; feels like: ${metric('apparent_temperature', '°C')}.${elevationGain >= 500 ? ' The $elevationGain m ascent adds exertion.' : ''} Slow down, rest in shade and carry drinking water. Stop if dizzy or unusually fatigued.',
+      quickAction: 'Slow down, rest in shade and drink water.',
+      quickFacts: [
+        'Peak ${metric('temperature_2m', '°C')}',
+        'Feels like ${metric('apparent_temperature', '°C')}',
+        if (elevationGain >= 500) 'Climb $elevationGain m',
+      ],
     );
   }
   if (any(
@@ -171,6 +211,8 @@ List<TrailPrecaution> trailPrecautions({
       2,
       'Risk of getting cold when wet',
       'Pack a waterproof outer layer and dry clothing. Avoid prolonged exposed stops.',
+      quickAction: 'Pack a waterproof layer and dry clothes.',
+      quickFacts: ['Cold + wet or windy'],
     );
   }
   if ((peak('wind_speed_10m') ?? -1) >= 25 ||
@@ -180,6 +222,11 @@ List<TrailPrecaution> trailPrecautions({
       (peak('wind_gusts_10m') ?? -1) >= 60 ? 3 : 2,
       'Strong winds expected',
       'Peak wind: ${metric('wind_speed_10m', ' km/h')}; gusts: ${metric('wind_gusts_10m', ' km/h')}. Avoid exposed sections and damaged trees; gusts may affect balance.',
+      quickAction: 'Avoid exposed sections and damaged trees.',
+      quickFacts: [
+        'Wind ${metric('wind_speed_10m', ' km/h')}',
+        'Gusts ${metric('wind_gusts_10m', ' km/h')}',
+      ],
     );
   }
   if (elevationGain >= 500 && !hot && !humidHeat) {
@@ -188,6 +235,8 @@ List<TrailPrecaution> trailPrecautions({
       elevationGain >= 1000 ? 2 : 1,
       'Demanding ascent',
       'This route climbs $elevationGain m. Pace yourself, allow extra breaks and save energy for the descent.',
+      quickAction: 'Take breaks and save energy for the descent.',
+      quickFacts: ['Climb $elevationGain m'],
     );
   }
   if ((peak('uv_index') ?? -1) >= 3) {
@@ -196,6 +245,8 @@ List<TrailPrecaution> trailPrecautions({
       (peak('uv_index') ?? -1) >= 8 ? 2 : 1,
       'Sun protection needed',
       'Peak UV: ${metric('uv_index', '')}. Use sun protection and shade; minimise prolonged exposure.',
+      quickAction: 'Use sun protection and shade.',
+      quickFacts: ['Peak UV ${metric('uv_index', '')}'],
     );
   }
   if (any(
@@ -209,6 +260,7 @@ List<TrailPrecaution> trailPrecautions({
       2,
       'Navigation may be difficult',
       'Fog or poor visibility may obscure markers and edges. Download the route and keep your group together.',
+      quickAction: 'Fog can hide markers and trail edges.',
     );
   }
   String clock(num epoch) {
@@ -229,6 +281,8 @@ List<TrailPrecaution> trailPrecautions({
         2,
         'Daylight timing unavailable',
         'Sunrise or sunset data is missing. Check daylight before departure.',
+        quickAction: 'Check sunrise and sunset before departure.',
+        quickFacts: ['Timing unavailable'],
       );
     } else if (start < sunrise || end >= sunset) {
       add(
@@ -246,6 +300,15 @@ List<TrailPrecaution> trailPrecautions({
         '${start < sunrise ? 'Departure: ${clock(start)}; sunrise: ${clock(sunrise)}. ' : ''}'
             '${end >= sunset ? 'Estimated finish: ${clock(end)}; sunset: ${clock(sunset)}. ' : 'Estimated finish: ${clock(end)}. '}'
             'Carry a headlamp and spare power.${end > sunset ? ' Consider an earlier departure or a shorter route to finish before sunset.' : ''}',
+        quickAction: end > sunset
+            ? 'Headlamp + spare power. Leave earlier or shorten the route.'
+            : 'Carry a headlamp and spare power.',
+        quickFacts: [
+          if (start < sunrise) 'Start ${clock(start)}',
+          if (start < sunrise) 'Sunrise ${clock(sunrise)}',
+          'Finish ${clock(end)}',
+          if (end >= sunset) 'Sunset ${clock(sunset)}',
+        ],
       );
     } else if (end >= sunset - 3600) {
       add(
@@ -253,6 +316,8 @@ List<TrailPrecaution> trailPrecautions({
         2,
         'Limited daylight buffer',
         'Estimated finish: ${clock(end)}; sunset: ${clock(sunset)}. Allow for delays and carry a headlamp with spare power.',
+        quickAction: 'Allow for delays; pack a headlamp and spare power.',
+        quickFacts: ['Finish ${clock(end)}', 'Sunset ${clock(sunset)}'],
       );
     }
   }
@@ -262,6 +327,8 @@ List<TrailPrecaution> trailPrecautions({
       1,
       'Plan for a longer hike',
       'Estimated hiking time: ${(durationMinutes / 60).toStringAsFixed(1)} hours, before delays. Carry food, water and backup power; share your return time.',
+      quickAction: 'Pack food, water and backup power; share your return time.',
+      quickFacts: ['Estimated ${(durationMinutes / 60).toStringAsFixed(1)}h'],
     );
   }
   result.sort((a, b) {

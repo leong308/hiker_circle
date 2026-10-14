@@ -1,5 +1,7 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'solo_hike_distance_dialog.dart';
 import 'hike_start_navigation.dart';
+import 'path_deviation_distance_setting.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -62,7 +64,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   List<_StartHikeWizardStep> get _steps => [
     _StartHikeWizardStep.type,
     _StartHikeWizardStep.timing,
-    _StartHikeWizardStep.trail,
+    if (!_draft.trail.isUnlisted) _StartHikeWizardStep.trail,
     if (_isUpcomingHike) _StartHikeWizardStep.reminder,
     if (!_isUpcomingHike) _StartHikeWizardStep.safety,
   ];
@@ -105,7 +107,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   bool _checkingDistance = false;
 
   Future<void> _next() async {
-    if (_isScheduling || _isStarting || _checkingDistance) return;
+    if (_isScheduling || _isStarting || _checkingDistance) {
+      return;
+    }
     final currentStep = _steps[_stepIndex];
 
     if (currentStep == _StartHikeWizardStep.timing &&
@@ -153,7 +157,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
         }),
       );
       _checkingDistance = false;
-      if (!mounted || checked == null) return;
+      if (!mounted || checked == null) {
+        return;
+      }
       _draft = checked;
     }
 
@@ -176,12 +182,16 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   }
 
   Future<void> _startNowAndFinish() async {
-    if (_isStarting) return;
+    if (_isStarting) {
+      return;
+    }
     final route = ModalRoute.of(context);
     setState(() => _isStarting = true);
     try {
       final safetyAccepted = await _confirmPreHikeSafety();
-      if (!safetyAccepted || !mounted) return;
+      if (!safetyAccepted || !mounted) {
+        return;
+      }
       final started = await widget.onStartNow!.call(_draftForNow());
       if (started) {
         HikeStartNavigation.closeOwnedRoute(route);
@@ -203,7 +213,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     } on HikerBleException catch (error) {
       inspectionError = error.message;
     }
-    if (!mounted) return false;
+    if (!mounted) {
+      return false;
+    }
 
     final value = readiness;
     final warnings = <String>[
@@ -333,7 +345,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       } catch (error) {
         debugPrint('Unable to cache the newly scheduled hike: $error');
       }
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -346,7 +360,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
         );
       Navigator.of(context).pop();
     } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -356,7 +372,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           ),
         );
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -415,7 +433,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     ).copyWith(
       departureTime: now,
       expectedArrivalTime: expectedArrival,
-      expectedReturnTime: expectedArrival.add(const Duration(hours: 2)),
+      expectedReturnTime: _draft.trail.isUnlisted
+          ? expectedArrival
+          : expectedArrival.add(const Duration(hours: 2)),
     );
   }
 
@@ -424,7 +444,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     if (_trails.isEmpty) {
       return Scaffold(
         backgroundColor: _WizardColors.backgroundFor(context),
-        appBar: AppBar(title: const Text('Create Hiking Session')),
+        appBar: PageHeaderAppBar(title: const Text('Create Hiking Session')),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -530,7 +550,9 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                   : 'Completing safety checks and preparing live tracking.',
               timeout: const Duration(seconds: 30),
               onTimeout: () {
-                if (!mounted) return;
+                if (!mounted) {
+                  return;
+                }
                 setState(() {
                   _isScheduling = false;
                   _isStarting = false;
@@ -561,6 +583,67 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
           onChanged: _updateDraft,
         );
       case _StartHikeWizardStep.timing:
+        if (_draft.trail.isUnlisted) {
+          return _StepCard(
+            title: 'Your location hike',
+            subtitle:
+                'No planned pathway is available. GPS records where you actually walk; weather follows your current location.',
+            children: [
+              Text(
+                'Starting point: ${_draft.trail.latitude.toStringAsFixed(5)}, ${_draft.trail.longitude.toStringAsFixed(5)}',
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<int>(
+                initialValue: _draft.trail.estimatedDurationMinutes,
+                decoration: const InputDecoration(
+                  labelText: 'Planned hike duration',
+                ),
+                items: [
+                  for (final minutes in [
+                    30,
+                    60,
+                    120,
+                    180,
+                    240,
+                    360,
+                    480,
+                    720,
+                    1440,
+                  ])
+                    DropdownMenuItem(
+                      value: minutes,
+                      child: Text(
+                        minutes < 60
+                            ? '$minutes minutes'
+                            : '${minutes / 60} hours',
+                      ),
+                    ),
+                ],
+                onChanged: (minutes) {
+                  if (minutes != null) {
+                    _updateDraft(
+                      _draft.copyWith(
+                        trail: _draft.trail.copyWith(
+                          estimatedDurationMinutes: minutes,
+                        ),
+                        expectedArrivalTime: _draft.departureTime.add(
+                          Duration(minutes: minutes),
+                        ),
+                        expectedReturnTime: _draft.departureTime.add(
+                          Duration(minutes: minutes),
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Starts now. Set a realistic return time and tell your emergency contact where you plan to go. Distance, terrain and weather farther ahead are unknown.',
+              ),
+            ],
+          );
+        }
         return _TimingStep(
           draft: _draft,
           startNow: _startNow,
@@ -609,47 +692,11 @@ class _Header extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Create Hiking Session',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _WizardColors.textFor(context),
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-              Text(
-                'Plan timing, safety, and route preparation',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _WizardColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => PageHeader(
+    title: 'Create Hiking Session',
+    subtitle: 'Plan timing, safety, and route preparation',
+    onBack: onBack,
+  );
 }
 
 class _StepProgress extends StatelessWidget {
@@ -861,7 +908,9 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
               ),
           ],
           onChanged: (trailId) {
-            if (trailId == null) return;
+            if (trailId == null) {
+              return;
+            }
             final nextTrail = widget.trails.firstWhere(
               (trail) => trail.trailId == trailId,
             );
@@ -879,6 +928,8 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
                 fallDetectionEnabled: current.fallDetectionEnabled,
                 fallDetectionSettings: current.fallDetectionSettings,
                 pathDeviationEnabled: current.pathDeviationEnabled,
+                pathDeviationDistanceMeters:
+                    current.pathDeviationDistanceMeters,
                 offlinePhysicalAlertEnabled:
                     current.offlinePhysicalAlertEnabled,
                 duressEnabled: current.duressEnabled,
@@ -968,7 +1019,9 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
   }
 
   Future<void> _addCheckpoint() async {
-    if (_checkpoints.length >= 12) return;
+    if (_checkpoints.length >= 12) {
+      return;
+    }
     final checkpoint = await showModalBottomSheet<TrailCheckpoint>(
       context: context,
       showDragHandle: true,
@@ -1001,7 +1054,9 @@ class _TrailSelectionStepState extends State<_TrailSelectionStep> {
         );
       },
     );
-    if (checkpoint == null || !mounted) return;
+    if (checkpoint == null || !mounted) {
+      return;
+    }
     widget.onChanged(widget.draft.addCheckpoint(checkpoint));
   }
 
@@ -1095,7 +1150,9 @@ class _CheckpointStepState extends State<_CheckpointStep> {
   }
 
   void _addCheckpoint() {
-    if (_checkpoints.length >= 12) return;
+    if (_checkpoints.length >= 12) {
+      return;
+    }
     showModalBottomSheet<TrailCheckpoint>(
       context: context,
       showDragHandle: true,
@@ -1128,7 +1185,9 @@ class _CheckpointStepState extends State<_CheckpointStep> {
         );
       },
     ).then((checkpoint) {
-      if (checkpoint == null || !mounted) return;
+      if (checkpoint == null || !mounted) {
+        return;
+      }
       widget.onChanged(widget.draft.addCheckpoint(checkpoint));
     });
   }
@@ -1369,8 +1428,12 @@ class _TimingStep extends StatelessWidget {
       firstDate: DateTime(minimum.year, minimum.month, minimum.day),
       lastDate: minimum.add(const Duration(days: 365)),
     );
-    if (picked == null) return;
-    if (!context.mounted) return;
+    if (picked == null) {
+      return;
+    }
+    if (!context.mounted) {
+      return;
+    }
     final updated = DateTime(
       picked.year,
       picked.month,
@@ -1390,8 +1453,12 @@ class _TimingStep extends StatelessWidget {
       context: context,
       initialTime: TimeOfDay.fromDateTime(initial),
     );
-    if (picked == null) return;
-    if (!context.mounted) return;
+    if (picked == null) {
+      return;
+    }
+    if (!context.mounted) {
+      return;
+    }
     final updated = DateTime(
       draft.departureTime.year,
       draft.departureTime.month,
@@ -1691,16 +1758,34 @@ class _SafetySettingsStep extends StatelessWidget {
             letterSpacing: 0,
           ),
         ),
-        _SwitchRow(
-          label: 'Path Deviation Alert',
-          value: draft.pathDeviationEnabled,
-          onChanged: (value) {
-            if (!value) {
-              unawaited(_showPathDeviationWarning(context));
-            }
-            onChanged(draft.copyWith(pathDeviationEnabled: value));
-          },
-        ),
+        if (draft.trail.isUnlisted)
+          const Padding(
+            padding: EdgeInsets.only(top: 12),
+            child: Text(
+              'Path deviation alerts are unavailable because this hike has no planned route. GPS recording and safety monitoring remain enabled.',
+            ),
+          )
+        else
+          _SwitchRow(
+            label: 'Path Deviation Alert',
+            value: draft.pathDeviationEnabled,
+            onChanged: (value) {
+              if (!value) {
+                unawaited(_showPathDeviationWarning(context));
+              }
+              onChanged(draft.copyWith(pathDeviationEnabled: value));
+            },
+          ),
+        if (!draft.trail.isUnlisted) ...[
+          const SizedBox(height: 12),
+          PathDeviationDistanceSetting(
+            value: draft.pathDeviationDistanceMeters,
+            enabled: draft.pathDeviationEnabled,
+            onChanged: (distance) => onChanged(
+              draft.copyWith(pathDeviationDistanceMeters: distance),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -2212,10 +2297,16 @@ HikeSessionDraft _reorderDraftCheckpoints(
 ) {
   final checkpoints = [...draft.effectiveCheckpoints]
     ..sort((a, b) => a.order.compareTo(b.order));
-  if (oldIndex < 0 || oldIndex >= checkpoints.length) return draft;
-  if (oldIndex < newIndex) newIndex--;
+  if (oldIndex < 0 || oldIndex >= checkpoints.length) {
+    return draft;
+  }
+  if (oldIndex < newIndex) {
+    newIndex--;
+  }
   newIndex = newIndex.clamp(0, checkpoints.length - 1);
-  if (oldIndex == newIndex) return draft;
+  if (oldIndex == newIndex) {
+    return draft;
+  }
   final moved = checkpoints.removeAt(oldIndex);
   checkpoints.insert(newIndex, moved);
   final reindexed = checkpoints
@@ -2601,24 +2692,7 @@ class _StatusRow extends StatelessWidget {
   }
 }
 
-class _CircleIcon extends StatelessWidget {
-  const _CircleIcon({required this.icon});
 
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: _WizardColors.surfaceFor(context),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: _WizardColors.green, size: 20),
-    );
-  }
-}
 
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon, this.color = _WizardColors.green});
@@ -2910,10 +2984,17 @@ HikeSessionDraft _withSafeRecordingInterval(HikeSessionDraft draft) {
 }
 
 HikeSessionDraft _withPlatformSafetyPolicy(HikeSessionDraft draft) {
-  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return draft;
+  if (draft.trail.isUnlisted && draft.pathDeviationEnabled) {
+    draft = draft.copyWith(pathDeviationEnabled: false);
+  }
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    return draft;
+  }
   final settings = draft.fallDetectionSettings;
   const androidWarningWindow = Duration(seconds: 15);
-  if (settings.fallResponseDuration == androidWarningWindow) return draft;
+  if (settings.fallResponseDuration == androidWarningWindow) {
+    return draft;
+  }
   return draft.copyWith(
     fallDetectionSettings: FallDetectionSettings(
       sensorSensitivity: settings.sensorSensitivity,

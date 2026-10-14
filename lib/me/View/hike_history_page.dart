@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -88,9 +89,8 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
       length: 2,
       child: Scaffold(
         backgroundColor: _HistoryColors.backgroundFor(context),
-        appBar: AppBar(
+        appBar: PageHeaderAppBar(
           backgroundColor: _HistoryColors.backgroundFor(context),
-          surfaceTintColor: Colors.transparent,
           leading: CupertinoButton(
             padding: EdgeInsets.zero,
             onPressed: () => Navigator.of(context).pop(),
@@ -392,7 +392,7 @@ class ExpiredHikeDetailPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final draft = hike.draft;
     return Scaffold(
-      appBar: AppBar(title: const Text('Expired hike plan')),
+      appBar: PageHeaderAppBar(title: const Text('Expired hike plan')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -518,9 +518,8 @@ class _HikeHistoryDetailPageState extends State<HikeHistoryDetailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _HistoryColors.backgroundFor(context),
-      appBar: AppBar(
+      appBar: PageHeaderAppBar(
         backgroundColor: _HistoryColors.backgroundFor(context),
-        surfaceTintColor: Colors.transparent,
         leading: CupertinoButton(
           padding: EdgeInsets.zero,
           onPressed: () => Navigator.of(context).pop(),

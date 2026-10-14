@@ -21,6 +21,7 @@ const {
 } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
+const { getStorage } = require('firebase-admin/storage');
 const crypto = require('crypto');
 const argon2 = require('argon2');
 const {
@@ -35,6 +36,7 @@ const {
 const {
   greenApiMessageId,
   greenApiStateReadiness,
+  sendGreenApiOtp,
 } = require('./green_api_helpers');
 const {
   LiveLocationNotificationValidationError,
@@ -106,6 +108,7 @@ const {
   createAssistantHandler,
 } = require('./hiker_circle_assistant');
 
+const {isUnlistedSessionTrail, unlistedTrailSnapshot} = require('./unlisted_hikes');
 admin.initializeApp();
 
 // firebase-admin v14 removed the legacy namespace accessors, while this
@@ -126,16 +129,68 @@ admin.messaging = () => getMessaging();
 const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
 const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
-const geminiApiKey = defineSecret('GEMINI_API_KEY');
 
 exports.checkCommunityContentIntegrity = onSchedule({
-  schedule: 'every 30 minutes', secrets: [geminiApiKey], timeoutSeconds: 240,
+  schedule: 'every 30 minutes', secrets: [], timeoutSeconds: 240,
   memory: '256MiB', maxInstances: 1, concurrency: 1,
 }, async () => {
   const result = await require('./community_moderation').runIntegrityCheck({
-    db: admin.firestore(), apiKey: geminiApiKey.value(), fieldPath: FieldPath.documentId(),
+    db: admin.firestore(), fieldPath: FieldPath.documentId(),
   });
   logger.log('Community integrity check finished.', result);
+});
+
+function recordedTrailRequestError(error, message) {
+  const known = ['invalid-argument', 'permission-denied', 'failed-precondition', 'already-exists'].includes(error.code);
+  return new HttpsError(known ? error.code : 'internal', known ? error.message : message);
+}
+
+exports.beginRecordedTrailRequest = onCall({timeoutSeconds: 30}, async request => {
+  const {uid} = authenticatedPhoneFor(request, 'Sign in to submit your recorded trail.');
+  try {
+    return await require('./recorded_trail_requests').beginRequest({
+      db: admin.firestore(), uid, data: request.data,
+    });
+  } catch (error) {
+    throw recordedTrailRequestError(error, 'Unable to create the trail request.');
+  }
+});
+for (const [name, handler] of Object.entries({submitTrailCaution:'submit', updateTrailCaution:'update'})) {
+  exports[name] = onCall({timeoutSeconds:60}, async request => {
+    const {uid, phoneNumber} = authenticatedPhoneFor(request, 'Sign in to report a trail caution.');
+    try {
+      return await require('./trail_cautions')[handler]({
+        db:admin.firestore(), bucket:getStorage().bucket(), uid, phone:phoneNumber,
+        data:request.data, timestamp:millis => Timestamp.fromMillis(millis),
+      });
+    } catch (error) {
+      const known = ['invalid-argument','permission-denied','failed-precondition','not-found'].includes(error.code);
+      throw new HttpsError(known ? error.code : 'unavailable', known ? error.message : 'Unable to save this caution. Please retry.');
+    }
+  });
+}
+exports.finalizeRecordedTrailRequest = onCall({timeoutSeconds: 120, memory: '512MiB'}, async request => {
+  const {uid} = authenticatedPhoneFor(request, 'Sign in to submit your recorded trail.');
+  try {
+    return await require('./recorded_trail_requests').finalizeRequest({
+      db: admin.firestore(), uid, requestId: request.data?.requestId,
+    });
+  } catch (error) {
+    throw recordedTrailRequestError(error, 'Unable to submit the trail request.');
+  }
+});
+
+exports.getAdminDashboardAnalytics = onCall({timeoutSeconds: 120, memory: '512MiB', maxInstances: 2}, async request => {
+  if (!request.auth?.uid || request.auth.token?.isAdmin !== true) {
+    throw new HttpsError('permission-denied', 'Administrator access is required.');
+  }
+  try {
+    return await require('./admin_analytics').loadAdminAnalytics({db: admin.firestore(),
+      documentId: FieldPath.documentId(), forceRefresh: request.data?.forceRefresh === true});
+  } catch (error) {
+    logger.error('Admin analytics could not load.', {code: String(error.code || 'analytics-unavailable')});
+    throw new HttpsError('unavailable', 'Statistics could not load. Refresh to retry.');
+  }
 });
 
 exports.reviewCommunityContentFlag = onCall({timeoutSeconds: 30}, async request => {
@@ -154,7 +209,7 @@ exports.reviewCommunityContentFlag = onCall({timeoutSeconds: 30}, async request 
 
 exports.askHikerCircleAssistant = onCall(
   {
-    secrets: [geminiApiKey],
+    secrets: [],
     timeoutSeconds: 30,
     memory: '256MiB',
     maxInstances: 4,
@@ -163,7 +218,6 @@ exports.askHikerCircleAssistant = onCall(
     try {
       const handler = createAssistantHandler({
         db: admin.firestore(),
-        apiKey: geminiApiKey.value(),
       });
       return await handler(request);
     } catch (error) {
@@ -1022,18 +1076,12 @@ exports.sendGreenApiLoginCode = onCall(
         'It expires in 5 minutes.';
     let response;
     try {
-      response = await fetch(
-        greenApiEndpoint('sendMessage', credentials),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chatId: `${digitsOnly}@c.us`,
-            message: verificationMessage,
-          }),
-          signal: AbortSignal.timeout(12 * 1000),
-        }
-      );
+      response = await sendGreenApiOtp({
+        endpointFor: (method) => greenApiEndpoint(method, credentials),
+        chatId: `${digitsOnly}@c.us`,
+        code,
+        message: verificationMessage,
+      });
     } catch (error) {
       logger.error('GreenAPI login transport failed', {
         challengeId,
@@ -3660,6 +3708,15 @@ function sanitizedPlainValue(value, depth = 0) {
       ) {
         continue;
       }
+      // Native recorded pathways use the same bounded encoded format as Add
+      // Trail. Do not silently truncate long recordings in session snapshots.
+      if (key === 'routeEncodedPolyline' && typeof entry === 'string') {
+        if (entry.length > 650000) {
+          throw new HttpsError('invalid-argument', 'The saved route exceeds the supported trail size.');
+        }
+        result[key] = entry;
+        continue;
+      }
       result[String(key).slice(0, 160)] = sanitizedPlainValue(
         entry,
         depth + 1
@@ -3676,6 +3733,12 @@ function boundedNumber(value, minimum, maximum, fallback) {
     return fallback;
   }
   return Math.max(minimum, Math.min(maximum, number));
+}
+
+function normalizedPathDeviationDistance(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(Math.min(50, Math.max(10, value)))
+    : 30;
 }
 
 function teamBuddyFromUser(phoneNumber, user, isHost, index) {
@@ -3718,7 +3781,7 @@ function sanitizedTeamDraft(rawDraft, trailData, buddies, options = {}) {
     ? rawDraft
     : {};
   const serialized = JSON.stringify(draft);
-  if (!serialized || Buffer.byteLength(serialized, 'utf8') > 180000) {
+  if (!serialized || Buffer.byteLength(serialized, 'utf8') > 900000) {
     throw new HttpsError('invalid-argument', 'The team hike plan is too large.');
   }
   const departureMillis = dateMillis(draft.departureTime);
@@ -3753,7 +3816,7 @@ function sanitizedTeamDraft(rawDraft, trailData, buddies, options = {}) {
     && typeof draft.fallDetectionSettings === 'object'
     ? draft.fallDetectionSettings
     : {};
-  const customCheckpoints = Array.isArray(draft.customCheckpoints)
+  const customCheckpoints = !isUnlistedSessionTrail(trailData) && Array.isArray(draft.customCheckpoints)
     ? draft.customCheckpoints
         .slice(0, 200)
         .map((checkpoint) => sanitizedPlainValue(checkpoint))
@@ -3799,7 +3862,8 @@ function sanitizedTeamDraft(rawDraft, trailData, buddies, options = {}) {
         boundedNumber(fall.longestRestDurationSeconds, 30, 7200, 180)
       ),
     },
-    pathDeviationEnabled: draft.pathDeviationEnabled === true,
+    pathDeviationEnabled: !isUnlistedSessionTrail(trailData) && draft.pathDeviationEnabled === true,
+    pathDeviationDistanceMeters: normalizedPathDeviationDistance(draft.pathDeviationDistanceMeters),
     offlinePhysicalAlertEnabled: draft.offlinePhysicalAlertEnabled === true,
     duressEnabled: draft.duressEnabled === true,
     completedChecklistItems: Array.isArray(draft.completedChecklistItems)
@@ -3972,12 +4036,12 @@ function queueTeamOutbox(
   );
 }
 
-function validTeamSafetySettings(raw) {
+function validTeamSafetySettings(raw, hasPlannedRoute = true) {
   if (
     !raw
     || typeof raw !== 'object'
     || raw.liveLocationSharing !== true
-    || raw.pathDeviationAlerts !== true
+    || (hasPlannedRoute && raw.pathDeviationAlerts !== true)
     || raw.teammateSeparationAlerts !== true
   ) {
     throw new HttpsError(
@@ -3987,7 +4051,8 @@ function validTeamSafetySettings(raw) {
   }
   return {
     liveLocationSharing: true,
-    pathDeviationAlerts: true,
+    pathDeviationAlerts: hasPlannedRoute,
+    pathDeviationDistanceMeters: normalizedPathDeviationDistance(raw.pathDeviationDistanceMeters),
     teammateSeparationAlerts: true,
     fallDetectionEnabled: raw.fallDetectionEnabled !== false,
     sensorSensitivity: boundedNumber(raw.sensorSensitivity, 1, 10, 5),
@@ -4072,7 +4137,14 @@ function assertWindowRate(
   );
 }
 
-function canonicalTrailSnapshot(trailId, trail) {
+function canonicalTrailSnapshot(trailId, trail, fallback) {
+  if (isUnlistedSessionTrail({...fallback, trailId}) && !trail?.name) {
+    try {
+      return unlistedTrailSnapshot(trailId, fallback);
+    } catch (_) {
+      throw new HttpsError('invalid-argument', 'Choose a valid current location for this hike.');
+    }
+  }
   return {
     ...sanitizedPlainValue(trail || {}),
     trailId,
@@ -4131,7 +4203,8 @@ function activeHikeDocumentData({
     fallDetectionResponseDurationSeconds: fall.fallResponseDurationSeconds,
     fallDetectionLongestRestDurationSeconds: fall.longestRestDurationSeconds,
     fallDetectionStillnessDurationSeconds: fall.fallResponseDurationSeconds,
-    pathDeviationEnabled: draft.pathDeviationEnabled === true,
+    pathDeviationEnabled: !isUnlistedSessionTrail(draft.trail) && draft.pathDeviationEnabled === true,
+    pathDeviationDistanceMeters: normalizedPathDeviationDistance(draft.pathDeviationDistanceMeters),
     offlinePhysicalAlertEnabled: draft.offlinePhysicalAlertEnabled === true,
     duressEnabled: draft.duressEnabled === true,
     completedChecklistItems: Array.isArray(draft.completedChecklistItems)
@@ -4370,7 +4443,7 @@ exports.scheduleUpcomingHike = onCall(
           );
         }
       });
-      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {});
+      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {}, rawDraft?.trail);
       const buddies = inviteeSnapshots.map((snapshot, index) =>
         teamBuddyFromUser(invitedPhones[index], snapshot.data() || {}, false, index)
       );
@@ -4737,7 +4810,7 @@ exports.startActiveHikeSession = onCall(
       let index = 5;
       const upcomingSnapshot = upcomingReference ? baseSnapshots[index++] : null;
       const teamSnapshot = teamReference ? baseSnapshots[index] : null;
-      if (!userSnapshot.exists || !trailSnapshot.exists) {
+      if (!userSnapshot.exists || (!trailSnapshot.exists && !isUnlistedSessionTrail({...rawDraft?.trail, trailId}))) {
         throw new HttpsError('failed-precondition', 'Your hike data is unavailable.');
       }
       const user = userSnapshot.data() || {};
@@ -4916,7 +4989,7 @@ exports.startActiveHikeSession = onCall(
           rawDraft
         );
       }
-      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {});
+      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {}, canonicalRawDraft?.trail);
       const buddies = teamParticipants
         .filter((participant) => teamParticipantPhone(participant) !== phoneNumber)
         .map((participant) => sanitizedPlainValue(participant.buddy || {}));
@@ -5377,7 +5450,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
           'The saved hike is too old to restore.'
         );
       }
-      if (!trailSnapshot.exists) {
+      if (!trailSnapshot.exists && !isUnlistedSessionTrail({...rawDraft?.trail, trailId})) {
         throw new HttpsError('failed-precondition', 'The saved hike cannot be restored.');
       }
       let buddies = [];
@@ -5441,7 +5514,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
           rawDraft
         );
       }
-      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {});
+      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {}, canonicalRawDraft?.trail);
       const draft = {
         ...sanitizedTeamDraft(canonicalRawDraft, trail, buddies, {
           pastDepartureToleranceMillis: 30 * 24 * 60 * 60 * 1000,
@@ -5737,7 +5810,7 @@ exports.completeActiveHikeSession = onCall(
       }
       const transactionNowMillis = Date.now();
       if (
-        !trailSnapshot.exists
+        (!trailSnapshot.exists && !isUnlistedSessionTrail({...rawDraft?.trail, trailId}))
         || endedAtMillis > transactionNowMillis + 5 * 60 * 1000
         || startedAtMillis < transactionNowMillis - 30 * 24 * 60 * 60 * 1000
         || endedAtMillis - startedAtMillis > 30 * 24 * 60 * 60 * 1000
@@ -5781,7 +5854,7 @@ exports.completeActiveHikeSession = onCall(
           rawDraft
         );
       }
-      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {});
+      const trail = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {}, canonicalRawDraft?.trail);
       const draft = {
         ...sanitizedTeamDraft(canonicalRawDraft, trail, buddies, {
           pastDepartureToleranceMillis: 30 * 24 * 60 * 60 * 1000,
@@ -6347,7 +6420,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
     if (!ownerSnapshot.exists) {
       throw new HttpsError('unauthenticated', 'Your account is unavailable.');
     }
-    if (!trailSnapshot.exists) {
+    if (!trailSnapshot.exists && !isUnlistedSessionTrail({...rawDraft?.trail, trailId})) {
       throw new HttpsError('not-found', 'This trail is no longer available.');
     }
     const owner = ownerSnapshot.data() || {};
@@ -6507,11 +6580,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
       )
     );
     const allBuddies = [hostBuddy, ...invitedBuddies];
-    const trailData = {
-      ...sanitizedPlainValue(trailSnapshot.data() || {}),
-      trailId,
-      name: String(trailSnapshot.data()?.name || 'Trail').trim().slice(0, 160),
-    };
+    const trailData = canonicalTrailSnapshot(trailId, trailSnapshot.data() || {}, rawDraft?.trail);
     const requestedSharedPlan = sharedHikePlan(
       rawDraft,
       trailData,
@@ -6645,9 +6714,6 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
   }
 
   let safetySettings;
-  if (action === 'ready') {
-    safetySettings = validTeamSafetySettings(request.data?.safetySettings);
-  }
   const targetPhone = action === 'ping'
     ? String(request.data?.participantPhoneNumber || '').trim()
     : '';
@@ -6730,6 +6796,11 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
       throw new HttpsError('permission-denied', 'Your account is unavailable.');
     }
     const team = teamSnapshot.data() || {};
+    if (action === 'ready') {
+      safetySettings = validTeamSafetySettings(
+        request.data?.safetySettings, !isUnlistedSessionTrail(team.draft?.trail)
+      );
+    }
     const originalParticipants = validTeamParticipants(team);
     const callerIndex = originalParticipants.findIndex(
       (participant) => teamParticipantPhone(participant) === callerPhone
@@ -6778,7 +6849,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
       const trailSnapshot = await transaction.get(
         db.collection('trails').doc(trailId)
       );
-      if (!trailSnapshot.exists) {
+      if (!trailSnapshot.exists && !isUnlistedSessionTrail({...team.draft?.trail, trailId})) {
         throw new HttpsError(
           'failed-precondition',
           'The trail for this invitation is no longer available.'
@@ -8561,20 +8632,13 @@ exports.sendPasswordResetCode = onCall(
     const digitsOnly = phoneNumber.replace(/\D/g, '');
     let response;
     try {
-      response = await fetch(
-        greenApiEndpoint('sendMessage', credentials),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chatId: `${digitsOnly}@c.us`,
-            message:
-              `Your HikerCircle password reset code is ${code}. ` +
-              'It expires in 5 minutes.',
-          }),
-          signal: AbortSignal.timeout(12 * 1000),
-        }
-      );
+      response = await sendGreenApiOtp({
+        endpointFor: (method) => greenApiEndpoint(method, credentials),
+        chatId: `${digitsOnly}@c.us`,
+        code,
+        message: `Your HikerCircle password reset code is ${code}. ` +
+          'It expires in 5 minutes.',
+      });
     } catch (error) {
       logger.error('GreenAPI password reset transport failed', {
         challengeId,

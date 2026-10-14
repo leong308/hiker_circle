@@ -80,7 +80,8 @@ class HikerCircleAssistantAnswer {
   final HikerCircleAssistantAction? action;
 
   bool get isEmergency => responseMode == 'curated_emergency';
-  bool get isCuratedFallback => responseMode == 'curated_fallback';
+  bool get isCuratedFallback =>
+      responseMode == 'curated_fallback' || responseMode == 'curated_guide';
 
   factory HikerCircleAssistantAnswer.fromMap(Map<String, dynamic> map) {
     final answer = map['answer']?.toString().trim() ?? '';
@@ -223,7 +224,7 @@ class HikerCircleAssistantRepository {
     return switch (code) {
       'unauthenticated' => 'Sign in before using the HikerCircle assistant.',
       'resource-exhausted' =>
-        'The unpaid assistant quota is currently exhausted. Try again later.',
+        'The help request limit has been reached. Try again later.',
       'deadline-exceeded' =>
         'The assistant took too long to respond. Try again.',
       'failed-precondition' =>

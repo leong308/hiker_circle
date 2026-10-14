@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import '../../core/widgets/page_header_style.dart';
 import 'package:feedback/feedback.dart';
 
 import '../../authentication/View/phone_sign_in_page.dart';
@@ -255,6 +256,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           useMaterial3: true,
           brightness: Brightness.light,
           fontFamily: _appFontFamily,
+          appBarTheme: PageHeaderStyle.appBarTheme,
           cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
             primaryColor: _appGreen,
             primaryContrastingColor: Colors.white,
@@ -304,6 +306,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           useMaterial3: true,
           brightness: Brightness.dark,
           fontFamily: _appFontFamily,
+          appBarTheme: PageHeaderStyle.appBarTheme,
           cupertinoOverrideTheme: const NoDefaultCupertinoThemeData(
             brightness: Brightness.dark,
             primaryColor: Color(0xFF7AD69C),

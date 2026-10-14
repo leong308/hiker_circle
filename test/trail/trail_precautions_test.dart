@@ -189,6 +189,11 @@ void main() {
     expect(caution.message, isNot(contains('sunset')));
     expect(caution.message, isNot(contains('start time')));
     expect(caution.message, isNot(contains('earlier')));
+    expect(caution.quickAction, 'Carry a headlamp and spare power.');
+    expect(
+      caution.quickFacts,
+      containsAll(['Start 05:00', 'Sunrise 06:00', 'Finish 08:30']),
+    );
   });
 
   test(
@@ -206,6 +211,8 @@ void main() {
       expect(evening.message, contains('sunset: 19:00'));
       expect(evening.message, contains('earlier departure'));
       expect(evening.message, isNot(contains('sunrise')));
+      expect(evening.quickAction, contains('Leave earlier'));
+      expect(evening.quickFacts, containsAll(['Finish 19:01', 'Sunset 19:00']));
     },
   );
 
@@ -268,5 +275,6 @@ void main() {
     ).firstWhere((c) => c.id == 'ascent');
     expect(caution.message, contains('769 m'));
     expect(caution.message, isNot(contains('altitude above sea level')));
+    expect(caution.quickFacts, ['Climb 769 m']);
   });
 }

@@ -32,14 +32,21 @@ class VerificationCodeInput extends StatefulWidget {
   State<VerificationCodeInput> createState() => _VerificationCodeInputState();
 }
 
-class _VerificationCodeInputState extends State<VerificationCodeInput> {
+class _VerificationCodeInputState extends State<VerificationCodeInput>
+    with WidgetsBindingObserver {
   late List<TextEditingController> _slotControllers;
   late List<FocusNode> _focusNodes;
   bool _synchronizing = false;
+  bool _restoreFocusOnResume = false;
+  AppLifecycleState? _lastLifecycleState;
+  bool _pasting = false;
+  String? _pasteError;
 
   @override
   void initState() {
     super.initState();
+    _lastLifecycleState = WidgetsBinding.instance.lifecycleState;
+    WidgetsBinding.instance.addObserver(this);
     _createSlots();
     widget.controller.addListener(_syncFromController);
     _syncFromController();
@@ -57,6 +64,79 @@ class _VerificationCodeInputState extends State<VerificationCodeInput> {
       _createSlots();
     }
     _syncFromController();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final previousState = _lastLifecycleState;
+    _lastLifecycleState = state;
+    if (state == AppLifecycleState.inactive &&
+        (previousState == AppLifecycleState.resumed || previousState == null)) {
+      _restoreFocusOnResume = _focusNodes.any((node) => node.hasFocus);
+    } else if (state == AppLifecycleState.resumed && _restoreFocusOnResume) {
+      _restoreFocusOnResume = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            !widget.enabled ||
+            ModalRoute.of(context)?.isCurrent == false) {
+          return;
+        }
+        final index = _digits(
+          widget.controller.text,
+        ).length.clamp(0, widget.length - 1);
+        _focusNodes[index].requestFocus();
+        // A still-focused field may have lost its platform keyboard while
+        // WhatsApp was foregrounded. Reopen that existing text connection.
+        SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    }
+  }
+
+  Future<void> _pasteCode() async {
+    if (!widget.enabled || _pasting) return;
+    setState(() {
+      _pasting = true;
+      _pasteError = null;
+    });
+    try {
+      // Read only after a user action, so returning from WhatsApp does not
+      // trigger clipboard permission prompts or submit a stale code.
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (!mounted ||
+          !widget.enabled ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      final text = data?.text?.trim() ?? '';
+      final matches = RegExp(
+        '(?<![0-9])[0-9]{${widget.length}}(?![0-9])',
+      ).allMatches(text).toList();
+      final compact = text.replaceAll(RegExp(r'[\s-]'), '');
+      final code = RegExp('^[0-9]{${widget.length}}\$').hasMatch(compact)
+          ? compact
+          : matches.length == 1
+          ? matches.single.group(0)
+          : null;
+      if (code == null) {
+        setState(
+          () => _pasteError =
+              'Copy the ${widget.length}-digit code, then tap Paste code.',
+        );
+        return;
+      }
+      _focusNodes.last.requestFocus();
+      _setCode(code);
+    } on PlatformException {
+      if (mounted) {
+        setState(
+          () => _pasteError =
+              'Unable to paste. Allow paste access or enter the code manually.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _pasting = false);
+    }
   }
 
   void _createSlots() {
@@ -201,6 +281,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_syncFromController);
     _disposeSlots();
     super.dispose();
@@ -219,103 +300,125 @@ class _VerificationCodeInputState extends State<VerificationCodeInput> {
         alignment: Alignment.center,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 360),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              for (var index = 0; index < widget.length; index++) ...[
-                if (index > 0) const SizedBox(width: 8),
-                Expanded(
-                  child: SizedBox(
-                    height: 58,
-                    child: TextField(
-                      controller: _slotControllers[index],
-                      focusNode: _focusNodes[index],
-                      enabled: widget.enabled,
-                      autofocus: widget.autofocus && index == 0,
-                      keyboardType: TextInputType.number,
-                      textInputAction: index == widget.length - 1
-                          ? TextInputAction.done
-                          : TextInputAction.next,
-                      // Offer platform OTP autofill on whichever slot is
-                      // focused; a supplied full code is distributed below.
-                      autofillHints: const [AutofillHints.oneTimeCode],
-                      enableSuggestions: false,
-                      autocorrect: false,
-                      textAlign: TextAlign.center,
-                      textAlignVertical: TextAlignVertical.center,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: scheme.onSurface,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(widget.length),
-                      ],
-                      decoration: InputDecoration(
-                        hintText: '•',
-                        hintStyle: TextStyle(
-                          color: scheme.onSurfaceVariant.withValues(
-                            alpha: 0.35,
+              Row(
+                children: [
+                  for (var index = 0; index < widget.length; index++) ...[
+                    if (index > 0) const SizedBox(width: 8),
+                    Expanded(
+                      child: SizedBox(
+                        height: 58,
+                        child: TextField(
+                          controller: _slotControllers[index],
+                          focusNode: _focusNodes[index],
+                          enabled: widget.enabled,
+                          autofocus: widget.autofocus && index == 0,
+                          keyboardType: TextInputType.number,
+                          textInputAction: index == widget.length - 1
+                              ? TextInputAction.done
+                              : TextInputAction.next,
+                          // Offer platform OTP autofill on whichever slot is
+                          // focused; a supplied full code is distributed below.
+                          autofillHints: const [AutofillHints.oneTimeCode],
+                          enableSuggestions: false,
+                          autocorrect: false,
+                          textAlign: TextAlign.center,
+                          textAlignVertical: TextAlignVertical.center,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: scheme.onSurface,
+                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
-                        ),
-                        filled: true,
-                        fillColor: _focusNodes[index].hasFocus
-                            ? scheme.primary.withValues(alpha: 0.12)
-                            : scheme.primary.withValues(alpha: 0.055),
-                        // Roboto's numeral ink sits fractionally left of its
-                        // advance box. This keeps the visual centre aligned
-                        // with the centre of the surrounding slot.
-                        contentPadding: const EdgeInsets.only(left: 2),
-                        counterText: '',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(color: scheme.outlineVariant),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: scheme.outlineVariant.withValues(
-                              alpha: 0.75,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(widget.length),
+                          ],
+                          decoration: InputDecoration(
+                            hintText: '•',
+                            hintStyle: TextStyle(
+                              color: scheme.onSurfaceVariant.withValues(
+                                alpha: 0.35,
+                              ),
+                            ),
+                            filled: true,
+                            fillColor: _focusNodes[index].hasFocus
+                                ? scheme.primary.withValues(alpha: 0.12)
+                                : scheme.primary.withValues(alpha: 0.055),
+                            // Roboto's numeral ink sits fractionally left of its
+                            // advance box. This keeps the visual centre aligned
+                            // with the centre of the surrounding slot.
+                            contentPadding: const EdgeInsets.only(left: 2),
+                            counterText: '',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(
+                                color: scheme.outlineVariant,
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(
+                                color: scheme.outlineVariant.withValues(
+                                  alpha: 0.75,
+                                ),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(
+                                color: scheme.primary,
+                                width: 2,
+                              ),
+                            ),
+                            disabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(
+                                color: scheme.outlineVariant.withValues(
+                                  alpha: 0.35,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: scheme.primary,
-                            width: 2,
-                          ),
-                        ),
-                        disabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: scheme.outlineVariant.withValues(
-                              alpha: 0.35,
-                            ),
-                          ),
+                          onTap: () {
+                            final text = _slotControllers[index].text;
+                            _slotControllers[index].selection = TextSelection(
+                              baseOffset: 0,
+                              extentOffset: text.length,
+                            );
+                          },
+                          onChanged: (value) =>
+                              _handleSlotChanged(index, value),
+                          onSubmitted: (_) {
+                            final code = _digits(widget.controller.text);
+                            if (code.length == widget.length) {
+                              widget.onSubmitted?.call(code);
+                            } else if (index < widget.length - 1) {
+                              _focusNodes[index + 1].requestFocus();
+                            }
+                          },
+                          onTapOutside: (_) => _focusNodes[index].unfocus(),
                         ),
                       ),
-                      onTap: () {
-                        final text = _slotControllers[index].text;
-                        _slotControllers[index].selection = TextSelection(
-                          baseOffset: 0,
-                          extentOffset: text.length,
-                        );
-                      },
-                      onChanged: (value) => _handleSlotChanged(index, value),
-                      onSubmitted: (_) {
-                        final code = _digits(widget.controller.text);
-                        if (code.length == widget.length) {
-                          widget.onSubmitted?.call(code);
-                        } else if (index < widget.length - 1) {
-                          _focusNodes[index + 1].requestFocus();
-                        }
-                      },
-                      onTapOutside: (_) => _focusNodes[index].unfocus(),
                     ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              TextButton.icon(
+                onPressed: widget.enabled && !_pasting ? _pasteCode : null,
+                icon: const Icon(Icons.content_paste_rounded, size: 18),
+                label: const Text('Paste code'),
+              ),
+              if (_pasteError != null)
+                Text(
+                  _pasteError!,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.error,
                   ),
                 ),
-              ],
             ],
           ),
         ),

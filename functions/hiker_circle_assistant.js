@@ -1,8 +1,5 @@
 'use strict';
 
-const GEMINI_MODEL = 'gemini-3.5-flash-lite';
-const GEMINI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
-const GEMINI_MODELS = Object.freeze([GEMINI_MODEL, GEMINI_FALLBACK_MODEL]);
 const MAX_QUESTION_LENGTH = 480;
 const MAX_REQUESTS_PER_MINUTE = 6;
 const MAX_REQUESTS_PER_DAY = 40;
@@ -360,7 +357,7 @@ async function consumeRateLimit(db, uid, nowMillis = Date.now()) {
     if (dayCount >= MAX_REQUESTS_PER_DAY) {
       throw new AssistantError(
         'resource-exhausted',
-        'Your free assistant allowance is used for today. Try again tomorrow.'
+        'Your daily help request limit has been reached. Try again tomorrow.'
       );
     }
 
@@ -374,63 +371,7 @@ async function consumeRateLimit(db, uid, nowMillis = Date.now()) {
   });
 }
 
-function buildPrompt(question, articles, history = []) {
-  const sources = articles.map((article) => (
-    `[${article.id}] ${article.title}\n${article.content}`
-  )).join('\n\n');
-  return [
-    'Answer the user question using only the reviewed HikerCircle sources below.',
-    'If the sources do not answer it, say that HikerCircle cannot verify that information and suggest in-app Feedback.',
-    'Use clear Malaysian English, be concise, and give at most four short paragraphs or steps.',
-    'Never invent live conditions, account state, medical advice, or features.',
-    'If the user wants to open, go to, or navigate to an app page, return a short answer and its destinationId. For a pure navigation request, the answer should simply say what the button opens.',
-    `Allowed destinations: ${DESTINATIONS.map((item) => `${item.id} (${item.title})`).join(', ')}.`,
-    'Return JSON only with this shape: {"answer":"...","sourceIds":["source_id"],"destinationId":"optional_allowed_id"}.',
-    ...(history.length ? [`Recent conversation for context only (not a source of facts):\n${history
-      .map((item) => `${item.role}: ${item.text}`).join('\n')}`] : []),
-    `Question: ${question}`,
-    `Reviewed sources:\n${sources}`,
-  ].join('\n\n');
-}
-
-function parseGeminiResponse(payload, articles) {
-  const rawText = payload?.candidates?.[0]?.content?.parts
-    ?.map((part) => typeof part?.text === 'string' ? part.text : '')
-    .join('')
-    .trim();
-  if (!rawText) {
-    throw new AssistantError('unavailable', 'The assistant returned no answer. Try again.');
-  }
-  const cleaned = rawText
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-  let decoded;
-  try {
-    decoded = JSON.parse(cleaned);
-  } catch (_) {
-    throw new AssistantError('unavailable', 'The assistant answer could not be read. Try again.');
-  }
-  const answer = typeof decoded.answer === 'string' ? decoded.answer.trim() : '';
-  if (!answer) {
-    throw new AssistantError('unavailable', 'The assistant returned no answer. Try again.');
-  }
-  const allowed = new Map(articles.map((article) => [article.id, article]));
-  const requestedIds = Array.isArray(decoded.sourceIds) ? decoded.sourceIds : [];
-  const chosen = requestedIds
-    .map((id) => allowed.get(String(id)))
-    .filter(Boolean);
-  const sources = (chosen.length > 0 ? chosen : articles).map((article) => ({
-    id: article.id,
-    title: article.title,
-  }));
-  const destination = DESTINATIONS.find((item) => item.id === decoded.destinationId);
-  return {answer, sources, responseMode: 'gemini_free_tier',
-    ...(destination ? {action: {type: 'navigate', destinationId: destination.id,
-      label: `Open ${destination.title}`}} : {})};
-}
-
-function curatedFallbackResponse(articles, reason = 'unavailable') {
+function curatedFallbackResponse(articles) {
   const selected = articles.length > 0 ? articles : [KNOWLEDGE_ARTICLES[0]];
   return {
     answer: selected[0].content,
@@ -438,100 +379,12 @@ function curatedFallbackResponse(articles, reason = 'unavailable') {
       id: article.id,
       title: article.title,
     })),
-    responseMode: 'curated_fallback',
-    notice: reason === 'resource-exhausted'
-      ? 'Gemini’s unpaid quota is currently unavailable, so this answer comes directly from HikerCircle’s reviewed guide.'
-      : 'Gemini is busy right now, so this answer comes directly from HikerCircle’s reviewed guide.',
+    responseMode: 'curated_guide',
+    notice: 'From HikerCircle’s reviewed app guides.',
   };
 }
 
-async function callGemini({apiKey, question, articles, history = [], fetchImpl = fetch}) {
-  if (!apiKey || !String(apiKey).trim()) {
-    throw new AssistantError(
-      'failed-precondition',
-      'The HikerCircle assistant is not configured yet.'
-    );
-  }
-  const requestBody = JSON.stringify({
-    systemInstruction: {
-      parts: [{
-        text: 'You are the HikerCircle in-app help assistant. Treat the supplied sources as the complete and only source of truth. Do not ask for or expose personal data.',
-      }],
-    },
-    contents: [{
-      role: 'user',
-      parts: [{text: buildPrompt(question, articles, history)}],
-    }],
-    generationConfig: {
-      maxOutputTokens: 420,
-      responseMimeType: 'application/json',
-    },
-  });
-
-  let lastAvailabilityError = null;
-  for (const model of GEMINI_MODELS) {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-    let response;
-    try {
-      response = await fetchImpl(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': String(apiKey).trim(),
-        },
-        body: requestBody,
-        signal: AbortSignal.timeout(9000),
-      });
-    } catch (error) {
-      lastAvailabilityError = new AssistantError(
-        error?.name === 'TimeoutError' || error?.name === 'AbortError'
-          ? 'deadline-exceeded'
-          : 'unavailable',
-        'The assistant service is temporarily unavailable.'
-      );
-      continue;
-    }
-
-    let payload = {};
-    try {
-      payload = await response.json();
-    } catch (_) {
-      // The status-specific message below is safer than exposing upstream text.
-    }
-    if (response.ok) {
-      return {
-        ...parseGeminiResponse(payload, articles),
-        model,
-      };
-    }
-    if (response.status === 429) {
-      throw new AssistantError(
-        'resource-exhausted',
-        'The unpaid Gemini quota is currently exhausted.'
-      );
-    }
-    if (response.status === 401 || response.status === 403) {
-      throw new AssistantError(
-        'failed-precondition',
-        'The HikerCircle assistant API key is missing or not permitted.'
-      );
-    }
-    if (response.status >= 500) {
-      lastAvailabilityError = new AssistantError(
-        'unavailable',
-        'The assistant service is temporarily unavailable.'
-      );
-      continue;
-    }
-    throw new AssistantError('internal', 'The assistant request could not be completed.');
-  }
-  throw lastAvailabilityError || new AssistantError(
-    'unavailable',
-    'The assistant service is temporarily unavailable.'
-  );
-}
-
-function createAssistantHandler({db, apiKey, fetchImpl = fetch, now = Date.now}) {
+function createAssistantHandler({db, now = Date.now}) {
   return async (request) => {
     const uid = String(request?.auth?.uid || '').trim();
     if (!uid) {
@@ -557,34 +410,17 @@ function createAssistantHandler({db, apiKey, fetchImpl = fetch, now = Date.now})
     }
     const lastUserMessage = [...history].reverse().find((item) => item.role === 'user');
     const articles = retrieveArticles(`${lastUserMessage?.text || ''} ${question}`);
-    try {
-      const result = await callGemini({apiKey, question, articles, history, fetchImpl});
-      return {...result, ...(result.action ? {} : action ? {action} : {})};
-    } catch (error) {
-      if (
-        error instanceof AssistantError
-        && ['unavailable', 'deadline-exceeded', 'resource-exhausted']
-          .includes(error.code)
-      ) {
-        return {...curatedFallbackResponse(articles, error.code), ...(action ? {action} : {})};
-      }
-      throw error;
-    }
+    return {...curatedFallbackResponse(articles), ...(action ? {action} : {})};
   };
 }
 
 module.exports = {
   AssistantError,
-  GEMINI_FALLBACK_MODEL,
-  GEMINI_MODEL,
-  GEMINI_MODELS,
   DESTINATIONS,
   KNOWLEDGE_ARTICLES,
   MAX_QUESTION_LENGTH,
   MAX_REQUESTS_PER_DAY,
   MAX_REQUESTS_PER_MINUTE,
-  buildPrompt,
-  callGemini,
   containsSensitivePersonalData,
   contextualAction,
   createAssistantHandler,
@@ -596,6 +432,5 @@ module.exports = {
   navigationAction,
   normalizeHistory,
   normalizeQuestion,
-  parseGeminiResponse,
   retrieveArticles,
 };

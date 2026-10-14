@@ -1,6 +1,6 @@
 # HikerCircle — fresh showcase captures
 
-Updated 2 October 2026. All 48 features await new media. The internal page no longer uses its previous screenshots, recordings or rendered previews.
+Updated 7 October 2026. 48 features have capture briefs; supplied media is wired to the matching features.
 
 29 recordings and 39 screenshots cover the full inventory. Recording-only features do not require an extra screenshot; a poster can be extracted when the clip is wired.
 
@@ -27,8 +27,8 @@ Use dark mode and the full portrait screen of the current app. Send originals wi
 | Know the route | Screenshot | `trail-detail.png` | Trail hero: loaded photo, distance, elevation, time and difficulty. Let trail photos and map data finish loading. |
 | Know the route | Screenshot | `trail-detail-checkpoints.png` | Trail details with the route and ordered checkpoint section. Let trail photos and map data finish loading. |
 | Preview the path | Recording · 20–30 sec | `route-preview.mp4` | Open the fully loaded route map. → Select a checkpoint and show its location. → Start the first-person route preview. → Change the view; include the rain estimate if available. |
+| Enhanced Preview | Screenshot | `enhanced-preview.png` | Route map, checkpoint flow and conditions. |
 | Choose your weather window | Recording · 20–25 sec | `trail-forecast.mp4` | Open Conditions and Safety. → Switch day and chart metric. → Select an hour on the chart. → Show daylight times and weather cautions. |
-| Weather on the map | Recording · 15–20 sec | `weather-map.mp4` | Open the route map and cloud control. → Show loaded rain, wind and temperature layers. → Show the legend and change overlay opacity. |
 | Trail cautions | Screenshot | `hazard-report-list.png` | Reported trail hazards with categories and location context. Prepare a demo report and leave it unsubmitted. |
 | Trail cautions | Screenshot | `hazard-report.png` | Prepared report: trail, category, location, severity and sample text. Prepare a demo report and leave it unsubmitted. |
 

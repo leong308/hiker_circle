@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../Model/hike_preparation_sharing.dart';
@@ -45,7 +46,7 @@ class _SharingState extends State<PreparationSharingPage> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving,
     child: Scaffold(
-      appBar: AppBar(title: const Text('Sharing for this hike')),
+      appBar: PageHeaderAppBar(title: const Text('Sharing for this hike')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
@@ -168,7 +169,7 @@ class _BatteryState extends State<PreparationBatteryPage>
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Phone battery')),
+    appBar: PageHeaderAppBar(title: const Text('Phone battery')),
     body: ListView(
       padding: const EdgeInsets.all(24),
       children: [

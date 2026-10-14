@@ -258,10 +258,10 @@
         "Adjust region or radius",
         "Open a trail"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "trail-discovery.mp4 (15–20 sec): Show the current Home trail list. Change the region or distance filter. Open a matching trail.",
       "captureFile": "trail-discovery.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "User-supplied screen recording, presented in an iPhone 15 Pro Max mockup. Converted to a browser-compatible MP4 without trimming; original preview used only as the video poster. App build not supplied.",
       "points": [
         {
           "label": "Browse routes",
@@ -283,7 +283,9 @@
             "Open a matching trail."
           ]
         }
-      }
+      },
+      "poster": "/internal/app-showcase/media/trail-discovery.jpeg",
+      "video": "/internal/app-showcase/media/trail-discovery.mp4"
     },
     {
       "id": "trail-detail",
@@ -296,10 +298,10 @@
         "Browse imagery",
         "Open route preview"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "trail-detail.png: Trail hero: loaded photo, distance, elevation, time and difficulty. trail-detail-checkpoints.png: Trail details with the route and ordered checkpoint section. Let trail photos and map data finish loading.",
       "captureFile": "trail-detail.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "User-supplied screenshots 3 and 4, in attachment order, mapped to Know the route as corrected by the user on 7 October 2026. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
       "points": [
         {
           "label": "Trail imagery",
@@ -326,7 +328,14 @@
           }
         ],
         "setup": "Let trail photos and map data finish loading."
-      }
+      },
+      "image": "/internal/app-showcase/media/route-preview.png",
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/enhanced-preview.png",
+          "alt": "Know the route: map, checkpoint flow and conditions"
+        }
+      ]
     },
     {
       "id": "route-preview",
@@ -339,10 +348,10 @@
         "Start route preview",
         "Change view"
       ],
-      "source": "needed",
-      "capture": "route-preview.mp4 (20–30 sec): Open the fully loaded route map. Select a checkpoint and show its location. Start the first-person route preview. Change the view; include the rain estimate if available.",
-      "captureFile": "route-preview.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "source": "device",
+      "capture": "route-preview.png: Trail overview and normal route map.",
+      "captureFile": "route-preview.png",
+      "notes": "User-supplied recording 1, mapped to this feature as corrected by the user on 7 October 2026. Converted to MP4 without trimming; poster extracted from the recording. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
       "points": [
         {
           "label": "Route & checkpoints",
@@ -354,7 +363,12 @@
         }
       ],
       "capturePlan": {
-        "screenshots": [],
+        "screenshots": [
+          {
+            "file": "route-preview.png",
+            "show": "Trail overview and normal route map."
+          }
+        ],
         "recording": {
           "file": "route-preview.mp4",
           "duration": "20–30 sec",
@@ -365,7 +379,49 @@
             "Change the view; include the rain estimate if available."
           ]
         }
-      }
+      },
+      "video": "/internal/app-showcase/media/trail-detail.mp4",
+      "poster": "/internal/app-showcase/media/trail-detail-poster.jpeg"
+    },
+    {
+      "id": "enhanced-preview",
+      "chapter": "discover",
+      "title": "Enhanced Preview",
+      "description": "Inspect the route map alongside checkpoint progress and conditions.",
+      "flow": [
+        "Open trail details",
+        "Inspect the route map",
+        "Review checkpoint flow",
+        "Check conditions and safety"
+      ],
+      "source": "device",
+      "capture": "enhanced-preview.png: Route map, checkpoint flow and conditions.",
+      "captureFile": "enhanced-preview.png",
+      "notes": "User-supplied recording 2, mapped to this feature as corrected by the user on 7 October 2026. Converted to MP4 without trimming; poster extracted from the recording. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
+      "points": [
+        {
+          "label": "Route map",
+          "detail": "See the trail route and mapped checkpoints."
+        },
+        {
+          "label": "Checkpoint flow",
+          "detail": "Review checkpoint order, progress and the next destination."
+        },
+        {
+          "label": "Conditions & safety",
+          "detail": "Keep conditions and safety information alongside the route."
+        }
+      ],
+      "capturePlan": {
+        "screenshots": [
+          {
+            "file": "enhanced-preview.png",
+            "show": "Route map, checkpoint flow and conditions."
+          }
+        ]
+      },
+      "video": "/internal/app-showcase/media/trail-detail-tour.mp4",
+      "poster": "/internal/app-showcase/media/trail-detail-tour-poster.jpeg"
     },
     {
       "id": "trail-forecast",
@@ -378,10 +434,10 @@
         "Explore hourly chart",
         "Read cautions"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "trail-forecast.mp4 (20–25 sec): Open Conditions and Safety. Switch day and chart metric. Select an hour on the chart. Show daylight times and weather cautions.",
       "captureFile": "trail-forecast.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "User-supplied screen recording, wired on 7 October 2026. Converted to MP4 without trimming; poster extracted from the recording. Presented in an iPhone 15 Pro Max mockup. App build not supplied.",
       "points": [
         {
           "label": "Days & hourly conditions",
@@ -408,69 +464,33 @@
             "Show daylight times and weather cautions."
           ]
         }
-      }
-    },
-    {
-      "id": "weather-map",
-      "chapter": "discover",
-      "title": "Weather on the map",
-      "description": "Overlay regional rain, wind or temperature while keeping the trail route visible.",
-      "flow": [
-        "Open normal route map",
-        "Tap cloud control",
-        "Choose weather layer",
-        "Inspect legend and opacity"
-      ],
-      "source": "needed",
-      "capture": "weather-map.mp4 (15–20 sec): Open the route map and cloud control. Show loaded rain, wind and temperature layers. Show the legend and change overlay opacity.",
-      "captureFile": "weather-map.mp4",
-      "notes": "Awaiting a new capture for this internal showcase.",
-      "points": [
-        {
-          "label": "Rain, wind & temperature",
-          "detail": "Switch between the regional weather layers."
-        },
-        {
-          "label": "Keep the trail visible",
-          "detail": "See the route beneath each weather overlay."
-        }
-      ],
-      "capturePlan": {
-        "screenshots": [],
-        "recording": {
-          "file": "weather-map.mp4",
-          "duration": "15–20 sec",
-          "steps": [
-            "Open the route map and cloud control.",
-            "Show loaded rain, wind and temperature layers.",
-            "Show the legend and change overlay opacity."
-          ]
-        }
-      }
+      },
+      "video": "/internal/app-showcase/media/trail-forecast.mp4",
+      "poster": "/internal/app-showcase/media/trail-forecast-poster.jpeg"
     },
     {
       "id": "hazard-report",
       "chapter": "discover",
       "title": "Trail cautions",
-      "description": "Review reported hazards and describe a caution at a trail location.",
+      "description": "Review mapped water crossings and steep terrain, with caution details and guidance.",
       "flow": [
-        "Open trail or active hike",
-        "Choose Report Hazard",
-        "Select category and detail",
-        "Review report"
+        "Open trail route map",
+        "Select a mapped caution",
+        "Review caution details",
+        "Read what to do"
       ],
-      "source": "needed",
+      "source": "device",
       "capture": "hazard-report-list.png: Reported trail hazards with categories and location context. hazard-report.png: Prepared report: trail, category, location, severity and sample text. Prepare a demo report and leave it unsubmitted.",
       "captureFile": "hazard-report-list.png",
-      "notes": "Awaiting a new capture for this internal showcase.",
+      "notes": "Two user-supplied screenshots, water crossing followed by steep terrain, wired on 7 October 2026. Displayed side by side in iPhone 15 Pro Max mockups. App build not supplied.",
       "points": [
         {
-          "label": "Reported hazards",
-          "detail": "Review cautions reported by other hikers."
+          "label": "Mapped cautions",
+          "detail": "Inspect possible water crossings and steep terrain along the route."
         },
         {
-          "label": "Location & details",
-          "detail": "Describe a caution at a specific trail location."
+          "label": "Details & guidance",
+          "detail": "Review the estimated caution, suggested actions and map-data limitations."
         }
       ],
       "capturePlan": {
@@ -485,7 +505,14 @@
           }
         ],
         "setup": "Prepare a demo report and leave it unsubmitted."
-      }
+      },
+      "image": "/internal/app-showcase/media/trail-caution-water.jpeg",
+      "images": [
+        {
+          "src": "/internal/app-showcase/media/trail-caution-terrain.jpeg",
+          "alt": "Steep terrain area caution"
+        }
+      ]
     },
     {
       "id": "upcoming-home",

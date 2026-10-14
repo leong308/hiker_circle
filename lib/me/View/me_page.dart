@@ -1039,59 +1039,8 @@ class _DetailHeader extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: _MeColors.surfaceFor(context),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                CupertinoIcons.chevron_back,
-                color: _MeColors.green,
-                size: 20,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.title(
-                  context,
-                  _MeColors.textFor(context),
-                ),
-              ),
-              Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: PageHeaderStyle.subtitle(
-                  context,
-                  _MeColors.secondaryTextFor(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: title, subtitle: subtitle, onBack: onBack);
 }
 
 class _QrPainter extends CustomPainter {
@@ -2497,7 +2446,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                       ),
                       title: const Text('Ask HikerCircle'),
                       subtitle: const Text(
-                        'Quick answers from reviewed app guides · unpaid Gemini quota',
+                        'Quick answers from reviewed app guides',
                       ),
                       trailing: const Icon(Icons.chevron_right_rounded),
                       onTap: () => Navigator.of(context).push(

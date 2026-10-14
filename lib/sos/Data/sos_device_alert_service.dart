@@ -142,6 +142,24 @@ class SosDeviceAlertService {
     });
   }
 
+  /// Completes when the native utterance finishes, rather than when it is queued.
+  Future<bool> speakHikePrecaution({
+    required String requestId,
+    required String message,
+  }) async =>
+      await _channel.invokeMethod<bool>('speakHikePrecaution', {
+        'requestId': requestId,
+        'message': message,
+      }) ??
+      false;
+
+  /// Stop only this routine warning; never cancel a newer SOS voice prompt.
+  Future<void> stopHikePrecaution(String requestId) async {
+    await _channel.invokeMethod<void>('stopHikePrecaution', {
+      'requestId': requestId,
+    });
+  }
+
   Future<void> stopSpokenPrompt() async {
     try {
       await _channel.invokeMethod<void>('stopSpokenPrompt');

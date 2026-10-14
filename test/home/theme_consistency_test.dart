@@ -27,7 +27,9 @@ void main() {
     );
     expect(
       tester.widget<Text>(find.text('First-Aid Guide')).style?.color,
-      const Color(0xFFEAF4EE),
+      Theme.of(
+        tester.element(find.byType(FirstAidGuidePage)),
+      ).colorScheme.onSurface,
     );
     expect(
       Theme.of(tester.element(find.byType(FirstAidGuidePage))).brightness,
@@ -57,7 +59,9 @@ void main() {
     );
     expect(
       tester.widget<Text>(find.text('First-Aid Guide')).style?.color,
-      const Color(0xFF111111),
+      Theme.of(
+        tester.element(find.byType(FirstAidGuidePage)),
+      ).colorScheme.onSurface,
     );
     expect(_decoratedColors(tester), contains(Colors.white));
   });

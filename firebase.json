@@ -43,6 +43,13 @@
         ]
       },
       {
+        "source": "/internal/app-showcase/media/*.mp4",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=3600" },
+          { "key": "Content-Type", "value": "video/mp4" }
+        ]
+      },
+      {
         "source": "/.well-known/apple-app-site-association",
         "headers": [
           {

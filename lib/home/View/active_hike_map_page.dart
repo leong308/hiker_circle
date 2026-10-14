@@ -1,4 +1,4 @@
-import 'package:flutter/cupertino.dart';
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 
 import '../Model/hike_session_models.dart';
@@ -62,35 +62,8 @@ class _Header extends StatelessWidget {
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Tooltip(
-          message: 'Back',
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(36),
-            onPressed: onBack,
-            child: const _CircleIcon(icon: CupertinoIcons.chevron_back),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            'Active Hike Map',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              color: _MapColors.textFor(context),
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) =>
+      PageHeader(title: 'Active Hike Map', onBack: onBack);
 }
 
 class _StatusCard extends StatelessWidget {
@@ -129,24 +102,7 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
-class _CircleIcon extends StatelessWidget {
-  const _CircleIcon({required this.icon});
 
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        shape: BoxShape.circle,
-      ),
-      child: Icon(icon, color: _MapColors.green, size: 20),
-    );
-  }
-}
 
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon});

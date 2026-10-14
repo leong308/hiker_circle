@@ -6,6 +6,7 @@ import '../Model/hike_shirt_color.dart';
 import 'hiking_forecast_sheet.dart';
 import 'preparation_conditions.dart';
 import 'preparation_safety_details_page.dart';
+import 'hike_start_navigation.dart';
 import '../Model/route_gear_assessment.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_weather_briefing.dart';
@@ -59,6 +60,8 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     with WidgetsBindingObserver {
   late PlannedHike? _plan = widget.plan;
   bool _busy = false;
+  bool _startRequested = false;
+  bool _completionDelivered = false;
   String? _error;
   bool _analyzing = false;
   bool _checkingWeather = false;
@@ -77,7 +80,9 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       _loadingSharing = false;
   String? _contactsError, _sharingError;
   Timer? _batteryTimer;
-  bool get _interactionBusy => _busy || _openingDetails;
+  bool get _interactionBusy => _busy || _openingDetails || _startRequested;
+  bool get _checkingConditions =>
+      _analyzing || _checkingWeather || _loadingSharing || _loadingContacts;
   @override
   void initState() {
     super.initState();
@@ -106,6 +111,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_completionDelivered) return;
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshBattery());
       if (_plan != null &&
@@ -117,7 +123,9 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   }
 
   Future<void> _refreshContacts() async {
-    if (widget.loadContacts == null || _loadingContacts) return;
+    if (widget.loadContacts == null || _loadingContacts) {
+      return;
+    }
     setState(() {
       _loadingContacts = true;
       _contactsError = null;
@@ -142,12 +150,17 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         );
       }
     } finally {
-      if (mounted) setState(() => _loadingContacts = false);
+      if (mounted) {
+        setState(() => _loadingContacts = false);
+        _completeRequestedStart();
+      }
     }
   }
 
   Future<void> _refreshBattery() async {
-    if (widget.loadBatteryLevel == null || _loadingBattery) return;
+    if (widget.loadBatteryLevel == null || _loadingBattery) {
+      return;
+    }
     setState(() => _loadingBattery = true);
     int? level;
     try {
@@ -169,7 +182,9 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   }
 
   Future<void> _restoreSharing() async {
-    if (widget.loadSharing == null || _loadingSharing) return;
+    if (widget.loadSharing == null || _loadingSharing) {
+      return;
+    }
     setState(() {
       _loadingSharing = true;
       _sharingError = null;
@@ -194,7 +209,10 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         );
       }
     } finally {
-      if (mounted) setState(() => _loadingSharing = false);
+      if (mounted) {
+        setState(() => _loadingSharing = false);
+        _completeRequestedStart();
+      }
     }
   }
 
@@ -202,14 +220,18 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     Future<void> Function() open, {
     Future<void> Function()? refresh,
   }) async {
-    if (_interactionBusy) return;
+    if (_interactionBusy) {
+      return;
+    }
     setState(() {
       _openingDetails = true;
       _error = null;
     });
     try {
       await open();
-      if (mounted) await refresh?.call();
+      if (mounted) {
+        await refresh?.call();
+      }
     } catch (_) {
       if (mounted) {
         setState(
@@ -217,7 +239,9 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         );
       }
     } finally {
-      if (mounted) setState(() => _openingDetails = false);
+      if (mounted) {
+        setState(() => _openingDetails = false);
+      }
     }
   }
 
@@ -266,11 +290,15 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   );
 
   Future<void> _refreshWeather() async {
-    if (_plan == null || widget.loadWeather == null || _checkingWeather) return;
+    if (_plan == null || widget.loadWeather == null || _checkingWeather) {
+      return;
+    }
     setState(() => _checkingWeather = true);
     try {
       final weather = await widget.loadWeather!();
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _plan = _plan!
             .copyWith(trail: _plan!.trail.copyWith(weather: weather))
@@ -295,12 +323,17 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         );
       }
     } finally {
-      if (mounted) setState(() => _checkingWeather = false);
+      if (mounted) {
+        setState(() => _checkingWeather = false);
+        _completeRequestedStart();
+      }
     }
   }
 
   Future<void> _analyzeRoute({bool force = false}) async {
-    if (_analyzing || widget.loadRouteAnalysis == null || _plan == null) return;
+    if (_analyzing || widget.loadRouteAnalysis == null || _plan == null) {
+      return;
+    }
     setState(() {
       _analyzing = true;
       _routeFailed = false;
@@ -315,15 +348,22 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         );
       }
     } catch (_) {
-      if (mounted) setState(() => _routeFailed = true);
+      if (mounted) {
+        setState(() => _routeFailed = true);
+      }
     } finally {
-      if (mounted) setState(() => _analyzing = false);
+      if (mounted) {
+        setState(() => _analyzing = false);
+        _completeRequestedStart();
+      }
     }
   }
 
   Future<bool> _saveGear(Set<String> items) async {
     final plan = _plan;
-    if (plan == null || widget.onPlanChanged == null || _busy) return false;
+    if (plan == null || widget.onPlanChanged == null || _busy) {
+      return false;
+    }
     final updated = plan
         .copyWith(
           completedChecklistItems: items,
@@ -359,12 +399,16 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       }
       return false;
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 
   Future<void> _cancel() async {
-    if (_busy || widget.onCancel == null) return;
+    if (_busy || widget.onCancel == null) {
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -387,14 +431,18 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted) {
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
       await widget.onCancel!();
-      if (mounted) Navigator.pop(context, 'cancelled');
+      if (mounted) {
+        Navigator.pop(context, 'cancelled');
+      }
     } catch (error) {
       if (mounted) {
         setState(
@@ -402,7 +450,9 @@ class _PreparationState extends State<FinalPreparationReviewPage>
         );
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+      }
     }
   }
 
@@ -431,13 +481,17 @@ class _PreparationState extends State<FinalPreparationReviewPage>
 
   Future<void> _selectShirtColor(HikeShirtColor color) async {
     final plan = _plan;
-    if (plan == null || _busy) return;
+    if (plan == null || _busy) {
+      return;
+    }
     final updated = HikeShirtColor.setPreference(
       plan.completedChecklistItems,
       color,
     );
     final saved = await _saveGear(updated);
-    if (!saved || !mounted) return;
+    if (!saved || !mounted) {
+      return;
+    }
     await _showShirtColorAdvice(color);
   }
 
@@ -457,7 +511,9 @@ class _PreparationState extends State<FinalPreparationReviewPage>
 
   List<_PreparationStep> get _steps {
     final plan = _plan;
-    if (plan == null) return const [];
+    if (plan == null) {
+      return const [];
+    }
     final gear = plan.gearPlan;
     final plannedDuration = plan.expectedReturnTime.difference(
       plan.plannedStartTime,
@@ -570,19 +626,29 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   }
 
   void _showStep(String id, {bool remember = true}) {
-    if (_interactionBusy) return;
+    if (_interactionBusy) {
+      return;
+    }
     final previous = _currentStep.id;
     setState(() {
-      if (remember && previous != id) _history.add(previous);
+      if (remember && previous != id) {
+        _history.add(previous);
+      }
       _stepId = id;
       _error = null;
     });
-    if (_scroll.hasClients) _scroll.jumpTo(0);
-    if (id == 'battery') unawaited(_refreshBattery());
+    if (_scroll.hasClients) {
+      _scroll.jumpTo(0);
+    }
+    if (id == 'battery') {
+      unawaited(_refreshBattery());
+    }
   }
 
   void _previousStep() {
-    if (_busy) return;
+    if (_busy) {
+      return;
+    }
     final ids = _steps.map((step) => step.id).toSet();
     while (_history.isNotEmpty) {
       final previous = _history.removeLast();
@@ -599,7 +665,9 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     final steps = _steps;
     final index = steps.indexWhere((step) => step.id == _currentStep.id);
     for (final step in steps.skip(index + 1)) {
-      if (_returnToReview && step.stage != 0) break;
+      if (_returnToReview && step.stage != 0) {
+        break;
+      }
       if (!_reviewPacked &&
           step.item != null &&
           _plan!.completedChecklistItems.contains(step.item)) {
@@ -614,11 +682,17 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   Future<void> _answerGear(bool packed) async {
     final step = _currentStep;
     final plan = _plan;
-    if (_busy || plan == null || step.item == null) return;
+    if (_busy || plan == null || step.item == null) {
+      return;
+    }
     final items = {...plan.completedChecklistItems};
     final changed = packed ? items.add(step.item!) : items.remove(step.item);
-    if (changed && !await _saveGear(items)) return;
-    if (!mounted) return;
+    if (changed && !await _saveGear(items)) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
     if (_returnToReview && !_reviewPacked) {
       final missing = _plan!.missingRequiredGear;
       _showStep(
@@ -636,26 +710,74 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   }
 
   void _finishPreparation() {
-    final plan = _plan;
     if (_interactionBusy ||
-        _loadingSharing ||
-        _sharingError != null ||
-        _loadingContacts ||
-        _analyzing ||
-        _checkingWeather ||
+        _completionDelivered ||
         !widget.canStart ||
-        plan == null ||
-        !plan.requiredGearReady) {
+        _plan == null) {
       return;
     }
-    setState(() => _busy = true);
-    widget.onReady?.call(plan);
-    Navigator.pop(context, 'start');
+    // A lifecycle refresh can begin between pointer-down and pointer-up, before
+    // the enabled button has rebuilt. Keep that tap rather than discarding it.
+    setState(() {
+      _startRequested = true;
+      _error = null;
+    });
+    _completeRequestedStart();
+  }
+
+  void _completeRequestedStart() {
+    if (!mounted ||
+        !_startRequested ||
+        _completionDelivered ||
+        _busy ||
+        _openingDetails ||
+        _checkingConditions) {
+      return;
+    }
+    final plan = _plan;
+    if (plan == null ||
+        !widget.canStart ||
+        _sharingError != null ||
+        !plan.requiredGearReady) {
+      setState(() {
+        _startRequested = false;
+        _error =
+            _sharingError ??
+            (plan?.requiredGearReady == false
+                ? 'The latest checks require more gear. Review the missing items before starting.'
+                : 'This hike cannot start yet. Review your preparation.');
+      });
+      return;
+    }
+    final route = ModalRoute.of<String>(context);
+    if (route == null || !route.isActive) {
+      return;
+    }
+    // Deliver one result to the preparation page's caller. Late refreshes and
+    // repeated taps must not submit again or close another route.
+    setState(() => _completionDelivered = true);
+    try {
+      widget.onReady?.call(plan);
+    } catch (_) {
+      setState(() {
+        _completionDelivered = false;
+        _startRequested = false;
+        _error =
+            'Unable to continue. Your preparation is kept; please try again.';
+      });
+      return;
+    }
+    HikeStartNavigation.closeOwnedRoute(route, 'start');
   }
 
   String get _routeStatus {
+    if (_plan?.trail.isUnlisted == true) {
+      return 'Unlisted route. Terrain ahead is unknown; the forecast covers the starting location only.';
+    }
     final assessment = _plan?.gearAssessment;
-    if (_analyzing) return 'Checking your route…';
+    if (_analyzing) {
+      return 'Checking your route…';
+    }
     if (_routeFailed || assessment?.usable != true) {
       return 'Route conditions are unavailable. Check the terrain locally; known gear requirements still apply.';
     }
@@ -666,8 +788,12 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   }
 
   String get _weatherStatus {
-    if (_checkingWeather) return 'Checking the forecast…';
-    if (_weatherNotice != null) return _weatherNotice!;
+    if (_checkingWeather) {
+      return 'Checking the forecast…';
+    }
+    if (_weatherNotice != null) {
+      return _weatherNotice!;
+    }
     final plan = _plan!;
     final forecast = HikeWeatherBriefing.fromWeather(
       plan.trail.weather,
@@ -715,7 +841,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     final plan = _plan;
     final step = plan == null ? null : _currentStep;
     return PopScope(
-      canPop: !_interactionBusy,
+      canPop: _completionDelivered || !_interactionBusy,
       child: Scaffold(
         backgroundColor: scheme.surfaceContainerLow,
         body: SafeArea(
@@ -741,22 +867,22 @@ class _PreparationState extends State<FinalPreparationReviewPage>
                         'Get ready to hike',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: PageHeaderStyle.title(context, scheme.onSurface),
                       ),
                     ),
                     if (widget.isHost && widget.onCancel != null)
-                      PopupMenuButton<String>(
-                        enabled: !_interactionBusy,
-                        tooltip: 'Hike options',
-                        onSelected: (_) => _cancel(),
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                            value: 'cancel',
-                            child: Text('Cancel upcoming hike'),
-                          ),
-                        ],
+                      PageHeaderControl(
+                        child: PopupMenuButton<String>(
+                          enabled: !_interactionBusy,
+                          tooltip: 'Hike options',
+                          onSelected: (_) => _cancel(),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'cancel',
+                              child: Text('Cancel upcoming hike'),
+                            ),
+                          ],
+                        ),
                       ),
                   ],
                 ),
@@ -1139,8 +1265,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   Widget _actions(_PreparationStep step) {
     final theme = Theme.of(context), scheme = theme.colorScheme;
     final plan = _plan!;
-    final checking =
-        _analyzing || _checkingWeather || _loadingSharing || _loadingContacts;
+    final checking = _checkingConditions;
     String label = 'Continue';
     String? secondary;
     String hint = 'Take a moment to review, then continue.';
@@ -1237,6 +1362,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
             onPressed: _interactionBusy ? null : action,
             icon:
                 _busy ||
+                    _startRequested ||
                     (step.id == 'ready' && checking && plan.requiredGearReady)
                 ? const SizedBox(
                     width: 18,
@@ -1248,7 +1374,13 @@ class _PreparationState extends State<FinalPreparationReviewPage>
                         ? Icons.check_rounded
                         : Icons.arrow_forward_rounded,
                   ),
-            label: Text(_busy ? 'Saving…' : label),
+            label: Text(
+              _busy
+                  ? 'Saving…'
+                  : _startRequested
+                  ? (checking ? 'Checking conditions…' : 'Starting…')
+                  : label,
+            ),
           ),
           if (secondary != null)
             TextButton(
@@ -1276,14 +1408,24 @@ class _PreparationState extends State<FinalPreparationReviewPage>
 
   IconData _itemIcon(String item) {
     final name = item.toLowerCase();
-    if (name.contains('water')) return Icons.water_drop_outlined;
+    if (name.contains('water')) {
+      return Icons.water_drop_outlined;
+    }
     if (name.contains('snack') || name.contains('food')) {
       return Icons.restaurant_outlined;
     }
-    if (name.contains('aid')) return Icons.medical_services_outlined;
-    if (name.contains('sun')) return Icons.wb_sunny_outlined;
-    if (name.contains('rain')) return Icons.umbrella_outlined;
-    if (name.contains('blanket')) return Icons.layers_outlined;
+    if (name.contains('aid')) {
+      return Icons.medical_services_outlined;
+    }
+    if (name.contains('sun')) {
+      return Icons.wb_sunny_outlined;
+    }
+    if (name.contains('rain')) {
+      return Icons.umbrella_outlined;
+    }
+    if (name.contains('blanket')) {
+      return Icons.layers_outlined;
+    }
     if (name.contains('poles') || name.contains('socks')) {
       return Icons.hiking_rounded;
     }
@@ -1691,7 +1833,9 @@ class _BatteryPreparationStatus extends StatelessWidget {
     final minutes = duration.inMinutes.clamp(0, 24 * 60 * 7);
     final hours = minutes ~/ 60;
     final remainder = minutes % 60;
-    if (remainder == 0) return '${hours}h';
+    if (remainder == 0) {
+      return '${hours}h';
+    }
     return '${hours}h ${remainder}m';
   }
 }

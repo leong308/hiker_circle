@@ -251,8 +251,9 @@ double _coordinateDistance(
 
 mapbox.PointAnnotationOptions staticHazardAnnotation(
   LocalTrailHazardMatch match,
-  Uint8List markerImage,
-) {
+  Uint8List markerImage, {
+  double scaleFactor = 1,
+}) {
   return mapbox.PointAnnotationOptions(
     geometry: mapbox.Point(
       coordinates: mapbox.Position(
@@ -262,7 +263,7 @@ mapbox.PointAnnotationOptions staticHazardAnnotation(
     ),
     image: markerImage,
     iconAnchor: mapbox.IconAnchor.CENTER,
-    iconSize: match.hazard.severity == 'warning' ? 0.72 : 0.64,
+    iconSize: (match.hazard.severity == 'warning' ? 0.72 : 0.64) * scaleFactor,
     symbolSortKey: 900,
     customData: {
       'hazard_id': match.hazard.hazardId,

@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/Model/app_session.dart';
@@ -103,7 +104,7 @@ class _RecentSecurityVerificationPageState
     final waitingForCode = _viewModel.hasCodeBeenSent;
     final busy = _viewModel.isBusy || _completing;
     return Scaffold(
-      appBar: AppBar(title: const Text('Confirm it is you')),
+      appBar: PageHeaderAppBar(title: const Text('Confirm it is you')),
       body: SafeArea(
         child: Stack(
           children: [

@@ -48,7 +48,7 @@ test('sign-in requires password verification before WhatsApp OTP delivery', () =
   );
   assert.ok(
     sendBlock.indexOf('requireLoginPasswordBeforeOtp') <
-      sendBlock.indexOf("greenApiEndpoint('sendMessage'")
+      sendBlock.indexOf('response = await sendGreenApiOtp')
   );
 
   const verifyBlock = exportedBlock(

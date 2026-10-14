@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 // ignore_for_file: sort_child_properties_last
 
 import 'dart:async';
@@ -715,17 +716,17 @@ class _PairingSheetHeader extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Add SOS button',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                  style: PageHeaderStyle.title(context, scheme.onSurface),
                 ),
               ),
-              IconButton(
+              PageHeaderAction(
                 tooltip: canClose
                     ? 'Close pairing guide'
                     : 'Pairing in progress',
                 onPressed: canClose ? onClose : null,
-                icon: const Icon(Icons.close_rounded),
+                icon: Icons.close_rounded,
+                color: scheme.primary,
+                surface: scheme.surface,
               ),
             ],
           ),

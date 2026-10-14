@@ -1,3 +1,4 @@
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -9,105 +10,265 @@ import '../core/widgets/loading_toast.dart';
 import 'feedback_repository.dart';
 
 class FeedbackPage extends StatelessWidget {
-  const FeedbackPage({super.key, this.isAdmin = false});
+  const FeedbackPage({super.key, this.isAdmin = false, this.repository});
   final bool isAdmin;
+  final FeedbackRepository? repository;
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Help shape HikerCircle')),
-    body: ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        Icon(
-          Icons.forum_outlined,
-          size: 64,
-          color: Theme.of(context).colorScheme.primary,
-        ),
-        const SizedBox(height: 20),
-        Text(
-          'A better experience, together',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'Found a problem or have an idea? Tell us what happened and what would make your next hike better.',
-        ),
-        const SizedBox(height: 24),
-        FilledButton.icon(
-          icon: const Icon(Icons.edit_outlined),
-          label: const Text('Write feedback'),
-          onPressed: () => Navigator.of(context).push(
+  void _capture(BuildContext context) {
+    final navigator = Navigator.of(context);
+    final feedback = BetterFeedback.of(context);
+    navigator.pop();
+    var previewOpened = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!navigator.mounted) return;
+      feedback.show((result) {
+        if (!navigator.mounted || !feedback.isVisible || previewOpened) return;
+        previewOpened = true;
+        unawaited(
+          navigator.push(
             MaterialPageRoute<void>(
-              builder: (_) => const FeedbackComposePage(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.draw_outlined),
-          label: const Text('Capture and mark a screen'),
-          onPressed: () {
-            final navigator = Navigator.of(context);
-            final feedback = BetterFeedback.of(context);
-            navigator.pop();
-            var previewOpened = false;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!navigator.mounted) return;
-              feedback.show((result) {
-                if (!navigator.mounted ||
-                    !feedback.isVisible ||
-                    previewOpened) {
-                  return;
-                }
-                previewOpened = true;
-                // Do not await the review route: the capture overlay must close first.
-                unawaited(
-                  navigator.push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => FeedbackComposePage(
-                        initialText: result.text,
-                        screenshot: result.screenshot,
-                      ),
-                    ),
-                  ),
-                );
-              });
-            });
-          },
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'Use Navigate to find the screen, then Draw to highlight the issue. You can review or remove the screenshot before sending. Maps and other native views may not appear in captures.',
-        ),
-        const SizedBox(height: 24),
-        ListTile(
-          leading: const Icon(Icons.inbox_outlined),
-          title: const Text('My feedback'),
-          subtitle: const Text('View your recent submissions and their status'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const FeedbackInboxPage()),
-          ),
-        ),
-        if (isAdmin)
-          ListTile(
-            leading: const Icon(Icons.admin_panel_settings_outlined),
-            title: const Text('Feedback inbox'),
-            subtitle: const Text('Review feedback from all hikers'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const FeedbackInboxPage(admin: true),
+              builder: (_) => FeedbackComposePage(
+                initialText: result.text,
+                screenshot: result.screenshot,
+                repository: repository,
               ),
             ),
           ),
-        const SizedBox(height: 24),
-        const Text(
-          'Only you and the HikerCircle admin team can view your report. We include your account ID and platform, not passwords, location or background recordings. Please remove sensitive information from screenshots. This is not an emergency channel.',
+        );
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context), colors = theme.colorScheme;
+    return Scaffold(
+      appBar: PageHeaderAppBar(
+        title: const Text('Feedback'),
+        actions: [
+          if (isAdmin)
+            PageHeaderAction(
+              tooltip: 'Feedback inbox',
+              icon: Icons.inbox_outlined,
+              color: colors.primary,
+              surface: colors.surface,
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      FeedbackInboxPage(admin: true, repository: repository),
+                ),
+              ),
+            ),
+          PageHeaderAction(
+            tooltip: 'My feedback',
+            icon: Icons.history_rounded,
+            color: colors.primary,
+            surface: colors.surface,
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => FeedbackInboxPage(repository: repository),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+        children: [
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 450),
+            curve: Curves.easeOutCubic,
+            builder: (context, progress, child) => Opacity(
+              opacity: progress,
+              child: Transform.translate(
+                offset: Offset(0, 12 * (1 - progress)),
+                child: child,
+              ),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  width: 76,
+                  height: 76,
+                  decoration: BoxDecoration(
+                    color: colors.primaryContainer,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Icon(
+                    Icons.forum_outlined,
+                    size: 36,
+                    color: colors.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Ideas & issues',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Help make your next hike better.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 28),
+          _FeedbackChoiceCard(
+            title: 'Write feedback',
+            subtitle: 'Report a problem or share an idea.',
+            icon: Icons.edit_outlined,
+            prominent: true,
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => FeedbackComposePage(repository: repository),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _FeedbackChoiceCard(
+            title: 'Mark a screenshot',
+            subtitle: 'Show us what needs fixing.',
+            icon: Icons.draw_outlined,
+            onTap: () => _capture(context),
+          ),
+          const SizedBox(height: 24),
+          TextButton.icon(
+            icon: const Icon(Icons.lock_outline_rounded, size: 17),
+            label: const Text('Private feedback · Not for emergencies'),
+            onPressed: () => showModalBottomSheet<void>(
+              context: context,
+              showDragHandle: true,
+              isScrollControlled: true,
+              builder: (context) => SafeArea(
+                top: false,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Privacy & capture tips',
+                        style: PageHeaderStyle.title(context, colors.onSurface),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Only you and HikerCircle admins can view your report. It includes your account ID and platform, not passwords, location or background recordings.',
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Navigate to the screen, then Draw to mark it. Review or remove the screenshot before sending. Maps and native views may be missing from captures.',
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Remove sensitive details from screenshots. Use SOS for emergencies.',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeedbackChoiceCard extends StatefulWidget {
+  const _FeedbackChoiceCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+    this.prominent = false,
+  });
+  final String title, subtitle;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool prominent;
+  @override
+  State<_FeedbackChoiceCard> createState() => _FeedbackChoiceCardState();
+}
+
+class _FeedbackChoiceCardState extends State<_FeedbackChoiceCard> {
+  bool pressed = false;
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context), colors = theme.colorScheme;
+    final ink = widget.prominent ? colors.onPrimaryContainer : colors.onSurface;
+    return AnimatedScale(
+      scale: pressed ? .98 : 1,
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 140),
+      child: Material(
+        color: widget.prominent
+            ? colors.primaryContainer
+            : colors.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(
+            color: widget.prominent
+                ? Colors.transparent
+                : colors.outlineVariant,
+          ),
         ),
-      ],
-    ),
-  );
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: widget.onTap,
+          onTapDown: (_) => setState(() => pressed = true),
+          onTapUp: (_) => setState(() => pressed = false),
+          onTapCancel: () => setState(() => pressed = false),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Icon(
+                  widget.icon,
+                  size: 26,
+                  color: widget.prominent ? ink : colors.primary,
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.title,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: ink,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.subtitle,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: ink.withValues(alpha: .8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Icon(Icons.chevron_right_rounded, color: ink, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class FeedbackComposePage extends StatefulWidget {
@@ -169,7 +330,9 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_busy,
     child: Scaffold(
-      appBar: AppBar(title: Text(_sent ? 'Thank you' : 'Review feedback')),
+      appBar: PageHeaderAppBar(
+        title: Text(_sent ? 'Thank you' : 'Review feedback'),
+      ),
       body: _sent
           ? Center(
               child: Padding(
@@ -326,14 +489,15 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
 }
 
 class FeedbackInboxPage extends StatefulWidget {
-  const FeedbackInboxPage({super.key, this.admin = false});
+  const FeedbackInboxPage({super.key, this.admin = false, this.repository});
   final bool admin;
+  final FeedbackRepository? repository;
   @override
   State<FeedbackInboxPage> createState() => _FeedbackInboxPageState();
 }
 
 class _FeedbackInboxPageState extends State<FeedbackInboxPage> {
-  final _repository = FeedbackRepository();
+  late final _repository = widget.repository ?? FeedbackRepository();
   late Stream<QuerySnapshot<Map<String, dynamic>>> _reports;
   @override
   void initState() {
@@ -343,7 +507,7 @@ class _FeedbackInboxPageState extends State<FeedbackInboxPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
+    appBar: PageHeaderAppBar(
       title: Text(widget.admin ? 'Feedback inbox' : 'My feedback'),
     ),
     body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -460,7 +624,7 @@ class _FeedbackDetailPageState extends State<_FeedbackDetailPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Feedback details')),
+    appBar: PageHeaderAppBar(title: const Text('Feedback details')),
     body: Stack(
       children: [
         ListView(

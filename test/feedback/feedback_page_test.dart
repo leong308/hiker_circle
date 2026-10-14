@@ -9,10 +9,20 @@ import 'package:hiker_circle/feedback/feedback_page.dart';
 import 'package:hiker_circle/feedback/feedback_capture_form.dart';
 import 'package:hiker_circle/feedback/feedback_repository.dart';
 import 'package:hiker_circle/core/widgets/loading_toast.dart';
+import 'package:hiker_circle/core/widgets/page_header_style.dart';
 
 class TestFeedbackRepository extends FeedbackRepository {
   final pending = Completer<void>();
   final drafts = <FeedbackDraft>[];
+  int historyRequests = 0;
+  @override
+  Stream<QuerySnapshot<Map<String, dynamic>>> reports({required bool admin}) {
+    historyRequests++;
+    return Stream<QuerySnapshot<Map<String, dynamic>>>.error(
+      StateError('test history'),
+    );
+  }
+
   @override
   FeedbackDraft draft(String category, String message, Uint8List? screenshot) =>
       FeedbackDraft(
@@ -101,10 +111,10 @@ void main() {
     );
     await tester.tap(find.text('Open feedback'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Capture and mark a screen'));
+    await tester.tap(find.text('Mark a screenshot'));
     await tester.pumpAndSettle();
     expect(BetterFeedback.of(homeContext).isVisible, isTrue);
-    expect(find.text('Help shape HikerCircle'), findsNothing);
+    expect(find.byType(FeedbackPage), findsNothing);
     BetterFeedback.of(homeContext).hide();
     await tester.pumpAndSettle();
     expect(find.text('Open feedback'), findsOneWidget);
@@ -121,10 +131,36 @@ void main() {
   ) async {
     await tester.pumpWidget(const MaterialApp(home: FeedbackPage()));
     expect(find.text('Write feedback'), findsOneWidget);
-    expect(find.text('Capture and mark a screen'), findsOneWidget);
-    expect(find.text('My feedback'), findsOneWidget);
-    expect(find.text('Feedback inbox'), findsNothing);
+    expect(find.text('Mark a screenshot'), findsOneWidget);
+    expect(find.byTooltip('My feedback'), findsOneWidget);
+    expect(find.text('My feedback'), findsNothing);
+    expect(find.byTooltip('Feedback inbox'), findsNothing);
+    expect(find.byType(PageHeaderAppBar), findsOneWidget);
   });
+
+  testWidgets(
+    'top-right history icon opens My feedback and returns to the landing page',
+    (tester) async {
+      final repository = TestFeedbackRepository();
+      await tester.pumpWidget(
+        MaterialApp(home: FeedbackPage(repository: repository)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.history_rounded), findsOneWidget);
+      final header = find.byType(PageHeaderAppBar);
+      expect(
+        tester.getCenter(find.byTooltip('My feedback')).dx,
+        greaterThan(tester.getCenter(header).dx),
+      );
+      await tester.tap(find.byTooltip('My feedback'));
+      await tester.pumpAndSettle();
+      expect(repository.historyRequests, 1);
+      expect(find.text('My feedback'), findsOneWidget);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ideas & issues'), findsOneWidget);
+    },
+  );
 
   testWidgets('empty feedback cannot be submitted', (tester) async {
     final repository = TestFeedbackRepository();

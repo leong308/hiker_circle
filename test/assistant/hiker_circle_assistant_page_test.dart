@@ -154,7 +154,7 @@ void main() {
         'answer': question.contains('medical')
             ? 'Review the matching first-aid guidance.'
             : 'Call 999 or 112 when there is immediate danger.',
-        'responseMode': 'gemini_free_tier',
+        'responseMode': 'curated_guide',
         'sources': <Map<String, dynamic>>[],
       },
     );
@@ -203,7 +203,7 @@ void main() {
     );
 
     expect(find.text('HikerCircle Assistant'), findsOneWidget);
-    expect(find.text('UNPAID'), findsOneWidget);
+    expect(find.text('GUIDES'), findsOneWidget);
     await tester.enterText(
       find.byKey(const Key('hiker-circle-assistant-question')),
       'Where can I manage my passkey?',
@@ -216,7 +216,7 @@ void main() {
 
     result.complete(<String, dynamic>{
       'answer': 'Open Profile, App Settings, then Login security.',
-      'responseMode': 'gemini_free_tier',
+      'responseMode': 'curated_guide',
       'sources': <Map<String, dynamic>>[
         <String, dynamic>{
           'id': 'login_security',

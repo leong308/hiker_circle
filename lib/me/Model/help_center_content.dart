@@ -260,8 +260,16 @@ const trailConditionGuides = <TrailConditionGuide>[
 ];
 
 class HelpArticle {
-  const HelpArticle(this.title, this.text);
+  const HelpArticle(
+    this.title,
+    this.text, {
+    this.location,
+    this.actions = const [],
+    this.tip,
+  });
   final String title, text;
+  final String? location, tip;
+  final List<String> actions;
 }
 
 const planningHelp = [
@@ -298,72 +306,280 @@ const planningHelp = [
 const teamHelp = [
   HelpArticle(
     'Create or join a hike',
-    'Open Find a Hike to browse upcoming hikes. Some groups allow immediate joining; others need the host to approve your request.',
+    'Choose a team and a route that suit everyone’s experience.',
+    location: 'Home → Find a Hike · or create a Group hike',
+    actions: [
+      'Check the host, departure, route and available places.',
+      'Join an open hike or send a request when approval is required.',
+      'Wait for acceptance before treating a pending request as a place.',
+    ],
+    tip: 'A join request is not a confirmed place until the host accepts it.',
   ),
   HelpArticle(
     'Coordinate in Circle',
-    'Use buddies and the hike group chat to agree on the meeting point, pace, equipment and return time. Accepted participants can access the related hike chat.',
+    'Use the hike chat to settle the details before meeting.',
+    location: 'Circle → Hike group chat',
+    actions: [
+      'Agree on the meeting point, pace and expected return.',
+      'Share equipment needs and tell the host about any limits.',
+      'Check the latest messages if the host changes the plan.',
+    ],
+    tip: 'Accepted participants can access the related hike chat.',
   ),
   HelpArticle(
     'Get ready together',
-    'When the host opens team preparation, complete your checks and tap Ready. The host starts the active team hike when everyone is ready.',
+    'Each participant completes their own preparation and safety setup.',
+    location: 'Team launch → READY',
+    actions: [
+      'Open your team invitation and review the shared trail.',
+      'Read the precautions and complete the required safety settings.',
+      'Send READY only when you and your equipment are ready.',
+    ],
+    tip:
+        'Returning from phone Settings should resume your preparation. Check the permission result before continuing.',
+  ),
+  HelpArticle(
+    'Start as one team',
+    'The host starts the shared hike after everyone sends READY.',
+    location: 'Team launch → START HIKE (host)',
+    actions: [
+      'Host: check that every included participant is ready.',
+      'Resolve unopened invitations; remove pending buddies only after agreeing with them.',
+      'Participants: wait for the host and the shared countdown.',
+    ],
+    tip:
+        'Sending READY does not start tracking. Wait until the active hike screen appears.',
   ),
   HelpArticle(
     'Stay together',
-    'Agree who leads and who stays at the back. Regroup at junctions, check on slower members and tell the group before changing plans.',
+    'Match the pace to the group and make route decisions together.',
+    location: 'Active hike → Team tools',
+    actions: [
+      'Agree who leads and who stays at the back.',
+      'Regroup at junctions and check on slower members.',
+      'Tell the team before stopping, leaving or changing the route.',
+    ],
+    tip: 'A location dot is not a substitute for checking on a teammate.',
   ),
   HelpArticle(
     'Location and check-ins',
-    'Agree when to check in and review location-sharing permissions before departure. A delayed or missing location update does not confirm where someone is.',
+    'Use team updates alongside an agreed plan for weak coverage.',
+    location: 'Active hike → Safety settings / Check-in',
+    actions: [
+      'Check location permissions and sharing settings before departure.',
+      'Look at the time of the last update before relying on a position.',
+      'Agree on regroup points and what to do if someone loses signal.',
+    ],
+    tip:
+        'GPS, connectivity and phone power can delay updates. A missing update does not prove someone is safe or in danger.',
+  ),
+  HelpArticle(
+    'Finish and reconnect',
+    'Confirm everyone has returned and close your tracking session.',
+    location: 'Active hike → End hike · Profile → Hike History',
+    actions: [
+      'Regroup and let the team know you have returned.',
+      'End your hike in the app and check the saved summary.',
+      'Review your recorded path and sharing preview before publishing.',
+    ],
+    tip:
+        'Check your own tracking status; do not assume another hiker ending their session has ended yours.',
   ),
 ];
 
 const sosHelp = [
   HelpArticle(
     'Set up before leaving',
-    'Add and check your emergency contacts. Review location, notification and Bluetooth permissions for the SOS features you use. Keep your phone charged.',
+    'Prepare your contacts and phone while you have time and signal.',
+    location: 'SOS → Emergency contacts · Hike safety settings',
+    actions: [
+      'Check contact numbers and agree how they should respond.',
+      'Allow the location, notification and Bluetooth permissions you need.',
+      'Check phone power and the safety setup shown by the app.',
+    ],
+    tip:
+        'Your contacts should know your route and expected return before you leave.',
   ),
   HelpArticle(
-    'Manual SOS',
-    'Open SOS and follow the on-screen confirmation. Check the alert status; sending an alert does not guarantee that a contact has received it or that help is on the way.',
-  ),
-  HelpArticle(
-    'Local alerts and nearby hikers',
-    'Local phone alerts may draw attention, and nearby SOS information may help other hikers notice an incident. Neither guarantees that someone nearby can respond.',
-  ),
-  HelpArticle(
-    'Duress',
-    'Duress SOS sends a discreet alert without the loud emergency pattern. It tells contacts you may be unable to speak safely. Use the dedicated test settings to practise; do not trigger a real alert as a test.',
+    'Practise safely',
+    'Learn the controls using the dedicated demos and tests.',
+    location: 'SOS → Manual & Duress guide / Test settings',
+    actions: [
+      'Use the gesture demo to practise tapping and holding without sending an SOS.',
+      'Warn contacts before using the WhatsApp test message.',
+      'Siren tests make noise; the BLE broadcast test can alert nearby phones.',
+    ],
+    tip:
+        'Tests have different effects. Read the test description; never trigger a real SOS just to practise.',
   ),
   HelpArticle(
     'Physical SOS button',
-    'Pair a supported button from SOS and follow its setup instructions. Keep Bluetooth enabled and the phone in range. Check the configured actions before leaving.',
+    'A paired button can start the phone’s Manual SOS workflow.',
+    location: 'SOS → Paired SOS button',
+    actions: [
+      'Follow pairing and the physical confirmation instructions.',
+      'Keep the button powered, Bluetooth on and the phone in range.',
+      'Enter the dedicated button test mode before a test press; wait for “Test mode active”.',
+    ],
+    tip:
+        'Outside the confirmed test window, a valid button press may trigger a real SOS.',
+  ),
+  HelpArticle(
+    'Manual SOS',
+    'Tap and release the emergency control when you need help.',
+    location: 'SOS → Emergency SOS',
+    actions: [
+      'A 10-second cancel window opens; cancel an accidental tap in that window.',
+      'After the countdown, the app starts its phone alarm and flashlight while notifying contacts.',
+      'Check the delivery status and seek direct emergency help when possible.',
+    ],
+    tip:
+        'Holding the same control has a different effect: it activates Duress SOS.',
+  ),
+  HelpArticle(
+    'Duress SOS',
+    'Use a discreet alert when you cannot speak safely.',
+    location: 'SOS → Hold the emergency control',
+    actions: [
+      'Hold continuously for about one second to activate Duress.',
+      'The alert sends without the loud alarm or a cancel countdown.',
+      'Contacts are warned that calling you could increase danger.',
+    ],
+    tip:
+        'Releasing early starts the Manual SOS cancel window. Practise this distinction in the gesture demo.',
+  ),
+  HelpArticle(
+    'Medical and automatic alerts',
+    'Understand the safety features enabled for your hike.',
+    location: 'SOS → Safety Tools · Active hike → Safety settings',
+    actions: [
+      'Review Medical SOS and any fall or stillness detection settings before leaving.',
+      'Respond to a safety countdown when prompted; confirm you are safe only when you are.',
+      'Do not wait for a sensor to detect an emergency—use Manual SOS or direct help when needed.',
+    ],
+    tip:
+        'Phone movement and OS restrictions affect detection. These features cannot detect every emergency.',
+  ),
+  HelpArticle(
+    'Check alert delivery',
+    'Read the alert status, not just the animation or phone alarm.',
+    location: 'SOS → Alert status / Queued dispatches',
+    actions: [
+      'Check whether contacts were notified, delivery is partial or dispatches are queued.',
+      'Queued dispatches retry when delivery becomes available; they cannot be removed from the queue screen.',
+      'Nearby SOS and local alarms may attract attention, but do not guarantee a response.',
+    ],
+    tip:
+        '“Sent” does not confirm a contact has read the alert or that rescuers are on the way.',
   ),
   HelpArticle(
     'Get emergency help',
-    'In immediate danger, call the local emergency number when possible. In Malaysia, call 999 or 112. Share your location, what happened and how many people need help.',
+    'For immediate danger in Malaysia, call 999 when possible.',
+    location: 'Phone → Emergency call',
+    actions: [
+      'Explain what happened and how many people need help.',
+      'Give your coordinates, trail name and nearby landmarks.',
+      'Follow the dispatcher’s instructions and update your contacts when safe.',
+    ],
+    tip:
+        'Outside Malaysia, use the local emergency number. HikerCircle does not replace emergency services.',
   ),
 ];
 
 const accountHelp = [
   HelpArticle(
     'Login and verification',
-    'Use your password and the verification method requested on screen. Never share passwords, one-time codes or authenticator codes.',
+    'Sign in with your registered number and the method requested on screen.',
+    location: 'Sign in → Verification',
+    actions: [
+      'Check the country code and registered phone number.',
+      'Use the newest verification code; an older code may no longer work.',
+      'Never share a password, one-time code or authenticator code.',
+    ],
+    tip:
+        'Repeated failures: check the on-screen message and wait for any resend timer before trying again.',
+  ),
+  HelpArticle(
+    'Enter a verification code',
+    'Use the code input’s paste or autofill option when available.',
+    location: 'Verification → Code field',
+    actions: [
+      'Return to HikerCircle and tap the code field.',
+      'Paste the code if your keyboard does not offer it automatically.',
+      'If it expired, request a new code and use only that code.',
+    ],
+    tip:
+        'Keyboard suggestions vary by phone and message app. Never include codes in feedback screenshots.',
   ),
   HelpArticle(
     'Manage login security',
-    'Go to Profile → App Settings → Login security to manage supported verification methods. Keep a working method available before changing devices.',
+    'Keep a usable verification method before changing phones.',
+    location: 'Profile → App Settings → Login security',
+    actions: [
+      'Review the Authenticator and passkey options supported on your device.',
+      'Complete any recent-login verification before changing a method.',
+      'Confirm a new method works before removing your previous one.',
+    ],
+    tip: 'Passkey availability depends on the device and this app build.',
   ),
   HelpArticle(
     'Forgot your password?',
-    'Use Forgot Password on the sign-in page. Verify the latest reset code, then follow a recovery method already linked to your account.',
+    'Recover access through a method already linked to your account.',
+    location: 'Sign in → Forgot Password',
+    actions: [
+      'Enter your registered number and verify the latest reset code.',
+      'Follow an available linked recovery method shown by the app.',
+      'Set a new password and return to sign in.',
+    ],
+    tip:
+        'A reset code alone may not finish recovery. Follow the next verification step shown.',
   ),
   HelpArticle(
-    'Permissions and delayed updates',
-    'Check internet access and the relevant phone permission when location, notifications or messages are not updating. Reopen the affected page and check again.',
+    'Location and notifications',
+    'Check phone permissions when tracking or alerts are delayed.',
+    location: 'Phone Settings → HikerCircle · Profile → App Settings',
+    actions: [
+      'Enable location and Precise Location where offered; allow background access when safety setup requests it.',
+      'Allow notifications and Bluetooth for the features you use.',
+      'Return to the app and check the permission result; finish any remaining setup.',
+    ],
+    tip:
+        'GPS can be less accurate under dense trees, near cliffs or between tall buildings.',
+  ),
+  HelpArticle(
+    'Weather is not refreshing',
+    'A failed refresh can leave the last saved forecast visible.',
+    location: 'Active hike → Weather along your hike',
+    actions: [
+      'Read the last updated time before relying on the forecast.',
+      'Active-hike weather refreshes at 15-minute intervals; reopening the sheet does not need a fresh request.',
+      'If there is no saved forecast, check connectivity and try again when available.',
+    ],
+    tip:
+        'A saved forecast describes an earlier update. Missing rain data does not mean no rain.',
+  ),
+  HelpArticle(
+    'Weak signal or delayed sync',
+    'Some saved information stays available when the connection drops.',
+    location: 'Active hike · Hike History · Circle',
+    actions: [
+      'Check internet access and the time of the last update.',
+      'Allow pending updates to sync when coverage returns.',
+      'Avoid reinstalling or clearing app data during a hike or while records are pending.',
+    ],
+    tip:
+        'Weather refreshes, chats and cloud SOS delivery need connectivity. Keep a backup plan.',
   ),
   HelpArticle(
     'Report an app problem',
-    'Use Feedback below. Include what you tried, what you expected and what happened. Remove passwords, verification codes and private information from screenshots.',
+    'Send enough detail to help us reproduce the issue.',
+    location: 'Profile → Help Center → Report a problem',
+    actions: [
+      'Describe what you tried, what you expected and what happened.',
+      'Use Mark a screenshot to show the affected screen, if useful.',
+      'Remove passwords, codes and private details; check replies through the Feedback history icon.',
+    ],
+    tip:
+        'Feedback is private support for app issues. Use emergency help for immediate danger.',
   ),
 ];

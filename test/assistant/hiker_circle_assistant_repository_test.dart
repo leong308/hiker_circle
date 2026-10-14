@@ -9,7 +9,7 @@ void main() {
         receivedQuestion = question;
         return <String, dynamic>{
           'answer': 'Open Profile, App Settings, then Login security.',
-          'responseMode': 'gemini_free_tier',
+          'responseMode': 'curated_guide',
           'sources': <Map<String, dynamic>>[
             <String, dynamic>{
               'id': 'login_security',
