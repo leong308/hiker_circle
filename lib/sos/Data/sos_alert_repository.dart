@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../app/Data/user_module_paths.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/app_settings_controller.dart';
@@ -193,7 +194,6 @@ class SosAlertRepository {
       'sosWhatsappNotesUpdatedAtLocal': DateTime.now()
           .toUtc()
           .toIso8601String(),
-      'phoneNumber': session.phoneNumber,
     }, SetOptions(merge: true));
   }
 
@@ -837,19 +837,6 @@ class SosAlertRepository {
         ),
       );
     }
-    await _userDocumentFor(session).set({
-      'latest_sos_messaging_test': {
-        'sentAtLocal': sentAt.toIso8601String(),
-        'contactCount': contacts.length,
-        'sentCount': dispatches.where((dispatch) => dispatch.wasSent).length,
-        'dispatches': dispatches
-            .map((dispatch) => dispatch.toFirestore())
-            .toList(),
-      },
-      'sosMessagingTestUpdatedAt': FieldValue.serverTimestamp(),
-      'sosMessagingTestUpdatedAtLocal': sentAt.toIso8601String(),
-      'phoneNumber': session.phoneNumber,
-    }, SetOptions(merge: true));
     return dispatches;
   }
 
@@ -1252,7 +1239,6 @@ class SosAlertRepository {
             transaction.set(userReference, {
               if (isLatest) 'latestSosAlertPath': alertPath,
               'recentSosAlertPaths': uniqueRecentPaths,
-              'sosAlertReferenceVersion': 1,
               if (!alertSnapshot.exists)
                 'sosAlertsCount': FieldValue.increment(1),
               'sosAlertsUpdatedAt': FieldValue.serverTimestamp(),
@@ -1260,12 +1246,6 @@ class SosAlertRepository {
                 'sosAlertsUpdatedAtLocal': alert.triggeredAt
                     .toUtc()
                     .toIso8601String(),
-              'phoneNumber': session.phoneNumber,
-              // SOS event bodies now live only in the canonical sosAlerts
-              // collection. Remove legacy copies after the canonical write and
-              // lightweight references are part of the same atomic transaction.
-              'latest_sos_alert': FieldValue.delete(),
-              'sos_alerts': FieldValue.delete(),
             }, SetOptions(merge: true));
           })
           .timeout(_cloudWriteTimeout);
@@ -1279,8 +1259,11 @@ class SosAlertRepository {
   }
 
   DocumentReference<Map<String, dynamic>> _userDocumentFor(AppSession session) {
-    return _users.doc(
-      FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber),
+    return userModuleDocument(
+      _users.doc(
+        FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber),
+      ),
+      UserModule.sos,
     );
   }
 

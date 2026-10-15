@@ -1,3 +1,4 @@
+const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 'use strict';
 const {createHash} = require('node:crypto');
 
@@ -63,7 +64,7 @@ async function sendPrecautionReminders({db, messaging, getWeather, userId, token
           return {fresh, sent: previous.sent || {}};
         });
         if (!claim) continue;
-        const user = (await db.collection('users').doc(userId(phone)).get()).data();
+        const user = (await readUser(db.collection('users').doc(userId(phone)), ["devices"])).data();
         const tokens = tokensFor(user || {});
         if (!tokens.length) { await ref.set({leaseUntil:0}, {merge:true}); continue; }
         let success = 0;

@@ -143,8 +143,17 @@ class EmergencyContactsViewModel extends ChangeNotifier {
       notifyListeners();
       return null;
     }
+    final normalized = PhoneNumberFormatter.normalize(phoneNumber);
+    if (EmergencyContactsRepository.isOwnPhoneNumber(
+      normalized,
+      _session.phoneNumber,
+    )) {
+      _saveErrorMessage = EmergencyContactsRepository.ownNumberMessage;
+      notifyListeners();
+      return null;
+    }
     _saveErrorMessage = null;
-    return PhoneNumberFormatter.normalize(phoneNumber);
+    return normalized;
   }
 
   @override

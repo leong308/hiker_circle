@@ -99,7 +99,7 @@ test('concurrent factor removals serialize and retain a security method', async 
   const results = await Promise.allSettled(['a', 'b'].map(id => removeMfaFactor(db, 'u', id, ApiError, stamp)));
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(results.find(r => r.status === 'rejected').reason.code, 'failed-precondition');
-  assert.equal(db.rows.get('users/u').mfaFactorCount, 1);
+  assert.equal(db.rows.get('users/u/modules/security').mfaFactorCount, 1);
   assert.equal([...db.rows.keys()].filter(p => p.includes('/authFactors/')).length, 1);
 });
 
@@ -149,7 +149,7 @@ function extractedFunction(name, nextName) {
 function callback(name, endMarker, db, extra = {}) {
   const accessor = () => db;
   accessor.FieldValue = { serverTimestamp: stamp, increment: value => value };
-  const context = { exports: {}, onDocumentUpdated: (_, handler) => handler,
+  const context = { ...require('../user_modules'), exports: {}, onDocumentUpdated: (_, handler) => handler,
     onDocumentCreated: (_, handler) => handler, admin: { firestore: accessor },
     dateMillis: value => typeof value === 'number' ? value : Date.parse(value),
     phoneKeyFor: value => value.replace(/[^0-9]/g, ''),

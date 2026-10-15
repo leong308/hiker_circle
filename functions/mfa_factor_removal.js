@@ -1,10 +1,11 @@
+const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 'use strict';
 async function removeMfaFactor(db, userId, factorId, ErrorType, timestamp) {
   const userRef = db.collection('users').doc(userId);
   return db.runTransaction(async tx => {
     // Query read and parent write serialize both removal and enrollment.
     const [snapshot] = await Promise.all([
-      tx.get(userRef.collection('authFactors')), tx.get(userRef),
+      tx.get(userRef.collection('authFactors')), readUser(userRef, ["security"], tx),
     ]);
     const factors = snapshot.docs.filter(d => d.data()?.enabled !== false);
     const target = factors.find(d => d.id === factorId);
@@ -14,7 +15,7 @@ async function removeMfaFactor(db, userId, factorId, ErrorType, timestamp) {
     const methods = [...new Set(remaining.map(d => d.data().type))]
       .filter(type => ['totp', 'passkey'].includes(type)).sort();
     tx.delete(target.ref);
-    tx.set(userRef, { mfaRequired: true, mfaFactorCount: remaining.length, mfaMethods: methods,
+    setUser(tx, userRef, { mfaRequired: true, mfaFactorCount: remaining.length, mfaMethods: methods,
       mfaUpdatedAt: timestamp(), mfaUpdatedAtLocal: new Date().toISOString() }, { merge: true });
     return { removed: true, factorCount: remaining.length, methods };
   });

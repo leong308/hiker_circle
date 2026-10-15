@@ -4,7 +4,9 @@
 
 This document explains how HikerCircle's local data progresses from an
 unnormalized form (0NF) to first normal form (1NF). It focuses on the local
-SQLite schema version 26.
+SQLite schema version 28. Documentation refreshed on 16 October 2026; the
+Firestore module split does not change the local schema or serialized payloads.
+The complete current table/column diagram is [sqlite_erd_1nf.md](sqlite_erd_1nf.md).
 
 The objective of 1NF is to ensure that:
 

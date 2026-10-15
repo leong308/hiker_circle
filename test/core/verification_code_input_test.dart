@@ -4,6 +4,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hiker_circle/core/widgets/verification_code_input.dart';
 
 void main() {
+  testWidgets('typing and repeated autofill submit once per complete entry', (
+    tester,
+  ) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    final completed = <String>[];
+    Widget page() => MaterialApp(
+      home: Scaffold(
+        body: VerificationCodeInput(
+          controller: controller,
+          onCompleted: completed.add,
+        ),
+      ),
+    );
+    await tester.pumpWidget(page());
+    final fields = find.byType(TextField);
+    const code = '012345';
+    for (var index = 0; index < 6; index++) {
+      await tester.enterText(fields.at(index), code[index]);
+      await tester.pump();
+      expect(completed, hasLength(index == 5 ? 1 : 0));
+    }
+    await tester.pumpWidget(page());
+    await tester.pump();
+    expect(completed, [
+      code,
+    ], reason: 'Rebuilding a full code must not submit again.');
+    for (var retry = 0; retry < 2; retry++) {
+      controller.clear();
+      await tester.pump();
+      // Whole-code autofill/paste may arrive in any of the six focused slots.
+      await tester.enterText(fields.at(3), code);
+      await tester.pump();
+      expect(completed, hasLength(retry + 2));
+      expect(completed.last, code);
+    }
+  });
+
   testWidgets('accepts a complete pasted verification code', (tester) async {
     final controller = TextEditingController();
     addTearDown(controller.dispose);

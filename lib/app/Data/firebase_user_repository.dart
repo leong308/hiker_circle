@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
+import 'user_module_paths.dart';
 
 class FirebaseUserRepositoryException implements Exception {
   const FirebaseUserRepositoryException(
@@ -64,19 +65,32 @@ class FirebaseUserRepository {
         transaction,
       ) async {
         final snapshot = await transaction.get(userDocument);
+        final profileDocument = userModuleDocument(
+          userDocument,
+          UserModule.profile,
+        );
+        final deviceDocument = userModuleDocument(
+          userDocument,
+          UserModule.devices,
+        );
+        final profileSnapshot = await transaction.get(profileDocument);
+        final deviceSnapshot = await transaction.get(deviceDocument);
         final appInstanceId = session.appInstanceId;
         if (!snapshot.exists) {
           transaction.set(userDocument, {
             'phoneNumber': session.phoneNumber,
+            'createdAt': FieldValue.serverTimestamp(),
+            'createdAtLocal': now.toIso8601String(),
+          });
+          transaction.set(profileDocument, {
             'requiresOnboarding': true,
             'profileSetupCompleted': false,
             'onboardingVersion': 1,
+          });
+          transaction.set(deviceDocument, {
             'boundAppInstanceId': appInstanceId,
-            'currentAppId': appInstanceId,
-            'lastSignedInAppInstanceId': appInstanceId,
+            'boundAppInstanceUpdatedAt': FieldValue.serverTimestamp(),
             'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
-            'createdAt': FieldValue.serverTimestamp(),
-            'createdAtLocal': now.toIso8601String(),
             'lastSignedInAt': FieldValue.serverTimestamp(),
             'lastSignedInAtLocal': now.toIso8601String(),
           });
@@ -91,12 +105,16 @@ class FirebaseUserRepository {
           );
         }
 
-        final data = snapshot.data();
+        final data = <String, dynamic>{
+          ...?snapshot.data(),
+          ...?profileSnapshot.data(),
+          ...?deviceSnapshot.data(),
+        };
         final createdAt =
-            _dateFromValue(data?['createdAt']) ??
-            _dateFromValue(data?['createdAtLocal']) ??
+            _dateFromValue(data['createdAt']) ??
+            _dateFromValue(data['createdAtLocal']) ??
             now;
-        final existingAppInstanceId = _stringFrom(data?['boundAppInstanceId']);
+        final existingAppInstanceId = _stringFrom(data['boundAppInstanceId']);
         final isRebinding =
             appInstanceId.isNotEmpty &&
             existingAppInstanceId.isNotEmpty &&
@@ -104,16 +122,8 @@ class FirebaseUserRepository {
         final requiresOnboarding = _requiresOnboarding(data);
         final isOnboardingProfileComplete = _isProfileSetupComplete(data);
 
-        transaction.set(userDocument, {
-          'phoneNumber': session.phoneNumber,
-          if (data?['requiresOnboarding'] is! bool)
-            'requiresOnboarding': requiresOnboarding,
-          if (data?['profileSetupCompleted'] is! bool)
-            'profileSetupCompleted': isOnboardingProfileComplete,
-          if (data?['onboardingVersion'] == null) 'onboardingVersion': 1,
+        transaction.set(deviceDocument, {
           'boundAppInstanceId': appInstanceId,
-          'currentAppId': appInstanceId,
-          'lastSignedInAppInstanceId': appInstanceId,
           'boundAppInstanceUpdatedAt': FieldValue.serverTimestamp(),
           'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
           if (isRebinding) ...{
@@ -154,13 +164,23 @@ class FirebaseUserRepository {
 
     try {
       await _requireAuthenticatedMfaSession(session);
-      final snapshot = await _users
-          .doc(documentIdForPhoneNumber(session.phoneNumber))
-          .get();
-      final data = snapshot.data();
-      if (!snapshot.exists || data == null) {
-        return session;
+      final account = _users.doc(documentIdForPhoneNumber(session.phoneNumber));
+      final snapshots = await Future.wait([
+        account.get(),
+        userModuleDocument(account, UserModule.profile).get(),
+        userModuleDocument(account, UserModule.devices).get(),
+      ]);
+      if (!snapshots[0].exists) {
+        throw const FirebaseUserRepositoryException(
+          'Your account record is unavailable. Sign in again.',
+          requiresSignIn: true,
+        );
       }
+      final data = <String, dynamic>{
+        ...?snapshots[0].data(),
+        ...?snapshots[1].data(),
+        ...?snapshots[2].data(),
+      };
 
       final boundAppInstanceId = _stringFrom(data['boundAppInstanceId']);
       if (boundAppInstanceId.isNotEmpty &&
@@ -285,44 +305,17 @@ class FirebaseUserRepository {
         ? _stringFrom(profile['username']).trim()
         : '';
     if (canonical.isNotEmpty) return canonical;
-    final topLevelUsername = _stringFrom(data?['username']).trim();
-    if (topLevelUsername.isNotEmpty) {
-      return topLevelUsername;
-    }
     return '';
   }
 
   String? _photoURL(Map<String, dynamic>? data) {
-    final topLevel = _stringFrom(data?['photoURL']).trim();
-    if (topLevel.isNotEmpty) {
-      return topLevel;
-    }
     final profile = data?['profile'];
-    if (profile is Map) {
-      final fromProfile = _stringFrom(profile['photoURL']).trim();
-      if (fromProfile.isNotEmpty) {
-        return fromProfile;
-      }
-    }
-    return null;
+    final value = profile is Map ? _stringFrom(profile['photoURL']).trim() : '';
+    return value.isEmpty ? null : value;
   }
 
-  bool _isProfileSetupComplete(Map<String, dynamic>? data) {
-    if (data?['profileSetupCompleted'] == true) {
-      return true;
-    }
-    final profile = data?['profile'];
-    if (profile is! Map) {
-      return false;
-    }
-    return _stringFrom(profile['username']).trim().isNotEmpty &&
-        _stringFrom(profile['gender']).trim().isNotEmpty &&
-        _stringFrom(profile['hikerExperience']).trim().isNotEmpty &&
-        _stringFrom(profile['hikeFrequency']).trim().isNotEmpty &&
-        _stringFrom(profile['residentialLocation']).trim().isNotEmpty &&
-        profile['residentialLatitude'] is num &&
-        profile['residentialLongitude'] is num;
-  }
+  bool _isProfileSetupComplete(Map<String, dynamic>? data) =>
+      data?['profileSetupCompleted'] == true;
 
   String _stringFrom(Object? value) {
     return value is String ? value : '';

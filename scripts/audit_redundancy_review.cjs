@@ -11,6 +11,29 @@ const files = execFileSync('rg', ['--files', 'lib', 'functions', 'scripts', 'too
 const source = new Map(files.filter(f => /\.(dart|js|cjs|kt|java|swift|html|json|xml|yaml|py|ps1)$/.test(f)).map(f => [f, fs.readFileSync(path.join(root, f), 'utf8')]));
 const production = [...source].filter(([f]) => !/\/test\/|^test\/|^scripts\/|^tool\//.test(f));
 const appText = production.map(([,t]) => t).join('\n');
+const sourceWords = new Set(appText.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []);
+// Dynamic dictionary keys can be phone numbers, IDs or tokens. Report schema
+// placeholders, never those keys. Unknown nested keys are also anonymized.
+const dictionaryFields = new Set(['fcmTokenByAppId','buddyRequestsIncoming','buddyRequestsOutgoing',
+  'groupChatMutedUntil','pinnedChats','activeHikeSessionIdsByPhone','unreadCount','lastReadAt',
+  'memberNames','memberPhotoUrls','participantsByPhone','memberAliases','participantLocations']);
+function nestedSchema(docs) {
+ const stats = new Map();
+ function walk(fields, prefix = '', dynamic = false) {
+  for (const [key,value] of Object.entries(fields || {})) {
+   const safe = dynamic || !sourceWords.has(key) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) ? '{key}' : key;
+   const field = prefix ? prefix + '.' + safe : safe;
+   const type = Object.keys(value)[0]; const entry = stats.get(field) || {occurrences:0,types:[]};
+   entry.occurrences++; if(!entry.types.includes(type))entry.types.push(type); stats.set(field,entry);
+   if(value.mapValue)walk(value.mapValue.fields,field,dictionaryFields.has(key));
+   if(value.arrayValue)for(const item of value.arrayValue.values||[]) {
+    if(item.mapValue)walk(item.mapValue.fields,field+'[]',dictionaryFields.has(key));
+   }
+  }
+ }
+ docs.forEach(d=>walk(d.fields));
+ return Object.fromEntries([...stats].sort(([a],[b])=>a.localeCompare(b)));
+}
 const report = {generatedAt: new Date().toISOString(), projectId, static: {}, live: {}};
 function matches(text, regex) {return [...text.matchAll(regex)];}
 function reach(graph, roots) {const visited = new Set(); const visit = f => {if (visited.has(f)) return; visited.add(f); for (const dep of graph.get(f) || []) visit(dep);}; roots.forEach(visit); return visited;}
@@ -30,6 +53,10 @@ report.static.publicMethodsWithoutCallers = dartFiles.flatMap(f => matches(sourc
 report.static.backendFunctionsWithoutCallers = jsFiles.flatMap(f => matches(source.get(f), /^(?:async )?function\s+(\w+)\(/gm).filter(m => matches(appText,new RegExp('\\b'+m[1]+'\\b','g')).length === 1).map(m=>({file:f,symbol:m[1],line:source.get(f).slice(0,m.index).split('\n').length})));
 report.static.assets = matches(pub, /^    - (assets\/[^\r\n]+)/gm).map(m => ({path:m[1],bytes:fs.statSync(path.join(root,m[1])).size,sourceReferences:production.filter(([,t]) => t.includes(m[1])).map(([f]) => f)}));
 report.static.functionExports = matches(source.get('functions/index.js'), /exports\.(\w+)\s*=/g).map(m => m[1]);
+for (const m of matches(source.get('functions/index.js'), /Object\.entries\(\{([^}]+)\}\)\)\s*\{\s*exports\[name\]/g)) {
+ report.static.functionExports.push(...matches(m[1], /(\w+)\s*:/g).map(v=>v[1]));
+}
+report.static.functionExports=[...new Set(report.static.functionExports)];
 report.static.unreferencedSqlTables = matches(source.get('lib/app/Data/local_session_database.dart'), /CREATE TABLE(?: IF NOT EXISTS)?\s+(\w+)/g).map(m => m[1]).filter((t,i,a) => a.indexOf(t)===i).map(t => ({table:t,files:production.filter(([,text])=>text.includes(t)).map(([f])=>f)}));
 function decode(v) {if(v.mapValue) return Object.fromEntries(Object.entries(v.mapValue.fields||{}).map(([k,n])=>[k,decode(n)])); if(v.arrayValue) return (v.arrayValue.values||[]).map(decode); return Object.values(v)[0];}
 function fields(d) {return Object.fromEntries(Object.entries(d.fields||{}).map(([k,v])=>[k,decode(v)]));}
@@ -45,7 +72,7 @@ async function main(){
  const documents=new Map();
  await mapLimit(collectionIds.sort(),async id=>{const docs=[];let next='';do{const u=new URL(`${docRoot}/${id}`);u.searchParams.set('pageSize','300');if(next)u.searchParams.set('pageToken',next);const r=await get(u);docs.push(...r.documents||[]);next=r.nextPageToken||'';}while(next);documents.set(id,docs);console.log(`Read ${id}: ${docs.length}`);});
  report.live.collections=Object.fromEntries([...documents].sort().map(([id,docs])=>[id,{...summary(docs),productionReferences:production.filter(([,text])=>text.includes(id)).map(([f])=>f)}]));
- const groups=['authFactors','comments','messages','ratings','reminderPreferences','reports','routeGeometry'];
+ const groups=['authFactors','comments','messages','ratings','reminderPreferences','reports','routeGeometry','snapshotArchives','modules'];
  const groupDocs=new Map();
  await mapLimit(groups,async id=>{const r=await get(`${docRoot}:runQuery`,{method:'POST',body:JSON.stringify({structuredQuery:{from:[{collectionId:id,allDescendants:true}]}})});const docs=(r||[]).filter(x=>x.document).map(x=>x.document);groupDocs.set(id,docs);report.live.subcollections=report.live.subcollections||{};const parents={};for(const doc of docs){const p=doc.name.split('/documents/')[1].split('/')[0];parents[p]=(parents[p]||0)+1;}report.live.subcollections[id]={...summary(docs),rootParents:parents};});
  let allDocs=[...[...documents.values()].flat(),...[...groupDocs.values()].flat()];
@@ -61,6 +88,7 @@ async function main(){
    report.live.subcollectionDiscovery={documentsInspected:inspected.size,additionalCollectionGroups:extra};
  }
  const knownPaths=new Set(allDocs.map(d=>d.name));
+ report.live.nestedSchemas=Object.fromEntries([...documents,...groupDocs].map(([id,docs])=>[id,nestedSchema(docs)]));
  report.live.orphanSubcollections={};for(const[id,docs]of groupDocs){const n=docs.filter(d=>!knownPaths.has(d.name.slice(0,d.name.lastIndexOf('/'+id+'/')))).length;if(n)report.live.orphanSubcollections[id]=n;}
  const ids=collection=>new Set((documents.get(collection)||[]).map(d=>d.name.split('/').at(-1)));
  const sessions=ids('hikeSessions'),trails=ids('trails'),teamSessions=ids('teamHikeSessions');

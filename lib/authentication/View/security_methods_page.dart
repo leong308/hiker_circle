@@ -12,20 +12,24 @@ import '../Model/mfa_models.dart';
 import 'recent_security_verification_page.dart';
 
 class SecurityMethodsPage extends StatefulWidget {
-  const SecurityMethodsPage({super.key});
+  const SecurityMethodsPage({super.key, MultiFactorAuthService? service})
+    : _service = service;
+
+  final MultiFactorAuthService? _service;
 
   @override
   State<SecurityMethodsPage> createState() => _SecurityMethodsPageState();
 }
 
 class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
-  final MultiFactorAuthService _service = MultiFactorAuthService();
+  late final MultiFactorAuthService _service;
   late Future<MfaStatus> _statusFuture;
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
+    _service = widget._service ?? MultiFactorAuthService();
     _statusFuture = _service.loadStatus();
   }
 
@@ -352,6 +356,7 @@ class _AuthenticatorSetupPage extends StatefulWidget {
 class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
   final TextEditingController _codeController = TextEditingController();
   bool _busy = false;
+  int _codeAttempt = 0;
   String? _error;
 
   @override
@@ -361,11 +366,13 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
   }
 
   Future<void> _finish() async {
+    if (_busy) return;
     final code = _codeController.text.trim();
     if (!RegExp(r'^\d{6}$').hasMatch(code)) {
       setState(() => _error = 'Enter the current 6-digit code.');
       return;
     }
+    final attempt = ++_codeAttempt;
     setState(() {
       _busy = true;
       _error = null;
@@ -375,11 +382,14 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
         challengeId: widget.enrollment.challengeId,
         code: code,
       );
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted && attempt == _codeAttempt) Navigator.of(context).pop(true);
     } catch (error) {
-      if (mounted) setState(() => _error = readableMfaError(error));
+      if (mounted && attempt == _codeAttempt) {
+        _codeController.clear();
+        setState(() => _error = readableMfaError(error));
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && attempt == _codeAttempt) setState(() => _busy = false);
     }
   }
 
@@ -428,12 +438,6 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
                     enabled: !_busy,
                     semanticLabel: 'Authenticator verification code',
                     onCompleted: (_) => _finish(),
-                    onSubmitted: (_) => _finish(),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: _busy ? null : _finish,
-                    child: const Text('Verify and add'),
                   ),
                 ],
                 if (_error != null) ...[
@@ -454,6 +458,8 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
                 timeout: const Duration(seconds: 30),
                 onTimeout: () {
                   if (!mounted || !_busy) return;
+                  _codeAttempt++;
+                  _codeController.clear();
                   setState(() {
                     _busy = false;
                     _error = 'Verification timed out. Please try again.';

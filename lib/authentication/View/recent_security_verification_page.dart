@@ -10,9 +10,14 @@ import 'inline_notice.dart';
 import 'security_verification_page.dart';
 
 class RecentSecurityVerificationPage extends StatefulWidget {
-  const RecentSecurityVerificationPage({super.key, required this.phoneNumber});
+  const RecentSecurityVerificationPage({
+    super.key,
+    required this.phoneNumber,
+    AuthViewModel? viewModel,
+  }) : _viewModel = viewModel;
 
   final String phoneNumber;
+  final AuthViewModel? _viewModel;
 
   @override
   State<RecentSecurityVerificationPage> createState() =>
@@ -24,12 +29,13 @@ class _RecentSecurityVerificationPageState
   final TextEditingController _codeController = TextEditingController();
   late final AuthViewModel _viewModel;
   bool _completing = false;
+  int _codeAttempt = 0;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _viewModel = AuthViewModel();
+    _viewModel = widget._viewModel ?? AuthViewModel();
     _viewModel.setAuthMode(AuthMode.login);
     _viewModel.addListener(_refresh);
     WidgetsBinding.instance.addPostFrameCallback((_) => _sendCode());
@@ -38,7 +44,7 @@ class _RecentSecurityVerificationPageState
   @override
   void dispose() {
     _viewModel.removeListener(_refresh);
-    _viewModel.dispose();
+    if (widget._viewModel == null) _viewModel.dispose();
     _codeController.dispose();
     super.dispose();
   }
@@ -57,14 +63,20 @@ class _RecentSecurityVerificationPageState
   }
 
   Future<void> _verifyCode() async {
-    if (_codeController.text.trim().length != 6 || _viewModel.isBusy) return;
+    if (_completing ||
+        _viewModel.isBusy ||
+        !RegExp(r'^\d{6}$').hasMatch(_codeController.text.trim())) {
+      return;
+    }
+    final attempt = ++_codeAttempt;
     FocusScope.of(context).unfocus();
     setState(() {
       _completing = true;
       _error = null;
     });
     final continuation = await _viewModel.verifyOtp(_codeController.text);
-    if (!mounted) return;
+    if (!mounted || attempt != _codeAttempt) return;
+    _codeController.clear();
     if (continuation == null) {
       setState(() => _completing = false);
       return;
@@ -180,13 +192,6 @@ class _RecentSecurityVerificationPageState
                             autofocus: true,
                             semanticLabel: 'WhatsApp verification code',
                             onCompleted: (_) => _verifyCode(),
-                            onSubmitted: (_) => _verifyCode(),
-                          ),
-                          const SizedBox(height: 12),
-                          FilledButton.icon(
-                            onPressed: busy ? null : _verifyCode,
-                            icon: const Icon(Icons.verified_user_rounded),
-                            label: const Text('Verify and continue'),
                           ),
                           TextButton(
                             onPressed: busy ? null : _sendCode,
@@ -224,6 +229,10 @@ class _RecentSecurityVerificationPageState
                     'Confirming your account securely. This may take a moment.',
                 timeout: const Duration(seconds: 30),
                 onTimeout: () {
+                  if (_completing) {
+                    _codeAttempt++;
+                    _codeController.clear();
+                  }
                   _viewModel.cancelPendingOperation();
                   if (mounted && _completing) {
                     setState(() {

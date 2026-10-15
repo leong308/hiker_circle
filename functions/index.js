@@ -1,3 +1,4 @@
+const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 const { validateSoloHikeDistance } = require('./solo_hike_policy');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
@@ -834,7 +835,7 @@ async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
     .doc(userDocumentIdForPhone(phoneNumber));
   const nowMillis = Date.now();
   const result = await admin.firestore().runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(userReference);
+    const snapshot = await readUser(userReference, ["security"], transaction);
     if (!snapshot.exists) {
       return {
         errorCode: 'not-found',
@@ -889,7 +890,7 @@ async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
     if (!passwordValid) {
       const failedAttempts = Number(user.loginFailedAttempts || 0) + 1;
       if (failedAttempts >= 5) {
-        transaction.update(userReference, {
+        updateUser(transaction, userReference, {
           loginFailedAttempts: 0,
           loginCooldownUntil: new Date(nowMillis + 30 * 60 * 1000),
         });
@@ -899,7 +900,7 @@ async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
             'Too many incorrect passwords. Login is paused for 30 minutes.',
         };
       }
-      transaction.update(userReference, {
+      updateUser(transaction, userReference, {
         loginFailedAttempts: failedAttempts,
       });
       return {
@@ -908,7 +909,7 @@ async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
       };
     }
 
-    transaction.update(userReference, {
+    updateUser(transaction, userReference, {
       loginFailedAttempts: 0,
       loginCooldownUntil: admin.firestore.FieldValue.delete(),
       lastPasswordVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -995,10 +996,9 @@ exports.sendGreenApiLoginCode = onCall(
     if (!['sign_in', 'sign_up', 'reauth'].includes(intent)) {
       throw new HttpsError('invalid-argument', 'Choose Sign Up or Login and try again.');
     }
-    const accountSnapshot = await admin.firestore()
+    const accountSnapshot = await readUser(admin.firestore()
       .collection('users')
-      .doc(userDocumentIdForPhone(phoneNumber))
-      .get();
+      .doc(userDocumentIdForPhone(phoneNumber)), ["profile","security"]);
     if (intent === 'sign_in' && !accountSnapshot.exists) {
       throw new HttpsError('not-found', 'No account was found for this phone number.');
     }
@@ -1365,7 +1365,7 @@ exports.sendSosWhatsAppMessage = onCall(
     const attemptNonce = crypto.randomBytes(24).toString('hex');
     const claim = await db.runTransaction(async (transaction) => {
       const [userSnapshot, dispatchSnapshot, rateSnapshot] = await Promise.all([
-        transaction.get(userReference),
+        readUser(userReference, ["preferences","sos"], transaction),
         transaction.get(dispatchReference),
         transaction.get(rateReference),
       ]);
@@ -1923,7 +1923,7 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
       .collection('live_location_shares')
       .doc(notification.shareId);
     const [userSnapshot, hikeSnapshot, shareSnapshot] = await Promise.all([
-      userReference.get(),
+      readUser(userReference, ["location","profile","sos"]),
       hikeReference.get(),
       shareReference.get(),
     ]);
@@ -2097,15 +2097,11 @@ exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
         },
         { merge: true }
       );
-      transaction.set(
-        admin.firestore().collection('users').doc(String(after.userId || '')),
-        {
+      setUser(transaction, admin.firestore().collection('users').doc(String(after.userId || '')), {
           liveLocation: sanitizedPlainValue(location),
           liveLocationUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
           liveLocationUpdatedAtLocal: nowIso,
-        },
-        { merge: true }
-      );
+        }, { merge: true });
     });
   }
 );
@@ -2143,8 +2139,8 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
     await db.runTransaction(async (transaction) => {
       const [rateSnapshot, ownerSnapshot, otherSnapshot] = await Promise.all([
         transaction.get(rateRef),
-        transaction.get(ownerRef),
-        transaction.get(otherRef),
+        readUser(ownerRef, ["profile","social"], transaction),
+        readUser(otherRef, ["profile","social"], transaction),
       ]);
       if (!ownerSnapshot.exists || !otherSnapshot.exists) {
         throw new HttpsError('not-found', 'This hiker is no longer available.');
@@ -2171,14 +2167,12 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
       const displayName = String(
         canonicalUsername(owner, `Hiker ${ownerKey.slice(-4)}`)
       ).slice(0, 80);
-      const photoURL = String(owner.photoURL || profile.photoURL || '').slice(
+      const photoURL = String(profile.photoURL || '').slice(
         0,
         2000
       );
       const nowIso = new Date(nowMillis).toISOString();
-      transaction.set(
-        otherRef,
-        {
+      setUser(transaction, otherRef, {
           buddyRequestsIncoming: { [ownerKey]: {
             phoneNumber: ownerPhone,
             displayName,
@@ -2188,21 +2182,15 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
           } },
           buddyRequestsUpdatedAt:
             admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      transaction.set(
-        ownerRef,
-        {
+        }, { merge: true });
+      setUser(transaction, ownerRef, {
           buddyRequestsOutgoing: { [otherKey]: {
             phoneNumber: otherPhone,
             createdAtLocal: nowIso,
           } },
           buddyRequestsUpdatedAt:
             admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+        }, { merge: true });
       transaction.set(
         rateRef,
         {
@@ -2218,15 +2206,15 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
 
   await db.runTransaction(async (transaction) => {
     const [ownerSnapshot, otherSnapshot] = await Promise.all([
-      transaction.get(ownerRef),
-      transaction.get(otherRef),
+      readUser(ownerRef, ["profile","social"], transaction),
+      readUser(otherRef, ["profile","social"], transaction),
     ]);
     if (!ownerSnapshot.exists || !otherSnapshot.exists) {
       throw new HttpsError('not-found', 'This buddy request no longer exists.');
     }
     const ownerData = ownerSnapshot.data() || {};
     const incoming = ownerData.buddyRequestsIncoming;
-    if (!incoming?.[otherKey] && !ownerData[`buddyRequestsIncoming.${otherKey}`]) {
+    if (!incoming?.[otherKey]) {
       throw new HttpsError(
         'failed-precondition',
         'This buddy request has already been handled.'
@@ -2252,37 +2240,11 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
       otherUpdate.buddiesUpdatedAt =
         admin.firestore.FieldValue.serverTimestamp();
     }
-    transaction.update(ownerRef, ownerUpdate);
-    transaction.update(otherRef, otherUpdate);
-    transaction.update(ownerRef, new FieldPath(`buddyRequestsIncoming.${otherKey}`), FieldValue.delete());
-    transaction.update(otherRef, new FieldPath(`buddyRequestsOutgoing.${ownerKey}`), FieldValue.delete());
+    updateUser(transaction, ownerRef, ownerUpdate);
+    updateUser(transaction, otherRef, otherUpdate);
   });
   return { status: action === 'accept' ? 'accepted' : 'declined' };
 });
-
-// Repair legacy dotted set keys as accounts are next used. Transactional reads
-// ensure an accepted/deleted request cannot be recreated from an old event.
-exports.repairLegacyBuddyRequests = onDocumentUpdated(
-  { document: 'users/{userId}', retry: true },
-  async event => {
-    const after = event.data.after.data() || {};
-    if (!Object.keys(after).some(key => /^buddyRequests(Incoming|Outgoing)\.[0-9]+$/.test(key))) return;
-    await admin.firestore().runTransaction(async tx => {
-      const snapshot = await tx.get(event.data.after.ref);
-      if (!snapshot.exists) return;
-      const current = snapshot.data() || {};
-      for (const [key, value] of Object.entries(current)) {
-        const match = /^(buddyRequestsIncoming|buddyRequestsOutgoing)\.([0-9]+)$/.exec(key);
-        if (!match) continue;
-        const [, map, phoneKey] = match;
-        if (value && typeof value === 'object' && !current[map]?.[phoneKey]) {
-          tx.set(snapshot.ref, { [map]: { [phoneKey]: value } }, { merge: true });
-        }
-        tx.update(snapshot.ref, new FieldPath(key), FieldValue.delete());
-      }
-    });
-  }
-);
 
 // Public discovery uses a server allow-list so private participant, safety,
 // and route-planning fields never cross the trust boundary. Full documents
@@ -2300,7 +2262,7 @@ exports.listUpcomingHikePreviews = onCall(
     }
 
     const db = admin.firestore();
-    const userSnapshot = await db.collection('users').doc(uid).get();
+    const userSnapshot = await readUser(db.collection('users').doc(uid), []);
     const user = userSnapshot.data() || {};
     if (
       !userSnapshot.exists
@@ -2393,7 +2355,7 @@ exports.joinUpcomingHike = onCall({}, async (request) => {
   const result = await db.runTransaction(async (transaction) => {
     const [hikeSnapshot, userSnapshot, chatSnapshot] = await Promise.all([
       transaction.get(hikeReference),
-      transaction.get(userReference),
+      readUser(userReference, ["preferences","profile"], transaction),
       transaction.get(chatReference),
     ]);
     if (!hikeSnapshot.exists) {
@@ -2557,7 +2519,7 @@ exports.requestToJoinUpcomingHike = onCall({}, async (request) => {
     const [hikeSnapshot, userSnapshot, requestSnapshot, rateSnapshot] =
       await Promise.all([
         transaction.get(hikeReference),
-        transaction.get(userReference),
+        readUser(userReference, ["profile"], transaction),
         transaction.get(requestReference),
         transaction.get(rateReference),
       ]);
@@ -2648,7 +2610,7 @@ async function publicHikerDetails(db, userId) {
   if (!validFirestoreDocumentId(userId)) return {};
   const [userDocument, achievementDocuments, historyDocuments] =
     await Promise.all([
-      db.collection('users').doc(userId).get(),
+      readUser(db.collection('users').doc(userId), ["achievements","profile"]),
       db.collection('userAchievements').where('userId', '==', userId)
         .where('isUnlocked', '==', true).orderBy('awardedAtLocal', 'desc')
         .limit(12).get(),
@@ -2791,7 +2753,7 @@ exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
     const chatReference = db.collection('groupChats').doc(`hike_${hikeId}`);
     const [hikeSnapshot, userSnapshot, chatSnapshot] = await Promise.all([
       transaction.get(hikeReference),
-      transaction.get(userReference),
+      readUser(userReference, ["preferences","profile"], transaction),
       transaction.get(chatReference),
     ]);
     const hike = hikeSnapshot.exists ? hikeSnapshot.data() || {} : null;
@@ -3048,8 +3010,8 @@ exports.remindUpcomingHikeHost = onCall(
 
     let fcmSent = false;
     try {
-      const host = await db.collection('users')
-        .doc(userDocumentIdForPhone(claim.hostPhone)).get();
+      const host = await readUser(db.collection('users')
+        .doc(userDocumentIdForPhone(claim.hostPhone)), ["devices"]);
       const tokens = latestFcmTokensForUser(host.data() || {});
       if (tokens.length > 0) {
         const delivery = await admin.messaging().sendEachForMulticast({
@@ -3180,10 +3142,9 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
     let fcmSuccessCount = 0;
     let fcmFailureCount = 0;
     try {
-      const hostSnapshot = await db
+      const hostSnapshot = await readUser(db
         .collection('users')
-        .doc(userDocumentIdForPhone(hostPhone))
-        .get();
+        .doc(userDocumentIdForPhone(hostPhone)), ["devices"]);
       const tokenList = latestFcmTokensForUser(hostSnapshot.data() || {});
       if (tokenList.length > 0) {
         for (let index = 0; index < tokenList.length; index += 500) {
@@ -3417,7 +3378,7 @@ exports.loadAchievementLeaderboard = onCall({}, async (request) => {
     admin.firestore().collection('users').doc(userId)
   );
   const users = userReferences.length > 0
-    ? await admin.firestore().getAll(...userReferences)
+    ? await readUsers(admin.firestore(), [...userReferences], ["profile"])
     : [];
   const profiles = new Map(users.map((document) => [document.id, document.data() || {}]));
   return {
@@ -3427,13 +3388,13 @@ exports.loadAchievementLeaderboard = onCall({}, async (request) => {
     entries: visibleRanked.map(([userId, points], index) => {
       const profile = profiles.get(userId) || {};
       const username = String(
-        profile.username || profile.displayName || profile.handle || 'Hiker'
+        canonicalUsername(profile, 'Hiker')
       ).replace(/^@/, '').trim();
       return {
         rank: userId === uid ? currentUserIndex + 1 : index + 1,
         userId,
         displayName: username || 'Hiker',
-        photoURL: String(profile.photoURL || '').trim(),
+        photoURL: String(profile.profile?.photoURL || '').trim(),
         points: Math.floor(points),
         isCurrentUser: userId === uid,
       };
@@ -3553,7 +3514,7 @@ function publicProfileFromUserDocument(document) {
     .trim()
     .slice(0, 80);
   const photoURL = String(
-    data.photoURL || data.profilePhotoURL || profile.photoURL || ''
+    profile.photoURL || ''
   ).trim().slice(0, 2000);
   return {
     userId: document.id,
@@ -3571,9 +3532,8 @@ function publicProfileFromUserDocument(document) {
   };
 }
 
-// User documents contain authentication hashes, device bindings, emergency
-// contacts, and push tokens. Mobile clients receive only this explicit public
-// projection instead of being allowed to read other users' full documents.
+// Public profiles combine only the account, profile and achievement modules.
+// Private modules are never loaded or returned by this projection.
 exports.getPublicProfiles = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
@@ -3601,28 +3561,24 @@ exports.getPublicProfiles = onCall({}, async (request) => {
   let documents;
   if (requestedPhones.length > 0) {
     const uniquePhones = [...new Set(requestedPhones)].slice(0, 50);
-    documents = await db.getAll(
-      ...uniquePhones.map((phone) =>
+    documents = await readUsers(db, [...uniquePhones.map((phone) =>
         db.collection('users').doc(userDocumentIdForPhone(phone))
-      )
-    );
+      )], ["achievements","profile"]);
   } else if (requestedUserIds.length > 0) {
     const uniqueUserIds = [...new Set(requestedUserIds)].slice(0, 50);
-    documents = await db.getAll(
-      ...uniqueUserIds.map((value) => db.collection('users').doc(value))
-    );
+    documents = await readUsers(db, [...uniqueUserIds.map((value) => db.collection('users').doc(value))], ["achievements","profile"]);
   } else if (/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
     documents = [
-      await db.collection('users').doc(userDocumentIdForPhone(phoneNumber)).get(),
+      await readUser(db.collection('users').doc(userDocumentIdForPhone(phoneNumber)), ["achievements","profile"]),
     ];
   } else if (/^[^/]{1,200}$/.test(userId)) {
-    documents = [await db.collection('users').doc(userId).get()];
+    documents = [await readUser(db.collection('users').doc(userId), ["achievements","profile"])];
   } else {
     const requestedLimit = Number(request.data?.limit || 80);
     const limit = Number.isFinite(requestedLimit)
       ? Math.max(1, Math.min(80, Math.floor(requestedLimit)))
       : 80;
-    documents = (await db.collection('users').limit(limit).get()).docs;
+    documents = (await readUserQuery(db.collection('users').limit(limit), ["achievements","profile"])).docs;
   }
   const profiles = documents
     .filter((document) => document.exists)
@@ -3762,7 +3718,7 @@ function teamBuddyFromUser(phoneNumber, user, isHost, index) {
     canonicalUsername(user, `Hiker ${key.slice(-4)}`)
   ).trim().slice(0, 80) || 'Trail buddy';
   const photoURL = String(
-    user?.photoURL || user?.profilePhotoURL || profile.photoURL || ''
+    profile.photoURL || ''
   ).trim().slice(0, 2000);
   return {
     name,
@@ -4107,7 +4063,7 @@ function canonicalChatProfile(phoneNumber, user) {
     canonicalUsername(user, `Hiker ${key.slice(-4)}`)
   ).trim().slice(0, 80) || 'Hiker';
   const photoURL = String(
-    user?.photoURL || user?.profilePhotoURL || profile.photoURL || ''
+    profile.photoURL || ''
   ).trim().slice(0, 2000);
   return { name, photoURL };
 }
@@ -4392,12 +4348,12 @@ exports.scheduleUpcomingHike = onCall(
 
     const result = await db.runTransaction(async (transaction) => {
       const snapshots = await Promise.all([
-        transaction.get(userReference),
+        readUser(userReference, ["preferences","profile","social"], transaction),
         transaction.get(trailReference),
         transaction.get(rateReference),
         transaction.get(hikeReference),
         transaction.get(chatReference),
-        ...inviteeReferences.map((reference) => transaction.get(reference)),
+        ...inviteeReferences.map((reference) => readUser(reference, ["preferences","profile","social"], transaction)),
       ]);
       const ownerSnapshot = snapshots[0];
       const trailSnapshot = snapshots[1];
@@ -4583,8 +4539,8 @@ exports.openDirectChat = onCall(
     const chat = await db.runTransaction(async (transaction) => {
       const [callerSnapshot, otherSnapshot, chatSnapshot, rateSnapshot] =
         await Promise.all([
-          transaction.get(callerReference),
-          transaction.get(otherReference),
+          readUser(callerReference, ["preferences","profile"], transaction),
+          readUser(otherReference, ["preferences","profile"], transaction),
           transaction.get(chatReference),
           transaction.get(rateReference),
         ]);
@@ -4696,7 +4652,7 @@ exports.deleteChatForUser = onCall(
         }
       }
       const remaining = participants.filter((phone) => phone !== callerPhone);
-      const callerUser = await transaction.get(db.collection('users').doc(uid));
+      const callerUser = await readUser(db.collection('users').doc(uid), ["preferences","profile"], transaction);
       const displayName = canonicalChatProfile(
         callerPhone,
         callerUser.data() || {}
@@ -4794,7 +4750,7 @@ exports.startActiveHikeSession = onCall(
 
     const result = await db.runTransaction(async (transaction) => {
       const baseSnapshots = await Promise.all([
-        transaction.get(userReference),
+        readUser(userReference, ["social"], transaction),
         transaction.get(trailReference),
         transaction.get(rateReference),
         transaction.get(sessionReference),
@@ -5124,7 +5080,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
       const snapshots = await Promise.all([
         transaction.get(sessionReference),
         transaction.get(terminalReference),
-        transaction.get(userReference),
+        readUser(userReference, ["social"], transaction),
         transaction.get(trailReference),
         transaction.get(rateReference),
         ...(upcomingReference ? [transaction.get(upcomingReference)] : []),
@@ -5730,7 +5686,7 @@ exports.completeActiveHikeSession = onCall(
       const snapshots = await Promise.all([
         transaction.get(sessionReference),
         transaction.get(terminalReference),
-        transaction.get(userReference),
+        readUser(userReference, ["social"], transaction),
         transaction.get(trailReference),
         transaction.get(rateReference),
         ...(teamReference ? [transaction.get(teamReference)] : []),
@@ -6404,12 +6360,12 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
 
   const team = await db.runTransaction(async (transaction) => {
     const snapshots = await Promise.all([
-      transaction.get(ownerReference),
+      readUser(ownerReference, ["profile","social"], transaction),
       transaction.get(trailReference),
       transaction.get(rateReference),
       transaction.get(sessionReference),
       ...(upcomingReference ? [transaction.get(upcomingReference)] : []),
-      ...inviteeReferences.map((reference) => transaction.get(reference)),
+      ...inviteeReferences.map((reference) => readUser(reference, ["profile","social"], transaction)),
     ]);
     const ownerSnapshot = snapshots[0];
     const trailSnapshot = snapshots[1];
@@ -6777,7 +6733,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
   const result = await db.runTransaction(async (transaction) => {
     const snapshots = await Promise.all([
       transaction.get(teamReference),
-      transaction.get(userReference),
+      readUser(userReference, ["location","profile","social"], transaction),
       transaction.get(rateReference),
       ...(hikeReference ? [transaction.get(hikeReference)] : []),
     ]);
@@ -7721,11 +7677,10 @@ function recentMfaAuthentication(request) {
 }
 
 async function createMfaCustomToken({ userId, phoneNumber, method }) {
-  const userSnapshot = await admin.firestore().collection('users').doc(userId).get();
+  const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["devices","security"]);
   const user = userSnapshot.data() || {};
   const nowIso = new Date().toISOString();
-  await userSnapshot.ref.set({
-    firebaseUid: userId,
+  await setUser(null, userSnapshot.ref, {
     lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
     lastSignedInAtLocal: nowIso,
     lastMfaAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -7759,7 +7714,7 @@ async function persistEnrolledFactor({
   await db.runTransaction(async (transaction) => {
     const reads = await Promise.all([
       transaction.get(factorReference),
-      transaction.get(userReference),
+      readUser(userReference, ["achievements","profile","security"], transaction),
       transaction.get(userReference.collection('authFactors')),
       ...(context.sessionReference
         ? [transaction.get(context.sessionReference)]
@@ -7796,9 +7751,8 @@ async function persistEnrolledFactor({
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAtLocal: nowIso,
     });
-    transaction.set(userReference, {
+    setUser(transaction, userReference, {
       phoneNumber: context.phoneNumber,
-      firebaseUid: context.userId,
       mfaRequired: true,
       mfaFactorCount: freshFactors.length + 1,
       mfaMethods: nextMethods,
@@ -8427,7 +8381,7 @@ exports.verifyGreenApiLoginCode = onCall(
       throw new HttpsError('internal', 'Invalid phone number on record.');
     }
     const userId = userDocumentIdForPhone(phoneNumber);
-    const userSnapshot = await admin.firestore().collection('users').doc(userId).get();
+    const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["profile","security"]);
     if (verification.intent === 'sign_in' && !userSnapshot.exists) {
       throw new HttpsError('not-found', 'This account no longer exists.');
     }
@@ -8531,21 +8485,17 @@ exports.registerSafetyQuestions = onCall(
     const a1Hash = await argon2.hash(a1.toLowerCase(), { type: argon2.argon2id });
     const a2Hash = await argon2.hash(a2.toLowerCase(), { type: argon2.argon2id });
 
-    await admin
+    await setUser(null, admin
       .firestore()
       .collection('users')
-      .doc(userId)
-      .set(
-        {
+      .doc(userId), {
           safetyQuestions: {
             q1,
             a1Hash,
             q2,
             a2Hash,
           },
-        },
-        { merge: true }
-      );
+        }, { merge: true });
 
     return { success: true };
   }
@@ -8578,11 +8528,10 @@ exports.sendPasswordResetCode = onCall(
       );
     }
 
-    const userSnapshot = await admin
+    const userSnapshot = await readUser(admin
       .firestore()
       .collection('users')
-      .doc(userId)
-      .get();
+      .doc(userId), ["security"]);
     const user = userSnapshot.data() || {};
     if (!user.passwordHash) {
       throw new HttpsError(
@@ -8779,11 +8728,10 @@ exports.verifyPasswordResetOtp = onCall(
     }
 
     const userId = userDocumentIdForPhone(phoneNumber);
-    const userSnapshot = await admin
+    const userSnapshot = await readUser(admin
       .firestore()
       .collection('users')
-      .doc(userId)
-      .get();
+      .doc(userId), ["security"]);
     const user = userSnapshot.data() || {};
     const questions = user.safetyQuestions;
     const hasQuestions =
@@ -8908,9 +8856,7 @@ exports.checkSafetyAnswer = onCall(
 
       const phoneNumber = String(session.phoneNumber || '');
       const userId = userDocumentIdForPhone(phoneNumber);
-      const userSnapshot = await transaction.get(
-        admin.firestore().collection('users').doc(userId)
-      );
+      const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["security"], transaction);
       const user = userSnapshot.data() || {};
       const questions = user.safetyQuestions;
       if (!questions) {
@@ -9247,10 +9193,7 @@ exports.resetPassword = onCall(
       const userId = userDocumentIdForPhone(phoneNumber);
 
       const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
-      transaction.update(
-        admin.firestore().collection('users').doc(userId),
-        { passwordHash }
-      );
+      updateUser(transaction, admin.firestore().collection('users').doc(userId), { passwordHash });
       transaction.update(sessionRef, { used: true });
       return { success: true };
     });
@@ -9306,26 +9249,21 @@ exports.linkPasswordToAccount = onCall({}, async (request) => {
   });
 
   const now = new Date();
-  await admin
+  await setUser(null, admin
     .firestore()
     .collection('users')
-    .doc(userId)
-    .set(
-      {
+    .doc(userId), {
         phoneNumber,
         passwordHash,
-        username,
+        profile: {username},
         requiresOnboarding: true,
         profileSetupCompleted: false,
         onboardingVersion: 1,
-        firebaseUid: userId,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAtLocal: now.toISOString(),
         lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
         lastSignedInAtLocal: now.toISOString(),
-      },
-      { merge: true }
-    );
+      }, { merge: true });
 
   const customToken = await admin.auth().createCustomToken(userId, {
     phoneNumber,
@@ -9811,7 +9749,7 @@ async function applyAchievementMetricServer({
           transaction.get(receiptReference),
           transaction.get(definitionReference),
           transaction.get(progressReference),
-          transaction.get(userReference),
+          readUser(userReference, ["achievements"], transaction),
         ]);
       if (receipt.exists) {
         return;
@@ -9888,9 +9826,7 @@ async function applyAchievementMetricServer({
         );
         const totalPoints = currentPoints + rewardPoints;
         const level = hikerLevelForPoints(totalPoints);
-        transaction.set(
-          userReference,
-          {
+        setUser(transaction, userReference, {
             achievementPoints: totalPoints,
             hikerLevel: level.number,
             hikerLevelName: level.name,
@@ -9898,9 +9834,7 @@ async function applyAchievementMetricServer({
             achievementSummaryUpdatedAt:
               admin.firestore.FieldValue.serverTimestamp(),
             achievementSummaryUpdatedAtLocal: nowIso,
-          },
-          { merge: true }
-        );
+          }, { merge: true });
       }
       transaction.create(receiptReference, {
         eventKey: String(eventKey).slice(0, 500),
@@ -9959,7 +9893,7 @@ async function reconcileAchievementMetricServer({
         await Promise.all([
           transaction.get(definitionDocument.ref),
           transaction.get(progressReference),
-          transaction.get(userReference),
+          readUser(userReference, ["achievements"], transaction),
         ]);
       const definition = definitionSnapshot.data() || {};
       if (
@@ -10025,9 +9959,7 @@ async function reconcileAchievementMetricServer({
         );
         const totalPoints = currentPoints + rewardPoints;
         const level = hikerLevelForPoints(totalPoints);
-        transaction.set(
-          userReference,
-          {
+        setUser(transaction, userReference, {
             achievementPoints: totalPoints,
             hikerLevel: level.number,
             hikerLevelName: level.name,
@@ -10035,9 +9967,7 @@ async function reconcileAchievementMetricServer({
             achievementSummaryUpdatedAt:
               admin.firestore.FieldValue.serverTimestamp(),
             achievementSummaryUpdatedAtLocal: nowIso,
-          },
-          { merge: true }
-        );
+          }, { merge: true });
       }
     });
   }
@@ -10073,7 +10003,7 @@ exports.syncMyAchievementProgress = onCall({}, async (request) => {
   );
   const db = admin.firestore();
   const userReference = db.collection('users').doc(uid);
-  const userSnapshot = await userReference.get();
+  const userSnapshot = await readUser(userReference, ["achievements","profile"]);
   if (!userSnapshot.exists) {
     throw new HttpsError('failed-precondition', 'Your profile is unavailable.');
   }
@@ -10125,14 +10055,11 @@ exports.syncMyAchievementProgress = onCall({}, async (request) => {
     metricKey: 'malaysia_state_hiked',
     progressCount: malaysiaStates.size,
   });
-  await userReference.set(
-    {
+  await setUser(null, userReference, {
       achievementCatalogSyncVersion: 3,
       achievementCatalogSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
       achievementCatalogSyncedAtLocal: new Date().toISOString(),
-    },
-    { merge: true }
-  );
+    }, { merge: true });
   return {
     synchronized: true,
     completedHikes: completedHikes.length,
@@ -10153,11 +10080,10 @@ exports.manageAchievementDefinition = onCall(
       await ensureAchievementDefinitions();
       return { seeded: true };
     }
-    const userSnapshot = await admin
+    const userSnapshot = await readUser(admin
       .firestore()
       .collection('users')
-      .doc(uid)
-      .get();
+      .doc(uid), ["achievements"]);
     if (!userSnapshot.exists || !isAdminUser(userSnapshot.data() || {})) {
       throw new HttpsError('permission-denied', 'Administrator access is required.');
     }
@@ -10245,12 +10171,12 @@ async function revokeTerminalHikeShare(hike) {
   const shareRef = db.collection('live_location_shares').doc(shareId);
   const userRef = db.collection('users').doc(userId);
   await db.runTransaction(async tx => {
-    const [shareSnapshot, userSnapshot] = await Promise.all([tx.get(shareRef), tx.get(userRef)]);
+    const [shareSnapshot, userSnapshot] = await Promise.all([tx.get(shareRef), readUser(userRef, ["location"], tx)]);
     const share = shareSnapshot.data() || {};
     if (!shareSnapshot.exists || share.ownerUserId !== userId) return;
     tx.update(shareRef, { isActive: false, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     if (userSnapshot.exists && userSnapshot.data()?.liveLocationShareId === shareId) {
-      tx.update(userRef, { liveLocationEnabled: false, liveLocationUpdatedAt: admin.firestore.FieldValue.serverTimestamp() });
+      updateUser(tx, userRef, { liveLocationEnabled: false, liveLocationUpdatedAt: admin.firestore.FieldValue.serverTimestamp() });
     }
   });
 }
@@ -10526,7 +10452,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
     const userReferences = participantPhones.map((phone) =>
       db.collection('users').doc(phone.replace(/\//g, '_'))
     );
-    const userSnapshots = await db.getAll(...userReferences);
+    const userSnapshots = await readUsers(db, [...userReferences], ["devices","preferences"]);
     const tokens = new Set();
     let eligibleUsers = 0;
     const now = Date.now();
@@ -10811,11 +10737,10 @@ async function deliverFcmOutboxDocument(reference, messageId) {
     const safeDeepLink = type === 'team_hike_ping'
       ? `hikercircle://team-hike/ping?teamSessionId=${encodeURIComponent(teamHikeSessionId)}`
       : `hikercircle://team-hike/join?teamSessionId=${encodeURIComponent(teamHikeSessionId)}`;
-    const userSnapshot = await admin
+    const userSnapshot = await readUser(admin
       .firestore()
       .collection('users')
-      .doc(recipientPhone.replace(/\//g, '_'))
-      .get();
+      .doc(recipientPhone.replace(/\//g, '_')), ["devices","social"]);
     const user = userSnapshot.data() || {};
     const tokenList = latestFcmTokensForUser(user);
     if (tokenList.length === 0) {
@@ -11049,7 +10974,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
     const participantPhones = new Set(
       Array.isArray(hike.participantPhones) ? hike.participantPhones : []
     );
-    const usersSnapshot = await admin.firestore().collection('users').get();
+    const usersSnapshot = await readUserQuery(admin.firestore().collection('users'), ["devices","profile"]);
     const tokens = new Set();
     let nearbyUserCount = 0;
 
@@ -11058,10 +10983,10 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
       const profile =
         user.profile && typeof user.profile === 'object' ? user.profile : {};
       const latitude = Number(
-        profile.residentialLatitude ?? user.residentialLatitude
+        profile.residentialLatitude
       );
       const longitude = Number(
-        profile.residentialLongitude ?? user.residentialLongitude
+        profile.residentialLongitude
       );
       const phoneNumber = String(user.phoneNumber || '');
       if (
@@ -11208,10 +11133,9 @@ async function sendUpcomingHikeReminderToPhone(
   if (!phone) {
     return { successCount: 0, failureCount: 0, skipped: true };
   }
-  const userSnapshot = await db
+  const userSnapshot = await readUser(db
     .collection('users')
-    .doc(userDocumentIdForPhone(phone))
-    .get();
+    .doc(userDocumentIdForPhone(phone)), ["devices"]);
   if (!userSnapshot.exists) {
     return { successCount: 0, failureCount: 0, skipped: true };
   }

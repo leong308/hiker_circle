@@ -31,6 +31,7 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
   final TextEditingController _codeController = TextEditingController();
   TotpEnrollment? _totpEnrollment;
   bool _busy = false;
+  int _codeAttempt = 0;
   String _busyMessage = 'Checking your security method…';
   String? _error;
 
@@ -90,11 +91,13 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
   }
 
   Future<void> _submitTotp() async {
+    if (_busy) return;
     final code = _codeController.text.trim();
     if (!RegExp(r'^\d{6}$').hasMatch(code)) {
       setState(() => _error = 'Enter the current 6-digit code.');
       return;
     }
+    final attempt = ++_codeAttempt;
     _beginBusy('Verifying security code…');
     try {
       final AppSession session;
@@ -112,11 +115,16 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
           code: code,
         );
       }
-      if (mounted) Navigator.of(context).pop(session);
+      if (mounted && attempt == _codeAttempt) {
+        Navigator.of(context).pop(session);
+      }
     } catch (error) {
-      if (mounted) setState(() => _error = readableMfaError(error));
+      if (mounted && attempt == _codeAttempt) {
+        _codeController.clear();
+        setState(() => _error = readableMfaError(error));
+      }
     } finally {
-      _endBusy();
+      if (attempt == _codeAttempt) _endBusy();
     }
   }
 
@@ -301,6 +309,8 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
               timeout: const Duration(seconds: 30),
               onTimeout: () {
                 if (!mounted || !_busy) return;
+                _codeAttempt++;
+                _codeController.clear();
                 setState(() {
                   _busy = false;
                   _error = 'The security check timed out. Please try again.';
@@ -383,15 +393,6 @@ class _SecurityVerificationPageState extends State<SecurityVerificationPage> {
               enabled: !_busy,
               semanticLabel: 'Authenticator verification code',
               onCompleted: (_) => _submitTotp(),
-              onSubmitted: (_) => _submitTotp(),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _busy ? null : _submitTotp,
-              icon: const Icon(Icons.verified_user_rounded),
-              label: Text(
-                _isEnrollment ? 'Verify and bind' : 'Verify and sign in',
-              ),
             ),
             TextButton(
               onPressed: _busy

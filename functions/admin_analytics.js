@@ -1,7 +1,8 @@
 'use strict';
+const {hydrateUsers} = require('./user_modules');
 // Aggregate-only response. Never return account identifiers, captions, GPS tracks or contact details.
 const SOURCES = {
-  users: ['createdAt','createdAtLocal','lastSignedInAt','lastSignedInAtLocal','isAdmin','role','roles','accountDisabled','status'],
+  users: ['createdAt','createdAtLocal','isAdmin','role','roles','accountDisabled','status'],
   trailRequests: ['status'],
   trails: ['name','state','distanceKm','estimatedDurationMinutes','elevationGainMeters','difficulty','isVerifiedTrail','offlineMapAvailable','routeProvider','routeGeometryMetadata.pointCount'],
   hikeSessions: ['status','userId','trailId','trailName','hikeType','startedAt','startedAtLocal','endedAt','endedAtLocal','distanceKm','durationMinutes'],
@@ -34,7 +35,9 @@ async function readSource(db, name, fields, documentId, limit=10000) {
   const total=(await collection.count().get()).data().count;
   const rows=[];let last;
   while(rows.length<limit){let query=collection.select(...fields).orderBy(documentId).limit(Math.min(500,limit-rows.length));if(last)query=query.startAfter(last);
-    const page=await query.get();rows.push(...page.docs.map(doc=>({id:doc.id,...doc.data()})));if(page.size<500)break;last=page.docs.at(-1);}
+    const page=await query.get();
+    const documents = name === 'users' ? await hydrateUsers(page.docs, ['devices'], db) : page.docs;
+    rows.push(...documents.map(doc=>({id:doc.id,...doc.data()})));if(page.size<500)break;last=page.docs.at(-1);}
   return {rows,total,complete:rows.length===total};
 }
 function aggregateAnalytics(sources, now=Date.now()) {

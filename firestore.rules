@@ -128,8 +128,7 @@ service cloud.firestore {
         'terminationSignalAt', 'terminationSignalAtLocal',
         'latestLocation', 'latestLocationUpdatedAt',
         'latestLocationUpdatedAtLocal', 'lastPathDeviation',
-        'latestMotion', 'latestMotionUpdatedAt',
-        'latestMotionUpdatedAtLocal',
+        'latestMotion',
         'lastPathDeviationAt', 'lastPathDeviationAtLocal',
         'pathDeviationAlertCount', 'updatedAt', 'updatedAtLocal'
       ]);
@@ -243,6 +242,7 @@ service cloud.firestore {
         && contact.name.size() <= 100
         && contact.phoneNumber is string
         && contact.phoneNumber.matches('^\\+[1-9][0-9]{7,14}$')
+        && contact.phoneNumber != phoneNumber()
         && contact.relationship is string
         && contact.relationship.size() <= 100;
     }
@@ -333,43 +333,107 @@ service cloud.firestore {
       ]);
     }
 
-    function safeSelfUserCreate(userId) {
-      return signedIn()
-        && request.auth.uid == userId
-        && request.resource.data.phoneNumber == phoneNumber()
-        && !request.resource.data.keys().hasAny([
-          'isAdmin', 'role', 'roles', 'accountDisabled', 'status',
-          'passwordHash', 'firebaseUid', 'achievementPoints', 'hikerLevel',
-          'hikerLevelName', 'hikerLevelBadge', 'buddyPhoneNumbers',
-          'buddyRequestsIncoming', 'buddyRequestsOutgoing'
-        ])
-        && validEmergencyContactsOnCreate(request.resource.data)
-        && validSosWhatsappNotesOnCreate(request.resource.data)
-        && validPreferredTimeZoneOnCreate(request.resource.data);
+    function ownAccount(userId) {
+      return signedIn() && request.auth.uid == userId;
     }
 
-    function safeSelfUserUpdate(userId) {
-      return signedIn()
-        && request.auth.uid == userId
-        && request.resource.data.phoneNumber == phoneNumber()
-        && resource.data.phoneNumber == phoneNumber()
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'isAdmin', 'role', 'roles', 'accountDisabled', 'status',
-          'passwordHash', 'firebaseUid', 'createdAt', 'createdAtLocal',
-          'achievementPoints', 'hikerLevel', 'hikerLevelName',
-          'hikerLevelBadge', 'buddyPhoneNumbers', 'buddyRequestsIncoming',
-          'buddyRequestsOutgoing', 'loginFailedAttempts', 'loginCooldownUntil'
-        ])
-        && validEmergencyContactsOnUpdate()
-        && validSosWhatsappNotesOnUpdate()
-        && validPreferredTimeZoneOnUpdate();
+    function accountFieldsOnly(data) {
+      return data.keys().hasOnly([
+        'phoneNumber', 'createdAt', 'createdAtLocal', 'isAdmin', 'role', 'roles',
+        'accountDisabled', 'status'
+      ]);
     }
 
     match /users/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || admin());
-      allow create: if safeSelfUserCreate(userId) || admin();
-      allow update: if safeSelfUserUpdate(userId) || admin();
+      allow create: if accountFieldsOnly(request.resource.data) && (
+        admin() || (ownAccount(userId)
+          && request.resource.data.phoneNumber == phoneNumber()
+          && request.resource.data.keys().hasOnly([
+            'phoneNumber', 'createdAt', 'createdAtLocal'
+          ]))
+      );
+      allow update: if admin() && accountFieldsOnly(request.resource.data);
       allow delete: if admin();
+    }
+
+    function profileFieldsOnly(data) {
+      return data.keys().hasOnly([
+        'profile', 'profileSetupCompleted', 'profileUpdatedAt',
+        'profileUpdatedAtLocal', 'requiresOnboarding', 'onboardingVersion',
+        'onboardingCompletedAt', 'onboardingCompletedAtLocal'
+      ]);
+    }
+
+    function deviceFieldsOnly(data) {
+      return data.keys().hasOnly([
+        'boundAppInstanceId', 'boundAppInstanceUpdatedAt',
+        'boundAppInstanceUpdatedAtLocal', 'previousBoundAppInstanceId',
+        'deviceReboundAt', 'deviceReboundAtLocal', 'deviceRebindVerifiedBy',
+        'fcmTokenByAppId', 'lastFcmTokenUpdatedAt', 'lastFcmTokenUpdatedAtLocal',
+        'lastSignedInAt', 'lastSignedInAtLocal'
+      ]) && (!data.keys().hasAny(['fcmTokenByAppId'])
+        || data.fcmTokenByAppId is map);
+    }
+
+    function preferenceFieldsOnly(data) {
+      return data.keys().hasOnly([
+        'preferredTimeZone', 'preferredTimeZoneUpdatedAt',
+        'preferredTimeZoneUpdatedAtLocal', 'groupChatNotificationsEnabled',
+        'groupChatNotificationSettingsUpdatedAt',
+        'groupChatNotificationSettingsUpdatedAtLocal', 'groupChatMutedUntil',
+        'pinnedChats', 'autoShareLiveLocationOnHikeStart',
+        'autoShareLiveLocationPreferenceUpdatedAt',
+        'autoShareLiveLocationPreferenceUpdatedAtLocal'
+      ]) && validPreferredTimeZoneOnCreate(data);
+    }
+
+    function sosFieldsOnly(data) {
+      return data.keys().hasOnly([
+        'sos_contacts', 'sosContactsCount', 'sosContactsUpdatedAt',
+        'sosContactsUpdatedAtLocal', 'sosWhatsappNotes',
+        'sosWhatsappNotesUpdatedAt', 'sosWhatsappNotesUpdatedAtLocal',
+        'latestSosAlertPath', 'recentSosAlertPaths', 'sosAlertsCount',
+        'sosAlertsUpdatedAt', 'sosAlertsUpdatedAtLocal'
+      ]);
+    }
+
+    function locationFieldsOnly(data) {
+      return data.keys().hasOnly([
+        'liveLocation', 'liveLocationEnabled', 'liveLocationShareId',
+        'liveLocationShareUrl', 'liveLocationUpdatedAt',
+        'liveLocationUpdatedAtLocal', 'liveLocationExpiresAt',
+        'liveLocationExpiresAtLocal'
+      ]);
+    }
+
+    match /users/{userId}/modules/{moduleId} {
+      // Security contains password/recovery hashes and security audit state.
+      // Neither account owners nor mobile administrators can fetch it.
+      allow read: if moduleId in [
+        'profile', 'devices', 'preferences', 'safety', 'sos', 'location',
+        'social', 'achievements'
+      ] && signedIn() && (ownAccount(userId) || admin());
+      allow create, update: if ownAccount(userId) && (
+        (moduleId == 'profile' && profileFieldsOnly(request.resource.data))
+        || (moduleId == 'devices' && deviceFieldsOnly(request.resource.data))
+        || (moduleId == 'preferences'
+          && preferenceFieldsOnly(request.resource.data))
+        || (moduleId == 'safety' && request.resource.data.keys().hasOnly([
+          'teamSafetyPreferences', 'teamSafetyPreferencesUpdatedAt',
+          'teamSafetyPreferencesUpdatedAtLocal'
+        ]))
+        || (moduleId == 'location' && locationFieldsOnly(request.resource.data))
+      );
+      allow create: if ownAccount(userId) && moduleId == 'sos'
+        && sosFieldsOnly(request.resource.data)
+        && validEmergencyContactsOnCreate(request.resource.data)
+        && validSosWhatsappNotesOnCreate(request.resource.data);
+      allow update: if ownAccount(userId) && moduleId == 'sos'
+        && sosFieldsOnly(request.resource.data)
+        && validEmergencyContactsOnUpdate()
+        && validSosWhatsappNotesOnUpdate();
+      allow delete: if false;
     }
 
     match /assistantConversations/{userId} {

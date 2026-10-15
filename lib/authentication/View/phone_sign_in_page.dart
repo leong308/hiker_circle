@@ -15,9 +15,14 @@ import 'inline_notice.dart';
 import 'security_verification_page.dart';
 
 class PhoneSignInPage extends StatefulWidget {
-  const PhoneSignInPage({super.key, required this.onSignedIn});
+  const PhoneSignInPage({
+    super.key,
+    required this.onSignedIn,
+    AuthViewModel? viewModel,
+  }) : _viewModel = viewModel;
 
   final Future<void> Function(AppSession session) onSignedIn;
+  final AuthViewModel? _viewModel;
 
   @override
   State<PhoneSignInPage> createState() => _PhoneSignInPageState();
@@ -36,6 +41,8 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   Timer? _resendCooldownTimer;
   bool _otpDialogOpen = false;
   bool _isResendingOtp = false;
+  bool _isVerifyingOtp = false;
+  int _otpAttempt = 0;
   bool _isCompletingSignIn = false;
   bool _obscurePassword = true;
   String? _signInError;
@@ -43,7 +50,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   @override
   void initState() {
     super.initState();
-    _viewModel = AuthViewModel();
+    _viewModel = widget._viewModel ?? AuthViewModel();
     _viewModel.setAuthMode(AuthMode.login);
     _viewModel.addListener(_refresh);
   }
@@ -51,7 +58,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   @override
   void dispose() {
     _viewModel.removeListener(_refresh);
-    _viewModel.dispose();
+    if (widget._viewModel == null) _viewModel.dispose();
     _phoneController.dispose();
     _otpController.dispose();
     _passwordController.dispose();
@@ -92,6 +99,8 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   }
 
   void _resetOtpEntry() {
+    _otpAttempt++;
+    _isVerifyingOtp = false;
     _resendCooldownTimer?.cancel();
     _resendCountdown.value = 0;
     _otpController.clear();
@@ -111,6 +120,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
         deliveryMessage: deliveryMessage,
         resendCountdown: _resendCountdown,
         isResending: () => _isResendingOtp,
+        isVerifying: () => _isVerifyingOtp,
         onVerify: _verifyOtp,
         onResend: _resendOtp,
         onCancel: () => Navigator.of(dialogContext).pop(false),
@@ -177,13 +187,21 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
   }
 
   Future<void> _verifyOtp() async {
-    if (_otpController.text.trim().length != 6) {
+    if (_isVerifyingOtp ||
+        _viewModel.isBusy ||
+        _isCompletingSignIn ||
+        _isResendingOtp ||
+        !RegExp(r'^\d{6}$').hasMatch(_otpController.text.trim())) {
       return;
     }
+    final attempt = ++_otpAttempt;
+    setState(() => _isVerifyingOtp = true);
     FocusScope.of(context).unfocus();
     _setLoadingOverlayVisible(true);
     final continuation = await _viewModel.verifyOtp(_otpController.text);
-    if (!mounted) return;
+    if (!mounted || attempt != _otpAttempt) return;
+    setState(() => _isVerifyingOtp = false);
+    if (continuation == null) _otpController.clear();
     _setLoadingOverlayVisible(false);
     if (continuation != null && mounted) {
       if (_otpDialogOpen) {
@@ -257,7 +275,7 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
             ? 'Finishing sign in…'
             : _isResendingOtp
             ? 'Sending a new OTP…'
-            : _viewModel.isVerifyingCode
+            : _isVerifyingOtp || _viewModel.isVerifyingCode
             ? 'Verifying WhatsApp code…'
             : isSignUp
             ? 'Sending WhatsApp code…'
@@ -265,11 +283,16 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
         detail: 'Securing your HikerCircle account. This may take a moment.',
         timeout: const Duration(seconds: 30),
         onTimeout: () {
+          if (_isVerifyingOtp) {
+            _otpAttempt++;
+            _otpController.clear();
+          }
           _viewModel.cancelPendingOperation();
           _setLoadingOverlayVisible(false);
           if (mounted) {
             setState(() {
               _isResendingOtp = false;
+              _isVerifyingOtp = false;
               if (_isCompletingSignIn) {
                 _isCompletingSignIn = false;
                 _signInError = 'Sign in timed out. Please try again.';
@@ -565,6 +588,7 @@ class _WhatsAppOtpDialog extends StatelessWidget {
     required this.deliveryMessage,
     required this.resendCountdown,
     required this.isResending,
+    required this.isVerifying,
     required this.onVerify,
     required this.onResend,
     required this.onCancel,
@@ -575,6 +599,7 @@ class _WhatsAppOtpDialog extends StatelessWidget {
   final String deliveryMessage;
   final ValueNotifier<int> resendCountdown;
   final bool Function() isResending;
+  final bool Function() isVerifying;
   final Future<void> Function() onVerify;
   final Future<void> Function() onResend;
   final VoidCallback onCancel;
@@ -589,7 +614,7 @@ class _WhatsAppOtpDialog extends StatelessWidget {
       builder: (context, _) => ValueListenableBuilder<int>(
         valueListenable: resendCountdown,
         builder: (context, secondsRemaining, _) {
-          final busy = viewModel.isBusy || isResending();
+          final busy = viewModel.isBusy || isResending() || isVerifying();
           return Dialog(
             insetPadding: const EdgeInsets.symmetric(
               horizontal: 20,
@@ -668,7 +693,6 @@ class _WhatsAppOtpDialog extends StatelessWidget {
                       autofocus: true,
                       semanticLabel: 'WhatsApp verification code',
                       onCompleted: (_) => onVerify(),
-                      onSubmitted: (_) => onVerify(),
                     ),
                     if (viewModel.error != null) ...[
                       const SizedBox(height: 14),
@@ -678,19 +702,7 @@ class _WhatsAppOtpDialog extends StatelessWidget {
                         text: viewModel.error!,
                       ),
                     ],
-                    const SizedBox(height: 18),
-                    FilledButton.icon(
-                      onPressed: busy ? null : onVerify,
-                      icon: const Icon(Icons.verified_user_rounded),
-                      label: const Text('Verify and continue'),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(52),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 12),
                     Wrap(
                       alignment: WrapAlignment.center,
                       crossAxisAlignment: WrapCrossAlignment.center,

@@ -56,17 +56,19 @@ test('revoked normalized tokens cannot be revived by compatibility fields', () =
     activeFcmAppInstanceId: 'a', activeFcmToken: old}), []);
   assert.deepEqual(latestFcmTokensForUser({fcmTokenSchemaVersion: 2, fcmTokenByAppId: {b: token}}), []);
 });
-test('legacy single-device registration remains supported, ambiguous tokens stay suppressed', () => {
-  assert.deepEqual(latestFcmTokensForUser({lastFcmToken: old}), [old]);
-  assert.deepEqual(latestFcmTokensForUser({activeFcmAppInstanceId: 'a', activeFcmToken: old}), [old]);
-  assert.deepEqual(latestFcmTokensForUser({fcmTokenByAppId: {a: token}}), [token]);
-  assert.deepEqual(latestFcmTokensForUser({fcmTokens: [token, old]}), []);
+test('unbound devices and retired token aliases never receive notifications', () => {
+  for (const data of [{lastFcmToken: old}, {activeFcmAppInstanceId: 'a', activeFcmToken: old},
+    {fcmTokenByAppId: {a: token}}, {fcmTokens: [token, old]}]) {
+    assert.deepEqual(latestFcmTokensForUser(data), []);
+  }
 });
-test('canonical username uses profile, retains top-level fallback', () => {
+
+test('username has a single canonical profile source', () => {
   assert.equal(canonicalUsername({profile: {username: 'New'}, username: 'Old'}), 'New');
-  assert.equal(canonicalUsername({username: 'Legacy'}), 'Legacy');
+  assert.equal(canonicalUsername({username: 'Retired'}), '');
   assert.equal(canonicalUsername({profile: null}, 'Hiker'), 'Hiker');
 });
+
 test('historical compaction keeps current weather and never mutates the full archive', () => {
   const source = structuredClone(weather);
   const compact = compactHistoricalWeather(source);

@@ -21,34 +21,14 @@ async function syncTrailWeather(db, reference, observed, weather) {
 }
 
 function latestFcmTokensForUser(user = {}) {
-  user = user && typeof user === 'object' ? user : {};
-  const byApp = user.fcmTokenByAppId && typeof user.fcmTokenByAppId === 'object'
-    && !Array.isArray(user.fcmTokenByAppId) ? user.fcmTokenByAppId : {};
-  const currentApp = [user.boundAppInstanceId, user.lastSignedInAppInstanceId,
-    user.currentAppId, user.activeFcmAppInstanceId].map(v => String(v || '').trim()).find(Boolean);
-  const valid = token => typeof token === 'string' && token.trim().length > 20;
-  if (currentApp) {
-    if (valid(byApp[currentApp])) return [byApp[currentApp].trim()];
-    // An explicit canonical entry (including an empty revoked token) is authoritative.
-    if (Object.hasOwn(byApp, currentApp)) return [];
-    if (user.fcmTokenSchemaVersion === 2) return [];
-    if (user.activeFcmAppInstanceId === currentApp && valid(user.activeFcmToken)) {
-      return [user.activeFcmToken.trim()];
-    }
-    return [];
-  }
-  if (user.fcmTokenSchemaVersion === 2) return [];
-  const canonical = [...new Set(Object.values(byApp).filter(valid).map(v => v.trim()))];
-  if (canonical.length) return canonical.length === 1 ? canonical : [];
-  if (valid(user.lastFcmToken)) return [user.lastFcmToken.trim()];
-  const legacy = [...new Set((Array.isArray(user.fcmTokens) ? user.fcmTokens : []).filter(valid))];
-  return legacy.length === 1 ? legacy : [];
+  const currentApp = typeof user.boundAppInstanceId === 'string' ? user.boundAppInstanceId.trim() : '';
+  const token = currentApp && user.fcmTokenByAppId?.[currentApp];
+  return typeof token === 'string' && token.trim().length > 20 ? [token.trim()] : [];
 }
 
 function canonicalUsername(user = {}, fallback = '') {
-  user = user && typeof user === 'object' ? user : {};
-  const values = [user.profile?.username, user.username, fallback];
-  return values.find(v => typeof v === 'string' && v.trim())?.trim() || '';
+  const value = user?.profile?.username;
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
 function compactHistoricalWeather(weather) {

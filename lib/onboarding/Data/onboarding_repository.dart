@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../app/Data/user_module_paths.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
@@ -30,11 +31,16 @@ class OnboardingRepository {
       _firestore ?? FirebaseFirestore.instance;
 
   DocumentReference<Map<String, dynamic>> _userDocument(AppSession session) {
-    return _resolvedFirestore
-        .collection('users')
-        .doc(
-          FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber),
-        );
+    return userModuleDocument(
+      _resolvedFirestore
+          .collection('users')
+          .doc(
+            FirebaseUserRepository.documentIdForPhoneNumber(
+              session.phoneNumber,
+            ),
+          ),
+      UserModule.profile,
+    );
   }
 
   Future<OnboardingProfile> loadProfile(AppSession session) async {
@@ -47,8 +53,6 @@ class OnboardingRepository {
       final profileData = profile is Map
           ? Map<String, dynamic>.from(profile)
           : <String, dynamic>{};
-      profileData['photoURL'] ??= snapshot.data()?['photoURL'];
-      profileData['username'] ??= snapshot.data()?['username'];
       return OnboardingProfile.fromFirestore(profileData);
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));
@@ -69,13 +73,9 @@ class OnboardingRepository {
       final now = DateTime.now().toUtc();
       await _userDocument(session).set({
         'profile': profile.toFirestore(),
-        // Small compatibility projection for older clients and public profiles.
-        // The profile map remains the canonical source; write both atomically.
-        'username': profile.username.trim(),
         'profileSetupCompleted': true,
         'profileUpdatedAt': FieldValue.serverTimestamp(),
         'profileUpdatedAtLocal': now.toIso8601String(),
-        if (profile.photoURL != null) 'photoURL': profile.photoURL,
       }, SetOptions(merge: true));
     } on FirebaseException catch (error) {
       throw OnboardingRepositoryException(_firebaseMessage(error));
@@ -88,6 +88,9 @@ class OnboardingRepository {
       final userDocument = _userDocument(session);
       await _resolvedFirestore.runTransaction((transaction) async {
         final snapshot = await transaction.get(userDocument);
+        final sosSnapshot = await transaction.get(
+          userModuleDocument(userDocument.parent.parent!, UserModule.sos),
+        );
         final data = snapshot.data();
         if (!snapshot.exists || data == null) {
           throw const OnboardingRepositoryException(
@@ -109,7 +112,7 @@ class OnboardingRepository {
           );
         }
 
-        final contacts = data['sos_contacts'];
+        final contacts = sosSnapshot.data()?['sos_contacts'];
         if (contacts is! Iterable || contacts.isEmpty) {
           throw const OnboardingRepositoryException(
             'Add at least one emergency contact before continuing.',

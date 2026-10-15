@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../app/Data/user_module_paths.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
@@ -42,6 +43,12 @@ class EmergencyContactsRepository {
   static final LocalSessionDatabase _defaultLocalDatabase =
       LocalSessionDatabase();
   static const int maxContacts = 3;
+  static const ownNumberMessage =
+      'You cannot use your own phone number as an emergency contact.';
+
+  static bool isOwnPhoneNumber(String number, String owner) =>
+      PhoneNumberFormatter.normalize(number) ==
+      PhoneNumberFormatter.normalize(owner);
   static const pendingPreferenceKey = 'pending_emergency_contacts';
   static final _changes = StreamController<EmergencyContactsChange>.broadcast();
   static Stream<EmergencyContactsChange> get changes => _changes.stream;
@@ -186,7 +193,6 @@ class EmergencyContactsRepository {
       'sosContactsCount': contacts.length,
       'sosContactsUpdatedAt': FieldValue.serverTimestamp(),
       'sosContactsUpdatedAtLocal': DateTime.now().toUtc().toIso8601String(),
-      'phoneNumber': session.phoneNumber,
     }, SetOptions(merge: true));
   }
 
@@ -233,6 +239,9 @@ class EmergencyContactsRepository {
           'Each emergency contact needs a name and a valid international phone number.',
         );
       }
+      if (isOwnPhoneNumber(normalized.phoneNumber, session.phoneNumber)) {
+        throw const EmergencyContactsRepositoryException(ownNumberMessage);
+      }
       if (normalizedContacts.any(
         (saved) => saved.phoneNumber == normalized.phoneNumber,
       )) {
@@ -274,8 +283,11 @@ class EmergencyContactsRepository {
   }
 
   DocumentReference<Map<String, dynamic>> _userDocumentFor(AppSession session) {
-    return _users.doc(
-      FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber),
+    return userModuleDocument(
+      _users.doc(
+        FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber),
+      ),
+      UserModule.sos,
     );
   }
 

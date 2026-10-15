@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../app/Data/user_module_paths.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
@@ -62,8 +63,9 @@ class LiveLocationRepository {
   Future<bool> loadAutoShareOnHikeStart({required String phoneNumber}) async {
     _throwIfFirebaseUnavailable();
     try {
-      final snapshot = await _userDocumentFor(
-        phoneNumber,
+      final snapshot = await userModuleDocument(
+        _users.doc(_userIdFor(phoneNumber)),
+        UserModule.preferences,
       ).get().timeout(_cloudTimeout);
       return snapshot.data()?['autoShareLiveLocationOnHikeStart'] == true;
     } on FirebaseException catch (error) {
@@ -80,9 +82,11 @@ class LiveLocationRepository {
     _throwIfFirebaseUnavailable();
     try {
       final now = DateTime.now().toUtc();
-      await _userDocumentFor(phoneNumber)
+      await userModuleDocument(
+            _users.doc(_userIdFor(phoneNumber)),
+            UserModule.preferences,
+          )
           .set({
-            'phoneNumber': phoneNumber,
             'autoShareLiveLocationOnHikeStart': enabled,
             'autoShareLiveLocationPreferenceUpdatedAt':
                 FieldValue.serverTimestamp(),
@@ -215,7 +219,6 @@ class LiveLocationRepository {
       final batch = _resolvedFirestore.batch();
 
       batch.set(userDocument, {
-        'phoneNumber': phoneNumber,
         'liveLocationEnabled': true,
         'liveLocationShareId': share.id,
         'liveLocationShareUrl': share.shareUrl,
@@ -229,7 +232,7 @@ class LiveLocationRepository {
       batch.set(shareDocument, {
         'shareId': share.id,
         'ownerUserId': _userIdFor(phoneNumber),
-        'ownerUserDocumentPath': userDocument.path,
+        'ownerUserDocumentPath': _users.doc(_userIdFor(phoneNumber)).path,
         'phoneNumber': phoneNumber,
         'isActive': true,
         'latestLocation': location.toFirestore(),
@@ -314,7 +317,6 @@ class LiveLocationRepository {
     final now = DateTime.now().toUtc();
     final batch = _resolvedFirestore.batch();
     batch.set(userDocument, {
-      'phoneNumber': phoneNumber,
       'liveLocationEnabled': false,
       'liveLocationUpdatedAt': FieldValue.serverTimestamp(),
       'liveLocationUpdatedAtLocal': now.toIso8601String(),
@@ -338,7 +340,10 @@ class LiveLocationRepository {
   }
 
   DocumentReference<Map<String, dynamic>> _userDocumentFor(String phoneNumber) {
-    return _users.doc(_userIdFor(phoneNumber));
+    return userModuleDocument(
+      _users.doc(_userIdFor(phoneNumber)),
+      UserModule.location,
+    );
   }
 
   String _userIdFor(String phoneNumber) {

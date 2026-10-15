@@ -66,10 +66,12 @@ async function seedFirestore(environment) {
     const writes = [
       db.doc(`users/${OWNER_UID}`).set({
         phoneNumber: OWNER_PHONE,
-        passwordHash: 'private-hash',
-        sos_contacts: [],
-        sosContactsCount: 0,
       }),
+      db.doc(`users/${OWNER_UID}/modules/security`).set({passwordHash: 'private-hash'}),
+      db.doc(`users/${OWNER_UID}/modules/profile`).set({profile: {username: 'Owner'}}),
+      db.doc(`users/${OWNER_UID}/modules/devices`).set({boundAppInstanceId: 'phone-1'}),
+      db.doc(`users/${OWNER_UID}/modules/preferences`).set({}),
+      db.doc(`users/${OWNER_UID}/modules/sos`).set({sos_contacts: [], sosContactsCount: 0}),
       db.doc(`users/${MEMBER_UID}`).set({phoneNumber: MEMBER_PHONE}),
       db.doc(`users/${OUTSIDER_UID}`).set({phoneNumber: OUTSIDER_PHONE}),
       db.doc(`users/${ADMIN_UID}`).set({phoneNumber: ADMIN_PHONE, isAdmin: true}),
@@ -197,36 +199,40 @@ async function run() {
     });
 
     test('canonical push token registration and revocation are atomic and owner-only', async () => {
-      const reference = ownerDb.doc(`users/${OWNER_UID}`);
-      await environment.withSecurityRulesDisabled(async context => {
-        await context.firestore().doc(reference.path).update({
-          fcmTokens: ['legacy-token'], activeFcmToken: 'legacy-token', lastFcmToken: 'legacy-token',
-        });
-      });
+      const reference = ownerDb.doc(`users/${OWNER_UID}/modules/devices`);
       await assertSucceeds(ownerDb.runTransaction(async transaction => {
         await transaction.get(reference);
-        transaction.set(reference, {
-          currentAppId: 'phone-1', activeFcmAppInstanceId: 'phone-1',
-          fcmTokenByAppId: {'phone-1': 'current-device-token'}, fcmTokenSchemaVersion: 2,
-          fcmTokens: FieldValue.delete(), activeFcmToken: FieldValue.delete(),
-          lastFcmToken: FieldValue.delete(),
-        }, {merge: true});
+        transaction.set(reference, {fcmTokenByAppId: {'phone-1': 'current-device-token'}}, {merge: true});
       }));
-      const registered = (await reference.get()).data();
-      if (registered.fcmTokenSchemaVersion !== 2 || registered.fcmTokens !== undefined
-          || registered.activeFcmToken !== undefined || registered.lastFcmToken !== undefined) {
-        throw new Error('Canonical registration did not remove redundant token aliases.');
+      if ((await reference.get()).data().fcmTokenByAppId['phone-1'] !== 'current-device-token') {
+        throw new Error('Canonical device token was not persisted.');
       }
-      await assertFails(outsiderDb.doc(reference.path).update({fcmTokenSchemaVersion: 2}));
+      await assertFails(outsiderDb.doc(reference.path).update({fcmTokenByAppId: {forged: 'token'}}));
+      await assertFails(reference.update({lastFcmToken: 'retired-alias'}));
+      await assertFails(ownerDb.doc(`users/${OWNER_UID}`).update({fcmTokenByAppId: {forged: 'token'}}));
       await assertSucceeds(ownerDb.runTransaction(async transaction => {
         await transaction.get(reference);
-        transaction.update(reference, {
-          'fcmTokenByAppId.phone-1': FieldValue.delete(), currentAppId: FieldValue.delete(),
-          activeFcmAppInstanceId: FieldValue.delete(),
-        });
+        transaction.update(reference, {'fcmTokenByAppId.phone-1': FieldValue.delete()});
       }));
-      if (Object.keys((await reference.get()).data().fcmTokenByAppId).length) {
-        throw new Error('Revoked device token remains registered.');
+      if (Object.keys((await reference.get()).data().fcmTokenByAppId).length) throw new Error('Token revocation failed.');
+    });
+
+    test('security modules are backend-only and module boundaries cannot be bypassed', async () => {
+      const security = `users/${OWNER_UID}/modules/security`;
+      for (const db of [ownerDb, memberDb, adminDb, anonymousDb]) {
+        await assertFails(db.doc(security).get());
+        await assertFails(db.doc(security).set({passwordHash: 'forged'}));
+        await assertFails(db.doc(security).delete());
+      }
+      for (const module of ['social', 'achievements']) {
+        await assertFails(ownerDb.doc(`users/${OWNER_UID}/modules/${module}`).set({achievementPoints: 999}));
+      }
+      await assertFails(ownerDb.doc(`users/${OWNER_UID}/modules/profile`).set({passwordHash: 'forged'}, {merge: true}));
+      await assertFails(ownerDb.doc(`users/${OWNER_UID}/modules/unknown`).set({profile: {}}));
+      await assertFails(ownerDb.collection(`users/${OWNER_UID}/modules`).get());
+      await assertFails(ownerDb.doc(`users/${OWNER_UID}`).update({username: 'retired-alias'}));
+      for (const field of ['latest_sos_messaging_test', 'sosMessagingTestUpdatedAt', 'sosMessagingTestUpdatedAtLocal']) {
+        await assertFails(ownerDb.doc(`users/${OWNER_UID}/modules/sos`).set({[field]: 'retired'}, {merge: true}));
       }
     });
 
@@ -313,34 +319,71 @@ async function run() {
         {name: 'Three', phoneNumber: '+60123456783', relationship: 'Parent'},
       ];
       await assertSucceeds(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
           sos_contacts: contacts,
           sosContactsCount: contacts.length,
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
           sos_contacts: [...contacts, contacts[0]],
           sosContactsCount: 4,
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
           sos_contacts: [{...contacts[0], phoneNumber: 'not-e164'}],
           sosContactsCount: 1,
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
           sos_contacts: contacts,
           sosContactsCount: 2,
         }),
       );
     });
 
+    test('own phone number cannot be added in any emergency-contact slot', async () => {
+      const contacts = [
+        {name: 'One', phoneNumber: MEMBER_PHONE, relationship: 'Friend'},
+        {name: 'Two', phoneNumber: OUTSIDER_PHONE, relationship: 'Sibling'},
+        {name: 'Three', phoneNumber: ADMIN_PHONE, relationship: 'Parent'},
+      ];
+      for (let index = 0; index < contacts.length; index++) {
+        const invalid = contacts.map((contact, i) => i === index
+          ? {...contact, phoneNumber: OWNER_PHONE} : contact);
+        await assertFails(ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
+          sos_contacts: invalid, sosContactsCount: invalid.length,
+        }));
+      }
+      // Existing invalid contacts must not prevent unrelated profile updates.
+      await environment.withSecurityRulesDisabled(async context => {
+        await context.firestore().doc(`users/${OWNER_UID}/modules/sos`).update({
+          sos_contacts: [{...contacts[0], phoneNumber: OWNER_PHONE}],
+          sosContactsCount: 1,
+        });
+      });
+      await assertSucceeds(ownerDb.doc(`users/${OWNER_UID}/modules/profile`).update({profile: {username: 'Owner'}}));
+      await assertSucceeds(ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
+        sos_contacts: contacts, sosContactsCount: contacts.length,
+      }));
+
+      const newPhone = '+60555555555';
+      const newUser = userContext(environment, 'new-contact-user', newPhone).firestore();
+      await assertFails(newUser.doc('users/new-contact-user/modules/sos').set({
+        sos_contacts: [{...contacts[0], phoneNumber: newPhone}],
+        sosContactsCount: 1,
+      }));
+      await assertSucceeds(newUser.doc('users/new-contact-user/modules/sos').set({
+        sos_contacts: [contacts[0]],
+        sosContactsCount: 1,
+      }));
+    });
+
     test('custom SOS notes have fixed keys and bounded text', async () => {
       await assertSucceeds(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
           sosWhatsappNotes: {
             manual: 'Please contact emergency services.',
             duress: 'Do not call if that would increase risk.',
@@ -349,43 +392,43 @@ async function run() {
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
           sosWhatsappNotes: {arbitrary_mode: 'not allowed'},
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({
           sosWhatsappNotes: {manual: 'x'.repeat(241)},
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({sosWhatsappNotes: 'not-a-map'}),
+        ownerDb.doc(`users/${OWNER_UID}/modules/sos`).update({sosWhatsappNotes: 'not-a-map'}),
       );
     });
 
     test('preferred SOS timezone is a bounded timezone identifier', async () => {
       await assertSucceeds(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/preferences`).update({
           preferredTimeZone: 'Asia/Singapore',
         }),
       );
       await assertSucceeds(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/preferences`).update({
           preferredTimeZone: 'America/New_York',
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/preferences`).update({
           preferredTimeZone: '../invalid timezone',
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({
+        ownerDb.doc(`users/${OWNER_UID}/modules/preferences`).update({
           preferredTimeZone: 'x'.repeat(81),
         }),
       );
       await assertFails(
-        ownerDb.doc(`users/${OWNER_UID}`).update({preferredTimeZone: 8}),
+        ownerDb.doc(`users/${OWNER_UID}/modules/preferences`).update({preferredTimeZone: 8}),
       );
     });
 
@@ -1264,6 +1307,7 @@ async function run() {
     }
     console.log(`PASS ${tests.length} Firebase security-rule groups`);
     await require('./caution_transaction_emulator.cjs').run();
+    await require('./user_modules_workflow.cjs').run();
   } finally {
     await environment.cleanup();
   }

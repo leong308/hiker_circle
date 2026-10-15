@@ -127,6 +127,10 @@ void main() {
       await load;
       expect(service.isActive, isFalse);
       expect(service.isBusy, isFalse);
+      expect(repository.stopOperations, hasLength(2));
+      // A stale load revokes its share in a background operation. Finish that
+      // real repository write before tearDown closes and deletes SQLite.
+      await Future.wait(repository.stopOperations);
       service.dispose();
     },
   );
@@ -163,6 +167,17 @@ class _LoadingSharing extends _Sharing {
   _LoadingSharing(super.db);
   final started = Completer<void>();
   final loaded = Completer<LiveLocationShare?>();
+  final stopOperations = <Future<void>>[];
+  @override
+  Future<void> deactivate({
+    required String phoneNumber,
+    required LiveLocationShare? share,
+  }) {
+    final operation = super.deactivate(phoneNumber: phoneNumber, share: share);
+    stopOperations.add(operation);
+    return operation;
+  }
+
   @override
   Future<bool> loadAutoShareOnHikeStart({required String phoneNumber}) async =>
       false;

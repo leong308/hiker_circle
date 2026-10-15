@@ -31,7 +31,7 @@ function fixture(offline, team) {
     const transaction = {
       async get(ref) {
         assert.equal(queued.length, 0, 'all reads must precede writes');
-        return {exists: rows.has(ref.path), data: () => rows.get(ref.path)};
+        return {ref, id: ref.id, exists: rows.has(ref.path), data: () => rows.get(ref.path)};
       },
       create(ref, value) {
         assert.equal(rows.has(ref.path), false, 'immutable archive must not be overwritten');
@@ -58,6 +58,7 @@ function fixture(offline, team) {
   firestore.FieldValue = {serverTimestamp: () => 'server-time', delete: () => null};
   const exports = {};
   vm.runInNewContext(block, {
+    ...require('../user_modules'),
     exports, onCall: (_, handler) => handler, admin: {firestore}, crypto,
     authenticatedPhoneFor: () => ({uid, phoneNumber: phone}),
     validFirestoreDocumentId: value => Boolean(value), dateMillis: Date.parse,

@@ -140,6 +140,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
       backgroundColor: Colors.transparent,
       builder: (context) => _EditContactSheet(
         contact: contact,
+        ownerPhoneNumber: widget.session.phoneNumber,
         pickContact: () => _pickDeviceContact(excluding: contact),
       ),
     );
@@ -207,6 +208,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
           future: contacts,
           builder: (context, snapshot) => _DeviceContactsPicker(
             contacts: snapshot.data ?? const [],
+            ownerPhoneNumber: widget.session.phoneNumber,
             savedContacts: viewModel.contacts
                 .where((contact) => contact != excluding)
                 .toList(),
@@ -293,6 +295,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
                     const SizedBox(height: 18),
                     _AddContactForm(
                       formKey: _formKey,
+                      ownerPhoneNumber: widget.session.phoneNumber,
                       nameController: _nameController,
                       phoneController: _phoneController,
                       relationshipController: _relationshipController,
@@ -332,15 +335,25 @@ class _Header extends StatelessWidget {
       child: PageHeader(
         title: 'Emergency Contacts',
         subtitle: 'Add up to 3 people for SOS alerts',
-        leading: PageHeaderAction(
-          tooltip: onboardingRequired ? 'Continue' : 'Back',
-          icon: onboardingRequired
-              ? CupertinoIcons.check_mark
-              : CupertinoIcons.chevron_back,
-          onPressed: enabled ? onAction : null,
-          color: enabled ? colors.primary : colors.onSurfaceVariant,
-          surface: colors.surface,
-        ),
+        leading: onboardingRequired
+            ? null
+            : PageHeaderAction(
+                tooltip: 'Back',
+                icon: CupertinoIcons.chevron_back,
+                onPressed: onAction,
+                color: colors.primary,
+                surface: colors.surface,
+              ),
+        actions: [
+          if (onboardingRequired)
+            PageHeaderAction(
+              tooltip: 'Continue',
+              icon: CupertinoIcons.check_mark,
+              onPressed: enabled ? onAction : null,
+              color: enabled ? colors.primary : colors.onSurfaceVariant,
+              surface: colors.surface,
+            ),
+        ],
       ),
     );
   }
@@ -426,6 +439,7 @@ class _SummaryCard extends StatelessWidget {
 class _DeviceContactsPicker extends StatelessWidget {
   const _DeviceContactsPicker({
     required this.contacts,
+    required this.ownerPhoneNumber,
     required this.savedContacts,
     required this.isLoading,
     required this.message,
@@ -434,6 +448,7 @@ class _DeviceContactsPicker extends StatelessWidget {
   });
 
   final List<EmergencyContactCandidate> contacts;
+  final String ownerPhoneNumber;
   final List<EmergencyContact> savedContacts;
   final bool isLoading;
   final String? message;
@@ -509,6 +524,11 @@ class _DeviceContactsPicker extends StatelessWidget {
                       const _HorizontalSeparator(),
                   itemBuilder: (context, index) {
                     final contact = candidates[index];
+                    final isOwnNumber =
+                        EmergencyContactsRepository.isOwnPhoneNumber(
+                          contact.primaryPhoneNumber,
+                          ownerPhoneNumber,
+                        );
                     final isAdded = savedNumbers.contains(
                       PhoneNumberFormatter.normalize(
                         contact.primaryPhoneNumber,
@@ -528,7 +548,12 @@ class _DeviceContactsPicker extends StatelessWidget {
                           contact.primaryPhoneNumber,
                         ),
                       ),
-                      trailing: isAdded
+                      trailing: isOwnNumber
+                          ? _StatusPill(
+                              label: 'Your number',
+                              color: _ContactsColors.secondaryTextFor(context),
+                            )
+                          : isAdded
                           ? const _StatusPill(
                               label: 'Added',
                               color: _ContactsColors.green,
@@ -838,6 +863,7 @@ class _StatusPill extends StatelessWidget {
 class _AddContactForm extends StatelessWidget {
   const _AddContactForm({
     required this.formKey,
+    required this.ownerPhoneNumber,
     required this.nameController,
     required this.phoneController,
     required this.relationshipController,
@@ -848,6 +874,7 @@ class _AddContactForm extends StatelessWidget {
   });
 
   final GlobalKey<FormState> formKey;
+  final String ownerPhoneNumber;
   final TextEditingController nameController;
   final TextEditingController phoneController;
   final TextEditingController relationshipController;
@@ -911,7 +938,7 @@ class _AddContactForm extends StatelessWidget {
                     onPressed: canAddContact ? onPickContact : null,
                   ),
                 ),
-                validator: _phoneValidator,
+                validator: (value) => _phoneValidator(value, ownerPhoneNumber),
               ),
               const SizedBox(height: 10),
               _RelationshipDropdown(
@@ -945,7 +972,7 @@ class _AddContactForm extends StatelessWidget {
     return null;
   }
 
-  static String? _phoneValidator(String? value) {
+  static String? _phoneValidator(String? value, String ownerPhoneNumber) {
     final required = _requiredValidator(value);
     if (required != null) {
       return required;
@@ -953,14 +980,22 @@ class _AddContactForm extends StatelessWidget {
     if (!PhoneNumberFormatter.isValid(value!)) {
       return 'Use country code, for example +60123456789';
     }
+    if (EmergencyContactsRepository.isOwnPhoneNumber(value, ownerPhoneNumber)) {
+      return EmergencyContactsRepository.ownNumberMessage;
+    }
     return null;
   }
 }
 
 class _EditContactSheet extends StatefulWidget {
-  const _EditContactSheet({required this.contact, required this.pickContact});
+  const _EditContactSheet({
+    required this.contact,
+    required this.ownerPhoneNumber,
+    required this.pickContact,
+  });
 
   final EmergencyContact contact;
+  final String ownerPhoneNumber;
   final Future<EmergencyContactCandidate?> Function() pickContact;
 
   @override
@@ -1113,7 +1148,10 @@ class _EditContactSheetState extends State<_EditContactSheet> {
                               },
                             ),
                           ),
-                          validator: _AddContactForm._phoneValidator,
+                          validator: (value) => _AddContactForm._phoneValidator(
+                            value,
+                            widget.ownerPhoneNumber,
+                          ),
                         ),
                         const SizedBox(height: 10),
                         _RelationshipDropdown(

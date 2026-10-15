@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'user_module_paths.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:firebase_auth/firebase_auth.dart';
@@ -615,89 +616,43 @@ class HikerCircleFirebaseRepository {
     required AppSession session,
     required String token,
   }) async {
-    if (!_firebaseBootstrapResult.isAvailable || token.isEmpty) {
+    if (!_firebaseBootstrapResult.isAvailable ||
+        token.isEmpty ||
+        session.appInstanceId.isEmpty) {
       return;
     }
-    final appInstanceId = session.appInstanceId;
-    final userDocument = _resolvedFirestore
-        .collection('users')
-        .doc(_userIdFor(session));
-    final now = DateTime.now().toUtc();
+    final device = _moduleFor(session, UserModule.devices);
     await _resolvedFirestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(userDocument);
-      final boundAppId = snapshot.data()?['boundAppInstanceId'];
-      if (appInstanceId.isNotEmpty &&
-          boundAppId is String &&
-          boundAppId.isNotEmpty &&
-          boundAppId != appInstanceId) {
-        return; // A stale device must not replace the newly bound phone's token.
+      final snapshot = await transaction.get(device);
+      if (snapshot.data()?['boundAppInstanceId'] != session.appInstanceId) {
+        return;
       }
-      transaction.set(userDocument, {
-        if (appInstanceId.isNotEmpty) ...{
-          'currentAppId': appInstanceId,
-          'activeFcmAppInstanceId': appInstanceId,
-          'fcmTokenByAppId': {appInstanceId: token},
-          'fcmTokenSchemaVersion': 2,
-          // Delete redundant old projections atomically with the canonical entry.
-          'fcmTokens': FieldValue.delete(),
-          'activeFcmToken': FieldValue.delete(),
-          'lastFcmToken': FieldValue.delete(),
-        } else ...{
-          // Compatibility for an old session without a device identifier.
-          'lastFcmToken': token,
-        },
+      transaction.set(device, {
+        'fcmTokenByAppId': {session.appInstanceId: token},
         'lastFcmTokenUpdatedAt': FieldValue.serverTimestamp(),
-        'lastFcmTokenUpdatedAtLocal': now.toIso8601String(),
+        'lastFcmTokenUpdatedAtLocal': DateTime.now().toUtc().toIso8601String(),
       }, SetOptions(merge: true));
     });
   }
 
   Future<void> removeFcmToken({required AppSession session}) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
+    if (!_firebaseBootstrapResult.isAvailable ||
+        session.appInstanceId.isEmpty) {
       return;
     }
-    final appInstanceId = session.appInstanceId;
-    if (appInstanceId.isEmpty) {
-      return;
-    }
-    final userDoc = _resolvedFirestore
-        .collection('users')
-        .doc(_userIdFor(session));
+    final device = _moduleFor(session, UserModule.devices);
     await _resolvedFirestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(userDoc);
+      final snapshot = await transaction.get(device);
       if (!snapshot.exists) {
         return;
       }
-      final data = snapshot.data()!;
-      final tokenMap = data['fcmTokenByAppId'];
-      final tokenValue = tokenMap is Map ? tokenMap[appInstanceId] : null;
-      final token = tokenValue is String ? tokenValue : null;
-
       final updates = <String, dynamic>{
-        'fcmTokenByAppId.$appInstanceId': FieldValue.delete(),
+        'fcmTokenByAppId.${session.appInstanceId}': FieldValue.delete(),
       };
-      if (data['currentAppId'] == appInstanceId) {
-        updates['currentAppId'] = FieldValue.delete();
-      }
-      if (data['activeFcmAppInstanceId'] == appInstanceId) {
-        updates['activeFcmAppInstanceId'] = FieldValue.delete();
-      }
-      if (data['boundAppInstanceId'] == appInstanceId) {
+      if (snapshot.data()?['boundAppInstanceId'] == session.appInstanceId) {
         updates['boundAppInstanceId'] = FieldValue.delete();
       }
-      if (token != null && token.isNotEmpty) {
-        final legacyTokens = data['fcmTokens'];
-        if (legacyTokens is List && legacyTokens.contains(token)) {
-          updates['fcmTokens'] = FieldValue.arrayRemove([token]);
-        }
-        if (data['activeFcmToken'] == token) {
-          updates['activeFcmToken'] = FieldValue.delete();
-        }
-        if (data['lastFcmToken'] == token) {
-          updates['lastFcmToken'] = FieldValue.delete();
-        }
-      }
-      transaction.update(userDoc, updates);
+      transaction.update(device, updates);
     });
   }
 
@@ -748,6 +703,11 @@ class HikerCircleFirebaseRepository {
       _resolvedFirestore.collection('trails');
   CollectionReference<Map<String, dynamic>> get _users =>
       _resolvedFirestore.collection('users');
+
+  DocumentReference<Map<String, dynamic>> _moduleFor(
+    AppSession session,
+    UserModule module,
+  ) => userModuleDocument(_users.doc(_userIdFor(session)), module);
   CollectionReference<Map<String, dynamic>> get _hikeSessions =>
       _resolvedFirestore.collection('hikeSessions');
   CollectionReference<Map<String, dynamic>> get _hazardReports =>
@@ -1847,10 +1807,10 @@ class HikerCircleFirebaseRepository {
       return const {};
     }
     try {
-      final snapshot = await _users
-          .doc(_userIdFor(session))
-          .get()
-          .timeout(_firebaseReadTimeout);
+      final snapshot = await _moduleFor(
+        session,
+        UserModule.social,
+      ).get().timeout(_firebaseReadTimeout);
       final raw = snapshot.data()?['buddyPhoneNumbers'];
       return raw is Iterable ? raw.whereType<String>().toSet() : <String>{};
     } catch (_) {
@@ -1865,10 +1825,10 @@ class HikerCircleFirebaseRepository {
       return const {};
     }
     try {
-      final snapshot = await _users
-          .doc(_userIdFor(session))
-          .get()
-          .timeout(_firebaseReadTimeout);
+      final snapshot = await _moduleFor(
+        session,
+        UserModule.social,
+      ).get().timeout(_firebaseReadTimeout);
       final raw = snapshot.data()?['buddyRequestsOutgoing'];
       if (raw is! Map) {
         return const {};
@@ -1888,10 +1848,10 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return const [];
     }
-    final snapshot = await _users
-        .doc(_userIdFor(session))
-        .get()
-        .timeout(_firebaseReadTimeout);
+    final snapshot = await _moduleFor(
+      session,
+      UserModule.social,
+    ).get().timeout(_firebaseReadTimeout);
     final raw = snapshot.data()?['buddyRequestsIncoming'];
     return _buddyRequestsFromRaw(raw);
   }
@@ -1902,7 +1862,7 @@ class HikerCircleFirebaseRepository {
     if (!_firebaseBootstrapResult.isAvailable) {
       return Stream.value(const []);
     }
-    return _users.doc(_userIdFor(session)).snapshots().map((snapshot) {
+    return _moduleFor(session, UserModule.social).snapshots().map((snapshot) {
       final raw = snapshot.data()?['buddyRequestsIncoming'];
       return _buddyRequestsFromRaw(raw);
     });
@@ -1972,7 +1932,7 @@ class HikerCircleFirebaseRepository {
       return true;
     }
     try {
-      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final snapshot = await _moduleFor(session, UserModule.preferences).get();
       return snapshot.data()?['groupChatNotificationsEnabled'] != false;
     } catch (_) {
       return true;
@@ -1984,7 +1944,7 @@ class HikerCircleFirebaseRepository {
     required bool enabled,
   }) async {
     _throwIfFirebaseUnavailable();
-    await _users.doc(_userIdFor(session)).set({
+    await _moduleFor(session, UserModule.preferences).set({
       'groupChatNotificationsEnabled': enabled,
       'groupChatNotificationSettingsUpdatedAt': FieldValue.serverTimestamp(),
       'groupChatNotificationSettingsUpdatedAtLocal': DateTime.now()
@@ -1998,7 +1958,7 @@ class HikerCircleFirebaseRepository {
       return null;
     }
     try {
-      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final snapshot = await _moduleFor(session, UserModule.preferences).get();
       final value = snapshot.data()?['preferredTimeZone'];
       return value is String && PreferredTimeZone.isValid(value)
           ? value.trim()
@@ -2018,7 +1978,7 @@ class HikerCircleFirebaseRepository {
         'Select a valid timezone before saving.',
       );
     }
-    await _users.doc(_userIdFor(session)).set({
+    await _moduleFor(session, UserModule.preferences).set({
       'preferredTimeZone': preferredTimeZone.trim(),
       'preferredTimeZoneUpdatedAt': FieldValue.serverTimestamp(),
       'preferredTimeZoneUpdatedAtLocal': DateTime.now()
@@ -2032,7 +1992,7 @@ class HikerCircleFirebaseRepository {
     required Map<String, dynamic> preferences,
   }) async {
     _throwIfFirebaseUnavailable();
-    await _users.doc(_userIdFor(session)).set({
+    await _moduleFor(session, UserModule.safety).set({
       'teamSafetyPreferences': preferences,
       'teamSafetyPreferencesUpdatedAt': FieldValue.serverTimestamp(),
       'teamSafetyPreferencesUpdatedAtLocal': DateTime.now()
@@ -2048,7 +2008,7 @@ class HikerCircleFirebaseRepository {
       return null;
     }
     try {
-      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final snapshot = await _moduleFor(session, UserModule.safety).get();
       final raw = snapshot.data()?['teamSafetyPreferences'];
       if (raw is Map) {
         return Map<String, dynamic>.from(raw);
@@ -2067,7 +2027,7 @@ class HikerCircleFirebaseRepository {
       return null;
     }
     try {
-      final snapshot = await _users.doc(_userIdFor(session)).get();
+      final snapshot = await _moduleFor(session, UserModule.preferences).get();
       final rawMap = snapshot.data()?['groupChatMutedUntil'];
       if (rawMap is! Map) {
         return null;
@@ -2092,7 +2052,7 @@ class HikerCircleFirebaseRepository {
     if (normalizedChatId.isEmpty) {
       return;
     }
-    final userReference = _users.doc(_userIdFor(session));
+    final userReference = _moduleFor(session, UserModule.preferences);
     final now = DateTime.now().toUtc();
     await _resolvedFirestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(userReference);
@@ -2122,10 +2082,10 @@ class HikerCircleFirebaseRepository {
       return {};
     }
     try {
-      final snapshot = await _users
-          .doc(_userIdFor(session))
-          .get()
-          .timeout(_firebaseReadTimeout);
+      final snapshot = await _moduleFor(
+        session,
+        UserModule.preferences,
+      ).get().timeout(_firebaseReadTimeout);
       final raw = snapshot.data()?['pinnedChats'];
       if (raw is Map) {
         return raw.keys
@@ -2149,7 +2109,7 @@ class HikerCircleFirebaseRepository {
     if (normalizedChatId.isEmpty) {
       return;
     }
-    await _users.doc(_userIdFor(session)).set({
+    await _moduleFor(session, UserModule.preferences).set({
       'pinnedChats': {
         normalizedChatId: pinned
             ? FieldValue.serverTimestamp()
@@ -5259,10 +5219,12 @@ class HikerCircleFirebaseRepository {
     var storedUsername = '';
     var photoURL = session.photoURL?.trim() ?? '';
     try {
-      final snapshot = await _users.doc(_userIdFor(session)).get();
-      final data = snapshot.data();
-      points = _intFrom(data?['achievementPoints']);
-      storedUsername = _stringFrom(data?['username']).trim();
+      final snapshots = await Future.wait([
+        _moduleFor(session, UserModule.profile).get(),
+        _moduleFor(session, UserModule.achievements).get(),
+      ]);
+      final data = snapshots[0].data();
+      points = _intFrom(snapshots[1].data()?['achievementPoints']);
       if (data != null) {
         final storedPhotoURL = _photoURLFromUserData(data);
         if (storedPhotoURL.isNotEmpty) {
@@ -5497,10 +5459,6 @@ class HikerCircleFirebaseRepository {
   }
 
   String _photoURLFromUserData(Map<String, dynamic> data) {
-    final topLevel = _stringFrom(data['photoURL']).trim();
-    if (topLevel.isNotEmpty) {
-      return topLevel;
-    }
     final profile = data['profile'];
     if (profile is Map) {
       return _stringFrom(profile['photoURL']).trim();

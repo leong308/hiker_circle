@@ -87,6 +87,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   int _resendSecondsRemaining = 0;
   String? _loadingMessageOverride;
   bool _isProcessing = false;
+  int _codeAttempt = 0;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
 
@@ -162,11 +163,16 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Future<void> _verifyOtp() async {
-    if (_otpController.text.trim().length != 6) return;
+    if (_isProcessing ||
+        !RegExp(r'^\d{6}$').hasMatch(_otpController.text.trim())) {
+      return;
+    }
+    final attempt = ++_codeAttempt;
     FocusScope.of(context).unfocus();
     _setProcessing(true);
     final ok = await _vm.verifyPasswordResetOtp(_otpController.text);
-    if (!mounted) return;
+    if (!mounted || attempt != _codeAttempt) return;
+    if (!ok) _otpController.clear();
     _setProcessing(false);
     if (ok) {
       setState(() => _step = _ResetStep.method);
@@ -192,6 +198,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Future<void> _verifyAuthenticator() async {
+    if (_isProcessing) return;
     final code = _authenticatorController.text.trim();
     if (!RegExp(r'^\d{6}$').hasMatch(code)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -201,10 +208,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       );
       return;
     }
+    final attempt = ++_codeAttempt;
     FocusScope.of(context).unfocus();
     _setProcessing(true);
     final ok = await _vm.verifyPasswordResetTotp(code);
-    if (!mounted) return;
+    if (!mounted || attempt != _codeAttempt) return;
+    if (!ok) _authenticatorController.clear();
     _setProcessing(false);
     setState(() {
       if (ok) {
@@ -277,7 +286,16 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             },
         detail: 'Updating your account securely. This may take a moment.',
         timeout: const Duration(seconds: 30),
-        onTimeout: () => _setProcessing(false),
+        onTimeout: () {
+          if (_step == _ResetStep.otp || _step == _ResetStep.authenticator) {
+            _codeAttempt++;
+          }
+          if (_step == _ResetStep.otp) _otpController.clear();
+          if (_step == _ResetStep.authenticator) {
+            _authenticatorController.clear();
+          }
+          _setProcessing(false);
+        },
       ),
       child: Scaffold(
         body: Stack(
@@ -342,13 +360,6 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                               enabled: !_isProcessing,
                               semanticLabel: 'Password reset verification code',
                               onCompleted: (_) => _verifyOtp(),
-                              onSubmitted: (_) => _verifyOtp(),
-                            ),
-                            const SizedBox(height: 16),
-                            FilledButton.icon(
-                              onPressed: _isProcessing ? null : _verifyOtp,
-                              icon: const Icon(Icons.verified_user),
-                              label: const Text('Verify Code'),
                             ),
                             const SizedBox(height: 10),
                             Wrap(
@@ -517,15 +528,6 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                               enabled: !_isProcessing,
                               semanticLabel: 'Authenticator code',
                               onCompleted: (_) => _verifyAuthenticator(),
-                              onSubmitted: (_) => _verifyAuthenticator(),
-                            ),
-                            const SizedBox(height: 16),
-                            FilledButton.icon(
-                              onPressed: _isProcessing
-                                  ? null
-                                  : _verifyAuthenticator,
-                              icon: const Icon(Icons.verified_user_outlined),
-                              label: const Text('Verify Authenticator'),
                             ),
                             const SizedBox(height: 8),
                             TextButton(

@@ -1,3 +1,4 @@
+const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 'use strict';
 const { milliseconds } = require('./location_batch');
 
@@ -29,7 +30,7 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
   const userRef = db.collection('users').doc(uid);
   const newShareRef = db.collection('live_location_shares').doc();
   return db.runTransaction(async tx => {
-    const userSnapshot = await tx.get(userRef);
+    const userSnapshot = await readUser(userRef, ["location"], tx);
     const user = userSnapshot.data() || {};
     if (!userSnapshot.exists || user.phoneNumber !== phoneNumber || user.accountDisabled === true || user.status === 'disabled') {
       throw new ErrorType('permission-denied', 'Your account is unavailable.');
@@ -53,7 +54,7 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
       updatedAt: fieldTimestamp(), updatedAtLocal: new Date(now).toISOString(),
       ...(!reuse ? { createdAt: fieldTimestamp(), createdAtLocal: new Date(now).toISOString() } : {}),
     }, { merge: true });
-    tx.set(userRef, { liveLocationEnabled: true, liveLocationShareId: shareRef.id,
+    setUser(tx, userRef, { liveLocationEnabled: true, liveLocationShareId: shareRef.id,
       liveLocationShareUrl: shareUrl, liveLocation: latestLocation,
       liveLocationExpiresAt: timestampFromMillis(expiresAtMillis), liveLocationExpiresAtLocal: new Date(expiresAtMillis).toISOString(),
       liveLocationUpdatedAt: fieldTimestamp(), liveLocationUpdatedAtLocal: new Date(now).toISOString(),

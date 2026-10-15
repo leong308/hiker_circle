@@ -1,16 +1,35 @@
-# HikerCircle SQLite ERD (1NF)
+# HikerCircle SQLite ERD
 
-Schema version: **26**
+Schema version: **28**. Regenerated 16 October 2026 from current source; the Firestore refactor changes no local tables, columns, payloads or version.
 
-This diagram shows the app-owned SQLite schema. Every column contains one
-atomic SQLite value, satisfying first normal form (1NF). Columns ending in
-`_json` intentionally store an atomic serialized document; their internal
-shape is not normalized beyond 1NF. Most account and safety relationships are
-logical so queued records survive sign-out and partial recovery. The compact
-hazard dataset declares its internal hazard-to-trail relationship explicitly.
+All 25 app-owned tables and their columns are shown below. JSON columns are atomic SQLite values; this is a physical schema, not a claim that nested JSON is relationally normalized. Only declared foreign keys are drawn. Other account/session relationships are logical so durable queues can survive sign-out.
+
+Editable diagram: [sqlite_erd.drawio](diagrams/sqlite_erd.drawio).
 
 ```mermaid
 erDiagram
+    BUTTON_DEBUG_SESSIONS {
+        TEXT id PK
+        TEXT owner_phone_number
+        TEXT started_at
+        TEXT ended_at
+        TEXT status
+        TEXT end_reason
+        TEXT log_text
+        TEXT file_path
+    }
+    BUTTON_DEBUG_ENTRIES {
+        TEXT session_id PK
+        INTEGER sequence PK
+        TEXT timestamp
+        TEXT direction
+        TEXT operation
+        TEXT device_id
+        TEXT characteristic
+        TEXT status
+        BLOB payload
+        TEXT interpretation
+    }
     USERS {
         TEXT phone_number PK
         TEXT created_at
@@ -23,51 +42,6 @@ erDiagram
         TEXT photo_url
         BLOB photo_bytes
     }
-
-    APP_DEVICE {
-        INTEGER id PK
-        TEXT app_instance_id
-        TEXT created_at
-    }
-
-    EMERGENCY_CONTACTS {
-        INTEGER id PK
-        TEXT owner_phone_number
-        TEXT contact_phone_number
-        TEXT name
-        TEXT relationship
-        INTEGER position
-        TEXT updated_at
-    }
-
-    ACTIVE_HIKE_SESSION {
-        TEXT owner_phone_number PK
-        TEXT session_id
-        TEXT payload_json
-        TEXT updated_at
-    }
-
-    PLANNED_HIKE_STATE {
-        TEXT owner_phone_number PK
-        TEXT upcoming_hike_id PK
-        TEXT upcoming_payload_json
-        TEXT completed_checklist_json
-        INTEGER is_consumed
-        TEXT updated_at
-    }
-
-    PENDING_HIKE_ENDS {
-        TEXT owner_phone_number PK
-        TEXT session_id PK
-        TEXT active_hike_payload_json
-        TEXT summary_payload_json
-        TEXT ended_at
-        TEXT created_at
-        TEXT updated_at
-        INTEGER retry_count
-        TEXT last_error
-    }
-
     LOCAL_LOCATION_POINTS {
         INTEGER id PK
         TEXT owner_phone_number
@@ -79,22 +53,10 @@ erDiagram
         INTEGER battery_level
         TEXT point_type
         TEXT recorded_at
+        TEXT sample_key
+        TEXT fix_captured_at
         INTEGER is_synced
     }
-
-    NETWORK_OBSERVATIONS {
-        INTEGER id PK
-        TEXT session_id
-        REAL latitude
-        REAL longitude
-        REAL accuracy
-        INTEGER network_available
-        INTEGER api_request_success
-        TEXT network_type
-        TEXT recorded_at
-        INTEGER is_synced
-    }
-
     QUEUED_ALERTS {
         INTEGER id PK
         TEXT owner_phone_number
@@ -114,10 +76,44 @@ erDiagram
         TEXT last_error
         TEXT sent_at
     }
-
+    DOWNLOADED_MAPS {
+        INTEGER id PK
+        TEXT trail_id
+        TEXT trail_name
+        TEXT local_file_path
+        INTEGER file_size
+        TEXT downloaded_at
+        TEXT last_weather_cached_at
+        TEXT weather_expiry_time
+    }
+    NETWORK_OBSERVATIONS {
+        INTEGER id PK
+        TEXT session_id
+        REAL latitude
+        REAL longitude
+        REAL accuracy
+        INTEGER network_available
+        INTEGER api_request_success
+        TEXT network_type
+        TEXT recorded_at
+        INTEGER is_synced
+    }
+    APP_DEVICE {
+        INTEGER id PK
+        TEXT app_instance_id
+        TEXT created_at
+    }
+    EMERGENCY_CONTACTS {
+        INTEGER id PK
+        TEXT owner_phone_number
+        TEXT contact_phone_number
+        TEXT name
+        TEXT relationship
+        INTEGER position
+        TEXT updated_at
+    }
     PENDING_MESSAGES {
         TEXT local_id PK
-        TEXT owner_phone_number
         TEXT chat_id
         TEXT sender_phone
         TEXT sender_name
@@ -127,17 +123,41 @@ erDiagram
         INTEGER retry_count
         TEXT firestore_doc_id
         TEXT attachment_json
+        TEXT owner_phone_number
         TEXT updated_at
         TEXT last_error
     }
-
-    CHAT_READ_RECEIPTS {
+    ACTIVE_HIKE_SESSION {
         TEXT owner_phone_number PK
-        TEXT chat_id PK
-        TEXT last_read_at
-        INTEGER is_synced
+        TEXT session_id
+        TEXT payload_json
+        TEXT updated_at
     }
-
+    PENDING_HIKE_ENDS {
+        TEXT owner_phone_number PK
+        TEXT session_id PK
+        TEXT active_hike_payload_json
+        TEXT summary_payload_json
+        TEXT ended_at
+        TEXT created_at
+        TEXT updated_at
+        INTEGER retry_count
+        TEXT last_error
+    }
+    PLANNED_HIKE_STATE {
+        TEXT owner_phone_number PK
+        TEXT upcoming_hike_id PK
+        TEXT upcoming_payload_json
+        TEXT completed_checklist_json
+        INTEGER is_consumed
+        TEXT updated_at
+    }
+    ACHIEVEMENT_PROGRESS_CACHE {
+        TEXT owner_phone_number PK
+        TEXT content_hash
+        TEXT payload_json
+        TEXT cached_at
+    }
     CACHED_ENTITIES {
         TEXT owner_phone_number PK
         TEXT entity_type PK
@@ -148,14 +168,13 @@ erDiagram
         TEXT cached_at
         TEXT expires_at
     }
-
     SYNC_OUTBOX {
         TEXT operation_id PK
         TEXT owner_phone_number
         TEXT operation_type
         TEXT entity_type
         TEXT entity_id
-        TEXT idempotency_key UK
+        TEXT idempotency_key
         TEXT payload_json
         TEXT local_file_path
         TEXT status
@@ -165,7 +184,6 @@ erDiagram
         TEXT created_at
         TEXT updated_at
     }
-
     LOCAL_PREFERENCES {
         TEXT owner_phone_number PK
         TEXT preference_key PK
@@ -173,28 +191,9 @@ erDiagram
         INTEGER is_dirty
         TEXT updated_at
     }
-
-    ACHIEVEMENT_PROGRESS_CACHE {
-        TEXT owner_phone_number PK
-        TEXT content_hash
-        TEXT payload_json
-        TEXT cached_at
-    }
-
-    DOWNLOADED_MAPS {
-        INTEGER id PK
-        TEXT trail_id UK
-        TEXT trail_name
-        TEXT local_file_path
-        INTEGER file_size
-        TEXT downloaded_at
-        TEXT last_weather_cached_at
-        TEXT weather_expiry_time
-    }
-
     OFFLINE_MAP_REGIONS {
         TEXT trail_id PK
-        TEXT region_id UK
+        TEXT region_id
         TEXT style_uri
         TEXT bounds_json
         INTEGER min_zoom
@@ -207,10 +206,9 @@ erDiagram
         TEXT updated_at
         TEXT last_error
     }
-
     HAZARD_FEATURES {
         INTEGER local_id PK
-        TEXT hazard_id UK
+        TEXT hazard_id
         TEXT hazard_type
         TEXT title
         TEXT description
@@ -226,16 +224,14 @@ erDiagram
         TEXT downloaded_at
         TEXT expires_at
     }
-
     TRAIL_HAZARD_MATCHES {
         TEXT trail_id PK
-        TEXT hazard_id PK,FK
+        TEXT hazard_id PK
         TEXT relationship
         REAL distance_meters
         REAL route_progress
         TEXT computed_at
     }
-
     HAZARD_FEATURE_RTREE {
         INTEGER local_id PK
         REAL min_longitude
@@ -243,18 +239,12 @@ erDiagram
         REAL min_latitude
         REAL max_latitude
     }
-
-    ROUTE_CACHE {
-        TEXT trail_id PK
-        TEXT checkpoints_hash PK
-        TEXT encoded_polyline
-        INTEGER distance_meters
-        INTEGER duration_seconds
-        REAL elevation_gain_meters
-        TEXT source_label
-        TEXT cached_at
+    CHAT_READ_RECEIPTS {
+        TEXT chat_id PK
+        TEXT owner_phone_number PK
+        TEXT last_read_at
+        INTEGER is_synced
     }
-
     DEVICE_NOTIFICATIONS {
         INTEGER id PK
         TEXT owner_phone_number
@@ -269,7 +259,6 @@ erDiagram
         TEXT source
         INTEGER is_starred
     }
-
     NEARBY_SOS_EVENTS {
         TEXT owner_phone_number PK
         TEXT event_key PK
@@ -287,39 +276,19 @@ erDiagram
         REAL detector_accuracy_meters
         TEXT detector_captured_at
     }
-
-    USERS ||--o{ EMERGENCY_CONTACTS : owns
-    USERS ||--o| ACTIVE_HIKE_SESSION : runs
-    USERS ||--o{ PLANNED_HIKE_STATE : plans
-    USERS ||--o{ PENDING_HIKE_ENDS : queues
-    USERS ||--o{ LOCAL_LOCATION_POINTS : records
-    USERS ||--o{ QUEUED_ALERTS : raises
-    USERS ||--o{ PENDING_MESSAGES : stores
-    USERS ||--o{ CHAT_READ_RECEIPTS : tracks
-    USERS ||--o{ CACHED_ENTITIES : caches
-    USERS ||--o{ SYNC_OUTBOX : queues
-    USERS ||--o{ LOCAL_PREFERENCES : configures
-    USERS ||--o| ACHIEVEMENT_PROGRESS_CACHE : earns
-    USERS ||--o{ DEVICE_NOTIFICATIONS : receives
-    USERS ||--o{ NEARBY_SOS_EVENTS : detects
-    ACTIVE_HIKE_SESSION ||--o{ LOCAL_LOCATION_POINTS : contains
-    ACTIVE_HIKE_SESSION ||--o{ NETWORK_OBSERVATIONS : observes
-    ACTIVE_HIKE_SESSION ||--o{ QUEUED_ALERTS : protects
-    ACTIVE_HIKE_SESSION ||--o| PENDING_HIKE_ENDS : completes
-    DOWNLOADED_MAPS ||--o| OFFLINE_MAP_REGIONS : identifies
-    OFFLINE_MAP_REGIONS ||--o{ ROUTE_CACHE : complements
-    HAZARD_FEATURES ||--o{ TRAIL_HAZARD_MATCHES : matched_to
-    HAZARD_FEATURES ||--|| HAZARD_FEATURE_RTREE : spatially_indexes
+    ROUTE_CACHE {
+        TEXT trail_id PK
+        TEXT checkpoints_hash PK
+        TEXT encoded_polyline
+        INTEGER distance_meters
+        INTEGER duration_seconds
+        REAL elevation_gain_meters
+        TEXT source_label
+        TEXT cached_at
+    }
+    BUTTON_DEBUG_SESSIONS ||--o{ BUTTON_DEBUG_ENTRIES : "session_id references id"
+    HAZARD_FEATURES ||--o{ TRAIL_HAZARD_MATCHES : "hazard_id references hazard_id"
+    HAZARD_FEATURES ||--o| HAZARD_FEATURE_RTREE : "local_id references local_id"
 ```
 
-`offline_map_regions.trail_id` is a legacy-compatible scope key; the
-Malaysia-wide package uses `country:MY`. `cached_entities.entity_type`
-currently supports trails, group chats,
-community profiles, community posts, community comments, hike-history lists,
-and hike-history details. `sync_outbox` is intentionally generic so additional
-offline mutations can be added without another schema migration.
-
-`hazard_features` stores compact Mapbox-derived river, stream, and cliff
-points rather than full map tiles. `trail_hazard_matches` records why each
-point matters to a route, while the SQLite R-tree accelerates geographic
-lookups. Wildlife presence is deliberately not inferred from water features.
+`hazard_feature_rtree` is the existing portable bounds table with longitude/latitude indexes, rather than an optional SQLite R-tree virtual table. The map-region scope key and all offline payload formats remain unchanged.
