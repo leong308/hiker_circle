@@ -1,3 +1,4 @@
+// AuthMode and AuthStatus describe the authentication form and its current operation state.
 enum AuthMode { signUp, login }
 
 enum AuthStatus {

@@ -1,3 +1,4 @@
+// TrailWeatherPanel shows the trail-local forecast, metric details and refresh state.
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';

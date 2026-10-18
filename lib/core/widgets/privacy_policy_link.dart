@@ -1,3 +1,4 @@
+// PrivacyPolicyLink presents the shared policy action and handles its asynchronous launch state.
 import 'dart:async';
 
 import 'package:flutter/material.dart';

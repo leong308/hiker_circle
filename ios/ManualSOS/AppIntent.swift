@@ -1,3 +1,4 @@
+// ConfigurationAppIntent supplies WidgetKit configuration for the SOS extension.
 //
 //  AppIntent.swift
 //  ManualSOS

@@ -1,3 +1,5 @@
+// HikeBriefingWeatherService shares bounded forecast caching for scheduled hike briefings.
+import '../../app/Data/local_session_database.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../trail/Model/trail_models.dart';
@@ -31,6 +33,20 @@ class HikeBriefingWeatherService {
     final key =
         '${latitude.toStringAsFixed(4)},${longitude.toStringAsFixed(4)}';
     final now = DateTime.now().toUtc();
+    if (_client == null && !_cache.containsKey(key)) {
+      try {
+        final local = await LocalSessionDatabase().loadCachedEntity(
+          ownerPhoneNumber: '',
+          entityType: 'briefing_weather',
+          entityId: key,
+          includeExpired: true,
+        );
+        if (local != null)
+          _cache[key] = TrailWeather.fromPersistence(local.payload);
+      } catch (_) {
+        /* Offline briefing remains best-effort. */
+      }
+    }
     final cached = _cache[key];
     if (!force &&
         cached != null &&
@@ -49,6 +65,19 @@ class HikeBriefingWeatherService {
     _pending[key] = request;
     try {
       final weather = await request;
+      if (_client == null) {
+        await LocalSessionDatabase().saveCachedEntity(
+          LocalCachedEntity(
+            ownerPhoneNumber: '',
+            entityType: 'briefing_weather',
+            entityId: key,
+            parentId: '',
+            payload: weather.toFirestore(),
+            cachedAt: weather.cachedAt,
+          ),
+        );
+      }
+
       _cache.remove(key);
       _cache[key] = weather;
       if (_cache.length > 12) _cache.remove(_cache.keys.first);

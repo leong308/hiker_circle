@@ -1,3 +1,4 @@
+// ActiveHikePrecautionNoticeView displays the current in-hike precaution above page controls.
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/app_toast.dart';

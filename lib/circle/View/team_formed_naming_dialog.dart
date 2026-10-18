@@ -1,8 +1,10 @@
+// TeamFormedNamingDialog confirms the new team's name before completing team setup.
 import 'package:flutter/material.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../core/widgets/loading_toast.dart';
 
+/// Return the confirmed team name through the dialog result instead of mutating navigation elsewhere.
 class TeamFormedNamingDialog extends StatefulWidget {
   const TeamFormedNamingDialog({
     super.key,

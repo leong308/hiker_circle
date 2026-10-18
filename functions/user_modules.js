@@ -1,3 +1,4 @@
+// User account and fixed module documents provide one physical source for each profile, security, device, and safety concern.
 'use strict';
 
 // One physical source for each concern. These helpers assemble selected modules
@@ -20,13 +21,14 @@ const RETIRED_FIELDS = Object.freeze([
   'sosMessagingTestUpdatedAtLocal',
 ]);
 
+// moduleForField: Assign every user field to one account/module owner and reject retired aliases.
 function moduleForField(field) {
   const name = field.split('.')[0];
   if (ACCOUNT_FIELDS.includes(name)) return null;
   if (RETIRED_FIELDS.includes(name)) throw new Error(`Retired user field: ${name}`);
   if (/^(profile|requiresOnboarding|onboarding)/.test(name)) return 'profile';
   if (/^(boundApp|previousBoundApp|deviceRebind|deviceRebound|fcmTokenByAppId|lastFcmTokenUpdated|lastSignedInAt)/.test(name)) return 'devices';
-  if (/^(password|safetyQuestions|mfa|lastMfa|lastPassword|lastFirebaseAuthenticated|loginFailed|loginCooldown)/.test(name)) return 'security';
+  if (/^(password|initialPassword|safetyQuestions|mfa|lastMfa|lastPassword|lastFirebaseAuthenticated|loginFailed|loginCooldown)/.test(name)) return 'security';
   if (/^(preferredTimeZone|groupChat|pinnedChats|autoShareLiveLocation)/.test(name)) return 'preferences';
   if (/^teamSafety/.test(name)) return 'safety';
   if (/^(sos|latestSos|recentSos)/.test(name)) return 'sos';
@@ -41,6 +43,7 @@ function userModule(reference, module) {
   return reference.collection('modules').doc(module);
 }
 
+// projectUserSnapshot: Assemble only requested modules in memory; misplaced persisted fields fail explicitly.
 function projectUserSnapshot(account, snapshots, modules) {
   if (!account.exists) return {id: account.id, ref: account.ref, exists: false, data: () => undefined};
   const raw = account.data() || {};
@@ -97,6 +100,7 @@ function partitionUserFields(data) {
   return groups;
 }
 
+// setUser: Partition writes to their canonical physical documents using the caller's transaction or batch.
 function setUser(writer, reference, data, options = {merge: true}) {
   const batch = writer || reference.firestore.batch();
   for (const [module, fields] of partitionUserFields(data)) {

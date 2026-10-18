@@ -1,9 +1,11 @@
+// Forecast-based precaution notifications send only new or worsening environmental risks for upcoming hikes.
 const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 'use strict';
 const {createHash} = require('node:crypto');
 
 // Same advisory thresholds as trail_precautions.dart. Notifications deliberately
 // exclude routine equipment/ascent tips; only changing environmental risks push.
+// upcomingPrecautions: Compare the actual hike window with fresh hourly risks and daylight boundaries.
 function upcomingPrecautions(weather, departure, duration, now = Date.now()) {
   const f = weather?.forecastData;
   const h = f?.hourly;
@@ -33,6 +35,7 @@ function upcomingPrecautions(weather, departure, duration, now = Date.now()) {
   return result.sort((a,b) => b.severity-a.severity || a.id.localeCompare(b.id));
 }
 
+// sendPrecautionReminders: Claim each hiker/departure delivery and notify only risks above the previously sent severity.
 async function sendPrecautionReminders({db, messaging, getWeather, userId, tokensFor, now = Date.now(), hikes}) {
   const hikeSnapshot = hikes || await db.collection('upcomingHikes').get();
   for (const doc of hikeSnapshot.docs) {

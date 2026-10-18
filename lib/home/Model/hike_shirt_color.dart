@@ -1,3 +1,4 @@
+// HikeShirtColorAdvice evaluates the selected shirt color for hike visibility and conditions.
 import 'hike_weather_briefing.dart';
 
 enum HikeShirtColorSuitability { recommended, visible, avoidInDaylight }

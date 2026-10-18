@@ -1,3 +1,4 @@
+// HikeReminderPreferencesEditor edits reminder offsets and previews their scheduled times.
 import 'package:flutter/material.dart';
 
 import '../Model/hike_session_models.dart';
@@ -21,6 +22,7 @@ Future<HikeReminderPreference?> showHikeReminderPreferencesSheet(
   );
 }
 
+/// Keep the edited offsets and reminder preview attached to the selected hike's departure time.
 class HikeReminderPreferencesEditor extends StatelessWidget {
   const HikeReminderPreferencesEditor({
     super.key,

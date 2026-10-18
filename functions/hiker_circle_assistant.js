@@ -1,3 +1,4 @@
+// The app assistant uses curated guidance, public trail search, and rate limits while withholding sensitive input.
 'use strict';
 
 const MAX_QUESTION_LENGTH = 480;
@@ -226,6 +227,7 @@ function distanceKm(a, b, c, d) {
   return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
+// findTrails: Filter public catalogue matches without choosing a route on the hiker's behalf.
 async function findTrails(db, question, location) {
   const snapshot = await db.collection('trails').get();
   const trails = snapshot.docs.map((doc) => {
@@ -333,6 +335,7 @@ function utcDayBucket(nowMillis) {
   return new Date(nowMillis).toISOString().slice(0, 10);
 }
 
+// consumeRateLimit: Enforce minute/day limits transactionally before producing assistant work.
 async function consumeRateLimit(db, uid, nowMillis = Date.now()) {
   const document = db.collection('assistantUsage').doc(uid);
   const minuteBucket = Math.floor(nowMillis / 60000);
@@ -384,6 +387,7 @@ function curatedFallbackResponse(articles) {
   };
 }
 
+// createAssistantHandler: Route emergencies, sensitive input, navigation, and curated answers through their appropriate response paths.
 function createAssistantHandler({db, now = Date.now}) {
   return async (request) => {
     const uid = String(request?.auth?.uid || '').trim();

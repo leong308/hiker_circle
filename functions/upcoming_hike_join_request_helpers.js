@@ -1,3 +1,4 @@
+// Upcoming-hike join requests use requester-scoped IDs and terminal lifecycle rules.
 'use strict';
 
 const crypto = require('crypto');
@@ -50,6 +51,7 @@ function upcomingHikeUnavailableReason(hike, nowMillis = Date.now()) {
   return '';
 }
 
+// joinRequestLifecycle: Keep accepted/rejected decisions terminal and expire requests when their source hike is unavailable.
 function joinRequestLifecycle(request, hike, nowMillis = Date.now()) {
   const status = String(request?.status || '').trim();
   if (status === 'accepted' || status === 'rejected') {

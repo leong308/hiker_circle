@@ -1,3 +1,4 @@
+// HikerBottomNavBar renders the app's shared destination controls and selected state.
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_bar/liquid_glass_bar.dart';
 

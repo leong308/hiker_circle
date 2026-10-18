@@ -1,3 +1,5 @@
+// Solo hike distance validation enforces the same route-length boundary used by the app.
+// validateSoloHikeDistance: Keep the route boundary identical for initial starts and retry validation.
 function validateSoloHikeDistance(km, group, acknowledgedKm, HttpsError) {
   if (group) return;
   if (km > 20) throw new HttpsError('failed-precondition', 'Routes over 20 km require group hike setup.');

@@ -1,3 +1,5 @@
+// RunningBorder paints an animated highlight around a child while respecting reduced-motion
+// settings.
 import 'package:flutter/material.dart';
 
 class RunningBorder extends StatefulWidget {

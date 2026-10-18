@@ -1,3 +1,4 @@
+// ActiveHikePrecautionAnnouncer keeps a visible hike warning synchronized with its spoken message.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';

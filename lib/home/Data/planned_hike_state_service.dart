@@ -1,3 +1,4 @@
+// PlannedHikeStateResolver combines upcoming hike data with local preparation progress.
 import '../../core/services/hiking_route_service.dart';
 import 'dart:convert';
 

@@ -1,3 +1,4 @@
+// ProfileDetailsPage edits public hiker details and crops the selected profile photo.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -66,6 +67,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
     });
   }
 
+  /// Preview and crop the selected image before persisting it as the account profile photo.
   Future<void> _changePhoto(OnboardingProfile profile) async {
     try {
       final file = await _imagePicker.pickImage(
@@ -471,6 +473,7 @@ class _ProfilePhotoCropDialogState extends State<_ProfilePhotoCropDialog> {
     });
   }
 
+  /// Render the chosen crop from decoded image coordinates before handing the bytes to profile persistence.
   Future<Uint8List> _cropImage() async {
     final image = _image;
     if (image == null) {

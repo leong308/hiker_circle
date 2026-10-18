@@ -1,3 +1,4 @@
+// SosViewModel coordinates SOS dashboard state, alert triggering, acknowledgement and retry feedback.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -225,6 +226,7 @@ class SosViewModel extends ChangeNotifier {
     }
   }
 
+  /// Expose the local queued submission first, then observe the authoritative delivery acknowledgement.
   Future<SosAlertResult?> triggerAlert({
     required SosAlertMode mode,
     required DateTime triggeredAt,
@@ -284,6 +286,7 @@ class SosViewModel extends ChangeNotifier {
     return null;
   }
 
+  /// Replace pending UI state with the matching alert's final or retryable result.
   Future<void> _observeAcknowledgement(
     Future<SosAlertResult> acknowledgement,
     String submittedAlertId,

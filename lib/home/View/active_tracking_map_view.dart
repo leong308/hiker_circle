@@ -1,3 +1,4 @@
+// ActiveTrackingMapView draws recorded movement, team positions, pins and check-ins.
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -65,6 +66,7 @@ Color _displayColorForParticipant(
   return storedColor;
 }
 
+/// Keep GPS movement and team markers tied to the active session rather than the planned trail geometry.
 class ActiveTrackingMapView extends StatefulWidget {
   const ActiveTrackingMapView({
     super.key,
@@ -678,6 +680,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
         identical(map, _mapboxMap);
   }
 
+  /// Recreate annotation state for a replacement native map and ignore callbacks from older map generations.
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap, int generation) async {
     if (!mounted || generation != _mapGeneration) return;
     final replacingNativeMap =

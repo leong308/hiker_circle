@@ -1,3 +1,5 @@
+// StateBoundaryOverlay adds selectable geographic outlines to a map without mutating saved trail
+// coordinates.
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;

@@ -1,7 +1,9 @@
+const {runOtpChecks, createOtpReadinessCheck, withOtpTiming} = require('./otp_delivery_performance');
+// Firebase entry points connect mobile session security, hiking, community, messaging, recovery, and scheduled maintenance.
 const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 const { validateSoloHikeDistance } = require('./solo_hike_policy');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
+const { onCall: firebaseOnCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const {
   onDocumentCreated,
   onDocumentDeleted,
@@ -23,6 +25,7 @@ const {
 const { getAuth } = require('firebase-admin/auth');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
+const {contentHash, conditionalPayload, reminderCooldown} = require('./mobile_cache_helpers');
 const crypto = require('crypto');
 const argon2 = require('argon2');
 const {
@@ -42,7 +45,9 @@ const {
 const {
   LiveLocationNotificationValidationError,
   composeLiveLocationStartMessage,
+  composeStandaloneLiveLocationStartMessage,
   liveLocationDispatchDocumentId,
+  originalLiveLocationStartedAtMillis,
   parseLiveLocationNotificationRequest,
 } = require('./live_location_notification_helpers');
 const {
@@ -112,6 +117,103 @@ const {
 const {isUnlistedSessionTrail, unlistedTrailSnapshot} = require('./unlisted_hikes');
 admin.initializeApp();
 
+const {createMobileSessionSecurity} = require('./mobile_session_security');
+const mobileSessionSecurity = createMobileSessionSecurity({
+  db: () => getFirestore(), auth: () => getAuth(), HttpsError,
+  timestamp: () => FieldValue.serverTimestamp(), setUser,
+});
+
+// All mobile business callables enforce the current server-owned session.
+// Purpose-limited login/recovery handlers validate their own OTP/MFA artifacts.
+function onCall(options, handler) {
+  const {authenticationFlow = false, ...firebaseOptions} = options;
+  return firebaseOnCall({enforceAppCheck: true, ...firebaseOptions}, async request => {
+    if (!authenticationFlow) await mobileSessionSecurity.requireActive(request);
+    if (!authenticationFlow && request.data?.expectedOwner && request.data.expectedOwner !== request.auth.uid) {
+      throw new HttpsError('unauthenticated', 'The signed-in account changed. Retry for the current account.');
+    }
+    return handler(request);
+  });
+}
+function onAuthenticationCall(options, handler) {
+  return onCall({...options, authenticationFlow: true}, handler);
+}
+
+exports.prepareMobileSession = onAuthenticationCall({}, request => mobileSessionSecurity.prepare(request));
+exports.activateMobileSession = onAuthenticationCall(
+  {secrets: [defineSecret('GREEN_API_INSTANCE_ID'), defineSecret('GREEN_API_TOKEN')], timeoutSeconds: 30},
+  async request => {
+    const result = await mobileSessionSecurity.activate(request);
+    if (result.sendNotice) {
+      await deliverSessionSecurityNotice(getFirestore().collection('sessionSecurityOutbox')
+        .doc(request.auth.token.mobileSessionId)).catch(error => {
+          logger.warn('Login notice is pending', {code: String(error?.code || error?.name || '')});
+        });
+    }
+    return result;
+  });
+exports.endMobileSession = onAuthenticationCall({}, request => mobileSessionSecurity.end(request));
+
+// deliverSessionSecurityNotice: Claim a session-change notice before FCM/WhatsApp sends; uncertain provider acceptance is not retried blindly.
+async function deliverSessionSecurityNotice(reference) {
+  const notice = await getFirestore().runTransaction(async transaction => {
+    const snapshot = await transaction.get(reference);
+    if (!snapshot.exists || snapshot.data()?.status !== 'pending') return null;
+    transaction.update(reference, {status: 'sending', attemptedAt: FieldValue.serverTimestamp()});
+    return snapshot.data();
+  });
+  if (!notice) return;
+  if (notice.replacedSession && notice.previousDevice?.appInstanceId) {
+    try {
+      const devices = await getFirestore().collection('users').doc(notice.uid).collection('modules').doc('devices').get();
+      const token = devices.data()?.fcmTokenByAppId?.[notice.previousDevice.appInstanceId];
+      if (typeof token === 'string' && token.length > 20) {
+        await getMessaging().send({token,
+          notification: {title: 'Signed out for your security', body: `Your account is now signed in on ${notice.newDevice.name}.`},
+          data: {type: 'account_session_replaced', newDeviceName: notice.newDevice.name}});
+      }
+    } catch (_) { /* The foreground session listener remains authoritative. */ }
+  }
+  try {
+    const credentials = greenApiCredentials();
+    const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({chatId: `${notice.phoneNumber.replace(/\D/g, '')}@c.us`,
+        message: `HikerCircle security notice: Your account is now signed in on ${notice.newDevice.name}. `
+          + (notice.replacedSession ? `The previous session on ${notice.previousDevice?.name || 'your previous device'} has been signed out. `
+            : `Previous device: ${notice.previousDevice?.name || 'No previous device'}. `)
+          + `Time: ${notice.createdAtLocal}. If this was not you, reset your password and review your security methods.`}),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const body = await response.json().catch(() => null);
+    const id = greenApiMessageId(body);
+    await reference.update({status: response.ok && id ? 'sent' : 'delivery_uncertain',
+      providerMessageId: id || '', completedAt: FieldValue.serverTimestamp()});
+  } catch (_) {
+    // Do not duplicate a message whose provider acceptance is unknown.
+    await reference.update({status: 'delivery_uncertain', completedAt: FieldValue.serverTimestamp()});
+  }
+}
+
+exports.deliverSessionSecurityNotice = onDocumentCreated({
+  document: 'sessionSecurityOutbox/{noticeId}', retry: true, region: 'asia-southeast1',
+  secrets: [defineSecret('GREEN_API_INSTANCE_ID'), defineSecret('GREEN_API_TOKEN')],
+}, event => deliverSessionSecurityNotice(event.data.ref));
+
+exports.endDisabledAccountSession = onDocumentWritten({document: 'users/{userId}', region: 'asia-southeast1'}, async event => {
+  const after = event.data?.after;
+  if (!after?.exists || after.data()?.accountDisabled === true || after.data()?.status === 'disabled') {
+    await getFirestore().runTransaction(async transaction => {
+      // Re-read to avoid a delayed trigger invalidating a subsequently restored account.
+      const current = await transaction.get(getFirestore().collection('users').doc(event.params.userId));
+      if (!current.exists || current.data()?.accountDisabled === true || current.data()?.status === 'disabled') {
+        mobileSessionSecurity.revokeInTransaction(transaction, event.params.userId, 'account-disabled');
+      }
+    });
+  }
+});
+
+
 // firebase-admin v14 removed the legacy namespace accessors, while this
 // backend intentionally still uses their concise syntax throughout. Keep one
 // compatibility adapter at the entry point so every callable and trigger uses
@@ -131,6 +233,7 @@ const greenApiInstanceId = defineSecret('GREEN_API_INSTANCE_ID');
 const greenApiToken = defineSecret('GREEN_API_TOKEN');
 const mfaTotpEncryptionKey = defineSecret('MFA_TOTP_ENCRYPTION_KEY');
 
+// checkCommunityContentIntegrity: Scan only public community text and preserve pending human review decisions.
 exports.checkCommunityContentIntegrity = onSchedule({
   schedule: 'every 30 minutes', secrets: [], timeoutSeconds: 240,
   memory: '256MiB', maxInstances: 1, concurrency: 1,
@@ -146,6 +249,7 @@ function recordedTrailRequestError(error, message) {
   return new HttpsError(known ? error.code : 'internal', known ? error.message : message);
 }
 
+// beginRecordedTrailRequest: Reserve an owner route submission before uploading its private geometry chunks.
 exports.beginRecordedTrailRequest = onCall({timeoutSeconds: 30}, async request => {
   const {uid} = authenticatedPhoneFor(request, 'Sign in to submit your recorded trail.');
   try {
@@ -181,6 +285,7 @@ exports.finalizeRecordedTrailRequest = onCall({timeoutSeconds: 120, memory: '512
   }
 });
 
+// getAdminDashboardAnalytics: Require a trusted administrator claim before returning aggregate coverage and activity.
 exports.getAdminDashboardAnalytics = onCall({timeoutSeconds: 120, memory: '512MiB', maxInstances: 2}, async request => {
   if (!request.auth?.uid || request.auth.token?.isAdmin !== true) {
     throw new HttpsError('permission-denied', 'Administrator access is required.');
@@ -208,6 +313,52 @@ exports.reviewCommunityContentFlag = onCall({timeoutSeconds: 30}, async request 
   }
 });
 
+// Community mutations are server-owned so identity, hike summaries and
+// engagement counters have one validated source of truth.
+// communityContext: Use server-verified identity and trusted admin claims for canonical community mutations.
+function communityContext(request, adminOnly = false) {
+  const identity = authenticatedPhoneFor(request, 'Sign in to use the community.');
+  const isAdmin = request.auth?.token?.isAdmin === true;
+  if (adminOnly && !isAdmin) throw new HttpsError('permission-denied', 'Administrator access is required.');
+  return { db: admin.firestore(), bucket: getStorage().bucket(), ...identity, isAdmin,
+    input: request.data || {}, ErrorType: HttpsError, timestamp: millis => Timestamp.fromMillis(millis) };
+}
+async function communityAuthor(context) {
+  const user = await readUser(context.db.collection('users').doc(context.uid), ['profile']);
+  if (!user.exists || user.data()?.accountDisabled === true) throw new HttpsError('permission-denied', 'This account cannot post to the community.');
+  return require('./community_posts').authorSnapshot(user.data());
+}
+exports.publishCommunityPost = onCall({timeoutSeconds: 120}, async request => {
+  const context = communityContext(request);
+  return require('./community_posts').publishPost({ ...context, author: await communityAuthor(context) });
+});
+exports.setCommunityPostLike = onCall({}, async request => require('./community_posts').setLike(communityContext(request)));
+exports.writeCommunityComment = onCall({}, async request => {
+  const context = communityContext(request);
+  return require('./community_posts').writeComment({ ...context, author: await communityAuthor(context) });
+});
+exports.removeCommunityComment = onCall({}, async request => require('./community_posts').removeComment(communityContext(request)));
+exports.editCommunityPost = onCall({timeoutSeconds: 60}, async request => {
+  const context = communityContext(request);
+  const { removedImages, ...result } = await require('./community_posts').editPost(context);
+  if (removedImages.length) {
+    // Stored paths are validated at creation/migration. Cleanup failures do
+    // not turn an already committed edit into a misleading failed response.
+    const post = await context.db.collection('communityPosts').doc(result.postId).get();
+    try { await require('./community_posts').removeImages(context.bucket, removedImages, post.data()?.authorId, result.postId); }
+    catch (error) { logger.warn('Removed community photos could not be cleaned up.', { code: String(error.code || 'cleanup-failed') }); }
+  }
+  return result;
+});
+exports.moderateCommunityPost = onCall({}, async request => require('./community_posts').moderatePost(communityContext(request, true)));
+exports.deleteCommunityPost = onCall({}, async request => require('./community_posts').deletePost(communityContext(request)));
+exports.cleanupDeletedCommunityPost = onDocumentDeleted(
+  { document: 'communityPosts/{postId}', retry: true, region: 'asia-southeast1' },
+  async event => require('./community_posts').cleanupDeletedPost({ db: admin.firestore(), bucket: getStorage().bucket(),
+    postId: event.params.postId, post: event.data.data() || {} })
+);
+
+// askHikerCircleAssistant: Apply the authenticated app session before routing the assistant request.
 exports.askHikerCircleAssistant = onCall(
   {
     secrets: [],
@@ -237,6 +388,7 @@ exports.askHikerCircleAssistant = onCall(
 // Public, privacy-safe community totals for the marketing site. All values are
 // aggregate-only. A completed team hike contributes one session and its
 // recorded distance for each participant, matching each hiker's history.
+// getPublicHikerCircleStats: Expose aggregate landing-page totals with bounded caching and no account records.
 exports.getPublicHikerCircleStats = onRequest(
   { timeoutSeconds: 30, memory: '256MiB' },
   async (request, response) => {
@@ -337,6 +489,7 @@ exports.getPublicHikerCircleStats = onRequest(
 // Accepts an explicitly unverified observation from a signed-in nearby phone.
 // A deterministic device/counter incident ID and one report per account prevent
 // repeated BLE advertisements or reconnect retries from creating emergencies.
+// forwardNearbySosIncident: Deduplicate a validated nearby BLE incident before forwarding owner alerts.
 exports.forwardNearbySosIncident = onCall(
   {},
   async (request) => {
@@ -767,12 +920,14 @@ function isAdminUser(user) {
   );
 }
 
+// reserveOtpChallenge: Reserve the OTP send attempt transactionally so normal retries do not send a second challenge.
 async function reserveOtpChallenge({
   reference,
   phoneNumber,
   codeHash,
   expiresAtMillis,
   cooldownMessage,
+  metadata = {},
 }) {
   const sentAtMillis = Date.now();
   await admin.firestore().runTransaction(async (transaction) => {
@@ -782,6 +937,7 @@ async function reserveOtpChallenge({
       throw new HttpsError('resource-exhausted', cooldownMessage);
     }
     transaction.set(reference, {
+      ...metadata,
       phoneNumber,
       codeHash,
       attemptsRemaining: 5,
@@ -822,6 +978,7 @@ async function markOtpDeliveryUncertain(reference, error) {
   );
 }
 
+// requireLoginPasswordBeforeOtp: Check the stored password and lockout state before sending a login verification code.
 async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
   if (!password) {
     throw new HttpsError(
@@ -923,6 +1080,7 @@ async function requireLoginPasswordBeforeOtp(phoneNumber, password) {
   }
 }
 
+// updateTeamParticipantForHike: Keep participant lifecycle changes aligned with the owning team session.
 async function updateTeamParticipantForHike(hike, nextStatus) {
   const teamHikeSessionId = String(hike.teamHikeSessionId || '');
   const phoneNumber = String(hike.userPhoneNumber || hike.phoneNumber || '');
@@ -982,9 +1140,10 @@ async function updateTeamParticipantForHike(hike, nextStatus) {
   }
 }
 
-exports.sendGreenApiLoginCode = onCall(
-  { secrets: [greenApiInstanceId, greenApiToken] },
-  async (request) => {
+// sendGreenApiLoginCode: Purpose-limited OTP delivery separates signup, login, and reauthentication artifacts.
+exports.sendGreenApiLoginCode = onAuthenticationCall(
+  { secrets: [greenApiInstanceId, greenApiToken], minInstances: 0, maxInstances: 20 },
+  withOtpTiming('login', async (request, timing) => {
     const phoneNumber = String(request.data?.phoneNumber || '').trim();
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
       throw new HttpsError(
@@ -993,49 +1152,37 @@ exports.sendGreenApiLoginCode = onCall(
       );
     }
     const intent = String(request.data?.intent || '').trim();
+    if (intent === 'reauth') await mobileSessionSecurity.requireActive(request);
     if (!['sign_in', 'sign_up', 'reauth'].includes(intent)) {
       throw new HttpsError('invalid-argument', 'Choose Sign Up or Login and try again.');
     }
-    const accountSnapshot = await readUser(admin.firestore()
-      .collection('users')
-      .doc(userDocumentIdForPhone(phoneNumber)), ["profile","security"]);
-    if (intent === 'sign_in' && !accountSnapshot.exists) {
-      throw new HttpsError('not-found', 'No account was found for this phone number.');
-    }
-    if (intent === 'sign_up' && accountSnapshot.exists
-      && !isIncompleteRegistration(accountSnapshot.data())) {
-      throw new HttpsError(
-        'already-exists',
-        'This phone number already has an account. Log in instead.'
-      );
-    }
-    if (intent === 'reauth') {
-      if (
-        !accountSnapshot.exists ||
-        authenticatedPhoneClaim(request) !== phoneNumber
-      ) {
-        throw new HttpsError(
-          'unauthenticated',
-          'Sign in again before confirming a security change.'
-        );
-      }
-    } else if (intent === 'sign_in') {
-      await requireLoginPasswordBeforeOtp(
-        phoneNumber,
-        String(request.data?.password || '')
-      );
-    }
-
-    let credentials;
-    try {
-      credentials = await requireGreenApiReady();
-    } catch (error) {
-      logger.error(
-        'GreenAPI login readiness failed',
-        greenApiReadinessLog(error)
-      );
-      throw greenApiReadinessHttpsError(error);
-    }
+    const {credentials} = await runOtpChecks({
+      timing,
+      checkAccount: async () => {
+        // The password transaction already checks existence, status and lockout.
+        if (intent === 'sign_in') {
+          await requireLoginPasswordBeforeOtp(phoneNumber, String(request.data?.password || ''));
+          return;
+        }
+        const accountSnapshot = await readUser(admin.firestore()
+          .collection('users').doc(userDocumentIdForPhone(phoneNumber)), ['profile', 'security']);
+        if (intent === 'sign_up' && accountSnapshot.exists
+          && !isIncompleteRegistration(accountSnapshot.data())) {
+          throw new HttpsError('already-exists', 'This phone number already has an account. Log in instead.');
+        }
+        if (intent === 'reauth' && (!accountSnapshot.exists
+          || authenticatedPhoneClaim(request) !== phoneNumber)) {
+          throw new HttpsError('unauthenticated', 'Sign in again before confirming a security change.');
+        }
+      },
+      checkProvider: async () => {
+        try { return await otpGreenApiReady(); }
+        catch (error) {
+          logger.error('GreenAPI login readiness failed', greenApiReadinessLog(error));
+          throw greenApiReadinessHttpsError(error);
+        }
+      },
+    });
 
     const challengeId = crypto
       .createHash('sha256')
@@ -1051,23 +1198,18 @@ exports.sendGreenApiLoginCode = onCall(
       .createHmac('sha256', greenApiToken.value())
       .update(`${challengeId}:${code}`)
       .digest('hex');
-    await reserveOtpChallenge({
+    await timing.measure('challengeReservation', () => reserveOtpChallenge({
       reference: challengeReference,
       phoneNumber,
       codeHash,
       expiresAtMillis,
       cooldownMessage: 'Wait one minute before requesting another WhatsApp code.',
-    });
-    await challengeReference.set(
-      {
+      metadata: {
         intent,
         passwordVerified: intent === 'sign_in',
-        requestedByUid: intent === 'reauth'
-          ? String(request.auth?.uid || '')
-          : admin.firestore.FieldValue.delete(),
+        ...(intent === 'reauth' ? {requestedByUid: String(request.auth?.uid || '')} : {}),
       },
-      { merge: true }
-    );
+    }));
     const digitsOnly = phoneNumber.replace(/\D/g, '');
     const verificationMessage = intent === 'sign_in'
       ? `Your HikerCircle login verification code is ${code}. ` +
@@ -1076,12 +1218,12 @@ exports.sendGreenApiLoginCode = onCall(
         'It expires in 5 minutes.';
     let response;
     try {
-      response = await sendGreenApiOtp({
+      response = await timing.measure('providerSend', () => sendGreenApiOtp({
         endpointFor: (method) => greenApiEndpoint(method, credentials),
         chatId: `${digitsOnly}@c.us`,
         code,
         message: verificationMessage,
-      });
+      }));
     } catch (error) {
       logger.error('GreenAPI login transport failed', {
         challengeId,
@@ -1116,7 +1258,7 @@ exports.sendGreenApiLoginCode = onCall(
         'WhatsApp verification is temporarily unavailable.'
       );
     }
-    const responseData = await response.json().catch(() => null);
+    const responseData = await timing.measure('providerAcknowledgement', () => response.json().catch(() => null));
     const providerMessageId = greenApiMessageId(responseData);
     if (!providerMessageId) {
       logger.error('GreenAPI login response did not include idMessage', {
@@ -1131,16 +1273,16 @@ exports.sendGreenApiLoginCode = onCall(
         'WhatsApp accepted the request but delivery could not be confirmed. Wait one minute before trying again.'
       );
     }
-    await challengeReference.set(
+    await timing.measure('deliveryCommit', () => challengeReference.set(
       {
         deliveryState: 'sent',
         providerMessageId: providerMessageId.slice(0, 240),
         deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
-    );
+    ));
     return { challengeId, expiresAtMillis };
-  }
+  }, (event, data) => logger.info(event, data))
 );
 
 function sosDispatchClientResponse(record, { alreadySent = false } = {}) {
@@ -1181,6 +1323,7 @@ function sosDispatchClientResponse(record, { alreadySent = false } = {}) {
   };
 }
 
+// transitionSosDispatch: Fence emergency dispatch transitions so only the current attempt can commit a provider result.
 async function transitionSosDispatch(
   reference,
   attemptNonce,
@@ -1255,6 +1398,8 @@ function greenApiEndpoint(method, credentials = greenApiCredentials()) {
   return `https://api.green-api.com/waInstance${credentials.instanceId}`
     + `/${method}/${credentials.token}`;
 }
+
+const otpGreenApiReady = createOtpReadinessCheck(() => requireGreenApiReady());
 
 async function requireGreenApiReady() {
   const credentials = greenApiCredentials();
@@ -1723,12 +1868,15 @@ async function sendLiveLocationStartToContact({
   uid,
   ownerPhone,
   sessionId,
+  shareId,
+  mode = 'hike',
   recipientPhone,
   message,
 }) {
   const dispatchReference = db
     .collection('liveLocationContactDispatches')
-    .doc(liveLocationDispatchDocumentId(uid, sessionId, recipientPhone));
+    .doc(liveLocationDispatchDocumentId(uid,
+      mode === 'standalone' ? `standalone:${shareId}` : sessionId, recipientPhone));
   const attemptNonce = crypto.randomBytes(24).toString('hex');
   const claim = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(dispatchReference);
@@ -1778,8 +1926,9 @@ async function sendLiveLocationStartToContact({
         ownerUid: uid,
         senderPhoneNumber: ownerPhone,
         recipientPhoneNumber: recipientPhone,
-        sessionId,
-        messageType: 'live_location_hike_start',
+        ...(mode === 'standalone' ? { shareId } : { sessionId }),
+        messageType: mode === 'standalone'
+          ? 'live_location_standalone_start' : 'live_location_hike_start',
         status: 'claimed',
         retryable: true,
         deliveryUncertain: false,
@@ -1893,6 +2042,7 @@ async function sendLiveLocationStartToContact({
 // This is a routine safety update, deliberately separate from SOS dispatches.
 // The server resolves saved contacts and canonical hike/share data so the app
 // cannot use this callable to message arbitrary recipients or arbitrary text.
+// notifyEmergencyContactsOfLiveLocation: Verify the owned share and dispatch each contact notice under a stable identity.
 exports.notifyEmergencyContactsOfLiveLocation = onCall(
   {
     secrets: [greenApiInstanceId, greenApiToken],
@@ -1917,20 +2067,23 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
     }
 
     const db = admin.firestore();
+    const standalone = notification.mode === 'standalone';
     const userReference = db.collection('users').doc(uid);
-    const hikeReference = db.collection('hikeSessions').doc(notification.sessionId);
+    const hikeReference = standalone
+      ? null : db.collection('hikeSessions').doc(notification.sessionId);
     const shareReference = db
       .collection('live_location_shares')
       .doc(notification.shareId);
     const [userSnapshot, hikeSnapshot, shareSnapshot] = await Promise.all([
-      readUser(userReference, ["location","profile","sos"]),
-      hikeReference.get(),
+      readUser(userReference, ["location","profile","sos", ...(standalone ? ["preferences"] : [])]),
+      hikeReference ? hikeReference.get() : null,
       shareReference.get(),
     ]);
     const user = userSnapshot.data() || {};
-    const hike = hikeSnapshot.data() || {};
+    const hike = hikeSnapshot?.data() || {};
     const share = shareSnapshot.data() || {};
-    const expiresAtMillis = dateMillis(share.expiresAtLocal || share.expiresAt);
+    const expiresAtMillis = dateMillis(standalone
+      ? share.expiresAt : share.expiresAtLocal || share.expiresAt);
     if (
       !userSnapshot.exists
       || String(user.phoneNumber || '') !== ownerPhone
@@ -1940,11 +2093,11 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
       throw new HttpsError('permission-denied', 'The signed-in account is invalid.');
     }
     if (
-      !hikeSnapshot.exists
+      !standalone && (!hikeSnapshot.exists
       || String(hike.userId || '') !== uid
       || String(hike.userPhoneNumber || '') !== ownerPhone
       || String(hike.status || '') !== 'active'
-      || hike.shareLiveLocation !== true
+      || hike.shareLiveLocation !== true)
     ) {
       throw new HttpsError(
         'failed-precondition',
@@ -1964,7 +2117,15 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
       );
     }
 
-    await hikeReference.set(
+    if (standalone && (user.liveLocationEnabled !== true
+        || String(user.liveLocationShareId || '') !== notification.shareId)) {
+      throw new HttpsError(
+        'failed-precondition',
+        'This live location link is not the currently enabled share.'
+      );
+    }
+
+    if (!standalone) await hikeReference.set(
       {
         liveLocationShareId: notification.shareId,
         liveLocationShareLinkedAt:
@@ -1992,13 +2153,27 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
       || new Date().toISOString();
     const shareUrl =
       `https://hiker-circle.web.app/live-location?share=${notification.shareId}`;
-    const message = composeLiveLocationStartMessage({
-      hikerName: canonicalUsername(user),
-      ownerPhone,
-      trailName: hike.trailName,
-      startedAt,
-      shareUrl,
-    });
+    let message;
+    try {
+      message = standalone ? composeStandaloneLiveLocationStartMessage({
+        hikerName: canonicalUsername(user),
+        ownerPhone,
+        startedAtMillis: originalLiveLocationStartedAtMillis({ share, user, expiresAtMillis, nowMillis: Date.now() }),
+        preferredTimeZone: user.preferredTimeZone,
+        shareUrl,
+      }) : composeLiveLocationStartMessage({
+        hikerName: canonicalUsername(user),
+        ownerPhone,
+        trailName: hike.trailName,
+        startedAt,
+        shareUrl,
+      });
+    } catch (error) {
+      if (error instanceof LiveLocationNotificationValidationError) {
+        throw new HttpsError('failed-precondition', error.message);
+      }
+      throw error;
+    }
     const credentials = greenApiCredentials();
     const statuses = await Promise.all(
       contacts.map((recipientPhone) => sendLiveLocationStartToContact({
@@ -2007,6 +2182,8 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
         uid,
         ownerPhone,
         sessionId: notification.sessionId,
+        shareId: notification.shareId,
+        mode: standalone ? 'standalone' : 'hike',
         recipientPhone,
         message,
       }))
@@ -2036,13 +2213,22 @@ exports.activateLiveLocationShare = onCall({}, async (request) => {
 // Native iOS/Android hike monitors keep hikeSessions.latestLocation fresh
 // while Flutter is suspended. Mirror that authenticated telemetry into the
 // public, expiring share rather than relying on a background Dart timer.
+// mirrorActiveHikeLocationToLiveShare: Publish only newer GPS versions while the owning hike/share remain active.
 exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
-  { document: 'hikeSessions/{sessionId}', retry: true },
+  { document: 'hikeSessions/{sessionId}', retry: true, region: 'asia-southeast1' },
   async (event) => {
     const before = event.data?.before.data() || {};
     const after = event.data?.after.data() || {};
     const shareId = String(after.liveLocationShareId || '').trim();
     const location = after.latestLocation;
+    if (after.status === 'active' && after.shareLiveLocation === true
+        && validFirestoreDocumentId(shareId)
+        && String(before.liveLocationShareId || '') !== shareId) {
+      await require('./live_location_route').backfillHikeRoute(admin.firestore(), {
+        sessionId: event.params.sessionId, shareId,
+        uid: String(after.userId || ''), phoneNumber: String(after.userPhoneNumber || ''),
+      });
+    }
     if (
       String(after.status || '') !== 'active'
       || after.shareLiveLocation !== true
@@ -2106,6 +2292,22 @@ exports.mirrorActiveHikeLocationToLiveShare = onDocumentUpdated(
   }
 );
 
+// Reuse standalone parent updates and clean derived chunks after revocation/deletion.
+exports.projectLiveLocationFootprints = onDocumentWritten(
+  { document: 'live_location_shares/{shareId}', retry: true, region: 'asia-southeast1' },
+  async (event) => {
+    const before = event.data?.before.data() || {};
+    const after = event.data?.after.data() || {};
+    if (event.data?.after.exists && after.isActive === true
+        && dateMillis(after.expiresAt) > Date.now()
+        && JSON.stringify(before.latestLocation || null) === JSON.stringify(after.latestLocation || null)) return;
+    return require('./live_location_route').projectShareLocation(admin.firestore(), {
+      shareId: event.params.shareId, location: after.latestLocation,
+    });
+  }
+);
+
+// manageBuddyRequest: Commit reciprocal incoming/outgoing relationship state with requester ownership and action limits.
 exports.manageBuddyRequest = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
@@ -2249,6 +2451,7 @@ exports.manageBuddyRequest = onCall({}, async (request) => {
 // Public discovery uses a server allow-list so private participant, safety,
 // and route-planning fields never cross the trust boundary. Full documents
 // remain readable only by their participants and administrators.
+// listUpcomingHikePreviews: Project public joinable hike plans without disclosing participant safety settings.
 exports.listUpcomingHikePreviews = onCall(
   {},
   async (request) => {
@@ -2329,6 +2532,7 @@ exports.listUpcomingHikePreviews = onCall(
 // Joining changes another user's upcoming-hike document, so membership and
 // chat creation are performed together by trusted server code. The caller's
 // phone number is always derived from the verified Firebase token.
+// joinUpcomingHike: Re-read join policy, membership, and launch state before accepting an open join.
 exports.joinUpcomingHike = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
@@ -2499,6 +2703,7 @@ exports.joinUpcomingHike = onCall({}, async (request) => {
   return { joined: true, ...result };
 });
 
+// requestToJoinUpcomingHike: Create one requester-scoped join request without bypassing host approval.
 exports.requestToJoinUpcomingHike = onCall({}, async (request) => {
   const { phoneNumber: requesterPhone, uid } = authenticatedPhoneFor(
     request,
@@ -2606,6 +2811,7 @@ function upcomingHikeJoinRequestResponse(requestId, request, hike, lifecycle) {
   };
 }
 
+// publicHikerDetails: Assemble public profile, reward, and completed-hike projections from their canonical sources.
 async function publicHikerDetails(db, userId) {
   if (!validFirestoreDocumentId(userId)) return {};
   const [userDocument, achievementDocuments, historyDocuments] =
@@ -2720,6 +2926,7 @@ exports.loadPublicHikerProfile = onCall({}, async (request) => {
   return publicHikerDetails(admin.firestore(), resolvedUserId);
 });
 
+// resolveUpcomingHikeJoinRequest: Only the current host can resolve a pending request and update related team/chat membership.
 exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
   const { phoneNumber: hostPhone } = authenticatedPhoneFor(
     request,
@@ -3079,9 +3286,11 @@ exports.openUpcomingHikeJoinRequest = onRequest((request, response) => {
 </body></html>`);
 });
 
+// notifyHostAboutUpcomingHikeJoinRequest: Claim host notification delivery before contacting the messaging provider.
 exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
   {
     document: 'upcomingHikeJoinRequests/{requestId}',
+    region: 'asia-southeast1',
     secrets: [greenApiInstanceId, greenApiToken],
   },
   async (event) => {
@@ -3337,6 +3546,7 @@ exports.markFormedHikeGroupNamingPromptShown = onCall({}, async (request) => {
   return { prepared: true, chatId };
 });
 
+// loadAchievementLeaderboard: Return bounded public achievement rankings without private user modules.
 exports.loadAchievementLeaderboard = onCall({}, async (request) => {
   const { uid } = authenticatedPhoneFor(
     request,
@@ -3402,6 +3612,7 @@ exports.loadAchievementLeaderboard = onCall({}, async (request) => {
   };
 });
 
+// nameFormedHikeGroupChat: Keep a host-approved group name aligned with the formed hike chat.
 exports.nameFormedHikeGroupChat = onCall({}, async (request) => {
   const { phoneNumber: ownerPhone } = authenticatedPhoneFor(
     request,
@@ -3534,6 +3745,7 @@ function publicProfileFromUserDocument(document) {
 
 // Public profiles combine only the account, profile and achievement modules.
 // Private modules are never loaded or returned by this projection.
+// getPublicProfiles: Hydrate only account, profile, and achievement modules needed by public hiker cards.
 exports.getPublicProfiles = onCall({}, async (request) => {
   const ownerPhone = authenticatedPhoneClaim(request);
   const uid = String(request.auth?.uid || '');
@@ -3732,6 +3944,7 @@ function teamBuddyFromUser(phoneNumber, user, isHost, index) {
   };
 }
 
+// sanitizedTeamDraft: Bound route/planning input before deriving shared team state.
 function sanitizedTeamDraft(rawDraft, trailData, buddies, options = {}) {
   const draft = rawDraft && typeof rawDraft === 'object' && !Array.isArray(rawDraft)
     ? rawDraft
@@ -3880,6 +4093,7 @@ function canonicalSharedPlanFromUpcoming(upcoming, fallbackTrail, buddies) {
   });
 }
 
+// mergeSharedPlanWithCallerSafety: Combine shared route/timing with this caller's own private safety settings.
 function mergeSharedPlanWithCallerSafety(sharedPlan, callerDraft) {
   const shared = sharedPlan && typeof sharedPlan === 'object'
     && !Array.isArray(sharedPlan)
@@ -4108,6 +4322,7 @@ function canonicalTrailSnapshot(trailId, trail, fallback) {
   };
 }
 
+// activeHikeDocumentData: Create the canonical private hike snapshot and initial footprint reference list.
 function activeHikeDocumentData({
   sessionId,
   uid,
@@ -4126,6 +4341,7 @@ function activeHikeDocumentData({
     userPhoneNumber: phoneNumber,
     ...(sourceUpcomingHikeId ? { sourceUpcomingHikeId } : {}),
     ...(teamHikeSessionId ? { teamHikeSessionId } : {}),
+    footprint: [],
     status: 'active',
     hikeType: String(draft.hikeType || 'solo') === 'team' ? 'team' : 'solo',
     teamBuddies: Array.isArray(draft.teamBuddies) ? draft.teamBuddies : [],
@@ -4177,6 +4393,7 @@ function activeHikeDocumentData({
   };
 }
 
+// ensureTeamChatDocument: Reconcile the team-derived group chat without replacing unrelated member state.
 async function ensureTeamChatDocument(
   db,
   teamId,
@@ -4299,6 +4516,7 @@ exports.cancelUpcomingHike = onCall({}, async (request) => {
   );
 });
 
+// scheduleUpcomingHike: Validate the host plan and atomically create the scheduled hike/team/chat links.
 exports.scheduleUpcomingHike = onCall(
   {},
   async (request) => {
@@ -4511,6 +4729,7 @@ exports.scheduleUpcomingHike = onCall(
   }
 );
 
+// openDirectChat: Use deterministic participant identity and reconcile only canonical chat fields.
 exports.openDirectChat = onCall(
   {},
   async (request) => {
@@ -4607,6 +4826,7 @@ exports.openDirectChat = onCall(
   }
 );
 
+// deleteChatForUser: Enforce participant ownership while preserving shared chat lifecycle semantics.
 exports.deleteChatForUser = onCall(
   {},
   async (request) => {
@@ -4693,6 +4913,7 @@ exports.deleteChatForUser = onCall(
   }
 );
 
+// startActiveHikeSession: Fence start retries, canonical trail data, and team readiness before creating an active hike.
 exports.startActiveHikeSession = onCall(
   {},
   async (request) => {
@@ -5011,6 +5232,7 @@ exports.startActiveHikeSession = onCall(
   }
 );
 
+// ensureActiveHikeSessionInCloud: Restore the same owned hike or return terminal state without reopening completed/abandoned sessions.
 exports.ensureActiveHikeSessionInCloud = onCall(
   {},
   async (request) => {
@@ -5359,6 +5581,13 @@ exports.ensureActiveHikeSessionInCloud = onCall(
             );
           }
         }
+        const locationSettingsPatch = require('./active_hike_location_settings')
+          .activeHikeLocationSettingsPatch(existing, rawDraft, HttpsError, {
+            hasTerminalState: terminalSnapshot.exists,
+          });
+        if (Object.keys(locationSettingsPatch).length > 0) {
+          transaction.set(sessionReference, locationSettingsPatch, { merge: true });
+        }
         return {
           sessionId,
           sourceLocalSessionId: isOfflineLocalSession ? requestedSessionId : '',
@@ -5542,6 +5771,7 @@ exports.ensureActiveHikeSessionInCloud = onCall(
   }
 );
 
+// completedHikeSummaryData: Normalize the completed report once so stored metrics and history projections agree.
 function completedHikeSummaryData({
   sessionId,
   trailName,
@@ -5616,6 +5846,7 @@ function completedHikeSummaryData({
 // finish even when its active cloud document was never created. Offline local
 // IDs are remapped into a caller-scoped deterministic namespace to prevent
 // another account from pre-claiming a predictable document ID.
+// completeActiveHikeSession: Commit terminal hike state, summary metrics, and related lifecycle updates idempotently.
 exports.completeActiveHikeSession = onCall(
   {},
   async (request) => {
@@ -5912,6 +6143,7 @@ exports.completeActiveHikeSession = onCall(
 // Ratings are accepted only for a server-confirmed completed hike. The review
 // document is keyed by session so retries replace the same vote, and the trail
 // aggregate is updated atomically with the review.
+// submitCompletedHikeRating: Authorize the completed owner session before replacing its trail rating vote.
 exports.submitCompletedHikeRating = onCall({}, async (request) => {
   const { uid } = authenticatedPhoneFor(
     request,
@@ -6031,11 +6263,18 @@ exports.listExpiredScheduledHikes = onCall({}, async (request) => {
     } : null };
 });
 
+// listMyHikeHistory: Use the owner revision hash to avoid rereading an unchanged history payload.
 exports.listMyHikeHistory = onCall({}, async (request) => {
   const { uid } = authenticatedPhoneFor(
     request,
     'Sign in to view your hike history.'
   );
+  const revision = await getFirestore().collection('mobileReadRevisions').doc(uid).get();
+  const revisionHash = String(revision.data()?.historyHash || 'initial');
+  if (request.data?.forcePayload !== true && request.data?.knownRevision === revisionHash
+    && /^[a-f0-9]{64}$/.test(String(request.data?.knownContentHash || ''))) {
+    return {notModified: true, contentHash: request.data.knownContentHash, revisionHash};
+  }
   const requestedLimit = Number(request.data?.limit || 100);
   const limit = Math.round(boundedNumber(requestedLimit, 1, 200, 100));
   const snapshot = await admin.firestore()
@@ -6051,14 +6290,21 @@ exports.listMyHikeHistory = onCall({}, async (request) => {
     .sort((left, right) => String(right.endedAtLocal || '')
       .localeCompare(String(left.endedAtLocal || '')))
     .slice(0, limit);
-  return { hikes };
+  return conditionalPayload({hikes}, request.data || {}, revisionHash);
 });
 
+// loadMyHikeHistoryDetail: Authorize the completed session before assembling private captures, footprints, check-ins, and team routes.
 exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
   const { phoneNumber, uid } = authenticatedPhoneFor(
     request,
     'Sign in to view this hike.'
   );
+  const revision = await getFirestore().collection('mobileReadRevisions').doc(uid).get();
+  const revisionHash = String(revision.data()?.historyHash || 'initial');
+  if (request.data?.forcePayload !== true && request.data?.knownRevision === revisionHash
+    && /^[a-f0-9]{64}$/.test(String(request.data?.knownContentHash || ''))) {
+    return {notModified: true, contentHash: request.data.knownContentHash, revisionHash};
+  }
   const sessionId = String(request.data?.sessionId || '').trim();
   if (!validFirestoreDocumentId(sessionId)) {
     throw new HttpsError('invalid-argument', 'The hike history entry is invalid.');
@@ -6089,7 +6335,7 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
   const [
     captureSnapshot,
     checkInSnapshot,
-    locationSnapshot,
+    footprints,
     ratingSnapshot,
     chatSnapshots,
     teamSessionsSnapshot,
@@ -6098,8 +6344,7 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
     await Promise.all([
       db.collection('hikeRouteCaptures').doc(sessionId).get(),
       db.collection('checkIns').where('sessionId', '==', sessionId).limit(1000).get(),
-      db.collection('localLocationPoints')
-        .where('sessionId', '==', sessionId).limit(5000).get(),
+      require('./footprint_batch').loadFootprints(db, sessionId, session.footprint),
       trailId
         ? db.collection('trails').doc(trailId).collection('ratings').doc(sessionId).get()
         : Promise.resolve(null),
@@ -6145,31 +6390,33 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
       routePoints: teamCaptureSnapshots[index]?.data()?.routePoints || [],
     };
   });
-  return {
+  return conditionalPayload({
     detail: hikeHistoryDetailData({
       sessionId,
       session,
       capture: captureSnapshot.data() || {},
       checkIns: checkInSnapshot.docs.map((document) => document.data() || {}),
-      locationPoints: locationSnapshot.docs.map((document) => document.data() || {}),
+      footprints,
       rating: ratingSnapshot?.data() || null,
       groupChatId,
       memberTracks,
     }),
-  };
+  }, request.data || {}, revisionHash);
 });
 
-exports.recordHikeLocationBatch = onCall({ timeoutSeconds: 60 }, async (request) => {
+// appendHikeFootprints: Delegate chunk identity, ownership, and durable sample acknowledgements to the footprint transaction.
+exports.appendHikeFootprints = onCall({ timeoutSeconds: 60 }, async (request) => {
   const { uid, phoneNumber } = authenticatedPhoneFor(request, 'Sign in to synchronize hike locations.');
   const sessionId = String(request.data?.sessionId || '').trim();
   if (!validFirestoreDocumentId(sessionId)) {
     throw new HttpsError('invalid-argument', 'The hike session is invalid.');
   }
-  return require('./location_batch').recordLocationBatch(admin.firestore(), {
-    sessionId, uid, phoneNumber, points: request.data?.points,
+  return require('./footprint_batch').appendFootprints(admin.firestore(), {
+    sessionId, uid, phoneNumber, footprints: request.data?.footprints,
   }, HttpsError, () => admin.firestore.FieldValue.serverTimestamp());
 });
 
+// recordActiveHikeCheckIn: Record the owner check-in and associated hike counters together.
 exports.recordActiveHikeCheckIn = onCall(
   {},
   async (request) => {
@@ -6290,6 +6537,7 @@ exports.recordActiveHikeCheckIn = onCall(
   }
 );
 
+// createTeamHikeSession: Create shared team planning state while keeping caller-specific safety settings private.
 exports.createTeamHikeSession = onCall({}, async (request) => {
   const { phoneNumber: ownerPhone, uid } = authenticatedPhoneFor(
     request,
@@ -6645,6 +6893,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
   return { teamSession: teamSessionForCallable(sessionReference.id, team) };
 });
 
+// manageTeamHikeSession: Fence team membership, readiness, launch, and terminal actions through one transactional authority.
 exports.manageTeamHikeSession = onCall({}, async (request) => {
   const { phoneNumber: callerPhone, uid } = authenticatedPhoneFor(
     request,
@@ -7463,6 +7712,7 @@ function queueTeamOutboxForParticipants(
   }
 }
 
+// cleanExpiredTeamHikeInvitationsTask: Expire stale invitations without changing an already launched team hike.
 async function cleanExpiredTeamHikeInvitationsTask({
   db = admin.firestore(),
   nowMillis = Date.now(),
@@ -7574,6 +7824,7 @@ function validMfaChallengeId(challengeId) {
   return /^[A-Za-z0-9_-]{20,100}$/.test(String(challengeId || ''));
 }
 
+// readUsableMfaSession: Validate opaque login-session identity, expiry, and consumption before using MFA artifacts.
 async function readUsableMfaSession(token, { enrollmentOnly = false } = {}) {
   if (!validMfaToken(token)) {
     throw new HttpsError('invalid-argument', 'The verification session is invalid.');
@@ -7634,7 +7885,8 @@ function factorMethods(documents) {
 }
 
 async function resolveMfaEnrollmentContext(request) {
-  if (request.auth?.uid) {
+  if (request.auth?.uid && !request.data?.mfaToken) {
+    await mobileSessionSecurity.requireActive(request);
     const phoneNumber = authenticatedPhoneClaim(request);
     const userId = String(request.auth.uid);
     if (
@@ -7676,9 +7928,18 @@ function recentMfaAuthentication(request) {
     && Date.now() / 1000 - authTimeSeconds <= 10 * 60;
 }
 
-async function createMfaCustomToken({ userId, phoneNumber, method }) {
+// createMfaCustomToken: Issue full-MFA claims only after preparing the matching server-owned mobile session candidate.
+async function createMfaCustomToken({ userId, phoneNumber, method, loginSession = {} }) {
   const userSnapshot = await readUser(admin.firestore().collection('users').doc(userId), ["devices","security"]);
   const user = userSnapshot.data() || {};
+  if (!userSnapshot.exists || user.accountDisabled === true || user.status === 'disabled') {
+    throw new HttpsError('permission-denied', 'This account is unavailable or disabled.');
+  }
+  const sessionClaims = await mobileSessionSecurity.createCandidate({
+    uid: userId, phoneNumber, method,
+    reauthSessionId: loginSession.loginIntent === 'reauth' ? String(loginSession.reauthSessionId || '') : '',
+    initialSetup: !user.passwordHash && ['sign_up', 'sign_in', 'reauth'].includes(loginSession.loginIntent),
+  });
   const nowIso = new Date().toISOString();
   await setUser(null, userSnapshot.ref, {
     lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -7690,12 +7951,14 @@ async function createMfaCustomToken({ userId, phoneNumber, method }) {
     phoneNumber,
     isAdmin: isAdminUser(user),
     verificationProvider: `whatsapp_${method}`,
+    ...sessionClaims,
     mfa: true,
     mfaMethod: method,
     mfaAt: nowIso,
   });
 }
 
+// persistEnrolledFactor: Bind the verified factor and update canonical MFA metadata in the same transaction.
 async function persistEnrolledFactor({
   context,
   factorId,
@@ -7784,6 +8047,7 @@ async function persistEnrolledFactor({
     userId: context.userId,
     phoneNumber: context.phoneNumber,
     method: factor.type,
+    loginSession: context.sessionReference ? (await context.sessionReference.get()).data() : {},
   });
   return {
     enrolled: true,
@@ -7793,6 +8057,7 @@ async function persistEnrolledFactor({
   };
 }
 
+// getMfaStatus: Return safe factor descriptions rather than encrypted secrets or credential material.
 exports.getMfaStatus = onCall({}, async (request) => {
   const phoneNumber = authenticatedPhoneClaim(request);
   const userId = String(request.auth?.uid || '');
@@ -7814,7 +8079,8 @@ exports.getMfaStatus = onCall({}, async (request) => {
   };
 });
 
-exports.beginTotpEnrollment = onCall(
+// beginTotpEnrollment: Create a purpose-limited authenticator enrollment challenge after authorization.
+exports.beginTotpEnrollment = onAuthenticationCall(
   { secrets: [mfaTotpEncryptionKey] },
   async (request) => {
     const context = await resolveMfaEnrollmentContext(request);
@@ -7845,7 +8111,8 @@ exports.beginTotpEnrollment = onCall(
   }
 );
 
-exports.finishTotpEnrollment = onCall(
+// finishTotpEnrollment: Verify the enrollment code and consume its challenge before binding the factor.
+exports.finishTotpEnrollment = onAuthenticationCall(
   { secrets: [mfaTotpEncryptionKey] },
   async (request) => {
     const context = await resolveMfaEnrollmentContext(request);
@@ -7901,7 +8168,8 @@ exports.finishTotpEnrollment = onCall(
   }
 );
 
-exports.beginPasskeyEnrollment = onCall({}, async (request) => {
+// beginPasskeyEnrollment: Bind a WebAuthn challenge to the verified enrollment context.
+exports.beginPasskeyEnrollment = onAuthenticationCall({}, async (request) => {
   const context = await resolveMfaEnrollmentContext(request);
   const factors = await factorDocumentsForUser(context.userId);
   const passkeys = factors.filter((document) => document.data()?.type === 'passkey');
@@ -7942,7 +8210,8 @@ exports.beginPasskeyEnrollment = onCall({}, async (request) => {
   return { challengeId, options, expiresAtMillis };
 });
 
-exports.finishPasskeyEnrollment = onCall({}, async (request) => {
+// finishPasskeyEnrollment: Verify WebAuthn registration before storing the credential and updating MFA state.
+exports.finishPasskeyEnrollment = onAuthenticationCall({}, async (request) => {
   const context = await resolveMfaEnrollmentContext(request);
   const challengeId = String(request.data?.challengeId || '').trim();
   const response = request.data?.response;
@@ -8014,7 +8283,8 @@ exports.finishPasskeyEnrollment = onCall({}, async (request) => {
   });
 });
 
-exports.verifyTotpLogin = onCall(
+// verifyTotpLogin: Consume the verified TOTP step and login session before minting full-MFA credentials.
+exports.verifyTotpLogin = onAuthenticationCall(
   { secrets: [mfaTotpEncryptionKey] },
   async (request) => {
     const token = String(request.data?.mfaToken || '').trim();
@@ -8088,12 +8358,13 @@ exports.verifyTotpLogin = onCall(
       userId: resolved.userId,
       phoneNumber: resolved.phoneNumber,
       method: 'totp',
+      loginSession: resolved.session,
     });
     return { customToken, phoneNumber: resolved.phoneNumber };
   }
 );
 
-exports.beginPasskeyLogin = onCall({}, async (request) => {
+exports.beginPasskeyLogin = onAuthenticationCall({}, async (request) => {
   const token = String(request.data?.mfaToken || '').trim();
   const resolved = await readUsableMfaSession(token);
   const factors = (await factorDocumentsForUser(resolved.userId))
@@ -8130,7 +8401,8 @@ exports.beginPasskeyLogin = onCall({}, async (request) => {
   return { challengeId, options, expiresAtMillis };
 });
 
-exports.finishPasskeyLogin = onCall({}, async (request) => {
+// finishPasskeyLogin: Verify the bound WebAuthn assertion and counter before issuing the mobile login candidate.
+exports.finishPasskeyLogin = onAuthenticationCall({}, async (request) => {
   const token = String(request.data?.mfaToken || '').trim();
   const challengeId = String(request.data?.challengeId || '').trim();
   const response = request.data?.response;
@@ -8223,6 +8495,7 @@ exports.finishPasskeyLogin = onCall({}, async (request) => {
     userId: resolved.userId,
     phoneNumber: resolved.phoneNumber,
     method: 'passkey',
+    loginSession: resolved.session,
   });
   return { customToken, phoneNumber: resolved.phoneNumber };
 });
@@ -8247,6 +8520,7 @@ exports.removeMfaFactor = onCall({}, async (request) => {
     HttpsError, () => admin.firestore.FieldValue.serverTimestamp());
 });
 
+// cleanExpiredMfaArtifacts: Delete only expired temporary artifacts; bound factors and account security remain intact.
 exports.cleanExpiredMfaArtifacts = onSchedule(
   { schedule: 'every 24 hours', timeoutSeconds: 120 },
   async () => {
@@ -8276,7 +8550,8 @@ exports.cleanExpiredMfaArtifacts = onSchedule(
   }
 );
 
-exports.verifyGreenApiLoginCode = onCall(
+// verifyGreenApiLoginCode: Consume the OTP proof before creating the purpose-limited second-factor login session.
+exports.verifyGreenApiLoginCode = onAuthenticationCall(
   { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
@@ -8405,6 +8680,7 @@ exports.verifyGreenApiLoginCode = onCall(
         verification.intent === 'sign_in' &&
         verification.passwordVerified === true,
       loginIntent: verification.intent,
+      reauthSessionId: verification.intent === 'reauth' ? String(request.auth?.token?.mobileSessionId || '') : '',
       enrollmentRequired: methods.length === 0,
       methods,
       attemptsRemaining: 8,
@@ -8424,7 +8700,7 @@ exports.verifyGreenApiLoginCode = onCall(
   }
 );
 
-exports.registerWithGreenApiAndPassword = onCall(
+exports.registerWithGreenApiAndPassword = onAuthenticationCall(
   {},
   async () => {
     throw new HttpsError(
@@ -8452,9 +8728,11 @@ const SAFETY_QUESTIONS = [
   "What is your father's middle name?",
 ];
 
+// registerSafetyQuestions: Require recent verified session authority before storing hashed recovery answers.
 exports.registerSafetyQuestions = onCall(
   {},
   async (request) => {
+    mobileSessionSecurity.requireRecent(request);
     const phoneNumber = authenticatedPhoneClaim(request);
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
       throw new HttpsError(
@@ -8485,25 +8763,25 @@ exports.registerSafetyQuestions = onCall(
     const a1Hash = await argon2.hash(a1.toLowerCase(), { type: argon2.argon2id });
     const a2Hash = await argon2.hash(a2.toLowerCase(), { type: argon2.argon2id });
 
-    await setUser(null, admin
-      .firestore()
-      .collection('users')
-      .doc(userId), {
-          safetyQuestions: {
-            q1,
-            a1Hash,
-            q2,
-            a2Hash,
-          },
-        }, { merge: true });
+    await getFirestore().runTransaction(async transaction => {
+      const reference = getFirestore().collection('users').doc(userId);
+      const [account, state] = await Promise.all([transaction.get(reference),
+        transaction.get(getFirestore().collection('mobileSessions').doc(userId))]);
+      if (!account.exists || account.data()?.accountDisabled === true || account.data()?.status === 'disabled'
+        || state.data()?.activeSessionId !== request.auth.token.mobileSessionId) {
+        throw new HttpsError('unauthenticated', 'This session has ended. Sign in again.');
+      }
+      setUser(transaction, reference, {safetyQuestions: {q1, a1Hash, q2, a2Hash}}, {merge: true});
+    });
 
     return { success: true };
   }
 );
 
-exports.sendPasswordResetCode = onCall(
-  { secrets: [greenApiInstanceId, greenApiToken] },
-  async (request) => {
+// sendPasswordResetCode: Reserve a reset OTP independently of ordinary sign-in challenges.
+exports.sendPasswordResetCode = onAuthenticationCall(
+  { secrets: [greenApiInstanceId, greenApiToken], minInstances: 0, maxInstances: 20 },
+  withOtpTiming('password_reset', async (request, timing) => {
     const phoneNumber = String(request.data?.phoneNumber || '').trim();
     if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
       throw new HttpsError(
@@ -8513,49 +8791,36 @@ exports.sendPasswordResetCode = onCall(
     }
 
     const userId = userDocumentIdForPhone(phoneNumber);
-    try {
-      await admin.auth().getUser(userId);
-    } catch (authError) {
-      if (authError.code === 'auth/user-not-found') {
-        throw new HttpsError(
-          'not-found',
-          'This phone number is not registered in the system.'
-        );
-      }
-      throw new HttpsError(
-        'internal',
-        'Unable to verify account. Please try again.'
-      );
-    }
-
-    const userSnapshot = await readUser(admin
-      .firestore()
-      .collection('users')
-      .doc(userId), ["security"]);
-    const user = userSnapshot.data() || {};
-    if (!user.passwordHash) {
-      throw new HttpsError(
-        'failed-precondition',
-        'This account does not have a password set.'
-      );
-    }
-    if (user.accountDisabled === true || user.status === 'disabled') {
-      throw new HttpsError(
-        'permission-denied',
-        'This HikerCircle account has been disabled.'
-      );
-    }
-
-    let credentials;
-    try {
-      credentials = await requireGreenApiReady();
-    } catch (error) {
-      logger.error(
-        'GreenAPI password reset readiness failed',
-        greenApiReadinessLog(error)
-      );
-      throw greenApiReadinessHttpsError(error);
-    }
+    const {credentials} = await runOtpChecks({
+      timing,
+      checkAccount: async () => {
+        const [authResult, accountResult] = await Promise.allSettled([
+          admin.auth().getUser(userId),
+          readUser(admin.firestore().collection('users').doc(userId), ['security']),
+        ]);
+        if (authResult.status === 'rejected') {
+          throw new HttpsError(authResult.reason.code === 'auth/user-not-found' ? 'not-found' : 'internal',
+            authResult.reason.code === 'auth/user-not-found'
+              ? 'This phone number is not registered in the system.'
+              : 'Unable to verify account. Please try again.');
+        }
+        if (accountResult.status === 'rejected') throw accountResult.reason;
+        const user = accountResult.value.data() || {};
+        if (!user.passwordHash) {
+          throw new HttpsError('failed-precondition', 'This account does not have a password set.');
+        }
+        if (user.accountDisabled === true || user.status === 'disabled') {
+          throw new HttpsError('permission-denied', 'This HikerCircle account has been disabled.');
+        }
+      },
+      checkProvider: async () => {
+        try { return await otpGreenApiReady(); }
+        catch (error) {
+          logger.error('GreenAPI password reset readiness failed', greenApiReadinessLog(error));
+          throw greenApiReadinessHttpsError(error);
+        }
+      },
+    });
 
     const challengeId = crypto
       .createHash('sha256')
@@ -8571,23 +8836,23 @@ exports.sendPasswordResetCode = onCall(
       .createHmac('sha256', greenApiToken.value())
       .update(`${challengeId}:${code}`)
       .digest('hex');
-    await reserveOtpChallenge({
+    await timing.measure('challengeReservation', () => reserveOtpChallenge({
       reference: challengeReference,
       phoneNumber,
       codeHash,
       expiresAtMillis,
       cooldownMessage: 'Wait one minute before requesting another code.',
-    });
+    }));
     const digitsOnly = phoneNumber.replace(/\D/g, '');
     let response;
     try {
-      response = await sendGreenApiOtp({
+      response = await timing.measure('providerSend', () => sendGreenApiOtp({
         endpointFor: (method) => greenApiEndpoint(method, credentials),
         chatId: `${digitsOnly}@c.us`,
         code,
         message: `Your HikerCircle password reset code is ${code}. ` +
           'It expires in 5 minutes.',
-      });
+      }));
     } catch (error) {
       logger.error('GreenAPI password reset transport failed', {
         challengeId,
@@ -8622,7 +8887,7 @@ exports.sendPasswordResetCode = onCall(
         'WhatsApp verification is temporarily unavailable.'
       );
     }
-    const responseData = await response.json().catch(() => null);
+    const responseData = await timing.measure('providerAcknowledgement', () => response.json().catch(() => null));
     const providerMessageId = greenApiMessageId(responseData);
     if (!providerMessageId) {
       logger.error(
@@ -8638,19 +8903,19 @@ exports.sendPasswordResetCode = onCall(
         'WhatsApp accepted the request but delivery could not be confirmed. Wait one minute before trying again.'
       );
     }
-    await challengeReference.set(
+    await timing.measure('deliveryCommit', () => challengeReference.set(
       {
         deliveryState: 'sent',
         providerMessageId: providerMessageId.slice(0, 240),
         deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
-    );
+    ));
     return { challengeId, expiresAtMillis };
-  }
+  }, (event, data) => logger.info(event, data))
 );
 
-exports.verifyPasswordResetOtp = onCall(
+exports.verifyPasswordResetOtp = onAuthenticationCall(
   { secrets: [greenApiToken] },
   async (request) => {
     const challengeId = String(request.data?.challengeId || '').trim();
@@ -8782,6 +9047,7 @@ exports.verifyPasswordResetOtp = onCall(
   }
 );
 
+// readUsablePasswordResetSession: Require an unexpired, unused reset session with the expected recovery method.
 async function readUsablePasswordResetSession(resetToken, recoveryMethod = '') {
   if (!/^[a-f0-9]{64}$/.test(resetToken)) {
     throw new HttpsError('invalid-argument', 'The password reset session is invalid.');
@@ -8818,7 +9084,7 @@ async function readUsablePasswordResetSession(resetToken, recoveryMethod = '') {
   return { reference, snapshot, session, phoneNumber, userId, recoveryMethods };
 }
 
-exports.checkSafetyAnswer = onCall(
+exports.checkSafetyAnswer = onAuthenticationCall(
   {},
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
@@ -8891,6 +9157,7 @@ exports.checkSafetyAnswer = onCall(
         recoveryVerified: true,
         recoveryMethod: 'secretQuestion',
         recoveryVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        recoveryVerifiedAtMillis: Date.now(),
       }, { merge: true });
       return { valid: true };
     });
@@ -8902,7 +9169,7 @@ exports.checkSafetyAnswer = onCall(
   }
 );
 
-exports.verifyPasswordResetTotp = onCall(
+exports.verifyPasswordResetTotp = onAuthenticationCall(
   { secrets: [mfaTotpEncryptionKey] },
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
@@ -8966,6 +9233,7 @@ exports.verifyPasswordResetTotp = onCall(
         recoveryVerified: true,
         recoveryMethod: 'totp',
         recoveryVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        recoveryVerifiedAtMillis: Date.now(),
       }, { merge: true });
       return { verified: true };
     });
@@ -8985,7 +9253,7 @@ exports.verifyPasswordResetTotp = onCall(
   }
 );
 
-exports.beginPasswordResetPasskey = onCall({}, async (request) => {
+exports.beginPasswordResetPasskey = onAuthenticationCall({}, async (request) => {
   const resetToken = String(request.data?.resetToken || '').trim();
   const resolved = await readUsablePasswordResetSession(resetToken, 'passkey');
   const factors = (await factorDocumentsForUser(resolved.userId))
@@ -9028,7 +9296,7 @@ exports.beginPasswordResetPasskey = onCall({}, async (request) => {
   return { challengeId, options, expiresAtMillis };
 });
 
-exports.finishPasswordResetPasskey = onCall({}, async (request) => {
+exports.finishPasswordResetPasskey = onAuthenticationCall({}, async (request) => {
   const resetToken = String(request.data?.resetToken || '').trim();
   const challengeId = String(request.data?.challengeId || '').trim();
   const response = request.data?.response;
@@ -9135,6 +9403,7 @@ exports.finishPasswordResetPasskey = onCall({}, async (request) => {
       recoveryVerified: true,
       recoveryMethod: 'passkey',
       recoveryVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        recoveryVerifiedAtMillis: Date.now(),
     }, { merge: true });
     transaction.set(factorDocument.ref, {
       counter: Number(verification.authenticationInfo?.newCounter || 0),
@@ -9144,7 +9413,8 @@ exports.finishPasswordResetPasskey = onCall({}, async (request) => {
   return { verified: true, method: 'passkey' };
 });
 
-exports.resetPassword = onCall(
+// resetPassword: Consume the recovery proof and revoke active mobile access in the password-change transaction.
+exports.resetPassword = onAuthenticationCall(
   {},
   async (request) => {
     const resetToken = String(request.data?.resetToken || '').trim();
@@ -9153,7 +9423,7 @@ exports.resetPassword = onCall(
     if (resetToken.length < 10) {
       throw new HttpsError('invalid-argument', 'Invalid reset token.');
     }
-    if (newPassword.length < 8) {
+    if (newPassword.length < 8 || newPassword.length > 1024) {
       throw new HttpsError('invalid-argument', 'New password must be at least 8 characters.');
     }
 
@@ -9176,6 +9446,7 @@ exports.resetPassword = onCall(
       const recoveryMethod = String(session.recoveryMethod || '');
       if (
         session.recoveryVerified !== true
+        || Date.now() - Number(session.recoveryVerifiedAtMillis || 0) > 10 * 60 * 1000
         || !['secretQuestion', 'totp', 'passkey'].includes(recoveryMethod)
         || !Array.isArray(session.recoveryMethods)
         || !session.recoveryMethods.includes(recoveryMethod)
@@ -9194,6 +9465,7 @@ exports.resetPassword = onCall(
 
       const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
       updateUser(transaction, admin.firestore().collection('users').doc(userId), { passwordHash });
+      mobileSessionSecurity.revokeInTransaction(transaction, userId, 'password-reset');
       transaction.update(sessionRef, { used: true });
       return { success: true };
     });
@@ -9206,74 +9478,70 @@ exports.resetPassword = onCall(
 );
 
 // Keep rejection stubs for older clients; these paths must never mint tokens.
-exports.loginWithPassword = onCall({}, async () => {
+exports.loginWithPassword = onAuthenticationCall({}, async () => {
   throw new HttpsError(
     'failed-precondition',
     'Password-only login is disabled. Sign in with WhatsApp and your security method.'
   );
 });
 
-exports.linkPasswordToAccount = onCall({}, async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid) {
-    throw new HttpsError(
-      'unauthenticated',
-      'You must be signed in to set a password.'
-    );
-  }
-  const phoneNumber = authenticatedPhoneClaim(request);
-  if (!/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
-    throw new HttpsError(
-      'unauthenticated',
-      'No verified phone number found. Sign in again.'
-    );
-  }
-  const password = String(request.data?.password || '');
-  const username = String(request.data?.username || '').trim();
-  if (password.length < 8) {
-    throw new HttpsError(
-      'invalid-argument',
-      'Password must be at least 8 characters.'
-    );
-  }
-  if (!username || username.length < 3 || username.length > 24) {
-    throw new HttpsError(
-      'invalid-argument',
-      'Username must be between 3 and 24 characters.'
-    );
-  }
-
-  const userId = userDocumentIdForPhone(phoneNumber);
-  const passwordHash = await argon2.hash(password, {
-    type: argon2.argon2id,
-  });
-
-  const now = new Date();
-  await setUser(null, admin
-    .firestore()
-    .collection('users')
-    .doc(userId), {
-        phoneNumber,
-        passwordHash,
-        profile: {username},
-        requiresOnboarding: true,
-        profileSetupCompleted: false,
-        onboardingVersion: 1,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAtLocal: now.toISOString(),
-        lastSignedInAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastSignedInAtLocal: now.toISOString(),
-      }, { merge: true });
-
-  const customToken = await admin.auth().createCustomToken(userId, {
-    phoneNumber,
-    username,
-    verificationProvider: 'green_api_password',
-  });
-  return { customToken, phoneNumber };
+exports.getPasswordSetupStatus = onCall({}, async request => {
+  const user = await readUser(getFirestore().collection('users').doc(request.auth.uid), ['security']);
+  return {configured: Boolean(user.data()?.passwordHash)};
 });
 
-exports.authenticateAppSession = onCall({}, async () => {
+// linkPasswordToAccount: Restrict initial password setup to its verified session and retain retry identity.
+exports.linkPasswordToAccount = onCall({}, async request => {
+  mobileSessionSecurity.requireRecent(request);
+  if (request.auth.token.initialPasswordSetup !== true) {
+    throw new HttpsError('permission-denied', 'Initial password setup is not authorized for this login.');
+  }
+  const uid = request.auth.uid;
+  const password = String(request.data?.password || '');
+  const username = String(request.data?.username || '').trim();
+  if (password.length < 8 || password.length > 1024 || !/^[A-Za-z0-9_]{3,24}$/.test(username)) {
+    throw new HttpsError('invalid-argument', 'Enter a valid password and username.');
+  }
+  const passwordHash = await argon2.hash(password, {type: argon2.argon2id});
+  return getFirestore().runTransaction(async transaction => {
+    const reference = getFirestore().collection('users').doc(uid);
+    const [user, state] = await Promise.all([readUser(reference, ['security'], transaction),
+      transaction.get(getFirestore().collection('mobileSessions').doc(uid))]);
+    const security = user.data() || {};
+    if (!user.exists || security.accountDisabled === true || security.status === 'disabled'
+      || state.data()?.activeSessionId !== request.auth.token.mobileSessionId) {
+      throw new HttpsError('permission-denied', 'This account is unavailable.');
+    }
+    if (security.passwordHash) {
+      if (security.initialPasswordSetupSessionId === request.auth.token.mobileSessionId) return {configured: true, alreadyConfigured: true};
+      throw new HttpsError('already-exists', 'A password is already configured. Use password change or recovery.');
+    }
+    setUser(transaction, reference, {passwordHash, passwordSetupCompletedAt: FieldValue.serverTimestamp(),
+      initialPasswordSetupSessionId: request.auth.token.mobileSessionId, profile: {username}}, {merge: true});
+    return {configured: true};
+  });
+});
+
+// changeAccountPassword: Recheck current mobile authority before replacing the account password hash.
+exports.changeAccountPassword = onCall({}, async request => {
+  mobileSessionSecurity.requireRecent(request);
+  const password = String(request.data?.newPassword || '');
+  if (password.length < 8 || password.length > 1024) throw new HttpsError('invalid-argument', 'Password must be 8-1024 characters.');
+  const passwordHash = await argon2.hash(password, {type: argon2.argon2id});
+  await getFirestore().runTransaction(async transaction => {
+    const ref = getFirestore().collection('users').doc(request.auth.uid);
+    const [user, state] = await Promise.all([readUser(ref, ['security'], transaction),
+      transaction.get(getFirestore().collection('mobileSessions').doc(request.auth.uid))]);
+    if (!user.exists || user.data()?.accountDisabled === true || user.data()?.status === 'disabled'
+      || state.data()?.activeSessionId !== request.auth.token.mobileSessionId) {
+      throw new HttpsError('unauthenticated', 'This session has ended. Sign in again.');
+    }
+    updateUser(transaction, ref, {passwordHash, passwordChangedAt: FieldValue.serverTimestamp()});
+  });
+  return {changed: true};
+});
+
+exports.authenticateAppSession = onAuthenticationCall({}, async () => {
   throw new HttpsError(
     'failed-precondition',
     'Saved-device recovery requires a fresh WhatsApp and second-factor sign-in.'
@@ -9283,6 +9551,7 @@ exports.authenticateAppSession = onCall({}, async () => {
 // ─── Weather ────────────────────────────────────────────────────
 
 
+// fetchWeatherForAllTrails: Share cached forecast refreshes across the scheduled catalogue update.
 exports.fetchWeatherForAllTrails = onSchedule(
   { schedule: 'every 60 minutes', timeoutSeconds: 540 },
   async () => {
@@ -9302,6 +9571,7 @@ exports.fetchWeatherForAllTrails = onSchedule(
   }
 );
 
+// fetchWeatherForTrail: Return conditional forecast hashes while preserving the shared refresh lease.
 exports.fetchWeatherForTrail = onCall(
   {},
   async (request) => {
@@ -9348,12 +9618,13 @@ exports.fetchWeatherForTrail = onCall(
 
     logger.log('Trail weather synchronized', {trailId, written: synchronized.written});
 
-    return { weather };
+    return conditionalPayload({weather}, request.data || {}, contentHash(weather));
   }
 );
 
 // ─── Notifications ──────────────────────────────────────────────
 
+// claimAtMostOnceDelivery: Persist delivery authority before sending a notification that cannot safely be repeated.
 async function claimAtMostOnceDelivery(
   reference,
   { claimPrefix, processedFields = [] }
@@ -9554,6 +9825,7 @@ function latestHikeActivityMillis(hike) {
     : Number.NaN;
 }
 
+// shouldAbandonInactiveHike: Classify stale monitoring using actual GPS/activity and the configured upload interval.
 function shouldAbandonInactiveHike(hike, nowMillis) {
   const latestActivityMillis = latestHikeActivityMillis(hike);
   if (
@@ -9710,6 +9982,7 @@ function serverEventReceiptId(prefix, ...values) {
     .digest('hex');
 }
 
+// applyAchievementMetricServer: Use event receipts to apply reward progress and point totals once.
 async function applyAchievementMetricServer({
   userId,
   metricKey,
@@ -9996,6 +10269,7 @@ exports.getMyAchievementProgressHash = onCall({}, async (request) => {
   };
 });
 
+// syncMyAchievementProgress: Reconcile progress from canonical server events while retaining idempotent reward accounting.
 exports.syncMyAchievementProgress = onCall({}, async (request) => {
   const { uid } = authenticatedPhoneFor(
     request,
@@ -10186,7 +10460,7 @@ async function revokeTerminalHikeShare(hike) {
 // start. No preparation metric is emitted until the backend has authoritative
 // offline-map and full-checklist evidence.
 exports.awardAchievementsForStartedHike = onDocumentCreated(
-  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60 },
+  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60, region: 'asia-southeast1' },
   async (event) => {
     const hike = event.data.data() || {};
     if (activeMembershipChanged(null, hike)) await reconcileActiveHikeMonitorSchedule();
@@ -10198,8 +10472,9 @@ exports.awardAchievementsForStartedHike = onDocumentCreated(
   }
 );
 
+// recordHikeTerminalStateAndAchievements: Preserve terminal identity and award completed-hike metrics without replaying the same event.
 exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
-  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60 },
+  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60, region: 'asia-southeast1' },
   async (event) => {
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
@@ -10242,7 +10517,7 @@ exports.recordHikeTerminalStateAndAchievements = onDocumentUpdated(
 );
 
 exports.awardAchievementForCompletedTeamHike = onDocumentUpdated(
-  { document: 'teamHikeSessions/{teamId}', retry: true },
+  { document: 'teamHikeSessions/{teamId}', retry: true, region: 'asia-southeast1' },
   async (event) => {
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
@@ -10302,7 +10577,7 @@ exports.awardAchievementForCompletedTeamHike = onDocumentUpdated(
 );
 
 exports.preserveDeletedHikeTerminalState = onDocumentDeleted(
-  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60 },
+  { document: 'hikeSessions/{sessionId}', retry: true, timeoutSeconds: 60, region: 'asia-southeast1' },
   async (event) => {
     const hike = event.data.data() || {};
     if (activeMembershipChanged(hike, null)) await reconcileActiveHikeMonitorSchedule();
@@ -10324,7 +10599,7 @@ exports.preserveDeletedHikeTerminalState = onDocumentDeleted(
 );
 
 exports.awardAchievementForCheckIn = onDocumentCreated(
-  'checkIns/{checkInId}',
+  { document: 'checkIns/{checkInId}', region: 'asia-southeast1' },
   async (event) => {
     const checkIn = event.data.data() || {};
     const userId = String(checkIn.userId || '');
@@ -10344,13 +10619,12 @@ exports.awardAchievementForCheckIn = onDocumentCreated(
 );
 
 exports.awardAchievementForCommunityPost = onDocumentCreated(
-  'communityPosts/{postId}',
+  { document: 'communityPosts/{postId}', region: 'asia-southeast1' },
   async (event) => {
     const post = event.data.data() || {};
     const userId = String(post.authorId || '');
-    const phoneNumber = String(post.authorPhoneNumber || '');
     if (
-      userId !== userDocumentIdForPhone(phoneNumber)
+      !/^\+[1-9]\d{7,14}$/.test(userId)
       || String(post.visibility || '') !== 'public'
     ) {
       return;
@@ -10364,7 +10638,7 @@ exports.awardAchievementForCommunityPost = onDocumentCreated(
 );
 
 exports.awardAchievementForApprovedHazard = onDocumentUpdated(
-  'hazardReports/{hazardId}',
+  { document: 'hazardReports/{hazardId}', region: 'asia-southeast1' },
   async (event) => {
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
@@ -10387,20 +10661,9 @@ exports.awardAchievementForApprovedHazard = onDocumentUpdated(
   }
 );
 
-exports.incrementCommunityCommentCount = onDocumentCreated(
-  { document: 'communityPosts/{postId}/comments/{commentId}', retry: true },
-  async event => require('./community_comment_counter').reconcileCommentCount(
-    admin.firestore(), event.params.postId, () => admin.firestore.FieldValue.serverTimestamp())
-);
-
-exports.decrementCommunityCommentCount = onDocumentDeleted(
-  { document: 'communityPosts/{postId}/comments/{commentId}', retry: true },
-  async event => require('./community_comment_counter').reconcileCommentCount(
-    admin.firestore(), event.params.postId, () => admin.firestore.FieldValue.serverTimestamp())
-);
-
+// notifyGroupMembersAboutMessage: Claim message delivery, reconcile the latest preview, and notify current members only.
 exports.notifyGroupMembersAboutMessage = onDocumentCreated(
-  { document: 'groupChats/{chatId}/messages/{messageId}', retry: true },
+  { document: 'groupChats/{chatId}/messages/{messageId}', retry: true, region: 'asia-southeast1' },
   async (event) => {
     const message = event.data.data() || {};
     if (message.isSystemMessage === true) {
@@ -10627,6 +10890,7 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
   }
 );
 
+// deliverFcmOutboxDocument: Fence preflight and outbound phases before delivering a queued push notification.
 async function deliverFcmOutboxDocument(reference, messageId) {
   const db = admin.firestore();
   const lifecycle = require('./fcm_outbox_delivery');
@@ -10819,13 +11083,14 @@ async function deliverFcmOutboxDocument(reference, messageId) {
 }
 
 exports.deliverFcmOutboxMessage = onDocumentCreated(
-  { document: 'fcmOutbox/{messageId}', retry: true },
+  { document: 'fcmOutbox/{messageId}', retry: true, region: 'asia-southeast1' },
   event => deliverFcmOutboxDocument(event.data.ref, event.params.messageId)
 );
 
 exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
   {
     document: 'fcmOutbox/{messageId}',
+    region: 'asia-southeast1',
     secrets: [greenApiInstanceId, greenApiToken],
   },
   async (event) => {
@@ -10934,6 +11199,7 @@ exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
   }
 );
 
+// recoverFcmOutboxDeliveries: Retry safe pending/preflight work while leaving uncertain outbound attempts explicit.
 exports.recoverFcmOutboxDeliveries = onSchedule('every 5 minutes', async () => {
   let cursor = null;
   while (true) {
@@ -10952,7 +11218,7 @@ exports.recoverFcmOutboxDeliveries = onSchedule('every 5 minutes', async () => {
 });
 
 exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
-  'upcomingHikes/{hikeId}',
+  { document: 'upcomingHikes/{hikeId}', region: 'asia-southeast1' },
   async (event) => {
     const hike = await claimAtMostOnceDelivery(event.data.ref, {
       claimPrefix: 'nearbyNotificationDelivery',
@@ -11089,7 +11355,7 @@ exports.notifyNearbyHikersAboutUpcomingHike = onDocumentCreated(
 );
 
 exports.sendReminderOnActiveHikeTerminationSignal = onDocumentUpdated(
-  'hikeSessions/{sessionId}',
+  { document: 'hikeSessions/{sessionId}', region: 'asia-southeast1' },
   async (event) => {
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
@@ -11186,6 +11452,7 @@ async function sendUpcomingHikeReminderToPhone(
   return { successCount, failureCount, skipped: false };
 }
 
+// claimUpcomingHikeReminder: Claim the eligible per-user reminder window before any provider send.
 async function claimUpcomingHikeReminder({
   db,
   hikeReference,
@@ -11253,6 +11520,7 @@ async function claimUpcomingHikeReminder({
   });
 }
 
+// processUpcomingHikeLifecycleTask: Reconcile departure, reminders, and source lifecycle within the existing scheduled worker.
 async function processUpcomingHikeLifecycleTask({db, snapshot, now}) {
     const expiredBefore = now - 15 * 60 * 1000;
 
@@ -11456,6 +11724,7 @@ async function abandonInactiveHikeDocument(db, document, now) {
   });
 }
 
+// monitorActiveHikesTask: Evaluate current owner activity before reminders or terminal abandonment.
 async function monitorActiveHikesTask({db, snapshot, now}) {
   let reminderCount = 0;
   let cleanedCount = 0;
@@ -11557,6 +11826,7 @@ exports.monitorActiveHikes = onSchedule({
   }, Date.now, event.scheduleTime);
 });
 
+// cleanExpiredGroupChatsTask: Apply the current chat-removal policy after checking linked hike/team state.
 async function cleanExpiredGroupChatsTask({
   db = admin.firestore(),
   now = Date.now(),
@@ -11677,3 +11947,140 @@ exports.cleanExpiredTeamAndGroupChats = onSchedule(
     );
   }
 );
+
+
+// Small owner-scoped invalidation records. Writes happen on history changes,
+// never on a mobile page opening. Event IDs make duplicate delivery harmless.
+// invalidateMobileHistory: Store one revision hash per owner and retain event receipts to deduplicate invalidation.
+async function invalidateMobileHistory(uid, eventId) {
+  if (!uid || !eventId) return;
+  const ref = getFirestore().collection('mobileReadRevisions').doc(uid);
+  const seen = ref.collection('events').doc(contentHash(eventId));
+  await getFirestore().runTransaction(async tx => {
+    const [previous, delivered] = await Promise.all([tx.get(ref), tx.get(seen)]);
+    if (delivered.exists) return;
+    tx.set(ref, {historyHash: contentHash([previous.data()?.historyHash || '', eventId]), updatedAt: FieldValue.serverTimestamp()}, {merge: true});
+    tx.create(seen, {createdAt: FieldValue.serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 7 * 86400000)});
+  });
+}
+exports.invalidateCompletedHistory = onDocumentWritten({document: 'hikeSessions/{sessionId}', region: 'asia-southeast1'}, async event => {
+  const before = event.data?.before?.data();
+  const after = event.data?.after?.data();
+  if (before?.status !== 'completed' && after?.status !== 'completed') return;
+  if (contentHash(before || {}) === contentHash(after || {})) return;
+  for (const uid of new Set([before?.userId, after?.userId].filter(Boolean))) await invalidateMobileHistory(uid, event.id);
+});
+async function invalidateHistoryChild(sessionId, eventId) {
+  if (!sessionId) return;
+  const hike = await getFirestore().collection('hikeSessions').doc(sessionId).get();
+  if (hike.data()?.status === 'completed') await invalidateMobileHistory(hike.data().userId, eventId);
+}
+exports.invalidateHistoryCapture = onDocumentWritten({document: 'hikeRouteCaptures/{sessionId}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.params.sessionId, event.id));
+exports.invalidateHistoryCheckIn = onDocumentWritten({document: 'checkIns/{id}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.data?.after?.data()?.sessionId || event.data?.before?.data()?.sessionId, event.id));
+exports.invalidateHistoryFootprints = onDocumentWritten({document: 'footprints/{chunkId}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.data?.after?.data()?.sessionId || event.data?.before?.data()?.sessionId, event.id));
+exports.invalidateHistoryRating = onDocumentWritten({document: 'trails/{trailId}/ratings/{sessionId}', region: 'asia-southeast1'}, event => invalidateHistoryChild(event.params.sessionId, event.id));
+
+
+// sendChatReminder: Derive cooldown from departure and persist only its canonical last-requested time.
+exports.sendChatReminder = onCall({secrets: [greenApiInstanceId, greenApiToken], timeoutSeconds: 30}, async request => {
+  const senderPhone = request.auth.uid;
+  const chatId = String(request.data?.chatId || '').trim();
+  const recipientPhone = String(request.data?.recipientPhone || '').trim();
+  if (!validFirestoreDocumentId(chatId) || !/^\+[1-9]\d{7,14}$/.test(recipientPhone) || recipientPhone === senderPhone) {
+    throw new HttpsError('invalid-argument', 'Choose another participant in this chat.');
+  }
+  const noticeId = contentHash([chatId, recipientPhone, randomOpaqueToken(16)]);
+  const notice = getFirestore().collection('chatReminderOutbox').doc(noticeId);
+  const result = await getFirestore().runTransaction(async tx => {
+    const chat = await tx.get(getFirestore().collection('groupChats').doc(chatId));
+    const data = chat.data() || {};
+    const members = Array.isArray(data.participantPhones) ? data.participantPhones : [];
+    if (!chat.exists || data.isDeleted === true || !members.includes(senderPhone) || !members.includes(recipientPhone)) {
+      throw new HttpsError('permission-denied', 'This chat reminder is not available.');
+    }
+    const departure = dateMillis(data.departureTimeLocal);
+    const cooldown = reminderCooldown(departure);
+    if (cooldown === null || data.hikeEndedAtLocal || data.hikeEndedAt) {
+      throw new HttpsError('failed-precondition', 'The hike has already started or ended.');
+    }
+    const record = getFirestore().collection('chatReminderCooldowns').doc(contentHash([chatId, recipientPhone]));
+    const previous = await tx.get(record);
+    const last = Number(previous.data()?.lastRequestedAtMillis || 0);
+    const nextAt = last + cooldown;
+    if (last > 0 && Date.now() < nextAt) {
+      throw new HttpsError('failed-precondition', 'A reminder was sent recently. Please wait before sending another.',
+        {nextAllowedAtMillis: nextAt});
+    }
+    const now = Date.now();
+    tx.set(record, {lastRequestedAtMillis: now});
+    tx.create(notice, {senderPhone, recipientPhone, chatId,
+      chatName: String(data.customName || data.trailName || 'your HikerCircle chat').replace(/[\x00-\x1f]/g, '').slice(0, 100),
+      status: 'pending', createdAt: FieldValue.serverTimestamp()});
+    return {nextAllowedAtMillis: now + cooldown, requestedAtMillis: now,
+      departureMillis: Number.isFinite(departure) ? departure : null};
+  });
+  await deliverChatReminder(notice);
+  const sent = await notice.get();
+  return {...result, status: sent.data()?.status || 'pending'};
+});
+
+// deliverChatReminder: Claim the reminder before the external WhatsApp send; preserve uncertain acceptance.
+async function deliverChatReminder(reference) {
+  const notice = await getFirestore().runTransaction(async tx => {
+    const snapshot = await tx.get(reference);
+    if (!snapshot.exists || snapshot.data()?.status !== 'pending') return null;
+    tx.update(reference, {status: 'sending', attemptedAt: FieldValue.serverTimestamp()});
+    return snapshot.data();
+  });
+  if (!notice) return;
+  try {
+    const credentials = greenApiCredentials();
+    const response = await fetch(greenApiEndpoint('sendMessage', credentials), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({chatId: `${notice.recipientPhone.replace(/\D/g, '')}@c.us`,
+        message: `HikerCircle reminder: A participant in ${notice.chatName} would like you to check the chat. Open HikerCircle to review the latest messages and hike arrangements.`}),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const body = await response.json().catch(() => null);
+    const id = greenApiMessageId(body);
+    await reference.update({status: response.ok && id ? 'sent' : 'delivery_uncertain', providerMessageId: id || ''});
+  } catch (_) { await reference.update({status: 'delivery_uncertain'}); }
+}
+exports.deliverChatReminder = onDocumentCreated({document: 'chatReminderOutbox/{noticeId}', region: 'asia-southeast1',
+  secrets: [greenApiInstanceId, greenApiToken], retry: true}, event => deliverChatReminder(event.data.ref));
+
+
+const providerSecrets = {
+  googleGeocode: defineSecret('GOOGLE_GEOCODING_API_KEY'),
+  googleRoute: defineSecret('GOOGLE_ROUTES_API_KEY'),
+  geoReverse: defineSecret('GEOAPIFY_API_KEY'), geoRoute: defineSecret('GEOAPIFY_API_KEY'),
+  orsRoute: defineSecret('OPENROUTESERVICE_API_KEY'),
+  // Weather tiles are optional; an absent server key must not block deployment.
+  weatherTile: {value: () => String(process.env.OPENWEATHER_API_KEY || '')},
+};
+// requestPrivateProvider: Allowlist private provider operations and bound the response without returning credentials.
+exports.requestPrivateProvider = onCall({secrets: ['GOOGLE_GEOCODING_API_KEY', 'GOOGLE_ROUTES_API_KEY', 'GEOAPIFY_API_KEY', 'OPENROUTESERVICE_API_KEY'],
+  timeoutSeconds: 30, memory: '256MiB'}, async request => {
+  const operation = String(request.data?.operation || '');
+  const parameter = Object.hasOwn(providerSecrets, operation) ? providerSecrets[operation] : null;
+  if (!parameter) throw new HttpsError('invalid-argument', 'Unsupported provider request.');
+  const secret = parameter.value();
+  if (!secret) throw new HttpsError('failed-precondition', 'This provider is not configured.');
+  let target;
+  try { target = require('./private_provider_proxy').buildProviderRequest(operation, request.data || {}, secret); }
+  catch (_) { throw new HttpsError('invalid-argument', 'The provider request contains invalid coordinates or parameters.'); }
+  try {
+    const response = await fetch(target.url, {method: target.method || 'GET', headers: target.headers,
+      ...(target.body ? {body: target.body} : {}), redirect: 'error', signal: AbortSignal.timeout(15_000)});
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > 1024 * 1024) throw new Error('provider-response-too-large');
+      chunks.push(chunk);
+    }
+    const body = Buffer.concat(chunks);
+    if (!response.ok) throw new Error('provider-request-failed');
+    return target.binary ? {httpStatus: response.status, base64: body.toString('base64')}
+      : {httpStatus: response.status, body: body.toString('utf8').split(secret).join('[redacted]')};
+  } catch (_) { throw new HttpsError('unavailable', 'The map or location provider is temporarily unavailable.'); }
+});

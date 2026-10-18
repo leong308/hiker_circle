@@ -1,3 +1,6 @@
+// GeoapifyService requests provider geocoding/routing through the authenticated proxy and converts
+// responses into typed route data.
+import 'private_provider_client.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -66,21 +69,26 @@ class GeoapifyService {
     required double latitude,
     required double longitude,
   }) async {
-    if (_apiKey.trim().isEmpty) {
+    if (_client != null && _apiKey.trim().isEmpty) {
       throw const GeoapifyException('Geoapify API key is not configured.');
     }
 
     final client = _client ?? http.Client();
     try {
-      final response = await client.get(
-        Uri.https('api.geoapify.com', '/v1/geocode/reverse', {
-          'lat': '$latitude',
-          'lon': '$longitude',
-          'apiKey': _apiKey,
-          'lang': 'en',
-          'limit': '1',
-        }),
-      );
+      final response = _client == null
+          ? await PrivateProviderClient.request('geoReverse', {
+              'latitude': latitude,
+              'longitude': longitude,
+            })
+          : await client.get(
+              Uri.https('api.geoapify.com', '/v1/geocode/reverse', {
+                'lat': '$latitude',
+                'lon': '$longitude',
+                'apiKey': _apiKey,
+                'lang': 'en',
+                'limit': '1',
+              }),
+            );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw GeoapifyException(
@@ -149,7 +157,7 @@ class GeoapifyService {
     required double endLongitude,
     List<TrailCheckpoint> waypoints = const [],
   }) async {
-    if (_apiKey.trim().isEmpty) {
+    if (_client != null && _apiKey.trim().isEmpty) {
       throw const GeoapifyException('Geoapify API key is not configured.');
     }
 
@@ -160,15 +168,24 @@ class GeoapifyService {
         for (final wp in waypoints) '${wp.latitude},${wp.longitude}',
         '$endLatitude,$endLongitude',
       ].join('|');
-      final response = await client.get(
-        Uri.https('api.geoapify.com', '/v1/routing', {
-          'waypoints': wpStrings,
-          'mode': 'hike',
-          'format': 'geojson',
-          'details': 'elevation',
-          'apiKey': _apiKey,
-        }),
-      );
+      final response = _client == null
+          ? await PrivateProviderClient.request('geoRoute', {
+              'coordinates': [
+                [startLongitude, startLatitude],
+                for (final point in waypoints)
+                  [point.longitude, point.latitude],
+                [endLongitude, endLatitude],
+              ],
+            })
+          : await client.get(
+              Uri.https('api.geoapify.com', '/v1/routing', {
+                'waypoints': wpStrings,
+                'mode': 'hike',
+                'format': 'geojson',
+                'details': 'elevation',
+                'apiKey': _apiKey,
+              }),
+            );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw GeoapifyException(

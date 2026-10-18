@@ -1,3 +1,4 @@
+// GearChecklistPage edits the current hike's packed gear selection.
 import 'package:flutter/material.dart';
 import '../../core/widgets/page_header_style.dart';
 import '../Model/hike_session_models.dart';

@@ -1,3 +1,4 @@
+// Opaque tokens, TOTP verification, authenticator normalization, and encrypted MFA secrets stay server-side.
 const crypto = require('crypto');
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -94,6 +95,7 @@ function totpAtStep(secret, step) {
   return String(binary % 10 ** TOTP_DIGITS).padStart(TOTP_DIGITS, '0');
 }
 
+// verifyTotp: Allow the bounded clock window while returning the verified step for replay protection.
 function verifyTotp({ secret, code, nowMillis = Date.now(), window = 1, lastUsedStep = -1 }) {
   const candidate = String(code || '').trim();
   if (!/^\d{6}$/.test(candidate)) {
@@ -125,6 +127,7 @@ function encryptionKeyFromBase64(value) {
   return key;
 }
 
+// encryptTotpSecret: Protect the authenticator secret with authenticated encryption before persistence.
 function encryptTotpSecret(secret, keyBase64) {
   const key = encryptionKeyFromBase64(keyBase64);
   const iv = crypto.randomBytes(12);

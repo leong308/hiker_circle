@@ -1,3 +1,4 @@
+// Unlisted location hikes retain valid private route snapshots without inventing a public catalogue trail.
 'use strict';
 const PROVIDER = 'recorded-location-hike';
 function isUnlistedSessionTrail(trail) {
@@ -6,6 +7,7 @@ function isUnlistedSessionTrail(trail) {
     /^unlisted_[A-Za-z0-9_-]{8,100}$/.test(String(trail.trailId || ''))
   );
 }
+// unlistedTrailSnapshot: Preserve the chosen location and route without creating a catalogue identity.
 function unlistedTrailSnapshot(trailId, raw) {
   if (!isUnlistedSessionTrail({ ...raw, trailId }))
     throw Error('invalid-unlisted-trail');

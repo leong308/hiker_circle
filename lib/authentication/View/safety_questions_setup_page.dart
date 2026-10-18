@@ -1,10 +1,14 @@
+// SafetyQuestionsSetupPage collects and confirms account recovery questions and answers.
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/loading_toast.dart';
 
 import '../Model/safety_questions.dart';
+import '../Data/multi_factor_auth_service.dart';
+import 'recent_security_verification_page.dart';
 
+/// Return setup completion only after the selected recovery questions and answers are saved.
 class SafetyQuestionsSetupPage extends StatefulWidget {
   const SafetyQuestionsSetupPage({super.key, required this.onSubmitted});
 
@@ -52,6 +56,15 @@ class _SafetyQuestionsSetupPageState extends State<SafetyQuestionsSetupPage> {
       if (!mounted) return;
       await widget.onSubmitted();
     } catch (error) {
+      if (mounted && requiresRecentMfaAuthentication(error)) {
+        final phone = await MultiFactorAuthService().authenticatedPhoneNumber();
+        if (!mounted) return;
+        await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => RecentSecurityVerificationPage(phoneNumber: phone),
+          ),
+        );
+      }
       if (!mounted) return;
       setState(() {
         _error = error.toString();

@@ -1,3 +1,4 @@
+// Owner hike-history projections assemble sessions, private routes, footprints, check-ins, and ratings.
 'use strict';
 
 function stringValue(value, maximumLength = 500) {
@@ -50,6 +51,8 @@ function safeCoordinate(value, capturedAtFields = []) {
   const capturedAtLocal = isoValue(
     ...capturedAtFields.map((field) => raw[field]),
     raw.capturedAtLocal,
+    raw.recordedAtMillis,
+    raw.fixCapturedAtMillis,
     raw.recordedAtLocal,
     raw.pinnedAtLocal
   );
@@ -64,6 +67,7 @@ function safeCoordinate(value, capturedAtFields = []) {
   };
 }
 
+// summaryData: Return a stable history card from canonical session metrics and summary data.
 function summaryData(sessionId, session) {
   const raw = plainMap(session);
   const report = plainMap(raw.summaryReport);
@@ -142,12 +146,13 @@ function sanitizedBuddy(value) {
   };
 }
 
+// detailData: Merge private route and telemetry detail while preserving source-derived counts and safety information.
 function detailData({
   sessionId,
   session,
   capture,
   checkIns,
-  locationPoints,
+  footprints,
   rating,
   groupChatId = '',
   memberTracks = [],
@@ -160,9 +165,9 @@ function detailData({
   const capturedRoute = Array.isArray(routeCapture.routePoints)
     ? routeCapture.routePoints.map((point) => safeCoordinate(point)).filter(Boolean)
     : [];
-  const telemetry = (Array.isArray(locationPoints) ? locationPoints : [])
+  const telemetry = (Array.isArray(footprints) ? footprints : [])
     .map((point) => {
-      const coordinate = safeCoordinate(point, ['recordedAtLocal']);
+      const coordinate = safeCoordinate(point, ['recordedAtMillis']);
       if (!coordinate) return null;
       return {
         ...coordinate,

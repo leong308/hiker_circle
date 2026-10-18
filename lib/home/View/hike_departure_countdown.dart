@@ -1,3 +1,4 @@
+// HikeDepartureCountdown updates only the local countdown and start controls for a scheduled hike.
 import 'split_flap_number.dart';
 import 'dart:async';
 import 'dart:math' as math;

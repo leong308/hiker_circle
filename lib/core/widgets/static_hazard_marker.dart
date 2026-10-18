@@ -1,3 +1,5 @@
+// Static hazard marker widgets draw hazard-specific icons and present route-related water, bridge
+// and steep-section details.
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;

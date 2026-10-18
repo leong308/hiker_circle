@@ -1,3 +1,4 @@
+// HikerCircleAssistantRepository calls the assistant backend and parses answers, sources and actions.
 import 'package:cloud_functions/cloud_functions.dart';
 
 typedef HikerCircleAssistantCallable =
@@ -181,6 +182,7 @@ class HikerCircleAssistantRepository {
     };
   }
 
+  /// Normalize the question and parse only the backend's supported answer and action structure.
   Future<HikerCircleAssistantAnswer> ask(
     String question, {
     Map<String, double>? location,

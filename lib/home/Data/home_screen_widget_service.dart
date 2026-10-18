@@ -1,3 +1,4 @@
+// HomeScreenWidgetService publishes upcoming hike and forecast summaries to native launcher widgets.
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -41,6 +42,7 @@ class HomeScreenWidgetService {
     await _publish(const []);
   }
 
+  /// Publish the immediate snapshot first, then apply forecast results only if the update revision is still current.
   Future<void> update({
     required List<UpcomingHike> hikes,
     PlannedHike? plan,

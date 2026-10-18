@@ -1,3 +1,4 @@
+// Maintenance task orchestration attempts every task and reports combined failures to Cloud Scheduler.
 'use strict';
 
 /**
@@ -6,6 +7,7 @@
  * Tasks are sequential by default. Independent tasks may opt into concurrent
  * execution when combining their former runtimes could exceed one timeout.
  */
+// runMaintenanceTasks: Attempt all tasks and aggregate errors instead of silently skipping later maintenance.
 async function runMaintenanceTasks(
   label,
   tasks,

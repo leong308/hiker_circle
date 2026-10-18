@@ -1,3 +1,5 @@
+// StaticHazardDatasetService downloads and deduplicates route-adjacent hazards, then stores
+// searchable local features and trail matches.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -98,6 +100,8 @@ class StaticHazardDatasetService {
   String get _resolvedAccessToken =>
       _accessToken?.trim() ?? GoogleApiConfig.mapboxAccessToken;
 
+  // downloadForTrails reports progress while replacing the downloaded hazard dataset and route
+  // matches atomically.
   Future<LocalHazardDatasetSummary> downloadForTrails(
     List<Trail> trails, {
     HazardDatasetProgress? onProgress,

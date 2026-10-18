@@ -1,3 +1,5 @@
+// WorldwideRegionPicker searches and selects country/state regions from one shared catalog using
+// adaptive picker surfaces.
 import 'package:country_state_city/country_state_city.dart' as csc;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';

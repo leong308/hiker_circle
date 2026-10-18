@@ -1,3 +1,5 @@
+// HikerCircleToast renders consistent transient feedback for informational, success and error
+// states.
 import 'dart:ui';
 
 import 'package:flutter/material.dart';

@@ -1,3 +1,4 @@
+// ButtonDebugEntry records application BLE payloads and their decoded diagnostic values.
 import 'dart:typed_data';
 
 import 'button_debug_field.dart';
@@ -89,6 +90,7 @@ class ButtonDebugEntry {
   }
 }
 
+/// Decode application payload fields for inspection without treating them as BLE radio frames.
 String decodeButtonPayload(Uint8List bytes, String characteristic) {
   if (bytes.isEmpty) {
     return 'No application payload (control operation or status only).';

@@ -1,3 +1,4 @@
+// HelpArticle and TrailConditionGuide provide offline help text and trail-condition explanations.
 /// Offline help content. Condition identifiers also cover map caution types and
 /// the labels hikers can choose when reporting a hazard.
 class TrailConditionGuide {

@@ -1,3 +1,5 @@
+// DeviceNotificationLogService records received FCM messages for the account-scoped local
+// notification history.
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import '../../app/Data/local_session_database.dart';

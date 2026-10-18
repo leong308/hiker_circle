@@ -1,3 +1,4 @@
+// recordedTrailCandidate derives a proposed trail from one recorded hike and named checkpoints.
 import '../../home/Model/hike_session_models.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/trail_geometry_storage.dart';

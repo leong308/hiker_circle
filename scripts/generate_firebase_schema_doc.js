@@ -1,3 +1,4 @@
+// generate_firebase_schema_doc documents audited Firestore collections and cleanup decisions.
 /* eslint-disable no-console */
 'use strict';
 
@@ -34,7 +35,7 @@ const purposes = {
   hikeSessionTerminalStates: 'Idempotent terminal-state markers for completion processing.',
   hikeSessions: 'Active and historical solo/group hike sessions.',
   liveLocationContactDispatches: 'At-most-once delivery ledger for live-location messages.',
-  localLocationPoints: 'Synced raw route/location observations used by hike history.',
+  footprints: 'Hike footprint chunks, up to 50 compact GPS samples each; referenced by hikeSessions.footprint.',
   maintenanceState: 'Cursor and progress state for backend maintenance jobs.',
   nearbySosIncidents: 'Deduplicated nearby SOS incidents reported by button receivers.',
   networkObservations: 'Route network-availability observations.',

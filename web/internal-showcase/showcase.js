@@ -1,3 +1,4 @@
+// Interactive internal feature showcase, screenshot gallery, and presentation navigation.
 (() => {
   'use strict';
 

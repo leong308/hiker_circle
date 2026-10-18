@@ -1,3 +1,4 @@
+// RecordedTrailRequestPage names recorded checkpoints and submits a proposed trail for review.
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import '../../app/Model/app_session.dart';
@@ -7,6 +8,7 @@ import '../../core/widgets/page_header_style.dart';
 import '../Model/hike_session_models.dart';
 import '../Model/recorded_hike_map_points.dart';
 
+/// Submit only the chosen recorded hike and named checkpoints as the proposed trail source.
 class RecordedTrailRequestPage extends StatefulWidget {
   const RecordedTrailRequestPage({
     super.key,
@@ -64,6 +66,7 @@ class _RecordedTrailRequestPageState extends State<RecordedTrailRequestPage> {
     }
   }
 
+  /// Validate the recorded trail proposal before saving the request for administrator review.
   Future<void> submit() async {
     if (saving || form.currentState?.validate() != true) {
       return;

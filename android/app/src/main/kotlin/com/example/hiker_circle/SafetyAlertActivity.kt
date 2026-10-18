@@ -1,3 +1,4 @@
+// SafetyAlertActivity shows the native fall/stillness response prompt above the lock screen.
 package com.leongziqi.hikercircle
 
 import android.app.Activity

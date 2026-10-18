@@ -1,4 +1,6 @@
+// AppDelegate bridges iOS safety monitoring, native location, widgets, alarms, and deep links.
 import Flutter
+import FirebaseAppCheck
 import UIKit
 import AVFoundation
 import AudioToolbox
@@ -46,6 +48,7 @@ import ActivityKit
   private var locationTimeoutTimer: Timer?
   private var motionAuthorizationManager: CMMotionActivityManager?
   private var deepLinkChannel: FlutterMethodChannel?
+  private var mobileSecurityBridge: MobileSecurityBridge?
   private var pendingDeepLink: String?
   private var activeHikeLiveActivitySessionId: String?
   private var activeHikeLiveStatusChannel: FlutterMethodChannel?
@@ -109,6 +112,7 @@ import ActivityKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    AppCheck.setAppCheckProviderFactory(HikerCircleAppCheckFactory())
     GeneratedPluginRegistrant.register(with: self)
     speechSynthesizer.delegate = self
     if let registrar = registrar(forPlugin: "QrScannerPlugin") {
@@ -116,6 +120,9 @@ import ActivityKit
       registrar.register(factory, withId: "hiker_circle/qr_scanner")
     }
     configureSosDeviceAlertChannel()
+    if let window, let controller = window.rootViewController as? FlutterViewController {
+      mobileSecurityBridge = MobileSecurityBridge(window: window, messenger: controller.binaryMessenger)
+    }
     configureDeepLinkChannel()
     configureHomeWidgetsChannel()
     configureSafetyNotifications()
@@ -1701,8 +1708,8 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       return point
     }
     uploadingLocations = true
-    Functions.functions(region: "us-central1").httpsCallable("recordHikeLocationBatch")
-      .call(["sessionId": session, "points": points]) { [weak self] result, error in
+    Functions.functions(region: "us-central1").httpsCallable("appendHikeFootprints")
+      .call(["sessionId": session, "footprints": points]) { [weak self] result, error in
         DispatchQueue.main.async {
           guard let self else { return }
           self.uploadingLocations = false

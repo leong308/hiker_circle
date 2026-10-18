@@ -1,3 +1,4 @@
+// Recorded-route submissions validate owner tracks and chunk integrity before publishing a reviewable trail request.
 'use strict';
 const { createHash } = require('node:crypto');
 const { isUnlistedSessionTrail } = require('./unlisted_hikes');
@@ -54,6 +55,7 @@ function validateSelections(values, count) {
   if (rows[0].index !== 0 || rows.at(-1).index !== count - 1) invalid();
   return rows;
 }
+// validateTrack: Verify ordered coordinates belong to the completed source hike before accepting its geometry.
 function validateTrack(points, session) {
   if (
     !Array.isArray(points) ||
@@ -102,6 +104,7 @@ function validateTrack(points, session) {
   }
   return points;
 }
+// beginRequest: Reserve one owner request identity with a stable route hash and expected chunk count.
 async function beginRequest({ db, uid, data, now = Date.now }) {
   if (
     !/^[A-Za-z0-9_-]{1,240}$/.test(data?.sessionId || '') ||
@@ -170,6 +173,7 @@ async function beginRequest({ db, uid, data, now = Date.now }) {
   });
   return result;
 }
+// finalizeRequest: Re-read every route chunk and publish only after point/hash validation succeeds.
 async function finalizeRequest({ db, uid, requestId, now = Date.now }) {
   if (!/^[a-f0-9]{64}$/.test(requestId || '')) invalid();
   const ref = db.doc(`trailRequests/${requestId}`);

@@ -51,13 +51,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        val localProperties = Properties()
-        val localPropertiesFile = rootProject.file("local.properties")
-        if (localPropertiesFile.exists()) {
-            localPropertiesFile.inputStream().use { localProperties.load(it) }
-        }
-        manifestPlaceholders["GOOGLE_MAPS_API_KEY"] =
-            localProperties.getProperty("google.maps.apiKey", "")
+        buildConfigField("boolean", "CAPTURE_ONLY", (System.getenv("HC_CAPTURE_ONLY") == "1").toString())
         buildConfigField(
             "boolean",
             "DEVELOPMENT_ONLY_SIGNING",
@@ -111,10 +105,14 @@ android {
 }
 
 dependencies {
+    implementation("net.zetetic:sqlcipher-android:4.10.0@aar")
+    implementation("androidx.sqlite:sqlite:2.5.2")
     implementation(platform("com.google.firebase:firebase-bom:34.17.0"))
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-appcheck-playintegrity")
+    debugImplementation("com.google.firebase:firebase-appcheck-debug")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")

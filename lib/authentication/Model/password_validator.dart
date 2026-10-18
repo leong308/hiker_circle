@@ -1,3 +1,5 @@
+// PasswordValidator returns explicit validation results for account password requirements.
+/// Check length and character rules alongside common, repeated and keyboard-pattern passwords.
 class PasswordValidator {
   static final RegExp _hasUppercase = RegExp(r'[A-Z]');
   static final RegExp _hasLowercase = RegExp(r'[a-z]');

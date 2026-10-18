@@ -1,3 +1,4 @@
+# Create the Android upload signing key and keep signing values in local configuration.
 param(
     [string]$Alias = "hiker-circle-upload"
 )

@@ -1,14 +1,16 @@
+// NativeLocationSampleBuffer keeps GPS samples until both local import and cloud acknowledgement.
 package com.leongziqi.hikercircle
 
 import android.content.ContentValues
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
+import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.zetetic.database.sqlcipher.SQLiteOpenHelper
 import android.location.Location
 
 /** Durable transfer queue. A cloud acknowledgement never removes an unimported local sample. */
 class NativeLocationSampleBuffer(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "native_hike_locations.db", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, NativeLocationCipher.NAME,
+        NativeLocationCipher.password(context), null, 1, 0, NativeLocationCipher.preserveOnError, null, true) {
     init { setWriteAheadLoggingEnabled(true) }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -26,6 +28,7 @@ class NativeLocationSampleBuffer(context: Context) :
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
+    // pendingSessions: List only this account's sessions still awaiting the selected acknowledgement.
     fun pendingSessions(ownerUid: String, forCloud: Boolean = false): List<String> {
         if (ownerUid.isBlank()) return emptyList()
         val flag = if (forCloud) "cloud_acknowledged" else "local_transferred"
@@ -35,6 +38,7 @@ class NativeLocationSampleBuffer(context: Context) :
         ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
     }
 
+    // remapSession: Move provisional session samples without transferring the old cloud acknowledgement.
     fun remapSession(oldSessionId: String, newSessionId: String, ownerUid: String): Int {
         require(oldSessionId.isNotBlank() && newSessionId.isNotBlank() && ownerUid.isNotBlank())
         if (oldSessionId == newSessionId) return 0
@@ -90,6 +94,7 @@ class NativeLocationSampleBuffer(context: Context) :
         writableDatabase.insertWithOnConflict("samples", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
 
+    // pending: Read an ordered, bounded batch for local import or footprint upload.
     fun pending(sessionId: String, ownerUid: String, limit: Int = 500, forCloud: Boolean = false): List<Map<String, Any>> {
         if (sessionId.isBlank() || ownerUid.isBlank()) return emptyList()
         val flag = if (forCloud) "cloud_acknowledged" else "local_transferred"
@@ -118,6 +123,7 @@ class NativeLocationSampleBuffer(context: Context) :
         }
     }
 
+    // acknowledge: Delete samples only after both local import and cloud upload have acknowledged them.
     fun acknowledge(sessionId: String, ownerUid: String, sampleIds: List<String>, cloud: Boolean = false): Int {
         if (sessionId.isBlank() || ownerUid.isBlank() || sampleIds.isEmpty()) return 0
         val db = writableDatabase

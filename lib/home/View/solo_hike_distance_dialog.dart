@@ -1,3 +1,4 @@
+// confirmSoloHikeDistance requires acknowledgement when the selected solo route exceeds the policy threshold.
 import 'package:flutter/material.dart';
 import '../Model/hike_session_models.dart';
 import '../Model/solo_hike_policy.dart';

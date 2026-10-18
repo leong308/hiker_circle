@@ -1,11 +1,23 @@
+// Live-location activation preserves owner access, monotonic GPS timestamps, and fixed share expiry.
 const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 'use strict';
-const { milliseconds } = require('./location_batch');
+const { milliseconds } = require('./footprint_batch');
+const SHARE_LIFETIME_MILLIS = 24 * 3600000;
 
 function locationVersion(location) {
   return milliseconds(location?.recordedAtMillis ?? location?.capturedAtLocal);
 }
 
+// The ISO creation time is server-generated at activation and preserves the
+// exact returned millisecond across retries; the commit timestamp is a fallback.
+function originalShareStartedAtMillis(share, expiresAtMillis, now) {
+  const candidates = [milliseconds(share.createdAtLocal), milliseconds(share.createdAt),
+    expiresAtMillis - SHARE_LIFETIME_MILLIS];
+  return candidates.find(value => Number.isFinite(value) && value > 0 && value <= now)
+    ?? Math.min(now, Math.max(1, expiresAtMillis - SHARE_LIFETIME_MILLIS));
+}
+
+// normalizeLocation: Reject invalid coordinates and normalize the GPS sample version.
 function normalizeLocation(data, ErrorType, now) {
   const latitude = data?.latitude, longitude = data?.longitude;
   if (typeof latitude !== 'number' || !Number.isFinite(latitude) || Math.abs(latitude) > 90
@@ -25,6 +37,7 @@ function normalizeLocation(data, ErrorType, now) {
     universalMapLink: `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}` };
 }
 
+// activateLiveLocationShare: Resume the same valid share on retry; create a new opaque identity only after revocation or expiry.
 async function activateLiveLocationShare(db, { uid, phoneNumber, location }, ErrorType, fieldTimestamp, timestampFromMillis, now = Date.now()) {
   const safeLocation = normalizeLocation(location, ErrorType, now);
   const userRef = db.collection('users').doc(uid);
@@ -44,7 +57,8 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
     const reuse = oldSnapshot?.exists && old.ownerUserId === uid && old.isActive === true
       && milliseconds(old.expiresAt) > now;
     const shareRef = reuse ? oldRef : newShareRef;
-    const expiresAtMillis = reuse ? milliseconds(old.expiresAt) : now + 24 * 3600000;
+    const expiresAtMillis = reuse ? milliseconds(old.expiresAt) : now + SHARE_LIFETIME_MILLIS;
+    const startedAtMillis = reuse ? originalShareStartedAtMillis(old, expiresAtMillis, now) : now;
     const shareUrl = `https://hiker-circle.web.app/live-location?share=${shareRef.id}`;
     const latestLocation = reuse && locationVersion(old.latestLocation) > locationVersion(safeLocation)
       ? old.latestLocation : safeLocation;
@@ -56,10 +70,11 @@ async function activateLiveLocationShare(db, { uid, phoneNumber, location }, Err
     }, { merge: true });
     setUser(tx, userRef, { liveLocationEnabled: true, liveLocationShareId: shareRef.id,
       liveLocationShareUrl: shareUrl, liveLocation: latestLocation,
+      liveLocationStartedAt: timestampFromMillis(startedAtMillis), liveLocationStartedAtLocal: new Date(startedAtMillis).toISOString(),
       liveLocationExpiresAt: timestampFromMillis(expiresAtMillis), liveLocationExpiresAtLocal: new Date(expiresAtMillis).toISOString(),
       liveLocationUpdatedAt: fieldTimestamp(), liveLocationUpdatedAtLocal: new Date(now).toISOString(),
     }, { merge: true });
-    return { shareId: shareRef.id, shareUrl, expiresAtMillis };
+    return { shareId: shareRef.id, shareUrl, startedAtMillis, expiresAtMillis };
   });
 }
 module.exports = { locationVersion, normalizeLocation, activateLiveLocationShare };

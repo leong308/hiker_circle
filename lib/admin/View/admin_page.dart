@@ -1,3 +1,4 @@
+// AdminPage routes administrator management, analytics and device debugging sections.
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -126,6 +127,7 @@ class _AdminPageState extends State<AdminPage> {
     if (widget.session.isAdmin) unawaited(_loadAdminData());
   }
 
+  /// Load the selected management data while retaining the current admin section and error state.
   Future<void> _loadAdminData() async {
     unawaited(_loadAnalytics(forceRefresh: _analytics != null));
     setState(() {
@@ -333,6 +335,7 @@ class _AdminPageState extends State<AdminPage> {
     if (mounted) unawaited(_loadAdminData());
   }
 
+  /// Wait for the mutation and refreshed server state before showing an administrator success message.
   Future<void> _runAdminAction({
     required Future<void> Function() action,
     required String successMessage,
@@ -405,7 +408,7 @@ class _AdminPageState extends State<AdminPage> {
         'communityPosts',
         'sosAlerts',
         'hikeSessions',
-        'localLocationPoints',
+        'footprints',
         'checkIns',
         'upcomingHikes',
         'teams',
@@ -494,6 +497,7 @@ class _AdminPageState extends State<AdminPage> {
     }
   }
 
+  /// Build the local SQLite inspection snapshot through the repository's diagnostics interface.
   Future<void> _loadLocalDbDebugData() async {
     setState(() {
       _isDebugLoading = true;

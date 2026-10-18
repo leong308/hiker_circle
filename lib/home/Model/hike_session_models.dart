@@ -1,7 +1,10 @@
+// Hike session models describe planning, team participation, tracking samples and completed hike summaries.
+import '../../core/services/phone_privacy.dart';
 import 'route_gear_assessment.dart';
 import 'hike_shirt_color.dart';
 import 'trail_gear_plan.dart';
 import 'path_deviation_policy.dart';
+import 'location_update_interval.dart';
 import 'dart:math' as math;
 
 import '../../sos/Model/sos_models.dart';
@@ -788,6 +791,7 @@ class TeamHikeSession {
   }
 }
 
+/// Collect the editable route, timing and safety choices used to schedule or start a hike.
 class HikeSessionDraft {
   const HikeSessionDraft({
     required this.hikeType,
@@ -814,7 +818,8 @@ class HikeSessionDraft {
     this.soloDistanceAcknowledgedKm,
   });
 
-  static const defaultLocationRecordingInterval = Duration(seconds: 30);
+  static const defaultLocationRecordingInterval =
+      LocationUpdateInterval.defaultValue;
   static const minLocationRecordingInterval = Duration(seconds: 5);
   static const maxLocationRecordingInterval = Duration(minutes: 1);
 
@@ -1189,6 +1194,7 @@ class HikeSessionDraft {
   }
 }
 
+/// Keep the active session identity with recorded movement, manual pins, check-ins and team state.
 class ActiveHikeSession {
   const ActiveHikeSession({
     required this.sessionId,
@@ -1433,6 +1439,7 @@ class HikeCoordinate {
         );
   }
 
+  /// Reject invalid coordinates while retaining available capture time, accuracy and altitude values.
   static HikeCoordinate? tryFromFirestore(Map<String, dynamic> data) {
     final latitude = _validLatitudeFrom(data['latitude']);
     final longitude = _validLongitudeFrom(data['longitude']);
@@ -1643,6 +1650,7 @@ class HikeSummaryReport {
     required this.insights,
   });
 
+  /// Compute the finished report from recorded movement and the actual elapsed session time.
   factory HikeSummaryReport.fromActiveHike({
     required ActiveHikeSession activeHike,
     required DateTime endedAt,
@@ -1892,6 +1900,7 @@ HikeSessionDraft? _modelDraftFromValue(Object? value) {
   }
 }
 
+/// Represent the scheduled hike and participation details used by briefings, invitations and reminders.
 class UpcomingHike {
   // Match the backend's window for starting a scheduled hike.
   static const visibleAfterDepartureGrace = Duration(minutes: 15);
@@ -2285,6 +2294,7 @@ class HikeReminderPreference {
   }
 }
 
+/// Model chat membership, display identity and per-participant unread/read state.
 class GroupChat {
   const GroupChat({
     required this.id,
@@ -2353,7 +2363,7 @@ class GroupChat {
         continue;
       }
       final name = participantNames[_modelPhoneKey(phone)]?.trim() ?? '';
-      return name.isEmpty ? phone : name;
+      return privateChatLabel(name.isEmpty ? phone : name);
     }
     return trailName.isEmpty ? 'Private chat' : trailName;
   }

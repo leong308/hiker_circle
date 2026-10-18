@@ -1,3 +1,4 @@
+// ManualSOSControl defines Control Center configuration and its SetValueIntent action.
 //
 //  ManualSOSControl.swift
 //  ManualSOS

@@ -1,3 +1,4 @@
+// TrailRatingDialog collects a trail score and optional feedback after a hike.
 import 'package:flutter/material.dart';
 
 import '../../core/widgets/loading_toast.dart';

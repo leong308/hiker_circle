@@ -1,3 +1,4 @@
+// ExpiredHikesRepository pages through expired hike records and their server-provided details.
 import 'dart:async';
 import 'dart:convert';
 
@@ -7,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../home/Model/hike_session_models.dart';
 
+/// Carry the paging cursor separately from the expired-hike result rows.
 class ExpiredHikesCursor {
   const ExpiredHikesCursor({
     required this.departureTimeLocal,

@@ -1,3 +1,4 @@
+// TrailCautionService uploads report evidence and calls the backend caution workflow.
 import 'dart:math' as math;
 
 import 'package:cloud_functions/cloud_functions.dart';
@@ -36,6 +37,7 @@ class PendingCautionMedia {
 }
 
 class TrailCautionService {
+  /// Upload selected evidence and return the metadata consumed by the caution backend.
   Future<List<Map<String, dynamic>>> upload(
     String hazardId,
     List<PendingCautionMedia> files,

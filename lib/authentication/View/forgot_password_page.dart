@@ -1,3 +1,5 @@
+// ForgotPasswordPage guides phone OTP, recovery method verification and password replacement.
+import '../../core/widgets/password_capture_protection.dart';
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
@@ -11,6 +13,7 @@ import '../Data/passkey_build_support.dart';
 import '../ModelView/auth_view_model.dart';
 import 'inline_notice.dart';
 
+/// Recovery advances from phone OTP to an available security factor, then to the new password.
 enum _ResetStep { phone, otp, method, question, authenticator, newPassword }
 
 class _ResetPasswordHeader extends StatelessWidget {
@@ -266,7 +269,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      PasswordCaptureProtection(child: _buildPasswordPage(context));
+
+  Widget _buildPasswordPage(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 

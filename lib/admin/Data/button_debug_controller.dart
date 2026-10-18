@@ -1,3 +1,4 @@
+// ButtonDebugController manages BLE packet capture, local debug sessions and device diagnostics.
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -9,6 +10,7 @@ import '../../app/Data/local_session_database.dart';
 import '../../core/services/hiker_ble_service.dart';
 import '../Model/button_debug_entry.dart';
 
+/// Keep captured BLE events and saved debug sessions observable by the admin UI.
 class ButtonDebugController extends ChangeNotifier {
   ButtonDebugController({
     required this.owner,

@@ -1,3 +1,4 @@
+// CommunityModerationRulesButton exposes the backend moderation policy for admin review.
 import 'package:flutter/material.dart';
 
 import 'admin_ui.dart';

@@ -1,3 +1,4 @@
+// Community trail cautions validate evidence and transact confirmations, resolutions, and reopened report cycles.
 'use strict';
 const {randomUUID} = require('node:crypto');
 const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -11,6 +12,7 @@ function millis(value) { return value?.toMillis ? value.toMillis() : typeof valu
 function expires(report) { return millis(report.expiresAt) || millis(report.reportedAt) + LIFETIME_MS || Date.parse(report.reportedAtLocal) + LIFETIME_MS; }
 function active(report, now) { return !['rejected','deleted'].includes(report.status) && Number.isFinite(expires(report)) && now < expires(report); }
 
+// mediaFor: Verify owner paths, MIME types, file sizes, and the combined media budget.
 async function mediaFor({bucket, uid, hazardId, media = []}) {
   if (!Array.isArray(media) || media.length > 6) fail('invalid-argument','Choose up to six photos or videos, totaling at most 50 MB.');
   const paths = new Set(); let total = 0; const result = [];
@@ -39,6 +41,7 @@ async function mediaFor({bucket, uid, hazardId, media = []}) {
   return result;
 }
 
+// submit: Create the caution and its initial confirmation vote under one stable report ID.
 async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp}) {
   const hazardId = id(data?.hazardId), trailId = id(data?.trailId);
   const description = note(data.description);
@@ -65,6 +68,7 @@ async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp
   });
 }
 
+// update: Fence the report cycle and apply each evidence-backed action once.
 async function update({db, bucket, uid, data, now = Date.now(), timestamp}) {
   const hazardId = id(data?.hazardId), requestId = id(data?.requestId);
   const action = data.action;

@@ -1,15 +1,14 @@
-import 'package:hiker_circle/core/widgets/page_header_style.dart';
+// HikeSharePreviewPage previews a completed hike using the shared community composer and durable draft.
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:math';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
-import '../../core/widgets/loading_toast.dart';
+import '../../circle/View/community_post_composer.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../Model/hike_session_models.dart';
 import '../Model/recorded_hike_map_points.dart';
@@ -22,12 +21,14 @@ class HikeSharePreviewPage extends StatefulWidget {
     required this.activeHike,
     required this.onShareExternally,
     required this.onPostToCommunity,
+    this.repository,
     this.initialMapStyleIndex = 0,
   });
 
   final AppSession session;
   final HikeSummaryReport report;
   final ActiveHikeSession activeHike;
+  final HikerCircleFirebaseRepository? repository;
   final Future<void> Function(
     String caption,
     List<CommunityPostImageUpload> images,
@@ -40,803 +41,608 @@ class HikeSharePreviewPage extends StatefulWidget {
   State<HikeSharePreviewPage> createState() => _HikeSharePreviewPageState();
 }
 
-class _HikeSharePreviewPageState extends State<HikeSharePreviewPage> {
-  late final TextEditingController _captionController;
-  bool _isPosting = false;
+class _HikeSharePreviewPageState extends State<HikeSharePreviewPage>
+    with WidgetsBindingObserver {
+  final _editorKey = GlobalKey<CommunityPostEditorState>();
+  late CommunityPostDraft _initialDraft;
+  late CommunityPostDraft _currentDraft;
+  late String _postId;
+  bool _isEditingBusy = false;
   bool _isSharingExternally = false;
-  final List<_SelectedHikeImage> _images = <_SelectedHikeImage>[];
+  bool _isClosing = false;
+  bool _isLoading = false;
+  bool _canLeave = false;
+  bool _published = false;
+  String? _loadError;
+  String? _saveError;
+  Timer? _saveTimer;
+  Future<void> _saveChain = Future<void>.value();
+
+  bool get _isBusy => _isEditingBusy || _isSharingExternally || _isClosing;
+  String get _draftKey => 'hike:${widget.activeHike.sessionId}';
 
   @override
   void initState() {
     super.initState();
-    _captionController = TextEditingController(
-      text: defaultHikeShareCaption(widget.report),
+    WidgetsBinding.instance.addObserver(this);
+    _initialDraft = CommunityPostDraft(
+      caption: defaultHikeShareCaption(widget.report),
+      images: const [],
+      includeHike: true,
+    );
+    _currentDraft = _initialDraft;
+    final random = Random.secure();
+    _postId =
+        'post_${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}_'
+        '${random.nextInt(0x100000000).toRadixString(36)}'
+        '${random.nextInt(0x100000000).toRadixString(36)}';
+    _isLoading = widget.repository != null;
+    if (_isLoading) unawaited(_loadDraft());
+  }
+
+  Future<void> _loadDraft() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+    try {
+      final saved = await widget.repository!.loadCommunityPostDraft(
+        session: widget.session,
+        draftKey: _draftKey,
+      );
+      if (!mounted) return;
+      if (saved != null) {
+        _postId = saved.postId;
+        _initialDraft = CommunityPostDraft(
+          caption: saved.caption,
+          images: saved.images,
+          includeHike: true,
+        );
+        _currentDraft = _initialDraft;
+      }
+      setState(() => _isLoading = false);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadError =
+              'Your saved post could not be opened. Try again to keep your draft safe.';
+        });
+      }
+    }
+  }
+
+  void _draftChanged(CommunityPostDraft draft) {
+    _currentDraft = draft;
+    _saveTimer?.cancel();
+    if (widget.repository == null) return;
+    _saveTimer = Timer(const Duration(milliseconds: 350), _saveInBackground);
+  }
+
+  /// Serialize end-hike draft writes so a late autosave cannot overwrite a newer caption or photo selection.
+  Future<void> _saveDraft() {
+    final repository = widget.repository;
+    if (repository == null || _published || _isLoading || _loadError != null) {
+      return Future<void>.value();
+    }
+    final draft = _currentDraft;
+    final pending = _saveChain.then(
+      (_) => repository.saveCommunityPostDraft(
+        session: widget.session,
+        draftKey: _draftKey,
+        postId: _postId,
+        caption: draft.caption,
+        images: draft.images,
+        includeHike: true,
+      ),
+    );
+    _saveChain = pending.catchError((Object _) {});
+    return pending;
+  }
+
+  void _saveInBackground() {
+    unawaited(
+      _saveDraft()
+          .then((_) {
+            if (mounted && _saveError != null) {
+              setState(() => _saveError = null);
+            }
+          })
+          .catchError((Object _) {
+            if (mounted) {
+              setState(
+                () => _saveError =
+                    'Your draft could not be saved. Keep this page open and try again.',
+              );
+            }
+          }),
     );
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed && !_published) {
+      _saveTimer?.cancel();
+      _saveInBackground();
+    }
+  }
+
+  @override
   void dispose() {
-    _captionController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _saveTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _postToCommunity() async {
-    final post = widget.onPostToCommunity;
-    if (_isPosting || _isSharingExternally) return;
-
-    final caption = _captionController.text.trim();
-    if (caption.isEmpty) {
-      _showMessage('Add a caption before sharing your hike.');
+  Future<void> _close() async {
+    if (_isBusy) return;
+    if (widget.repository != null && _loadError == null) {
+      _saveTimer?.cancel();
+      setState(() => _isClosing = true);
+      try {
+        await _saveDraft();
+        if (mounted) _leave(false);
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _isClosing = false;
+            _saveError =
+                'Your draft could not be saved. Try again before closing.';
+          });
+        }
+      }
       return;
     }
-
-    setState(() => _isPosting = true);
-    try {
-      await post(
-        caption,
-        _images
-            .map(
-              (image) => CommunityPostImageUpload(
-                bytes: image.bytes,
-                fileName: image.fileName,
-                contentType: image.contentType,
-              ),
-            )
-            .toList(),
+    if (_editorKey.currentState?.hasChanges ?? false) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Discard this draft?'),
+          content: const Text('Your text and selected photos will be removed.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Keep editing'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Discard'),
+            ),
+          ],
+        ),
       );
-      if (mounted) Navigator.of(context).pop(true);
-    } catch (error) {
-      if (mounted) {
-        _showMessage(
-          error is HikerCircleFirebaseRepositoryException
-              ? error.message
-              : 'Unable to share this hike right now. Please try again.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isPosting = false);
+      if (discard != true || !mounted) return;
     }
+    _leave(false);
   }
 
-  Future<void> _addImages() async {
-    if (_images.length >= 6 || _isPosting || _isSharingExternally) return;
+  void _leave(bool posted) {
+    setState(() => _canLeave = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop(posted);
+    });
+  }
+
+  /// Save the stable post identity before publishing; local cleanup cannot turn a confirmed post into failure.
+  Future<void> _publish(CommunityPostDraft draft) async {
+    _currentDraft = draft;
+    _saveTimer?.cancel();
     try {
-      final picked = await ImagePicker().pickMultiImage(
-        imageQuality: 88,
-        limit: 6 - _images.length,
-      );
-      final additions = <_SelectedHikeImage>[];
-      for (final file in picked) {
-        final bytes = await file.readAsBytes();
-        if (bytes.isEmpty || bytes.length > 10 * 1024 * 1024) continue;
-        additions.add(
-          _SelectedHikeImage(
-            bytes: bytes,
-            fileName: file.name,
-            contentType: file.mimeType,
-          ),
-        );
-      }
-      if (mounted && additions.isNotEmpty) {
-        setState(() => _images.addAll(additions));
-      }
+      await _saveDraft();
     } catch (_) {
-      if (mounted) _showMessage('Unable to open the photo library.');
+      throw const HikerCircleFirebaseRepositoryException(
+        'Your draft could not be saved. Please try posting again.',
+      );
     }
+    await widget.onPostToCommunity(draft.caption, draft.images);
+    _published = true;
+    // A cleanup failure must not turn a successful, idempotent post into an error.
+    try {
+      await widget.repository?.deleteCommunityPostDraft(
+        session: widget.session,
+        draftKey: _draftKey,
+      );
+    } catch (_) {}
   }
 
+  /// Share the currently edited caption and report while blocking a simultaneous community publish.
   Future<void> _shareExternally() async {
-    if (_isPosting || _isSharingExternally) return;
-
+    if (_isBusy) return;
+    FocusScope.of(context).unfocus();
     setState(() => _isSharingExternally = true);
     try {
       await widget.onShareExternally(
         buildExternalHikeShareText(
           report: widget.report,
-          caption: _captionController.text.trim(),
+          caption: _editorKey.currentState?.caption ?? '',
         ),
       );
     } catch (_) {
-      if (mounted) _showMessage('Sharing is unavailable on this device.');
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Sharing is unavailable on this device.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      }
     } finally {
       if (mounted) setState(() => _isSharingExternally = false);
     }
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-      );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final report = widget.report;
-    final isBusy = _isPosting || _isSharingExternally;
-
-    return PopScope(
-      canPop: !isBusy,
+    final colors = Theme.of(context).colorScheme;
+    return PopScope<bool>(
+      canPop: _canLeave,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _close();
+      },
       child: Scaffold(
-        backgroundColor: _ShareColors.backgroundFor(context),
-        appBar: PageHeaderAppBar(
-          backgroundColor: _ShareColors.backgroundFor(context),
-          leading: CupertinoButton(
-            padding: EdgeInsets.zero,
-            onPressed: isBusy ? null : () => Navigator.of(context).pop(),
-            child: const Icon(CupertinoIcons.xmark, size: 20),
+        backgroundColor: colors.surface,
+        appBar: AppBar(
+          backgroundColor: colors.surface,
+          leading: IconButton(
+            tooltip: 'Close hike post',
+            onPressed: _isBusy ? null : _close,
+            icon: const Icon(Icons.close_rounded),
           ),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Share hike',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: _ShareColors.textFor(context),
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-              Text(
-                'Preview your post before sharing',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _ShareColors.secondaryTextFor(context),
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
+          title: const Text('Share your hike'),
+          centerTitle: false,
         ),
         body: SafeArea(
           top: false,
-          child: Stack(
-            children: [
-              Column(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 640),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              const _AudienceRow(),
-                              const SizedBox(height: 12),
-                              _PostPreviewCard(
-                                session: widget.session,
-                                report: report,
-                                activeHike: widget.activeHike,
-                                initialMapStyleIndex:
-                                    widget.initialMapStyleIndex,
-                                captionController: _captionController,
-                                enabled: !isBusy,
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _loadError != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_loadError!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                        FilledButton(
+                          onPressed: _loadDraft,
+                          child: const Text('Try again'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(22, 18, 22, 32),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 600),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (_saveError != null) ...[
+                            Semantics(
+                              liveRegion: true,
+                              child: MaterialBanner(
+                                content: Text(_saveError!),
+                                actions: [
+                                  TextButton(
+                                    onPressed: _isBusy
+                                        ? null
+                                        : _saveInBackground,
+                                    child: const Text('Try again'),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 12),
-                              _HikePhotoPicker(
-                                images: _images,
-                                enabled: !isBusy,
-                                onAdd: _addImages,
-                                onRemove: (index) =>
-                                    setState(() => _images.removeAt(index)),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Your route and hike totals will be included with this post.',
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: _ShareColors.secondaryTextFor(
-                                        context,
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          CommunityPostEditor(
+                            key: _editorKey,
+                            authorName: widget.session.username,
+                            photoURL: widget.session.photoURL ?? '',
+                            photoBytes: widget.session.photoBytes,
+                            initialCaption: _initialDraft.caption,
+                            initialImages: _initialDraft.images,
+                            captionKey: const Key('hike-share-caption'),
+                            publishKey: const Key('post-hike-to-community'),
+                            publishLabel: 'Post hike',
+                            enabled: !_isSharingExternally && !_isClosing,
+                            allowHikeToggle: false,
+                            hikeAttachment: _HikeAttachment(
+                              report: widget.report,
+                              activeHike: widget.activeHike,
+                              initialMapStyleIndex: widget.initialMapStyleIndex,
+                              enabled: !_isBusy,
+                            ),
+                            onDraftChanged: _draftChanged,
+                            onPublish: _publish,
+                            onBusyChanged: (busy) {
+                              if (mounted) {
+                                setState(() => _isEditingBusy = busy);
+                              }
+                            },
+                            onPublished: () => _leave(true),
+                            secondaryAction: TextButton.icon(
+                              key: const Key('share-hike-externally'),
+                              onPressed: _isBusy ? null : _shareExternally,
+                              icon: _isSharingExternally
+                                  ? const SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
                                       ),
-                                      letterSpacing: 0,
+                                    )
+                                  : const Icon(
+                                      CupertinoIcons.square_arrow_up,
+                                      size: 19,
                                     ),
+                              label: Text(
+                                _isSharingExternally
+                                    ? 'Opening share…'
+                                    : 'Share to other apps',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HikeAttachment extends StatelessWidget {
+  const _HikeAttachment({
+    required this.report,
+    required this.activeHike,
+    required this.initialMapStyleIndex,
+    required this.enabled,
+  });
+  final HikeSummaryReport report;
+  final ActiveHikeSession activeHike;
+  final int initialMapStyleIndex;
+  final bool enabled;
+
+  Future<void> _exploreRoute(BuildContext context) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        useSafeArea: true,
+        builder: (context) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .78,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        report.trailName,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close route preview',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: _routeMap(context, interactive: true),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _HikeMetrics(report: report),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  Widget _routeMap(BuildContext context, {required bool interactive}) =>
+      RoutePreviewMap(
+        trail: activeHike.trail,
+        recordedTrackPoints: recordedHikeMapPoints(activeHike),
+        pinnedPoints: _pinPoints(activeHike),
+        checkInPoints: _checkInPoints(activeHike),
+        captureAllGestures: interactive,
+        animateRoute: !MediaQuery.disableAnimationsOf(context),
+        initialStyleIndex: initialMapStyleIndex,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: colors.outlineVariant.withValues(alpha: .7)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(21),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              button: true,
+              label: 'Explore the recorded route for ${report.trailName}',
+              child: GestureDetector(
+                key: const Key('hike-share-explore-route'),
+                behavior: HitTestBehavior.opaque,
+                onTap: enabled ? () => _exploreRoute(context) : null,
+                child: Stack(
+                  children: [
+                    SizedBox(
+                      height: 164,
+                      child: ExcludeSemantics(
+                        child: IgnorePointer(
+                          child: _routeMap(context, interactive: false),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 10,
+                      bottom: 10,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: colors.surface.withValues(alpha: .96),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 7,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.open_in_full_rounded,
+                                size: 13,
+                                color: colors.primary,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Explore route',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ],
                           ),
                         ),
                       ),
                     ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.check_circle_rounded,
+                        size: 19,
+                        color: colors.primary,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          report.trailName,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  _ShareActionBar(
-                    isPosting: _isPosting,
-                    isSharingExternally: _isSharingExternally,
-                    onPost: _postToCommunity,
-                    onShareExternally: _shareExternally,
+                  const SizedBox(height: 5),
+                  Text(
+                    'Completed ${_formatShareDate(report.endedAt)}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
                   ),
+                  const SizedBox(height: 15),
+                  _HikeMetrics(report: report),
                 ],
               ),
-              if (isBusy)
-                HikerCircleLoadingToastOverlay(
-                  message: _isPosting
-                      ? 'Sharing your hike…'
-                      : 'Preparing share…',
-                  detail: _isPosting
-                      ? 'Uploading your preview and route details.'
-                      : 'Opening the selected sharing app.',
-                  timeout: const Duration(seconds: 30),
-                  onTimeout: () {
-                    if (mounted) {
-                      _showMessage(
-                        'Sharing is taking longer than usual. '
-                        'Please wait while the current request finishes.',
-                      );
-                    }
-                  },
-                ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _AudienceRow extends StatelessWidget {
-  const _AudienceRow();
+class _HikeMetrics extends StatelessWidget {
+  const _HikeMetrics({required this.report});
+  final HikeSummaryReport report;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 24,
+    runSpacing: 14,
+    children: [
+      _Metric(
+        icon: Icons.route_rounded,
+        label: 'Distance',
+        value: '${report.distanceKm.toStringAsFixed(2)} km',
+      ),
+      _Metric(
+        icon: CupertinoIcons.clock,
+        label: 'Time',
+        value: _formatDuration(report.duration),
+      ),
+    ],
+  );
+}
 
+class _Metric extends StatelessWidget {
+  const _Metric({required this.icon, required this.label, required this.value});
+  final IconData icon;
+  final String label;
+  final String value;
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final quiet = theme.colorScheme.onSurfaceVariant;
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          'SHARING TO',
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: _ShareColors.secondaryTextFor(context),
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.5,
-          ),
-        ),
-        const Spacer(),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: _ShareColors.green.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.groups_2_rounded, color: _ShareColors.green, size: 16),
-              const SizedBox(width: 6),
-              Text(
-                'Public community',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: _ShareColors.green,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
+        Icon(icon, size: 19, color: quiet),
+        const SizedBox(width: 9),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              value,
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
               ),
-            ],
-          ),
+            ),
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(color: quiet),
+            ),
+          ],
         ),
       ],
     );
   }
 }
 
-class _PostPreviewCard extends StatelessWidget {
-  const _PostPreviewCard({
-    required this.session,
-    required this.report,
-    required this.activeHike,
-    required this.initialMapStyleIndex,
-    required this.captionController,
-    required this.enabled,
-  });
-
-  final AppSession session;
-  final HikeSummaryReport report;
-  final ActiveHikeSession activeHike;
-  final int initialMapStyleIndex;
-  final TextEditingController captionController;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _ShareColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _ShareColors.separatorFor(context)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(
-              alpha: Theme.of(context).brightness == Brightness.dark
-                  ? 0.18
-                  : 0.06,
-            ),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            child: Row(
-              children: [
-                _ShareAvatar(session: session),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        session.username.trim().isEmpty
-                            ? 'HikerCircle member'
-                            : session.username.trim(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: _ShareColors.textFor(context),
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                      Text(
-                        'Completed a hike • ${_formatShareDate(report.endedAt)}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _ShareColors.secondaryTextFor(context),
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(
-                  Icons.verified_rounded,
-                  color: _ShareColors.green,
-                  size: 20,
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-            child: TextField(
-              key: const Key('hike-share-caption'),
-              controller: captionController,
-              enabled: enabled,
-              minLines: 2,
-              maxLines: 5,
-              maxLength: 500,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                hintText: 'Say something about your hike...',
-                counterStyle: TextStyle(
-                  color: _ShareColors.secondaryTextFor(context),
-                ),
-                filled: true,
-                fillColor: _ShareColors.inputFor(context),
-                contentPadding: const EdgeInsets.all(12),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ),
-          SizedBox(
-            height: 230,
-            child: RoutePreviewMap(
-              trail: activeHike.trail,
-              recordedTrackPoints: recordedHikeMapPoints(activeHike),
-              pinnedPoints: _pinPoints(activeHike),
-              checkInPoints: _checkInPoints(activeHike),
-              captureAllGestures: true,
-              animateRoute: true,
-              initialStyleIndex: initialMapStyleIndex,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: _ShareColors.green.withValues(alpha: 0.12),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.terrain_rounded,
-                    color: _ShareColors.green,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'TRAIL COMPLETED',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: _ShareColors.green,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      Text(
-                        report.trailName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: _ShareColors.textFor(context),
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 8, 14),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _PreviewMetric(
-                    value: '${report.distanceKm.toStringAsFixed(2)} km',
-                    label: 'Distance',
-                  ),
-                ),
-                _MetricDivider(color: _ShareColors.separatorFor(context)),
-                Expanded(
-                  child: _PreviewMetric(
-                    value: _formatDuration(report.duration),
-                    label: 'Duration',
-                  ),
-                ),
-                _MetricDivider(color: _ShareColors.separatorFor(context)),
-                Expanded(
-                  child: _PreviewMetric(
-                    value: '${report.routePointCount}',
-                    label: 'GPS points',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (report.manualPins > 0)
-            Container(
-              color: _ShareColors.inputFor(context),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.push_pin_rounded,
-                    color: Color(0xFFE11D48),
-                    size: 17,
-                  ),
-                  const SizedBox(width: 7),
-                  Text(
-                    '${report.manualPins} ${report.manualPins == 1 ? 'location' : 'locations'} pinned along the route',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _ShareColors.secondaryTextFor(context),
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ShareAvatar extends StatelessWidget {
-  const _ShareAvatar({required this.session});
-
-  final AppSession session;
-
-  @override
-  Widget build(BuildContext context) {
-    final photoBytes = session.photoBytes;
-    final photoUrl = session.photoURL?.trim() ?? '';
-    final username = session.username.trim();
-    final initial = username.isEmpty ? 'H' : username.characters.first;
-
-    Widget child;
-    if (photoBytes != null && photoBytes.isNotEmpty) {
-      child = Image.memory(photoBytes, fit: BoxFit.cover);
-    } else if (photoUrl.isNotEmpty) {
-      child = Image.network(
-        photoUrl,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => _AvatarInitial(initial: initial),
-      );
-    } else {
-      child = _AvatarInitial(initial: initial);
-    }
-
-    return ClipOval(child: SizedBox.square(dimension: 42, child: child));
-  }
-}
-
-class _SelectedHikeImage {
-  const _SelectedHikeImage({
-    required this.bytes,
-    required this.fileName,
-    this.contentType,
-  });
-
-  final Uint8List bytes;
-  final String fileName;
-  final String? contentType;
-}
-
-class _HikePhotoPicker extends StatelessWidget {
-  const _HikePhotoPicker({
-    required this.images,
-    required this.enabled,
-    required this.onAdd,
-    required this.onRemove,
-  });
-
-  final List<_SelectedHikeImage> images;
-  final bool enabled;
-  final VoidCallback onAdd;
-  final ValueChanged<int> onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _ShareColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _ShareColors.separatorFor(context)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.photo_library_outlined,
-                color: _ShareColors.green,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Hike photos (${images.length}/6)',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: enabled && images.length < 6 ? onAdd : null,
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                label: const Text('Add'),
-              ),
-            ],
-          ),
-          if (images.isEmpty)
-            Text(
-              'Add photos from this hike to make the post more personal.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _ShareColors.secondaryTextFor(context),
-              ),
-            )
-          else
-            SizedBox(
-              height: 92,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: images.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 8),
-                itemBuilder: (context, index) => Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(11),
-                      child: Image.memory(
-                        images[index].bytes,
-                        width: 92,
-                        height: 92,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    Positioned(
-                      right: 4,
-                      top: 4,
-                      child: InkWell(
-                        onTap: enabled ? () => onRemove(index) : null,
-                        child: const CircleAvatar(
-                          radius: 12,
-                          backgroundColor: Color(0xB3000000),
-                          child: Icon(
-                            Icons.close,
-                            size: 15,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AvatarInitial extends StatelessWidget {
-  const _AvatarInitial({required this.initial});
-
-  final String initial;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: _ShareColors.green,
-      child: Center(
-        child: Text(
-          initial.toUpperCase(),
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PreviewMetric extends StatelessWidget {
-  const _PreviewMetric({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-      child: Column(
-        children: [
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: _ShareColors.textFor(context),
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _ShareColors.secondaryTextFor(context),
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MetricDivider extends StatelessWidget {
-  const _MetricDivider({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 44,
-      child: VerticalDivider(width: 1, thickness: 0.7, color: color),
-    );
-  }
-}
-
-class _ShareActionBar extends StatelessWidget {
-  const _ShareActionBar({
-    required this.isPosting,
-    required this.isSharingExternally,
-    required this.onPost,
-    required this.onShareExternally,
-  });
-
-  final bool isPosting;
-  final bool isSharingExternally;
-  final VoidCallback onPost;
-  final VoidCallback onShareExternally;
-
-  @override
-  Widget build(BuildContext context) {
-    final isBusy = isPosting || isSharingExternally;
-    final externalAction = OutlinedButton.icon(
-      key: const Key('share-hike-externally'),
-      onPressed: isBusy ? null : onShareExternally,
-      icon: const Icon(Icons.ios_share_rounded),
-      label: const Text('Other apps'),
-    );
-    final communityAction = FilledButton.icon(
-      key: const Key('post-hike-to-community'),
-      onPressed: isBusy ? null : onPost,
-      style: FilledButton.styleFrom(
-        backgroundColor: _ShareColors.green,
-        foregroundColor: Colors.white,
-      ),
-      icon: const Icon(Icons.send_rounded),
-      label: const Text('Post to Community'),
-    );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _ShareColors.surfaceFor(context),
-        border: Border(
-          top: BorderSide(color: _ShareColors.separatorFor(context)),
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        minimum: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                if (constraints.maxWidth < 420) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      communityAction,
-                      const SizedBox(height: 8),
-                      externalAction,
-                    ],
-                  );
-                }
-                return Row(
-                  children: [
-                    Expanded(child: externalAction),
-                    const SizedBox(width: 10),
-                    Expanded(flex: 2, child: communityAction),
-                  ],
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-String defaultHikeShareCaption(HikeSummaryReport report) {
-  return 'Completed ${report.trailName} — '
-      '${report.distanceKm.toStringAsFixed(2)} km in '
-      '${_formatDuration(report.duration)}. '
-      '${report.routePointCount} GPS points recorded along the way.';
-}
+String defaultHikeShareCaption(HikeSummaryReport report) =>
+    'Completed ${report.trailName}.';
 
 String buildExternalHikeShareText({
   required HikeSummaryReport report,
   required String caption,
-}) {
-  return [
-    if (caption.isNotEmpty) ...[caption, ''],
-    report.shareText,
-  ].join('\n');
-}
+}) => [
+  if (caption.isNotEmpty) ...[caption, ''],
+  report.shareText,
+].join('\n');
 
 String _formatDuration(Duration duration) {
   final hours = duration.inHours;
@@ -861,62 +667,28 @@ String _formatShareDate(DateTime value) {
     'Nov',
     'Dec',
   ];
-  return '${months[local.month - 1]} ${local.day}';
+  return '${local.day} ${months[local.month - 1]} ${local.year}';
 }
 
-List<mapbox.Point> _pinPoints(ActiveHikeSession activeHike) {
-  return activeHike.manualPinLocations
-      .map(
-        (pin) => mapbox.Point(
-          coordinates: mapbox.Position(
-            pin.coordinate.longitude,
-            pin.coordinate.latitude,
-          ),
+List<mapbox.Point> _pinPoints(ActiveHikeSession activeHike) => activeHike
+    .manualPinLocations
+    .map(
+      (pin) => mapbox.Point(
+        coordinates: mapbox.Position(
+          pin.coordinate.longitude,
+          pin.coordinate.latitude,
         ),
-      )
-      .toList();
-}
+      ),
+    )
+    .toList();
 
-List<mapbox.Point> _checkInPoints(ActiveHikeSession activeHike) {
-  return activeHike.checkInRecords
-      .map((record) => record.coordinate)
-      .whereType<HikeCoordinate>()
-      .map(
-        (coordinate) => mapbox.Point(
-          coordinates: mapbox.Position(
-            coordinate.longitude,
-            coordinate.latitude,
-          ),
-        ),
-      )
-      .toList();
-}
-
-abstract final class _ShareColors {
-  static const green = Color(0xFF34A853);
-  static const lightBackground = Color(0xFFF2F2F7);
-  static const lightText = Color(0xFF111111);
-  static const lightSecondaryText = Color(0xFF6E6E73);
-  static const lightSeparator = Color(0xFFD9E1DC);
-
-  static bool _isDark(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark;
-
-  static Color backgroundFor(BuildContext context) =>
-      _isDark(context) ? const Color(0xFF0C120F) : lightBackground;
-
-  static Color surfaceFor(BuildContext context) =>
-      _isDark(context) ? const Color(0xFF141C17) : Colors.white;
-
-  static Color inputFor(BuildContext context) =>
-      _isDark(context) ? const Color(0xFF1B261F) : const Color(0xFFF5F7F5);
-
-  static Color textFor(BuildContext context) =>
-      _isDark(context) ? const Color(0xFFEAF4EE) : lightText;
-
-  static Color secondaryTextFor(BuildContext context) =>
-      _isDark(context) ? const Color(0xFFA8B8AE) : lightSecondaryText;
-
-  static Color separatorFor(BuildContext context) =>
-      _isDark(context) ? const Color(0xFF2B3A31) : lightSeparator;
-}
+List<mapbox.Point> _checkInPoints(ActiveHikeSession activeHike) => activeHike
+    .checkInRecords
+    .map((record) => record.coordinate)
+    .whereType<HikeCoordinate>()
+    .map(
+      (coordinate) => mapbox.Point(
+        coordinates: mapbox.Position(coordinate.longitude, coordinate.latitude),
+      ),
+    )
+    .toList();

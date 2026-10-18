@@ -1,5 +1,7 @@
+// Nearby BLE SOS reports normalize bounded telemetry and hash device/counter identity for deduplication.
 const crypto = require('crypto');
 
+// normalizeNearbySosReport: Validate the BLE incident window and derive a privacy-preserving deduplication identity.
 function normalizeNearbySosReport(data, nowMillis = Date.now()) {
   const deviceId = String(data?.deviceId || '').trim().toLowerCase();
   if (!/^[a-z0-9_:-]{3,64}$/.test(deviceId)) {

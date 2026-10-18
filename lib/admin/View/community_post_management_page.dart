@@ -1,3 +1,4 @@
+// CommunityPostManagementPage loads, edits and moderates community posts.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 
@@ -32,6 +33,7 @@ class _CommunityPostManagementPageState
     if (widget.session.isAdmin) _load();
   }
 
+  /// Append another moderation page or replace the list when refreshing from the first page.
   Future<void> _load({bool more = false}) async {
     if (_loading || _saving) return;
     setState(() {
@@ -70,6 +72,7 @@ class _CommunityPostManagementPageState
     }
   }
 
+  /// Serialize moderation writes and reload the resulting server state after success.
   Future<void> _save(Future<void> Function() action) async {
     if (_saving || _loading) return;
     setState(() {

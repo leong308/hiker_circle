@@ -1,3 +1,5 @@
+// Map utilities validate coordinates and share gesture, distance and camera helpers across map-based
+// screens.
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';

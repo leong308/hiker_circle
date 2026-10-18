@@ -51,11 +51,90 @@
       background: white;
     }
 
+    .map-frame {
+      position: relative;
+      aspect-ratio: 8 / 5;
+      background: #eaf7ee;
+    }
+
     .map {
+      position: absolute;
+      inset: 0;
+      display: block;
       width: 100%;
-      height: 280px;
+      height: 100%;
       border: 0;
       background: #eaf7ee;
+    }
+
+    .map[hidden] {
+      display: none;
+    }
+
+    .view-switch, .footprint-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 14px;
+    }
+
+    button {
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .view-switch button, .footprint-controls button {
+      min-height: 44px;
+      border: 1px solid #d5e4d9;
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: #fff;
+      color: #176b2e;
+      font-weight: 650;
+    }
+
+    .view-switch button[aria-pressed="true"] {
+      color: #fff;
+      background: #237d3b;
+      border-color: #237d3b;
+    }
+
+    button:disabled {
+      opacity: .55;
+      cursor: default;
+    }
+
+    .footprint-controls {
+      padding: 0;
+      margin: 12px 0;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      margin: 8px 0;
+      font-size: 13px;
+      color: #444;
+    }
+
+    .legend span::before {
+      content: '';
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: #23964f;
+    }
+
+    .legend .recorded::before {
+      border-radius: 2px;
+      background: #007aff;
     }
 
     .details {
@@ -76,11 +155,17 @@
       color: #6e6e73;
     }
 
+    .directions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
     .button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      margin-top: 14px;
       min-height: 44px;
       padding: 0 16px;
       border-radius: 8px;
@@ -88,6 +173,16 @@
       color: white;
       font-weight: 700;
       text-decoration: none;
+    }
+
+    .button:focus-visible {
+      outline: 3px solid #111111;
+      outline-offset: 3px;
+    }
+
+    .button-secondary {
+      background: #edf7f0;
+      color: #176b2e;
     }
 
     .empty {
@@ -102,12 +197,32 @@
     <h1>HikerCircle Live Location</h1>
     <p id="status">Loading shared location...</p>
     <section id="content" class="panel" hidden>
-      <img id="map" class="map" alt="Live location on Mapbox" style="object-fit:contain">
-      <iframe id="fallbackMap" class="map" title="Live location map — OpenStreetMap fallback" hidden></iframe>
+      <div class="view-switch" role="group" aria-label="Location map view">
+        <button id="latestMode" type="button" aria-pressed="true">Latest location</button>
+        <button id="footprintsMode" type="button" aria-pressed="false">Live footprints</button>
+      </div>
+      <div class="map-frame">
+        <img id="map" class="map" alt="Live location on Mapbox Outdoors" width="640" height="400">
+        <iframe id="fallbackMap" class="map" title="Live location map — OpenStreetMap fallback" hidden></iframe>
+        <div id="footprintMap" class="map" aria-label="Interactive recorded footprints map" hidden></div>
+      </div>
       <div class="details">
+        <p id="modeNotice" role="status" hidden></p>
+        <div id="footprintPanel" hidden>
+          <p id="footprintStatus" class="updated" role="status">Loading recorded footprints…</p>
+          <div class="legend"><span>Latest GPS fix</span><span class="recorded">Recorded footprints playback</span></div>
+          <div class="footprint-controls">
+            <button id="fitFootprints" type="button">Fit route</button>
+            <button id="pauseFootprints" type="button">Pause playback</button>
+            <button id="replayFootprints" type="button">Replay</button>
+          </div>
+        </div>
         <p id="coordinate" class="coordinate"></p>
         <p id="updated" class="updated"></p>
-        <a id="mapLink" class="button" target="_blank" rel="noreferrer">Open in Google Maps</a>
+        <div class="directions">
+          <a id="mapLink" class="button" target="_blank" rel="noopener noreferrer">Open in Google Maps</a>
+          <a id="wazeLink" class="button button-secondary" target="_blank" rel="noopener noreferrer">Get directions in Waze</a>
+        </div>
       </div>
     </section>
     <section id="empty" class="empty" hidden>
@@ -117,7 +232,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+    import { getFirestore, doc, collection, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyAEnKwoQqGoJaQ23x4QOH0_TSWB7DU3Mxk",
@@ -128,6 +243,63 @@
       appId: "1:41069899337:web:04b79b9aaf104702a61998"
     };
 
+    // BEGIN LIVE FOOTPRINT GEOMETRY
+    // Match View Trail Normal: discrete chronological vertices, a fixed base
+    // route, three physical-distance tails, 15 seconds then a 2-second dwell.
+    const FOOTPRINT_PLAYBACK_MS = 15000;
+    const FOOTPRINT_DWELL_MS = 2000;
+    function footprintDistanceMeters(a, b) {
+      const radians = value => value * Math.PI / 180;
+      const latitudeDelta = radians(b[1] - a[1]);
+      const longitudeDelta = radians(b[0] - a[0]);
+      const h = Math.sin(latitudeDelta / 2) ** 2
+        + Math.cos(radians(a[1])) * Math.cos(radians(b[1])) * Math.sin(longitudeDelta / 2) ** 2;
+      return 6371000 * 2 * Math.asin(Math.sqrt(Math.min(1, Math.max(0, h))));
+    }
+    function prepareFootprintGeometry(points) {
+      const coordinates = [];
+      for (const point of points) {
+        if (!Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite)
+            || Math.abs(point[1]) > 85.05112878 || Math.abs(point[0]) > 180) continue;
+        let longitude = point[0];
+        const previous = coordinates.at(-1);
+        if (previous) {
+          while (longitude - previous[0] > 180) longitude -= 360;
+          while (longitude - previous[0] < -180) longitude += 360;
+          if (longitude === previous[0] && point[1] === previous[1]) continue;
+        }
+        coordinates.push([longitude, point[1]]);
+      }
+      const distances = coordinates.length ? [0] : [];
+      for (let i = 1; i < coordinates.length; i++) {
+        distances.push(distances[i - 1] + footprintDistanceMeters(coordinates[i - 1], coordinates[i]));
+      }
+      const totalMeters = distances.at(-1) || 0;
+      return { coordinates, distances, totalMeters, tailLengthMeters: Math.min(625, Math.max(2.5, totalMeters * .15)) };
+    }
+    function footprintTailStart(distances, head, length) {
+      let start = head;
+      const cutoff = distances[head] - length;
+      while (start > 0 && distances[start - 1] >= cutoff) start--;
+      return start === head && head > 0 ? head - 1 : start;
+    }
+    function footprintPlaybackFrame(geometry, elapsedMs, { reducedMotion = false } = {}) {
+      const points = geometry.coordinates;
+      if (points.length < 2) return { targetIndex: points.length, progress: 1, tailCoordinates: [], dwell: false };
+      const cycle = Math.max(0, Number.isFinite(elapsedMs) ? elapsedMs : 0) % (FOOTPRINT_PLAYBACK_MS + FOOTPRINT_DWELL_MS);
+      const progress = reducedMotion ? 1 : Math.min(1, cycle / FOOTPRINT_PLAYBACK_MS);
+      const targetIndex = Math.min(points.length, Math.max(2, 1 + Math.round(progress * (points.length - 1))));
+      const head = targetIndex - 1;
+      return {
+        targetIndex,
+        progress,
+        dwell: !reducedMotion && cycle >= FOOTPRINT_PLAYBACK_MS,
+        tailCoordinates: reducedMotion ? [] : [1, 2 / 3, 1 / 3].map(factor => points.slice(
+          footprintTailStart(geometry.distances, head, geometry.tailLengthMeters * factor), targetIndex)),
+      };
+    }
+    // END LIVE FOOTPRINT GEOMETRY
+
     const params = new URLSearchParams(window.location.search);
     const shareId = params.get("share");
     const status = document.getElementById("status");
@@ -135,11 +307,57 @@
     const empty = document.getElementById("empty");
     const map = document.getElementById("map");
     const fallbackMap = document.getElementById("fallbackMap");
+    const footprintMapElement = document.getElementById('footprintMap');
+    const latestMode = document.getElementById('latestMode');
+    const footprintsMode = document.getElementById('footprintsMode');
+    const footprintPanel = document.getElementById('footprintPanel');
+    const footprintStatus = document.getElementById('footprintStatus');
+    const modeNotice = document.getElementById('modeNotice');
+    const fitFootprints = document.getElementById('fitFootprints');
+    const pauseFootprints = document.getElementById('pauseFootprints');
+    const replayFootprints = document.getElementById('replayFootprints');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const mapConfig = fetch('/map-config.json').then(response => response.ok ? response.json() : {})
       .catch(() => ({}));
     let mapGeneration = 0;
     let lastCoordinates = '';
+    let staticState = null;
     let expiryTimer = null;
+    let db = null;
+    let latestShare = null;
+    let shareExpiresAtMillis = 0;
+    let selectedMode = 'latest';
+    let mapboxLibraryPromise = null;
+    let glMap = null;
+    let glReady = false;
+    let glGeneration = 0;
+    let glLoadTimer = null;
+    let latestMarker = null;
+    let routeUnsubscribe = null;
+    let routeGeneration = 0;
+    const routeChunks = new Map();
+    let geometry = prepareFootprintGeometry([]);
+    let rawPointCount = 0;
+    let geometrySignature = '';
+    let didFitRoute = false;
+    let paused = false;
+    let raf = null;
+    let dwellTimer = null;
+    let animationElapsed = 0;
+    let animationStartedAt = null;
+    let lastAnimatedIndex = -1;
+
+    function eligibleForFootprints() {
+      return selectedMode === 'footprints' && latestShare?.isActive === true
+        && shareExpiresAtMillis > Date.now();
+    }
+
+    function syncMapVisibility() {
+      const showInteractive = eligibleForFootprints() && glReady;
+      footprintMapElement.hidden = !showInteractive;
+      map.hidden = showInteractive || staticState !== 'image';
+      fallbackMap.hidden = showInteractive || staticState !== 'fallback';
+    }
 
     async function updateMap(lat, lng) {
       const coordinates = `${lat},${lng}`;
@@ -150,8 +368,8 @@
       if (generation !== mapGeneration) return;
       function fallback() {
         if (generation !== mapGeneration) return;
-        map.hidden = true;
-        fallbackMap.hidden = false;
+        staticState = 'fallback';
+        syncMapVisibility();
         const bbox = [lng - 0.008, lat - 0.005, lng + 0.008, lat + 0.005].join(',');
         fallbackMap.src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lng}`;
       }
@@ -162,8 +380,8 @@
         clearTimeout(timeout);
         if (generation !== mapGeneration) return;
         map.src = image.src;
-        map.hidden = false;
-        fallbackMap.hidden = true;
+        staticState = 'image';
+        syncMapVisibility();
         fallbackMap.removeAttribute('src');
       };
       image.onerror = () => { clearTimeout(timeout); fallback(); };
@@ -172,14 +390,348 @@
     const coordinate = document.getElementById("coordinate");
     const updated = document.getElementById("updated");
     const mapLink = document.getElementById("mapLink");
+    const wazeLink = document.getElementById("wazeLink");
+
+    function emptyLine() { return { type: 'FeatureCollection', features: [] }; }
+    function lineData(coordinates) {
+      return coordinates.length < 2 ? emptyLine() : {
+        type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates },
+      };
+    }
+
+    function stopAnimation() {
+      if (raf !== null) cancelAnimationFrame(raf);
+      if (dwellTimer !== null) clearTimeout(dwellTimer);
+      raf = null;
+      dwellTimer = null;
+      if (animationStartedAt !== null) animationElapsed += Math.max(0, performance.now() - animationStartedAt);
+      animationStartedAt = null;
+    }
+
+    function paintPlayback(elapsed, force = false) {
+      if (!glReady || !glMap) return;
+      const frame = footprintPlaybackFrame(geometry, elapsed, { reducedMotion: reducedMotion.matches });
+      if (force || frame.targetIndex !== lastAnimatedIndex || reducedMotion.matches) {
+        lastAnimatedIndex = frame.targetIndex;
+        for (let i = 0; i < 3; i++) {
+          glMap.getSource(`footprint-tail-${i}`)?.setData(lineData(frame.tailCoordinates[i] || []));
+        }
+      }
+      return frame;
+    }
+
+    function animationCanRun() {
+      return eligibleForFootprints() && glReady && geometry.coordinates.length > 1
+        && !reducedMotion.matches && !document.hidden && !paused;
+    }
+
+    function startAnimation() {
+      if (!animationCanRun() || raf !== null || dwellTimer !== null) return;
+      if (animationStartedAt === null) animationStartedAt = performance.now();
+      function tick(now) {
+        raf = null;
+        if (!animationCanRun()) { stopAnimation(); return; }
+        const elapsed = animationElapsed + Math.max(0, now - animationStartedAt);
+        const frame = paintPlayback(elapsed);
+        if (frame?.dwell) {
+          const remaining = FOOTPRINT_PLAYBACK_MS + FOOTPRINT_DWELL_MS
+            - elapsed % (FOOTPRINT_PLAYBACK_MS + FOOTPRINT_DWELL_MS);
+          dwellTimer = setTimeout(() => { dwellTimer = null; startAnimation(); }, Math.max(1, remaining));
+        } else {
+          raf = requestAnimationFrame(tick);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    }
+
+    function updateFootprintStatus() {
+      const enoughPoints = geometry.coordinates.length > 1;
+      footprintStatus.textContent = !enoughPoints
+        ? 'Waiting for more footprints. The green pin shows the latest GPS fix.'
+        : `Footprints playback · ${rawPointCount.toLocaleString()} recorded points. `
+          + (reducedMotion.matches ? 'Motion is disabled by your device setting. ' : paused ? 'Playback paused. ' : '')
+          + 'Blue motion replays recorded footprints, not a live moving position.';
+      pauseFootprints.disabled = !enoughPoints || reducedMotion.matches;
+      replayFootprints.disabled = !enoughPoints || reducedMotion.matches;
+      pauseFootprints.textContent = paused ? 'Resume playback' : 'Pause playback';
+    }
+
+    function fitRoute() {
+      if (!glReady || !glMap) return;
+      if (geometry.coordinates.length > 1) {
+        const bounds = new window.mapboxgl.LngLatBounds(geometry.coordinates[0], geometry.coordinates[0]);
+        for (const point of geometry.coordinates) bounds.extend(point);
+        glMap.fitBounds(bounds, { padding: 48, duration: reducedMotion.matches ? 0 : 350, maxZoom: 18 });
+        didFitRoute = true;
+      } else if (latestShare?.latestLocation) {
+        const location = latestShare.latestLocation;
+        glMap.easeTo({ center: [location.longitude, location.latitude], zoom: 16, duration: reducedMotion.matches ? 0 : 350 });
+      }
+    }
+
+    function refreshLatestMarker() {
+      if (!glReady || !glMap || !latestShare?.latestLocation) return;
+      const location = latestShare.latestLocation;
+      const coordinates = [location.longitude, location.latitude];
+      if (!latestMarker) {
+        latestMarker = new window.mapboxgl.Marker({ color: '#23964f' }).setLngLat(coordinates).addTo(glMap);
+      } else latestMarker.setLngLat(coordinates);
+    }
+
+    function refreshFootprintRendering() {
+      updateFootprintStatus();
+      if (!glReady || !glMap || !eligibleForFootprints()) return;
+      glMap.getSource('footprint-base')?.setData(lineData(geometry.coordinates));
+      refreshLatestMarker();
+      if (!didFitRoute && geometry.coordinates.length > 1) fitRoute();
+      lastAnimatedIndex = -1;
+      paintPlayback(animationElapsed + (animationStartedAt === null ? 0 : Math.max(0, performance.now() - animationStartedAt)), true);
+      if (geometry.coordinates.length < 2 || reducedMotion.matches) stopAnimation();
+      else startAnimation();
+    }
+
+    function unsubscribeFootprints() {
+      routeGeneration++;
+      if (routeUnsubscribe) routeUnsubscribe();
+      routeUnsubscribe = null;
+      stopAnimation();
+    }
+
+    function clearFootprintCache() {
+      routeChunks.clear();
+      geometry = prepareFootprintGeometry([]);
+      geometrySignature = '';
+      rawPointCount = 0;
+      didFitRoute = false;
+      animationElapsed = 0;
+      lastAnimatedIndex = -1;
+    }
+
+    function destroyFootprintMap() {
+      glGeneration++;
+      clearTimeout(glLoadTimer);
+      glLoadTimer = null;
+      latestMarker?.remove();
+      latestMarker = null;
+      if (glMap) glMap.remove();
+      glMap = null;
+      glReady = false;
+      footprintMapElement.hidden = true;
+    }
+
+    function fallbackToLatest() {
+      unsubscribeFootprints();
+      clearFootprintCache();
+      destroyFootprintMap();
+      selectMode('latest');
+      modeNotice.textContent = 'The footprints map could not load. Showing the latest location instead.';
+      modeNotice.hidden = false;
+    }
+
+    // Load GL JS only after the recipient selects footprints. Version and URLs
+    // are pinned to Mapbox's official route-animation example; no Turf needed.
+    // https://docs.mapbox.com/mapbox-gl-js/example/animate-point-along-route/
+    function loadMapboxLibrary() {
+      if (window.mapboxgl) return Promise.resolve(window.mapboxgl);
+      if (!mapboxLibraryPromise) {
+        mapboxLibraryPromise = new Promise((resolve, reject) => {
+          const stylesheet = document.createElement('link');
+          stylesheet.rel = 'stylesheet';
+          stylesheet.href = 'https://api.mapbox.com/mapbox-gl-js/v3.33.0/mapbox-gl.css';
+          const script = document.createElement('script');
+          script.src = 'https://api.mapbox.com/mapbox-gl-js/v3.33.0/mapbox-gl.js';
+          script.async = true;
+          let loaded = 0;
+          const timer = setTimeout(() => reject(new Error('Map library timed out')), 15000);
+          function finish() {
+            if (++loaded === 2) { clearTimeout(timer); window.mapboxgl ? resolve(window.mapboxgl) : reject(new Error('Map library unavailable')); }
+          }
+          stylesheet.onload = finish;
+          script.onload = finish;
+          stylesheet.onerror = script.onerror = () => { clearTimeout(timer); reject(new Error('Map library unavailable')); };
+          document.head.append(stylesheet, script);
+        }).catch(error => { mapboxLibraryPromise = null; throw error; });
+      }
+      return mapboxLibraryPromise;
+    }
+
+    async function ensureFootprintMap() {
+      if (glMap) {
+        if (glReady) { syncMapVisibility(); glMap.resize(); refreshFootprintRendering(); }
+        return;
+      }
+      const generation = ++glGeneration;
+      try {
+        const [library, config] = await Promise.all([loadMapboxLibrary(), mapConfig]);
+        if (generation !== glGeneration || !eligibleForFootprints()) return;
+        if (!config.mapboxAccessToken?.startsWith('pk.') || (library.supported && !library.supported())) throw new Error('Interactive map unavailable');
+        const location = latestShare.latestLocation;
+        // Keep the container laid out while the style loads, then reveal it.
+        footprintMapElement.hidden = false;
+        glMap = new library.Map({
+          container: footprintMapElement, accessToken: config.mapboxAccessToken,
+          style: 'mapbox://styles/mapbox/outdoors-v12',
+          center: [location.longitude, location.latitude], zoom: 16,
+          attributionControl: true,
+        });
+        glMap.addControl(new library.NavigationControl(), 'top-right');
+        glMap.addControl(new library.ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-left');
+        glLoadTimer = setTimeout(() => { if (generation === glGeneration && !glReady) fallbackToLatest(); }, 15000);
+        glMap.on('error', () => { if (generation === glGeneration && !glReady) fallbackToLatest(); });
+        glMap.on('load', () => {
+          if (generation !== glGeneration || !glMap) return;
+          clearTimeout(glLoadTimer);
+          glLoadTimer = null;
+          for (const [id, color, width, opacity] of [
+            ['footprint-base', '#7DD3FC', 5.65, .45],
+            ['footprint-tail-0', '#007AFF', 2.65, .18],
+            ['footprint-tail-1', '#007AFF', 2.65, .40],
+            ['footprint-tail-2', '#007AFF', 2.65, .90],
+          ]) {
+            glMap.addSource(id, { type: 'geojson', data: emptyLine() });
+            glMap.addLayer({ id, source: id, type: 'line',
+              layout: { 'line-cap': 'round', 'line-join': 'round' },
+              paint: { 'line-color': color, 'line-width': width, 'line-opacity': opacity } });
+          }
+          glReady = true;
+          syncMapVisibility();
+          glMap.resize();
+          refreshFootprintRendering();
+        });
+      } catch (_) {
+        if (generation === glGeneration && eligibleForFootprints()) fallbackToLatest();
+      }
+    }
+
+    function timestampMillis(value) {
+      return typeof value?.toMillis === 'function' ? value.toMillis()
+        : typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
+    }
+
+    function chunkPoints(data) {
+      const expires = timestampMillis(data.expiresAt);
+      if (!Number.isFinite(expires) || expires <= Date.now() || !Array.isArray(data.points)) return [];
+      const started = timestampMillis(latestShare.createdAtLocal)
+        || timestampMillis(latestShare.createdAt) || shareExpiresAtMillis - 24 * 3600000;
+      return data.points.filter(point => point && typeof point === 'object'
+        && Number.isFinite(point.latitude) && Math.abs(point.latitude) <= 85.05112878
+        && Number.isFinite(point.longitude) && Math.abs(point.longitude) <= 180
+        && Number.isFinite(point.recordedAtMillis) && point.recordedAtMillis >= started && point.recordedAtMillis < shareExpiresAtMillis
+        && Number.isFinite(point.fixCapturedAtMillis) && point.fixCapturedAtMillis >= started && point.fixCapturedAtMillis < shareExpiresAtMillis
+        && point.fixCapturedAtMillis <= Date.now() + 300000);
+    }
+
+    function rebuildFootprints() {
+      const points = [...routeChunks.values()].flat().sort((a, b) =>
+        a.recordedAtMillis - b.recordedAtMillis || a.fixCapturedAtMillis - b.fixCapturedAtMillis
+        || a.latitude - b.latitude || a.longitude - b.longitude);
+      const unique = [];
+      for (const point of points) {
+        if (unique.at(-1)?.recordedAtMillis !== point.recordedAtMillis) unique.push(point);
+      }
+      rawPointCount = unique.length;
+      const coordinates = unique.map(point => [point.longitude, point.latitude]);
+      const signature = JSON.stringify(coordinates);
+      if (signature !== geometrySignature) {
+        geometrySignature = signature;
+        geometry = prepareFootprintGeometry(coordinates);
+        refreshFootprintRendering();
+      } else updateFootprintStatus();
+    }
+
+    function subscribeFootprints() {
+      if (routeUnsubscribe || !eligibleForFootprints()) return;
+      const generation = ++routeGeneration;
+      let firstSnapshot = true;
+      const chunks = query(collection(db, 'live_location_shares', shareId, 'live_location_route_chunks'), orderBy('bucketStartMillis'));
+      routeUnsubscribe = onSnapshot(chunks, snapshot => {
+        if (generation !== routeGeneration || !eligibleForFootprints()) return;
+        if (firstSnapshot || typeof snapshot.docChanges !== 'function') {
+          routeChunks.clear();
+          for (const chunk of snapshot.docs) routeChunks.set(chunk.id, chunkPoints(chunk.data()));
+        } else {
+          for (const change of snapshot.docChanges()) {
+            if (change.type === 'removed') routeChunks.delete(change.doc.id);
+            else routeChunks.set(change.doc.id, chunkPoints(change.doc.data()));
+          }
+        }
+        firstSnapshot = false;
+        rebuildFootprints();
+      }, () => {
+        if (generation === routeGeneration) showEmpty('Unable to load shared footprints. Reopen the link to try again.');
+      });
+    }
+
+    function selectMode(mode) {
+      if (!latestShare || shareExpiresAtMillis <= Date.now()) return;
+      selectedMode = mode;
+      latestMode.setAttribute('aria-pressed', String(mode === 'latest'));
+      footprintsMode.setAttribute('aria-pressed', String(mode === 'footprints'));
+      footprintPanel.hidden = mode !== 'footprints';
+      modeNotice.hidden = true;
+      syncMapVisibility();
+      if (mode === 'footprints') {
+        updateFootprintStatus();
+        subscribeFootprints();
+        ensureFootprintMap();
+      } else {
+        unsubscribeFootprints();
+        glMap?.stop();
+        if (!glReady && glMap) destroyFootprintMap();
+        const location = latestShare.latestLocation;
+        updateMap(location.latitude, location.longitude);
+      }
+    }
+
+    latestMode.addEventListener('click', () => selectMode('latest'));
+    footprintsMode.addEventListener('click', () => selectMode('footprints'));
+    fitFootprints.addEventListener('click', fitRoute);
+    pauseFootprints.addEventListener('click', () => {
+      paused = !paused;
+      if (paused) stopAnimation(); else startAnimation();
+      updateFootprintStatus();
+    });
+    replayFootprints.addEventListener('click', () => {
+      stopAnimation(); animationElapsed = 0; paused = false;
+      paintPlayback(0, true); updateFootprintStatus(); startAnimation();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopAnimation(); else startAnimation();
+    });
+    reducedMotion.addEventListener('change', () => {
+      stopAnimation();
+      if (eligibleForFootprints()) { refreshFootprintRendering(); startAnimation(); }
+    });
+    window.addEventListener('pagehide', () => {
+      unsubscribeFootprints(); clearFootprintCache(); destroyFootprintMap();
+    });
+    window.addEventListener('pageshow', event => {
+      if (event.persisted && eligibleForFootprints()) {
+        subscribeFootprints(); ensureFootprintMap();
+      }
+    });
 
     function showEmpty(message) {
       clearTimeout(expiryTimer);
       expiryTimer = null;
+      latestShare = null;
+      shareExpiresAtMillis = 0;
+      selectedMode = 'latest';
+      unsubscribeFootprints();
+      clearFootprintCache();
+      destroyFootprintMap();
+      footprintStatus.textContent = '';
+      footprintPanel.hidden = true;
+      modeNotice.hidden = true;
       mapGeneration++;
       lastCoordinates = '';
+      staticState = null;
       map.removeAttribute('src');
       fallbackMap.removeAttribute('src');
+      mapLink.removeAttribute('href');
+      wazeLink.removeAttribute('href');
+      coordinate.textContent = '';
+      updated.textContent = '';
       status.textContent = message;
       content.hidden = true;
       empty.hidden = false;
@@ -200,17 +752,30 @@
         showEmpty("This live location link is inactive.");
         return;
       }
+      latestShare = data;
+      shareExpiresAtMillis = expiresAtMillis;
 
       const lat = location.latitude;
       const lng = location.longitude;
-      const link = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+      const coordinates = `${lat},${lng}`;
+      const link = new URL('https://www.google.com/maps/search/');
+      link.searchParams.set('api', '1');
+      link.searchParams.set('query', coordinates);
+      // The HTTPS deep link opens the installed app or Waze's web fallback.
+      // https://developers.google.com/waze/deeplinks
+      const waze = new URL('https://waze.com/ul');
+      waze.searchParams.set('ll', coordinates);
+      waze.searchParams.set('navigate', 'yes');
+      waze.searchParams.set('utm_source', 'hikercircle');
       const timestamp = location.capturedAtLocal || data.updatedAtLocal || "";
 
       status.textContent = "Live location active";
       coordinate.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
       updated.textContent = timestamp ? `Updated ${new Date(timestamp).toLocaleString()}` : "Updated recently";
-      updateMap(lat, lng);
-      mapLink.href = link;
+      if (selectedMode === 'latest') updateMap(lat, lng);
+      else refreshLatestMarker();
+      mapLink.href = link.toString();
+      wazeLink.href = waze.toString();
       content.hidden = false;
       empty.hidden = true;
     }
@@ -219,7 +784,7 @@
       showEmpty("Missing or invalid live location share id.");
     } else {
       const app = initializeApp(firebaseConfig);
-      const db = getFirestore(app);
+      db = getFirestore(app);
       onSnapshot(
         doc(db, "live_location_shares", shareId),
         (snapshot) => {

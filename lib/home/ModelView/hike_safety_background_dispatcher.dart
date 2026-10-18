@@ -1,3 +1,4 @@
+// runHikeSafetyBackgroundDispatcher receives native safety events in a headless Flutter engine.
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 

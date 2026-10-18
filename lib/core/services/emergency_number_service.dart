@@ -1,3 +1,6 @@
+// EmergencyNumberService resolves country-specific emergency dial targets and keeps a fallback
+// available for the SOS calling flow.
+import 'private_provider_client.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -129,9 +132,9 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     final ownsClient = _client == null;
     try {
       final lookups = <Future<_CountryMatch?>>[
-        if (_googleGeocodingApiKey.trim().isNotEmpty)
+        if (_client == null || _googleGeocodingApiKey.trim().isNotEmpty)
           _countryFromGoogle(client, latitude, longitude),
-        if (_geoapifyApiKey.trim().isNotEmpty)
+        if (_client == null || _geoapifyApiKey.trim().isNotEmpty)
           _countryFromGeoapify(client, latitude, longitude),
       ];
       if (lookups.isEmpty) return null;
@@ -166,16 +169,25 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     double longitude,
   ) async {
     final key = _googleGeocodingApiKey.trim();
-    if (key.isEmpty) return null;
+    if (_client != null && key.isEmpty) return null;
     try {
       final uri = Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
         'latlng': '$latitude,$longitude',
         'result_type': 'country',
         'key': key,
       });
-      final response = await client
-          .get(uri, headers: GoogleApiConfig.androidBetaHeaders)
-          .timeout(_requestTimeout);
+      final response =
+          await (_client == null
+                  ? PrivateProviderClient.request('googleGeocode', {
+                      'latitude': latitude,
+                      'longitude': longitude,
+                      'countryOnly': true,
+                    })
+                  : client.get(
+                      uri,
+                      headers: GoogleApiConfig.androidBetaHeaders,
+                    ))
+              .timeout(_requestTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) return null;
@@ -199,7 +211,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     double longitude,
   ) async {
     final key = _geoapifyApiKey.trim();
-    if (key.isEmpty) return null;
+    if (_client != null && key.isEmpty) return null;
     try {
       final uri = Uri.https('api.geoapify.com', '/v1/geocode/reverse', {
         'lat': '$latitude',
@@ -208,7 +220,15 @@ class EmergencyNumberService implements EmergencyNumberResolver {
         'format': 'json',
         'apiKey': key,
       });
-      final response = await client.get(uri).timeout(_requestTimeout);
+      final response =
+          await (_client == null
+                  ? PrivateProviderClient.request('geoReverse', {
+                      'latitude': latitude,
+                      'longitude': longitude,
+                      'countryOnly': true,
+                    })
+                  : client.get(uri))
+              .timeout(_requestTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) return null;

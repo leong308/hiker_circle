@@ -1,3 +1,4 @@
+// ResidentialCityPickerPage searches and confirms a geocoded residential city selection.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 
@@ -11,6 +12,7 @@ import '../../core/widgets/state_boundary_overlay.dart';
 import '../../trail/Model/malaysia_map_region.dart';
 import '../Data/google_city_geocoding_service.dart';
 
+/// Keep the geocoded city selection distinct from raw search text until the user confirms it.
 class ResidentialCityPickerPage extends StatefulWidget {
   const ResidentialCityPickerPage({
     super.key,

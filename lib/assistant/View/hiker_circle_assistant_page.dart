@@ -1,3 +1,4 @@
+// HikerCircleAssistantPage presents conversations, suggestions and supported hiking actions.
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -10,6 +11,7 @@ import '../../sos/Data/location_snapshot_service.dart';
 import '../Data/hiker_circle_assistant_history_store.dart';
 import '../Data/hiker_circle_assistant_repository.dart';
 
+/// Keep conversation presentation separate from backend answers and account-scoped history persistence.
 class HikerCircleAssistantPage extends StatefulWidget {
   const HikerCircleAssistantPage({
     super.key,
@@ -114,6 +116,7 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
     });
   }
 
+  /// Clear persisted history as well as visible messages so reopening does not restore the old conversation.
   Future<void> _clearHistory() async {
     await _pendingSave;
     try {
@@ -156,6 +159,7 @@ class _HikerCircleAssistantPageState extends State<HikerCircleAssistantPage> {
     super.dispose();
   }
 
+  /// Send bounded recent history and request a location fix only for nearby-trail questions.
   Future<void> _send([String? suggestedQuestion]) async {
     if (_isSending || _isLoadingHistory) return;
     final question = (suggestedQuestion ?? _controller.text).trim();

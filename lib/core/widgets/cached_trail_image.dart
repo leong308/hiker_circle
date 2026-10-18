@@ -1,3 +1,5 @@
+// CachedTrailImage displays a cached trail photo with consistent loading, fallback and image-fit
+// behavior.
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 

@@ -1,3 +1,4 @@
+// FirstTimeOnboardingFlow sequences required profile and safety setup after account creation.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -53,6 +54,7 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
     unawaited(_loadSavedProgress());
   }
 
+  /// Restore saved profile and emergency contacts so an interrupted onboarding flow can resume.
   Future<void> _loadSavedProgress() async {
     setState(() {
       _isLoading = true;
@@ -104,6 +106,7 @@ class _FirstTimeOnboardingFlowState extends State<FirstTimeOnboardingFlow> {
     });
   }
 
+  /// Save emergency contacts before marking onboarding complete and notifying the app shell.
   Future<void> _complete(List<EmergencyContact> contacts) async {
     await _contactsRepository.saveEmergencyContacts(
       session: widget.session,

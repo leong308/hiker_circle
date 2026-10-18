@@ -1,3 +1,4 @@
+// trailPrecautions derives explainable safety observations without treating missing measurements as safe.
 import 'trail_models.dart';
 
 class TrailPrecaution {

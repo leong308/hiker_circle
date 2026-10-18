@@ -1,3 +1,5 @@
+// PageHeaderStyle and shared header controls keep navigation titles, touch targets and page actions
+// consistent.
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 

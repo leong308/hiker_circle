@@ -1,3 +1,4 @@
+// CommunityIntegrityPanel reviews integrity flags and records administrator decisions.
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -218,6 +219,7 @@ class _FlagReviewDialogState extends State<_FlagReviewDialog> {
     return source;
   }
 
+  /// Confirm destructive moderation choices before submitting the selected integrity review action.
   Future<void> _review(String action) async {
     if (_saving) return;
     final isComment = widget.flag['contentType'] == 'comment';

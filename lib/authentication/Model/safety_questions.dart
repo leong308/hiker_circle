@@ -1,3 +1,4 @@
+// Safety questions provide the fixed choices used by account setup and recovery forms.
 const safetyQuestionsList = [
   "What is the name of your first pet?",
   "What city were you born in?",

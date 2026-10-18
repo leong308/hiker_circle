@@ -1,3 +1,5 @@
+// Community caution map widgets decode, cluster and render community hazard markers with access to
+// their detail sheets.
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';

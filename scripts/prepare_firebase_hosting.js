@@ -1,3 +1,4 @@
+// prepare_firebase_hosting assembles public website assets and cache-safe configuration.
 const fs = require('fs');
 const path = require('path');
 

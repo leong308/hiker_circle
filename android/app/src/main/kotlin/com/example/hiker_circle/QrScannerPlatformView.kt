@@ -1,3 +1,4 @@
+// QrScannerPlatformView streams camera QR results and owns Android camera lifecycle cleanup.
 package com.leongziqi.hikercircle
 
 import android.Manifest

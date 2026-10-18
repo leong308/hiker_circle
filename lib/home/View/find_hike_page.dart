@@ -1,3 +1,4 @@
+// FindHikePage browses upcoming hikes and opens hike details or join actions.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;

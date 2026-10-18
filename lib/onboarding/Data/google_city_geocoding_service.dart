@@ -1,3 +1,5 @@
+// GoogleCityGeocodingService resolves residential city selections through the backend geocoding service.
+import '../../core/services/private_provider_client.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -47,7 +49,7 @@ class GoogleCityGeocodingService {
     required double latitude,
     required double longitude,
   }) async {
-    if (_apiKey.trim().isEmpty) {
+    if (_client != null && _apiKey.trim().isEmpty) {
       throw const CityGeocodingException(
         'Google Geocoding API key is not configured.',
       );
@@ -55,14 +57,19 @@ class GoogleCityGeocodingService {
 
     final client = _client ?? http.Client();
     try {
-      final response = await client.get(
-        Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
-          'latlng': '$latitude,$longitude',
-          'key': _apiKey,
-          'language': 'en',
-        }),
-        headers: GoogleApiConfig.androidBetaHeaders,
-      );
+      final response = _client == null
+          ? await PrivateProviderClient.request('googleGeocode', {
+              'latitude': latitude,
+              'longitude': longitude,
+            })
+          : await client.get(
+              Uri.https('maps.googleapis.com', '/maps/api/geocode/json', {
+                'latlng': '$latitude,$longitude',
+                'key': _apiKey,
+                'language': 'en',
+              }),
+              headers: GoogleApiConfig.androidBetaHeaders,
+            );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw CityGeocodingException(
           'Google Geocoding ${response.statusCode}: unable to resolve this city.',

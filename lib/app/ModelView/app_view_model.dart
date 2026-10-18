@@ -1,3 +1,5 @@
+// AppViewModel publishes session changes to the app shell and coordinates authentication changes
+// with home-screen safety widgets.
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -41,6 +43,11 @@ class AppViewModel extends ChangeNotifier {
   AppSession? get session => _sessionRepository.currentSession;
 
   bool get isSignedIn => _sessionRepository.isSignedIn;
+  String? get securityMessage => _sessionRepository.securityMessage;
+  void acknowledgeSecurityMessage() {
+    _sessionRepository.securityMessage = null;
+  }
+
   bool get isInitializing => _isInitializing;
 
   Future<void> initialize() async {

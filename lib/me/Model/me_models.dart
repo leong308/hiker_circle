@@ -1,3 +1,4 @@
+// MeProfile, MeStat and MeSection describe the profile overview and account action groups.
 import 'package:flutter/material.dart';
 
 class MeProfile {

@@ -1,3 +1,5 @@
+// Map controls provide zoom/reset actions, a geographic scale bar and deferred native-map creation
+// for scrolling pages.
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';

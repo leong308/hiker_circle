@@ -1,3 +1,4 @@
+// NextHikeBriefing summarizes the scheduled trail, departure countdown, forecast and preparation actions.
 import 'hike_departure_countdown.dart';
 import 'hiking_forecast_sheet.dart';
 import 'dart:async';

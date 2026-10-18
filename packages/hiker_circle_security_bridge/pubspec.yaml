@@ -1,0 +1,18 @@
+name: hiker_circle_security_bridge
+description: Private native database-key bridge for all HikerCircle Flutter engines.
+version: 0.0.1
+publish_to: none
+environment:
+  sdk: ^3.10.4
+  flutter: '>=3.38.0'
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.hikercircle.securitybridge
+        pluginClass: HikerCircleSecurityBridgePlugin
+      ios:
+        pluginClass: HikerCircleSecurityBridgePlugin

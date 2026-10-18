@@ -1,3 +1,4 @@
+// ThreeButtonSosWidgetProvider opens instant, medical, and duress SOS actions.
 package com.leongziqi.hikercircle
 
 import android.app.PendingIntent

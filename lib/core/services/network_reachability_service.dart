@@ -1,3 +1,5 @@
+// NetworkReachabilityService combines connection-change events with reachability probes and shares
+// one current online/offline snapshot.
 import 'dart:async';
 import 'dart:io';
 
@@ -38,6 +40,8 @@ class NetworkReachabilityService {
   Stream<NetworkReachabilitySnapshot> get snapshots => _controller.stream;
   NetworkReachabilitySnapshot get latest => _latest;
 
+  // NetworkReachabilityService.start reference-counts listeners so shared screens reuse one
+  // connectivity monitor.
   Future<void> start() async {
     _startCount += 1;
     _connectivitySubscription ??= _connectivity.onConnectivityChanged.listen(
@@ -72,6 +76,7 @@ class NetworkReachabilityService {
     _refreshTimer = null;
   }
 
+  // refresh coalesces concurrent probes instead of starting a request for every listening widget.
   Future<NetworkReachabilitySnapshot> refresh() {
     return _refreshFuture ??= _refreshNow();
   }

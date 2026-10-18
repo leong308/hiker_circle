@@ -1,3 +1,4 @@
+// HikeWeatherBriefing converts hourly forecasts into the scheduled hike's weather window.
 import '../../trail/Model/trail_models.dart';
 
 /// An hourly sample represents [time, time + 1 hour). All comparisons use epochs.
@@ -19,6 +20,7 @@ class HikeWeatherHour {
   final double? rainChance;
 }
 
+/// Compare forecast epochs with the planned hike window instead of using the viewing device's clock labels.
 class HikeWeatherBriefing {
   const HikeWeatherBriefing({
     required this.hours,

@@ -1,3 +1,4 @@
+// Firestore leases coordinate active-hike and upcoming-hike Cloud Scheduler jobs without duplicate workers.
 'use strict';
 const {randomUUID} = require('node:crypto');
 const CONTROL_DOCUMENT = 'activeHikeMonitorSchedule';
@@ -32,6 +33,7 @@ function createSchedulerClient({projectId, accessToken, fetchImpl = fetch, funct
   }
   return {name, get: () => request(), pause: () => request('pause'), resume: () => request('resume')};
 }
+// acquireLease: Fence competing scheduler controllers and already completed schedule ticks.
 async function acquireLease(db, documentId, now = Date.now, tickMillis, leaseMillis = LEASE_MILLIS) {
   const ref = db.collection('maintenanceState').doc(documentId);
   const owner = randomUUID();
@@ -65,6 +67,7 @@ async function reconcileActiveHikeMonitor({db, scheduler, now = Date.now}) {
   return reconcileHikeSchedule({db, scheduler, now, controlDocument: CONTROL_DOCUMENT,
     hasWork: hasActiveHike, membershipField: 'hasActiveHike'});
 }
+// reconcileHikeSchedule: Recheck current work around pause/resume calls so membership races converge on the existing job.
 async function reconcileHikeSchedule({db, scheduler, now = Date.now, controlDocument, hasWork, membershipField}) {
   const lease = await acquireLease(db, controlDocument, now);
   if (!lease) {
@@ -103,6 +106,7 @@ async function reconcileHikeSchedule({db, scheduler, now = Date.now, controlDocu
 async function withMonitorRunLease(db, work, now = Date.now, scheduleTime) {
   return withMaintenanceRunLease({db, work, now, scheduleTime, documentId: RUN_DOCUMENT});
 }
+// withMaintenanceRunLease: Release only the current worker lease and retain successful tick identity.
 async function withMaintenanceRunLease({db, work, now = Date.now, scheduleTime, documentId,
   leaseMillis = LEASE_MILLIS}) {
   const tickMillis = Date.parse(scheduleTime || '');

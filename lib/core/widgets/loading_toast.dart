@@ -1,3 +1,5 @@
+// HikerCircleLoadingToast widgets show bounded loading feedback; callers retain control of the
+// underlying operation and timeout handling.
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:lottie/lottie.dart';

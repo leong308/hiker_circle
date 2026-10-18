@@ -1,3 +1,4 @@
+// ActiveHikeWeatherController owns forecast refresh state for one account and active hike.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -50,6 +51,7 @@ class ActiveHikeWeatherController
   static String cacheKey(ActiveHikeSession hike) =>
       '${hike.trail.trailId}:${hike.startedAt.toUtc().microsecondsSinceEpoch}';
 
+  /// Bind the cache and request clock to one owner/hike; generation checks reject results from an older binding.
   Future<void> bind(ActiveHikeSession hike) async {
     if (_disposed) return;
     _hike = hike;
@@ -119,6 +121,7 @@ class ActiveHikeWeatherController
     if (_current(generation)) _pending = null;
   }
 
+  /// Preserve the current binding while refreshing and persist only results that still belong to it.
   Future<void> _fetch(
     ActiveHikeSession hike,
     String key,

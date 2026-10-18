@@ -1,3 +1,4 @@
+// HikerCircleAssistantHistoryStore synchronizes account-scoped local and cloud assistant history.
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -177,6 +178,7 @@ class HikerCircleAssistantHistoryStore {
         value: messages,
       );
 
+  /// Merge messages by ID after the newest clear-history cutoff so deleted history cannot reappear.
   Future<List<Map<String, dynamic>>> synchronize() async {
     final local = await load();
     final remote = await cloud?.load().timeout(const Duration(seconds: 7));
@@ -226,6 +228,7 @@ class HikerCircleAssistantHistoryStore {
     return merged;
   }
 
+  /// Save locally first, then queue only message IDs not yet uploaded to the private cloud history.
   Future<void> save(List<Map<String, dynamic>> messages) async {
     await _saveLocal(messages);
     if (cloud != null) {

@@ -1,3 +1,4 @@
+// TrailPage browses trails and opens route, forecast, caution, review and trail editing flows.
 export 'hazard_report_page.dart';
 import 'trail_caution_details.dart';
 import '../../core/widgets/page_header_style.dart';
@@ -1137,6 +1138,7 @@ class _AddTrailSheetState extends State<_AddTrailSheet> {
     );
   }
 
+  /// Resolve the selected coordinate's region instead of inferring identity from map camera presets.
   Future<void> _resolveLocation(double latitude, double longitude) async {
     final generation = ++_locationGeneration;
     setState(() {
@@ -2195,6 +2197,7 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
     }
   }
 
+  /// Update map route annotations only for the current route inputs and loaded style.
   Future<void> _syncRoute() async {
     if (!_styleLoaded) return;
     final manager = _polylineManager;
@@ -3910,6 +3913,7 @@ class _EditTrailPageState extends State<_EditTrailPage> {
         HikingRouteService.checkpointsHash(widget.trail.checkpoints);
   }
 
+  /// Refresh route-derived values when the edited checkpoints no longer match the stored route inputs.
   Future<HikingRouteResult?> _freshRouteForSave(
     List<TrailCheckpoint> checkpoints,
   ) async {

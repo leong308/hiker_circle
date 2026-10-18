@@ -1,3 +1,4 @@
+// showIosHikeSafetySetupDialog waits for the required iOS permissions during the current start attempt.
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';

@@ -1,3 +1,4 @@
+// HikeHistoryPage browses completed and expired hikes, with route, telemetry and team detail views.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -63,7 +64,9 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
       widget.loadHistory?.call() ?? widget.repository.loadMyHikeHistory();
 
   Future<void> _refresh() async {
-    final future = _load();
+    final future =
+        widget.loadHistory?.call() ??
+        widget.repository.loadMyHikeHistory(force: true);
     setState(() => _historyFuture = future);
     await future;
   }
@@ -253,6 +256,7 @@ class _ExpiredHikeHistoryListState extends State<_ExpiredHikeHistoryList> {
     unawaited(_load(refresh: true));
   }
 
+  /// Keep expired-hike pagination separate from refresh so existing rows remain visible while loading more.
   Future<void> _load({bool refresh = false}) async {
     if (!refresh && (_isLoading || _cursor == null)) return;
     final generation = ++_loadGeneration;

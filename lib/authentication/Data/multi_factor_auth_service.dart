@@ -1,3 +1,4 @@
+// MultiFactorAuthService coordinates TOTP, passkey enrollment and server-verified login challenges.
 import 'dart:developer' as developer;
 
 import 'package:cloud_functions/cloud_functions.dart';
@@ -9,6 +10,7 @@ import 'package:passkeys/types.dart';
 import '../../app/Model/app_session.dart';
 import '../Model/mfa_models.dart';
 import 'passkey_build_support.dart';
+import 'auth_flow_diagnostics.dart';
 
 class MultiFactorAuthService {
   MultiFactorAuthService({
@@ -27,6 +29,7 @@ class MultiFactorAuthService {
       _functionsOverride ?? FirebaseFunctions.instance;
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
 
+  /// Read the verified phone claim from the authenticated token before changing security factors.
   Future<String> authenticatedPhoneNumber() async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -75,7 +78,9 @@ class MultiFactorAuthService {
     return _sessionFromTokenResponse(data);
   }
 
+  /// Complete the server challenge around the platform passkey registration operation.
   Future<AppSession?> enrollPasskey({String? mfaToken, String? label}) async {
+    AuthFlowDiagnostics.event('passkey-enrollment', 'start');
     _requirePasskeysEnabled();
     final begin = await _call(
       'beginPasskeyEnrollment',
@@ -92,6 +97,7 @@ class MultiFactorAuthService {
       if (mfaToken != null) 'mfaToken': mfaToken,
       if (label != null && label.trim().isNotEmpty) 'label': label.trim(),
     });
+    AuthFlowDiagnostics.event('passkey-enrollment', 'server-verified');
     return _sessionFromTokenResponse(completed);
   }
 
@@ -106,6 +112,7 @@ class MultiFactorAuthService {
     return _requiredSession(data);
   }
 
+  /// Exchange the server's passkey challenge and assertion result for the verified app session.
   Future<AppSession> verifyPasskeyLogin({required String mfaToken}) async {
     _requirePasskeysEnabled();
     final begin = await _call('beginPasskeyLogin', {'mfaToken': mfaToken});
@@ -232,9 +239,11 @@ class MultiFactorAuthService {
     return _requiredSession(data);
   }
 
+  /// Accept the Firebase custom token only after the backend completes factor verification.
   Future<AppSession> _requiredSession(Map<String, dynamic> data) async {
     final customToken = _requiredString(data, 'customToken');
     final phoneNumber = _requiredString(data, 'phoneNumber');
+    AuthFlowDiagnostics.event('firebase-custom-token-sign-in', 'start');
     final credential = await _auth.signInWithCustomToken(customToken);
     if (credential.user == null) {
       throw FirebaseAuthException(
@@ -242,6 +251,7 @@ class MultiFactorAuthService {
         message: 'Firebase could not complete secure sign-in.',
       );
     }
+    AuthFlowDiagnostics.event('firebase-custom-token-sign-in', 'success');
     return AppSession(phoneNumber: phoneNumber, signedInAt: DateTime.now());
   }
 
@@ -363,6 +373,9 @@ bool requiresRecentMfaAuthentication(Object error) {
       error.code != 'failed-precondition') {
     return false;
   }
+  if (error.details is Map &&
+      (error.details as Map)['reason'] == 'recent-verification-required')
+    return true;
   final message = (error.message ?? '').toLowerCase();
   return message.contains('sign in again before') &&
       message.contains('security method');

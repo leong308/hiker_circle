@@ -1,3 +1,4 @@
+// HikeSafetyMonitorService records footprints and runs fall, stillness, and response timers.
 package com.leongziqi.hikercircle
 
 import android.Manifest
@@ -125,6 +126,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KEY_ENABLED, false)
 
+        // remapSession: Replace a provisional hike ID in the running monitor and buffered samples.
         fun remapSession(context: Context, oldSessionId: String, newSessionId: String, ownerUid: String) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             if (prefs.getString(KEY_SESSION_ID, null) != oldSessionId || prefs.getString(KEY_OWNER_UID, null) != ownerUid) return
@@ -623,6 +625,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             age in -5_000L..LOCATION_MAX_AGE_MILLIS
     }
 
+    // sampleLocationIfDue: Persist a due GPS sample before scheduling cloud footprint uploads.
     private fun sampleLocationIfDue() {
         // The resumed Flutter isolate owns foreground sampling; avoid two clocks
         // recording nearly identical positions at different milliseconds.
@@ -653,6 +656,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         uploadNextLocationBatch(settings, sessions)
     }
 
+    // uploadNextLocationBatch: Upload bounded footprint chunks and acknowledge only a confirmed server response.
     private fun uploadNextLocationBatch(settings: SafetyConfig, pendingSessions: List<String>) {
         val uploadSessionId = pendingSessions.firstOrNull() ?: return
         if (uploadingLocations || flutterUiForeground ||
@@ -681,8 +685,8 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         }
         runCatching {
             FirebaseFunctions.getInstance("us-central1")
-                .getHttpsCallable("recordHikeLocationBatch")
-                .call(mapOf("sessionId" to uploadSessionId, "points" to points))
+                .getHttpsCallable("appendHikeFootprints")
+                .call(mapOf("sessionId" to uploadSessionId, "footprints" to points))
                 .addOnCompleteListener { task ->
                     uploadingLocations = false
                     if (task.isSuccessful) {
@@ -709,6 +713,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         }
     }
 
+    // evaluateTimers: Advance stillness and response timers from persisted motion state.
     private fun evaluateTimers() {
         val settings = config ?: return
         if (!settings.fallDetectionEnabled) return
@@ -757,6 +762,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         }
     }
 
+    // beginResponseCountdown: Start the fixed response window before escalating a safety alert.
     private fun beginResponseCountdown(kind: String) {
         val settings = config ?: return
         val nowWall = System.currentTimeMillis()
@@ -852,6 +858,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         lastMotionPersistedElapsed = nowElapsed
     }
 
+    // restorePendingState: Resume an unfinished warning or dispatch after the service restarts.
     private fun restorePendingState() {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         val eventId = prefs.getString(KEY_EVENT_ID, null) ?: return
@@ -914,6 +921,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         if (eventId.isBlank()) cancelAlert("Invalid safety event")
     }
 
+    // startBackgroundDispatch: Run the Flutter safety dispatcher in a headless engine.
     private fun startBackgroundDispatch(
         eventId: String,
         kind: String,

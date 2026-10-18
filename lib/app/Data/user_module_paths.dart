@@ -1,3 +1,5 @@
+// UserModule and userModuleDocument keep profile, device, preference and safety Firestore document
+// paths consistent.
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Firestore modules are independent cloud records. Local SQLite models and

@@ -1,3 +1,4 @@
+// HikeWarningSpeechQueue serializes spoken warnings and deduplicates repeated hike alerts.
 import 'dart:async';
 
 /// Serializes routine hike warnings so a new alert does not interrupt a

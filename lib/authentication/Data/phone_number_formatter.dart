@@ -1,3 +1,5 @@
+// PhoneNumberFormatter normalizes account phone numbers and WhatsApp chat IDs.
+/// Use one phone normalization rule for authentication, stored contact identity and WhatsApp addressing.
 class PhoneNumberFormatter {
   static String normalize(String input) {
     final compact = input.trim().replaceAll(RegExp(r'[\s\-\(\)]'), '');

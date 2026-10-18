@@ -1,3 +1,5 @@
+// orderedCheckpointMatches aligns checkpoint animation positions with route traversal order,
+// including repeated coordinates.
 /// Minimum-distance matching constrained to traversal order, with anchored ends.
 List<int> orderedCheckpointMatches(List<List<double>> costs) {
   if (costs.isEmpty || costs.first.isEmpty) return [];

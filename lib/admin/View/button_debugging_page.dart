@@ -1,3 +1,4 @@
+// ButtonDebuggingPage controls live BLE capture and reviews locally saved debug logs.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -14,6 +15,7 @@ import '../Model/button_debug_entry.dart';
 import 'button_debug_entry_card.dart';
 import 'admin_ui.dart';
 
+/// Keep the live capture session separate from saved diagnostic logs opened for review.
 class ButtonDebuggingPage extends StatefulWidget {
   const ButtonDebuggingPage({
     super.key,

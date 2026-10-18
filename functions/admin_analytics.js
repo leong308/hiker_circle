@@ -1,3 +1,4 @@
+// Administrator analytics use projected aggregate data without returning account, caption, or route contents.
 'use strict';
 const {hydrateUsers} = require('./user_modules');
 // Aggregate-only response. Never return account identifiers, captions, GPS tracks or contact details.
@@ -7,7 +8,7 @@ const SOURCES = {
   trails: ['name','state','distanceKm','estimatedDurationMinutes','elevationGainMeters','difficulty','isVerifiedTrail','offlineMapAvailable','routeProvider','routeGeometryMetadata.pointCount'],
   hikeSessions: ['status','userId','trailId','trailName','hikeType','startedAt','startedAtLocal','endedAt','endedAtLocal','distanceKm','durationMinutes'],
   upcomingHikes: ['isDeleted','status','departureTime','departureTimeLocal','hikeType'],
-  communityPosts: ['createdAt','createdAtLocal','visibility','likeCount','commentCount'],
+  communityPosts: ['createdAt','visibility','likeCount','commentCount'],
   hazardReports: ['status','severity','hazardType','reportedAt','reportedAtLocal'],
   appFeedback: ['status','createdAt','createdAtLocal','category'],
   communityModerationReviews: ['status','contentType'],
@@ -30,6 +31,7 @@ function distribution(rows, key) {
   const counts=new Map();for(const row of rows){const name=key(row);counts.set(name,(counts.get(name)||0)+1);}
   return [...counts].map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value||a.label.localeCompare(b.label));
 }
+// readSource: Read bounded field projections and report total coverage independently of the sampled rows.
 async function readSource(db, name, fields, documentId, limit=10000) {
   const collection=db.collection(name);
   const total=(await collection.count().get()).data().count;
@@ -40,6 +42,7 @@ async function readSource(db, name, fields, documentId, limit=10000) {
     rows.push(...documents.map(doc=>({id:doc.id,...doc.data()})));if(page.size<500)break;last=page.docs.at(-1);}
   return {rows,total,complete:rows.length===total};
 }
+// aggregateAnalytics: Build Malaysia-local daily/monthly totals without returning individual source documents.
 function aggregateAnalytics(sources, now=Date.now()) {
   const today=dayKey(now);
   const dayStart=Date.parse(today+'T00:00:00Z');
@@ -57,7 +60,7 @@ function aggregateAnalytics(sources, now=Date.now()) {
     if(hike.status==='active')active++;if(hike.status==='abandoned')abandoned++;
     if(hike.status!=='completed')continue;completed++;const km=num(hike.distanceKm);distance+=km;duration+=num(hike.durationMinutes);
     record(dateOf(hike,'endedAtLocal','endedAt'),'hikes',km);if(hike.trailId)popular.set(hike.trailId,(popular.get(hike.trailId)||0)+1);}
-  for(const post of posts)record(dateOf(post,'createdAt','createdAtLocal'),'posts');
+  for(const post of posts)record(dateOf(post,'createdAt'),'posts');
   const pendingHazards=sources.hazardReports.rows.filter(r=>!r.status||['pending','unverified'].includes(r.status)).length;
   const pendingReviews=sources.communityModerationReviews.rows.filter(r=>r.status==='pending').length;
   const openFeedback=sources.appFeedback.rows.filter(r=>!['resolved','closed'].includes(String(r.status||'').toLowerCase())).length;
@@ -83,6 +86,7 @@ function aggregateAnalytics(sources, now=Date.now()) {
     daily,monthly};
 }
 let cached, inFlight;
+// loadAdminAnalytics: Share a short-lived result and in-flight read across equivalent administrator requests.
 async function loadAdminAnalytics({db,documentId,now=Date.now,forceRefresh=false}) {
   if(!forceRefresh&&cached&&now()-cached.generatedAtMillis<60000)return cached;
   if(inFlight)return inFlight;

@@ -1,3 +1,4 @@
+// PairedSosButtonPage displays BLE button readiness and runs a controlled paired-button test.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 
@@ -339,6 +340,7 @@ class _ReadinessCard extends StatelessWidget {
   }
 }
 
+/// Present paired-button readiness and the outcome of an explicitly armed test.
 class PairedSosButtonPage extends StatefulWidget {
   const PairedSosButtonPage({super.key, required this.accountId});
 

@@ -1,3 +1,8 @@
+// HikerCircleApp applies settings and selects startup, authentication or the signed-in shell.
+import '../../authentication/View/session_security_dialogs.dart';
+import '../../core/widgets/password_capture_protection.dart';
+import '../Data/local_session_database.dart';
+import 'private_screen_unlock_page.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../../core/widgets/page_header_style.dart';
@@ -105,6 +110,7 @@ SnackBarThemeData _buildSnackBarTheme(Brightness brightness) {
   );
 }
 
+/// Own the root navigator, account lifecycle and app-wide presentation settings.
 class HikerCircleApp extends StatefulWidget {
   const HikerCircleApp({
     super.key,
@@ -122,6 +128,10 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   final AppSettingsController _settingsController =
       AppSettingsController.instance;
   String? _pendingPlatformDeepLink;
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  bool _showingSecurityNotice = false;
+  bool _checkingLaunchLock = true;
+  bool _launchLocked = false;
 
   @override
   void initState() {
@@ -136,7 +146,26 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
     );
     _appViewModel.addListener(_refresh);
     _settingsController.addListener(_refresh);
-    _appViewModel.initialize();
+    _initializeLaunch();
+  }
+
+  Future<void> _initializeLaunch() async {
+    await _appViewModel.initialize();
+    await _settingsController.ready;
+    final session = _appViewModel.session;
+    var lock = false;
+    if (session != null && _settingsController.privateScreenUnlockEnabled) {
+      // Decide exactly once on a terminated-to-foreground launch. No resume hook.
+      final active = await LocalSessionDatabase().loadActiveHikeSession(
+        phoneNumber: session.phoneNumber,
+      );
+      lock = active == null;
+    }
+    if (mounted)
+      setState(() {
+        _launchLocked = lock;
+        _checkingLaunchLock = false;
+      });
   }
 
   @override
@@ -148,8 +177,32 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   }
 
   void _refresh() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) return;
+    setState(() {
+      if (_appViewModel.session == null) {
+        _launchLocked = false;
+      }
+    });
+    final message = _appViewModel.securityMessage;
+    if (message != null && !_showingSecurityNotice) {
+      _showingSecurityNotice = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final navigator = _navigatorKey.currentState;
+        final context = _navigatorKey.currentContext;
+        if (navigator == null || context == null) {
+          _showingSecurityNotice = false;
+          return;
+        }
+        _appViewModel.acknowledgeSecurityMessage();
+        navigator.popUntil((route) => route.isFirst);
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => SessionEndedDialog(message: message),
+        );
+        _showingSecurityNotice = false;
+      });
     }
   }
 
@@ -164,6 +217,16 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
           _pendingPlatformDeepLink = null;
         }
       });
+    }
+    if (_checkingLaunchLock) return const _StartupPage();
+    if (_launchLocked && _appViewModel.session != null) {
+      return PrivateScreenUnlockPage(
+        onUnlocked: () => setState(() => _launchLocked = false),
+        onSignOut: () {
+          setState(() => _launchLocked = false);
+          _appViewModel.signOut();
+        },
+      );
     }
     return _appViewModel.isInitializing
         ? const _StartupPage()
@@ -250,6 +313,8 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
       ),
       child: MaterialApp(
         title: 'HikerCircle',
+        navigatorKey: _navigatorKey,
+        navigatorObservers: [passwordRouteObserver],
         debugShowCheckedModeBanner: false,
         themeMode: _settingsController.themeMode,
         theme: ThemeData(
@@ -387,6 +452,7 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
   }
 }
 
+/// Present the startup state while bootstrap and account restoration determine the next route.
 class _StartupPage extends StatelessWidget {
   const _StartupPage();
 

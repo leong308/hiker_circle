@@ -1,3 +1,5 @@
+// HikerLevel maps achievement points to stable level names, badges and progress toward the next
+// threshold.
 class HikerLevel {
   const HikerLevel({
     required this.number,

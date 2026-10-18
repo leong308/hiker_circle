@@ -1,3 +1,7 @@
+// OnboardingProfilePage collects profile identity, hiking preferences and residential city.
+import '../../authentication/Data/multi_factor_auth_service.dart';
+import '../../authentication/View/recent_security_verification_page.dart';
+import '../../core/widgets/password_capture_protection.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -13,10 +17,12 @@ class OnboardingProfilePage extends StatefulWidget {
     super.key,
     required this.initialProfile,
     required this.onSubmit,
+    this.initialPasswordConfigured,
   });
 
   final OnboardingProfile initialProfile;
   final Future<void> Function(OnboardingProfile profile) onSubmit;
+  final bool? initialPasswordConfigured;
 
   @override
   State<OnboardingProfilePage> createState() => _OnboardingProfilePageState();
@@ -47,6 +53,7 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
   String? _hikeFrequency;
   ResidentialCitySelection? _residentialCity;
   bool _isSaving = false;
+  bool? _passwordConfigured;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String? _errorMessage;
@@ -59,6 +66,8 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
     );
     _passwordController = TextEditingController();
     _confirmPasswordController = TextEditingController();
+    _passwordConfigured = widget.initialPasswordConfigured;
+    if (_passwordConfigured == null) _loadPasswordSetupStatus();
     _gender = _normalizedChoice(
       widget.initialProfile.gender,
       _genderValues,
@@ -105,6 +114,25 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
     super.dispose();
   }
 
+  Future<void> _loadPasswordSetupStatus() async {
+    try {
+      final response = await FirebaseFunctions.instance
+          .httpsCallable('getPasswordSetupStatus')
+          .call();
+      if (mounted)
+        setState(
+          () => _passwordConfigured =
+              (response.data as Map)['configured'] == true,
+        );
+    } catch (_) {
+      if (mounted)
+        setState(
+          () => _errorMessage =
+              'Unable to check password setup. Reopen this page to retry.',
+        );
+    }
+  }
+
   Future<void> _chooseResidentialCity() async {
     if (_isSaving) {
       return;
@@ -145,10 +173,12 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
         throw Exception('You must be signed in to set a password.');
       }
       try {
-        await functions.httpsCallable('linkPasswordToAccount').call({
-          'password': _passwordController.text,
-          'username': _usernameController.text.trim(),
-        });
+        if (_passwordConfigured != true) {
+          await functions.httpsCallable('linkPasswordToAccount').call({
+            'password': _passwordController.text,
+            'username': _usernameController.text.trim(),
+          });
+        }
       } on FirebaseFunctionsException catch (e) {
         if (e.code == 'not-found') {
           throw Exception(
@@ -158,6 +188,9 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
         }
         rethrow;
       }
+      _passwordConfigured = true;
+      _passwordController.clear();
+      _confirmPasswordController.clear();
       await widget.onSubmit(
         OnboardingProfile(
           username: _usernameController.text,
@@ -170,6 +203,15 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
         ),
       );
     } catch (error) {
+      if (mounted && requiresRecentMfaAuthentication(error)) {
+        final phone = await MultiFactorAuthService().authenticatedPhoneNumber();
+        if (!mounted) return;
+        await Navigator.of(context).push<bool>(
+          MaterialPageRoute(
+            builder: (_) => RecentSecurityVerificationPage(phoneNumber: phone),
+          ),
+        );
+      }
       if (mounted) {
         setState(() {
           _errorMessage = _friendlyError(error);
@@ -192,7 +234,23 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      PasswordCaptureProtection(child: _buildPasswordPage(context));
+
+  Widget _buildPasswordPage(BuildContext context) {
+    if (_passwordConfigured == null) {
+      return Scaffold(
+        body: Center(
+          child: _errorMessage == null
+              ? const CircularProgressIndicator()
+              : TextButton(
+                  onPressed: _loadPasswordSetupStatus,
+                  child: Text(_errorMessage!),
+                ),
+        ),
+      );
+    }
+
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -252,76 +310,78 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
                         },
                       ),
                       const SizedBox(height: 14),
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        enabled: !_isSaving,
-                        textInputAction: TextInputAction.next,
-                        decoration: InputDecoration(
-                          labelText: 'Password',
-                          prefixIcon: const Icon(Icons.key),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
+                      if (_passwordConfigured != true) ...[
+                        TextFormField(
+                          controller: _passwordController,
+                          obscureText: _obscurePassword,
+                          enabled: !_isSaving,
+                          textInputAction: TextInputAction.next,
+                          decoration: InputDecoration(
+                            labelText: 'Password',
+                            prefixIcon: const Icon(Icons.key),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                              ),
+                              tooltip: _obscurePassword
+                                  ? 'Show password'
+                                  : 'Hide password',
+                              onPressed: _isSaving
+                                  ? null
+                                  : () {
+                                      setState(
+                                        () => _obscurePassword =
+                                            !_obscurePassword,
+                                      );
+                                    },
                             ),
-                            tooltip: _obscurePassword
-                                ? 'Show password'
-                                : 'Hide password',
-                            onPressed: _isSaving
-                                ? null
-                                : () {
-                                    setState(
-                                      () =>
-                                          _obscurePassword = !_obscurePassword,
-                                    );
-                                  },
                           ),
+                          validator: (value) {
+                            final result = PasswordValidator.validate(
+                              value ?? '',
+                            );
+                            return result.isValid ? null : result.errorMessage;
+                          },
                         ),
-                        validator: (value) {
-                          final result = PasswordValidator.validate(
-                            value ?? '',
-                          );
-                          return result.isValid ? null : result.errorMessage;
-                        },
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller: _confirmPasswordController,
-                        obscureText: _obscureConfirmPassword,
-                        enabled: !_isSaving,
-                        textInputAction: TextInputAction.next,
-                        decoration: InputDecoration(
-                          labelText: 'Confirm password',
-                          prefixIcon: const Icon(Icons.key),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscureConfirmPassword
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _confirmPasswordController,
+                          obscureText: _obscureConfirmPassword,
+                          enabled: !_isSaving,
+                          textInputAction: TextInputAction.next,
+                          decoration: InputDecoration(
+                            labelText: 'Confirm password',
+                            prefixIcon: const Icon(Icons.key),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscureConfirmPassword
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                              ),
+                              tooltip: _obscureConfirmPassword
+                                  ? 'Show password'
+                                  : 'Hide password',
+                              onPressed: _isSaving
+                                  ? null
+                                  : () {
+                                      setState(
+                                        () => _obscureConfirmPassword =
+                                            !_obscureConfirmPassword,
+                                      );
+                                    },
                             ),
-                            tooltip: _obscureConfirmPassword
-                                ? 'Show password'
-                                : 'Hide password',
-                            onPressed: _isSaving
-                                ? null
-                                : () {
-                                    setState(
-                                      () => _obscureConfirmPassword =
-                                          !_obscureConfirmPassword,
-                                    );
-                                  },
                           ),
+                          validator: (value) {
+                            if (value != _passwordController.text) {
+                              return 'Passwords do not match.';
+                            }
+                            return null;
+                          },
                         ),
-                        validator: (value) {
-                          if (value != _passwordController.text) {
-                            return 'Passwords do not match.';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 14),
+                        const SizedBox(height: 14),
+                      ],
                       DropdownButtonFormField<String>(
                         initialValue: _gender,
                         decoration: const InputDecoration(

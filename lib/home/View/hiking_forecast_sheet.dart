@@ -1,3 +1,4 @@
+// HikingForecastSheet explores the selected hike's hourly conditions, charts and precaution details.
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../Model/hike_session_models.dart';
 import '../Model/hike_weather_briefing.dart';
 import '../Model/session_weather_forecast.dart';
 
+/// Present the requested hike window without changing the active hike's tracking weather controller.
 class HikingForecastSheet extends StatefulWidget {
   const HikingForecastSheet({
     super.key,

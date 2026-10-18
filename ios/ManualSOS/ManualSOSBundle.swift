@@ -1,3 +1,4 @@
+// ManualSOSBundle registers hike, weather, SOS, and Live Activity widgets.
 import WidgetKit
 import SwiftUI
 

@@ -1,3 +1,4 @@
+// Shared hike plans project route and timing fields while excluding each participant's private safety settings.
 'use strict';
 
 const SHARED_HIKE_PLAN_PRIVACY_VERSION = 1;
@@ -22,6 +23,7 @@ function planObject(value) {
     : {};
 }
 
+// projectSharedHikePlan: Copy only the explicit public planning allowlist, excluding participant safety preferences.
 function projectSharedHikePlan(rawPlan) {
   const plan = planObject(rawPlan);
   const projected = {};
@@ -100,6 +102,7 @@ function sharedRouteAndTimingMatch(candidatePlan, canonicalPlan) {
     === JSON.stringify(normalizedCheckpoints(canonical.customCheckpoints));
 }
 
+// teamSourceMatchesRequest: Match the shared source and route timing before a caller can adopt team state.
 function teamSourceMatchesRequest(team, requestedSourceUpcomingHikeId) {
   const teamData = planObject(team);
   return String(teamData.sourceUpcomingHikeId || '').trim()

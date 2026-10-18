@@ -1,3 +1,4 @@
+// ButtonDebugTrace mirrors real BLE packets to diagnostics without consuming SOS events.
 package com.leongziqi.hikercircle
 
 import android.bluetooth.BluetoothGatt

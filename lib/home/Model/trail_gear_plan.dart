@@ -1,3 +1,4 @@
+// TrailGearPlan derives a compact packing list from route, weather and hike conditions.
 import 'route_gear_assessment.dart';
 import '../../trail/Model/trail_models.dart';
 import 'hike_weather_briefing.dart';

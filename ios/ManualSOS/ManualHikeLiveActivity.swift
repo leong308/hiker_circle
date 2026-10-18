@@ -1,3 +1,4 @@
+// ManualHikeLiveActivity renders active hike state on the Lock Screen and Dynamic Island.
 //
 //  ManualHikeLiveActivity.swift
 //  Runner

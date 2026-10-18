@@ -1,3 +1,4 @@
+// FallStillnessMonitor combines motion sensors, response countdowns and emergency readiness state.
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -52,6 +53,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     return _snapshot.status == FallStillnessMonitorStatus.awaitingResponse;
   }
 
+  /// Restart the sensor subscriptions with one active detection configuration.
   Future<void> start(FallDetectionSettings settings) async {
     if (_isStarted && _settings == settings) {
       return;
@@ -296,6 +298,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     }
   }
 
+  /// Distinguish direct impact from free fall before opening the impact or bounce-grace phase.
   void _handleNormalTracking({
     required FallDetectionSettings settings,
     required DateTime now,
@@ -381,6 +384,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     );
   }
 
+  /// Require the post-impact gyroscope stillness window before starting the response countdown.
   void _startStillnessVerification({
     required FallDetectionSettings settings,
     required DateTime now,
@@ -480,6 +484,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     _countdownTimer = null;
   }
 
+  /// Prevent concurrent emergency callbacks when the response countdown expires.
   Future<void> _confirmEmergency(FallDetectionSettings settings) async {
     if (_isHandlingEmergency) {
       return;

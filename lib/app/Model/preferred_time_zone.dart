@@ -1,3 +1,5 @@
+// PreferredTimeZone validates IANA zone IDs and formats local labels, offsets and schedule times
+// consistently.
 import 'package:timezone/data/latest.dart' as time_zone_data;
 import 'package:timezone/timezone.dart' as time_zone;
 

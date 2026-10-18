@@ -1,3 +1,5 @@
+// RouteGearAnalysisService checks nearby map features against the actual route corridor and caches
+// the resulting equipment assessment.
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:math' as math;

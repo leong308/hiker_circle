@@ -1,7 +1,9 @@
+// SessionWeatherForecast evaluates forecast coverage for the hike's planned time interval.
 import '../../trail/Model/trail_models.dart';
 import '../../trail/Model/trail_precautions.dart';
 import 'hike_weather_briefing.dart';
 
+/// Track whether hourly samples cover the requested hike window before presenting a forecast summary.
 class SessionWeatherForecast {
   SessionWeatherForecast(
     this.weather,

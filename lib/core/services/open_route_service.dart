@@ -1,3 +1,6 @@
+// OpenRouteService requests hiking directions through the private provider proxy and converts
+// validated route responses.
+import 'private_provider_client.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -43,7 +46,7 @@ class OpenRouteService {
     required double endLongitude,
     List<TrailCheckpoint> waypoints = const [],
   }) async {
-    if (_apiKey.trim().isEmpty) {
+    if (_client != null && _apiKey.trim().isEmpty) {
       throw const OpenRouteServiceException(
         'OpenRouteService API key is not configured.',
       );
@@ -51,28 +54,37 @@ class OpenRouteService {
 
     final client = _client ?? http.Client();
     try {
-      final response = await client.post(
-        Uri.https(
-          'api.openrouteservice.org',
-          '/v2/directions/foot-hiking/geojson',
-        ),
-        headers: {
-          'Authorization': _apiKey,
-          'Content-Type': 'application/json; charset=utf-8',
-          'Accept': 'application/json, application/geo+json',
-        },
-        body: jsonEncode({
-          'coordinates': [
-            [startLongitude, startLatitude],
-            for (final wp in waypoints) [wp.longitude, wp.latitude],
-            [endLongitude, endLatitude],
-          ],
-          'elevation': true,
-          'format': 'geojson',
-          'preference': 'steepest',
-          'avoid_features': ['highways', 'tollways'],
-        }),
-      );
+      final response = _client == null
+          ? await PrivateProviderClient.request('orsRoute', {
+              'coordinates': [
+                [startLongitude, startLatitude],
+                for (final point in waypoints)
+                  [point.longitude, point.latitude],
+                [endLongitude, endLatitude],
+              ],
+            })
+          : await client.post(
+              Uri.https(
+                'api.openrouteservice.org',
+                '/v2/directions/foot-hiking/geojson',
+              ),
+              headers: {
+                'Authorization': _apiKey,
+                'Content-Type': 'application/json; charset=utf-8',
+                'Accept': 'application/json, application/geo+json',
+              },
+              body: jsonEncode({
+                'coordinates': [
+                  [startLongitude, startLatitude],
+                  for (final wp in waypoints) [wp.longitude, wp.latitude],
+                  [endLongitude, endLatitude],
+                ],
+                'elevation': true,
+                'format': 'geojson',
+                'preference': 'steepest',
+                'avoid_features': ['highways', 'tollways'],
+              }),
+            );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw OpenRouteServiceException(

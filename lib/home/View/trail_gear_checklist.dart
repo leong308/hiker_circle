@@ -1,7 +1,9 @@
+// TrailGearChecklist presents required and suggested gear with packing progress.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../Model/hike_session_models.dart';
 
+/// Show packing progress using the current TrailGearPlan and the hiker's selected items.
 class TrailGearChecklist extends StatefulWidget {
   const TrailGearChecklist({
     super.key,

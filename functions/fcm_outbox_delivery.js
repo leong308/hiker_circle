@@ -1,7 +1,9 @@
+// FCM delivery claims distinguish safe preflight retries from uncertain outbound sends.
 'use strict';
 const { randomUUID } = require('node:crypto');
 const LEASE_MILLIS = 5 * 60000;
 
+// claimOutbox: Claim pending delivery once; expired outbound attempts remain uncertain rather than resending.
 async function claimOutbox(db, ref, timestamp, now = Date.now()) {
   const attemptId = randomUUID();
   return db.runTransaction(async tx => {
@@ -29,6 +31,7 @@ async function claimOutbox(db, ref, timestamp, now = Date.now()) {
   });
 }
 
+// updateClaim: Only the lease-owning attempt may advance delivery state.
 async function updateClaim(db, ref, attemptId, update, expectedPhase) {
   return db.runTransaction(async tx => {
     const snapshot = await tx.get(ref), current = snapshot.data() || {};

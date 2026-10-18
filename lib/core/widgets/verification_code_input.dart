@@ -1,3 +1,5 @@
+// VerificationCodeInput coordinates code entry, paste, focus and completion across the verification
+// digit fields.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 

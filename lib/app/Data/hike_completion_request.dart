@@ -1,3 +1,5 @@
+// Hike completion requests bound the wait for a cloud result while preserving the separately queued
+// local end-of-hike intent.
 import 'dart:async';
 
 // Completion includes a transaction and server-side follow-up work. Production

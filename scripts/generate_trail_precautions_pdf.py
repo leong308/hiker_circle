@@ -1,3 +1,4 @@
+# generate_trail_precautions_pdf formats the app trail precaution rules for review.
 from pathlib import Path
 import re
 from reportlab.lib import colors

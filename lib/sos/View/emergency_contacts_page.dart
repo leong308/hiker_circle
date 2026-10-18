@@ -1,3 +1,4 @@
+// EmergencyContactsPage edits emergency recipients and imports selected device contacts.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 
@@ -71,6 +72,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     }
   }
 
+  /// Finish the contact editor through its result flow instead of abandoning the current save state.
   Future<void> _close() async {
     if (viewModel.isSaving) return;
     if (!widget.onboardingRequired) {
@@ -224,6 +226,7 @@ class _EmergencyContactsPageState extends State<EmergencyContactsPage> {
     );
   }
 
+  /// Import only the device contact explicitly selected by the hiker.
   Future<void> _importDeviceContact() async {
     final contact = await _pickDeviceContact();
     if (contact != null && mounted) _selectDeviceContact(contact);

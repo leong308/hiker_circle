@@ -1,6 +1,7 @@
+// Community text integrity scans and human moderation preserve source fingerprints and audit decisions.
 'use strict';
 const {createHash, randomUUID} = require('node:crypto');
-const VERSION = 1;
+const VERSION = 2;
 const CATEGORIES = ['spam_scam', 'harassment', 'hate', 'sexual', 'violence', 'privacy', 'unsafe_advice'];
 const LABELS = {spam_scam: 'Possible spam or scam', harassment: 'Possible harassment', hate: 'Possible hate speech',
   sexual: 'Possible sexual content', violence: 'Possible threats or graphic violence', privacy: 'Personal information',
@@ -15,16 +16,15 @@ function sourceInfo(path) {
 }
 function contentHash(path, data) {
   const info = sourceInfo(path);
-  return sha(JSON.stringify([VERSION, path, info?.type === 'post' ? data.caption : data.body,
-    data.authorId, data.postId, data.commentId]));
+  return sha(JSON.stringify([VERSION, path, info?.type === 'post' ? data.caption : data.body, data.authorId]));
 }
+// prepareContent: Keep sensitive disclosures on the local review path and redact author/link context.
 function prepareContent(path, data) {
   const info = sourceInfo(path);
   if (!info) return {manual: 'integrity'};
   const text = info.type === 'post' ? data.caption : data.body;
   if (typeof text !== 'string' || (info.type === 'comment' && !text.trim()) || text.length > (info.type === 'post' ? 5000 : 2000)
-    || !data.authorId || (info.type === 'post' ? data.postId !== info.postId
-      : data.commentId !== info.commentId || data.postId !== info.postId)) return {manual: 'integrity'};
+    || typeof data.authorId !== 'string' || !data.authorId || data.authorId.length > 200) return {manual: 'integrity'};
   // Caption-free hike/photo posts are valid. Images are outside this text-only checker.
   if (!text.trim()) return {skip: true};
   // Fail closed on identifiable/sensitive disclosures rather than send them outside the app backend.
@@ -33,7 +33,7 @@ function prepareContent(path, data) {
     || /(?:\+?\d[\d ().-]{6,}\d)/.test(text)
     || /-?\d{1,3}\.\d{3,}\s*[,/]\s*-?\d{1,3}\.\d{3,}/.test(text)) return {manual: 'sensitive_content'};
   let redacted = text.replace(/https?:\/\/\S+|www\.\S+/gi, '[external link]');
-  for (const value of [data.authorName, data.authorUsername, data.username]) {
+  for (const value of [data.author?.name]) {
     if (typeof value === 'string' && value.length >= 2) redacted = redacted.split(value).join('[hiker]');
   }
   return {text: redacted, hasExternalLink: /https?:\/\/|www\./i.test(text)};
@@ -86,6 +86,7 @@ async function scanPage(db, collection, cursor, limit, fieldPath) {
   const page = await query.get();
   return {docs: page.docs, cursor: page.size === limit ? page.docs.at(-1).ref.path : null};
 }
+// scanContent: Fingerprint only eligible public post/comment paths; changed text supersedes old verdicts.
 async function scanContent(db, state, now, fieldPath) {
   const posts = await scanPage(db, db.collection('communityPosts'), state.postCursor, 100, fieldPath);
   const comments = await scanPage(db, db.collectionGroup('comments'), state.commentCursor, 150, fieldPath);
@@ -179,6 +180,7 @@ async function runIntegrityCheck({db, fieldPath, now = Date.now}) {
     });
   }
 }
+// reviewContent: Apply a human decision only while its source fingerprint still matches.
 async function reviewContent({db, reviewId, action, adminId, now = Date.now()}) {
   if (!/^[a-f0-9]{64}$/.test(reviewId || '') || !['dismiss', 'hide'].includes(action)) throw new Error('invalid-review');
   return db.runTransaction(async tx => {
@@ -198,9 +200,10 @@ async function reviewContent({db, reviewId, action, adminId, now = Date.now()}) 
       if (info.type === 'comment') {
         // Explicit human removal only; preserve the text in the admin-only audit record.
         tx.set(ref, {removedBody: source.data().body}, {merge: true}); tx.delete(sourceRef);
-      } else tx.update(sourceRef, {visibility: 'hidden', moderationStatus: 'hidden',
-        moderationReason: 'Reviewed by an administrator', moderatedByAdminId: adminId,
-        moderatedAtLocal: new Date(now).toISOString()});
+        tx.update(postRef, {commentCount: Math.max(0, Math.round(Number(parent.data()?.commentCount) || 0) - 1)});
+      } else tx.update(sourceRef, {visibility: 'hidden',
+        moderation: {status: 'hidden', reason: 'Reviewed by an administrator', adminId, at: new Date(now)},
+        updatedAt: new Date(now)});
     }
     tx.set(db.collection('communityModerationChecks').doc(reviewId),
       {stage: 'checked', checkedAtMillis: now}, {merge: true});

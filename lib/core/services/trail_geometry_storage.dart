@@ -1,3 +1,5 @@
+// TrailGeometryStorage validates complete route coordinates, computes geometry checksums and splits
+// oversized geometry into cloud chunks.
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';

@@ -1,3 +1,4 @@
+// HikeHistorySummary and detail models parse completed hikes, route samples and team tracks.
 import '../../home/Model/hike_session_models.dart';
 
 Map<String, dynamic> _map(Object? value) =>
@@ -17,6 +18,7 @@ double _number(Object? value) => value is num && value.isFinite
 DateTime? _date(Object? value) =>
     value is String ? DateTime.tryParse(value)?.toLocal() : null;
 
+/// Parse the compact history row separately from route and telemetry detail payloads.
 class HikeHistorySummary {
   const HikeHistorySummary({
     required this.sessionId,

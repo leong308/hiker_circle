@@ -1,3 +1,4 @@
+// PreparationConditions separates present conditions from the scheduled hike forecast.
 import 'package:flutter/material.dart';
 import '../../trail/Model/trail_models.dart';
 import '../../trail/View/weather_presentation.dart';

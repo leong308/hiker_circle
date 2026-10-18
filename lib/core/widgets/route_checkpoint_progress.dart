@@ -1,3 +1,5 @@
+// RouteCheckpointProgress exposes the route animation playhead and ordered checkpoint fractions to
+// synchronized UI panels.
 /// A snapshot of the map animation's own playhead. Checkpoint fractions follow
 /// traversal order, so an out-and-back route can revisit the same coordinate.
 class RouteCheckpointProgress {

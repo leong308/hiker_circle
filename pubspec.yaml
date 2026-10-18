@@ -28,6 +28,8 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  hiker_circle_security_bridge:
+    path: packages/hiker_circle_security_bridge
   flutter:
     sdk: flutter
 
@@ -67,6 +69,9 @@ dependencies:
   qr_flutter: ^4.1.0
   path_provider: ^2.1.6
   video_player: ^2.14.1
+  sqflite_sqlcipher: 3.4.1
+  local_auth: 3.0.2
+  firebase_app_check: 0.4.8
 
 
 dev_dependencies:
@@ -80,6 +85,8 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.3
+  integration_test:
+    sdk: flutter
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -95,7 +102,7 @@ flutter:
     enable-lldb-debugging: false
   
   assets:
-    - .env
+    - .env.public
     - assets/audios/sos_alarm.mp3
     - assets/audios/med_alarm.mp3
     - assets/guides/first_aid_guide.json
@@ -103,6 +110,8 @@ flutter:
     - assets/animations/hiker_circle_loading.json
     - assets/animations/loading_spinner.json
     - assets/animations/bluetooth_search.json
+    - assets/animations/gps_location.json
+    - assets/animations/gps_location.LICENSE.txt
     - assets/animations/file_transfer.gif
     - assets/icons/AppIcon-Android-1024.png
 

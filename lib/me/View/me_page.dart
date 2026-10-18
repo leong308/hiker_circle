@@ -1,3 +1,7 @@
+// MePage coordinates profile, account settings, privacy, achievements and security actions.
+import '../../core/services/private_screen_unlock.dart';
+import '../../authentication/View/recent_security_verification_page.dart';
+import '../../authentication/View/change_password_page.dart';
 import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -168,6 +172,7 @@ class _MePageState extends State<MePage> {
     }
   }
 
+  /// Load posts, group chats and buddy profiles independently from the account's editable profile fields.
   Future<void> _loadProfileCollections() async {
     try {
       final results = await Future.wait<Object>([
@@ -177,11 +182,6 @@ class _MePageState extends State<MePage> {
       ]);
       final ownPhone = widget.session.phoneNumber.trim();
       final posts = (results[0] as List<Map<String, dynamic>>)
-          .where(
-            (post) =>
-                (post['authorPhoneNumber']?.toString().trim() ?? '') ==
-                ownPhone,
-          )
           .map(
             (post) => _ProfileHistoryItem(
               title: post['trailName']?.toString().trim().isNotEmpty == true
@@ -434,6 +434,7 @@ class _MePageState extends State<MePage> {
     }
   }
 
+  /// Open the shared privacy-policy destination and surface a launch failure in the account UI.
   Future<void> _openPrivacyPolicy() async {
     final launched = await launchPrivacyPolicy();
     if (!mounted || launched) return;
@@ -490,6 +491,7 @@ class _MePageState extends State<MePage> {
     HikerCircleToast.show(context, 'This trail is no longer available.');
   }
 
+  /// Map supported assistant destination identifiers to existing account and app screens.
   void _navigateFromAssistant(String destinationId) {
     switch (destinationId) {
       case 'trails':
@@ -2247,6 +2249,47 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
   bool _isLoadingTimeZone = true;
   bool _isSavingTimeZone = false;
   String _timeZoneStatus = 'Loading your saved SOS timezone…';
+  Future<void> _setPrivateUnlock(bool enabled) async {
+    try {
+      if (enabled && !await PrivateScreenUnlock.available()) {
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Enroll biometrics in your phone settings before enabling private-screen unlock.',
+              ),
+            ),
+          );
+        return;
+      }
+      if (!await PrivateScreenUnlock.authenticate() || !mounted) return;
+      _settings.setPrivateScreenUnlockEnabled(enabled);
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Biometric verification is unavailable on this device.',
+            ),
+          ),
+        );
+    }
+  }
+
+  Future<void> _changePassword() async {
+    final verified = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => RecentSecurityVerificationPage(
+          phoneNumber: widget.session.phoneNumber,
+        ),
+      ),
+    );
+    if (verified == true && mounted)
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
+      );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2484,6 +2527,25 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                         ),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 18),
+                  SwitchListTile.adaptive(
+                    secondary: const Icon(Icons.fingerprint_rounded),
+                    title: const Text('Private-screen unlock'),
+                    subtitle: const Text(
+                      'Require biometrics when opening the app after it was closed. Skipped during an active hike.',
+                    ),
+                    value: _settings.privateScreenUnlockEnabled,
+                    onChanged: _setPrivateUnlock,
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.password_rounded),
+                    title: const Text('Change password'),
+                    subtitle: const Text(
+                      'Verify your identity before changing your password',
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: _changePassword,
                   ),
                   const SizedBox(height: 18),
                   _SectionTitle(label: 'Language'),

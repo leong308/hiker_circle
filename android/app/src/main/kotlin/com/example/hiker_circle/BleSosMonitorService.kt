@@ -1,3 +1,4 @@
+// BleSosMonitorService scans nearby SOS beacons and paired buttons while Flutter is inactive.
 package com.leongziqi.hikercircle
 
 import android.Manifest
@@ -341,6 +342,7 @@ class BleSosMonitorService : Service() {
         activeHelpGatts.values.toList().forEach(::closeHelpGatt)
     }
 
+    // handleScanResult: Separate paired-button events from nearby-help beacons before dispatch.
     private fun handleScanResult(result: ScanResult) {
         ButtonDebugTrace.advertisement(result)
         updateMonitorHealth(resultReceived = true)
@@ -622,6 +624,7 @@ class BleSosMonitorService : Service() {
         )
     }
 
+    // persistPendingOwnerEvent: Persist an owner SOS event before waking the Flutter handler.
     private fun persistPendingOwnerEvent(
         packet: HikerBleProtocol.PairedSosRemotePacket,
         receivedAtMillis: Long,
@@ -1073,6 +1076,7 @@ class BleSosMonitorService : Service() {
         ).joinToString(":")
     }
 
+    // hasHandledEvent: Reject an already handled BLE event across scan callbacks and restarts.
     private fun hasHandledEvent(fingerprint: String): Boolean {
         val handledAt = handledEventTimes[fingerprint] ?: return false
         if (System.currentTimeMillis() - handledAt > HANDLED_EVENT_RETENTION_MILLIS) {
@@ -1168,6 +1172,7 @@ class BleSosMonitorService : Service() {
         ).apply()
     }
 
+    // checkLostButtons: Detect stale paired-button presence and update the disconnect warning.
     private fun checkLostButtons() {
         val prefs = getSharedPreferences(MONITOR_PREFS, MODE_PRIVATE)
         if (!prefs.getBoolean(LOST_BUTTON_WARNING_ENABLED, true)) return

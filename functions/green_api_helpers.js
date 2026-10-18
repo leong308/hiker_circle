@@ -1,3 +1,4 @@
+// Green API readiness and provider acknowledgements keep WhatsApp delivery state explicit.
 'use strict';
 
 const stateDescriptions = Object.freeze({
@@ -11,6 +12,7 @@ const stateDescriptions = Object.freeze({
     'GreenAPI has temporarily suspended message sending for this WhatsApp account.',
 });
 
+// greenApiStateReadiness: Translate provider account state into an explicit send/no-send decision.
 function greenApiStateReadiness(rawState) {
   const state = String(rawState || '').trim();
   if (state === 'authorized') {
@@ -32,6 +34,7 @@ function greenApiMessageId(responseData) {
 }
 
 // Keep OTPs visible in the body even if a WhatsApp client hides buttons.
+// sendGreenApiOtp: Require a confirmed provider message ID before acknowledging an OTP send.
 async function sendGreenApiOtp({ endpointFor, chatId, code, message,
   fetchImpl = fetch }) {
   if (!/^[0-9]{6}$/.test(code)) throw new TypeError('Expected six OTP digits');

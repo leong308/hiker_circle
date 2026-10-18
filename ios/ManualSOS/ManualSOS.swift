@@ -1,3 +1,4 @@
+// ManualSOS opens the app manual SOS flow from its WidgetKit timeline.
 import WidgetKit
 import SwiftUI
 

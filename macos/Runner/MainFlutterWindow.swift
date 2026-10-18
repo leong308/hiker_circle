@@ -1,3 +1,4 @@
+// MainFlutterWindow creates the Flutter controller and registers macOS plugins.
 import Cocoa
 import FlutterMacOS
 

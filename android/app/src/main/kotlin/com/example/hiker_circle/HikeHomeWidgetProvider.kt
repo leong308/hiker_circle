@@ -1,3 +1,4 @@
+// HikeHomeWidgetProvider renders saved hike and weather snapshots with app deep links.
 package com.leongziqi.hikercircle
 
 import android.app.PendingIntent

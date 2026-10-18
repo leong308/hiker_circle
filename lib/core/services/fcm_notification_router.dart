@@ -1,3 +1,5 @@
+// FcmNotificationRouter maps known notification payloads to supported app deep links without
+// invoking navigation itself.
 abstract final class FcmNotificationRouter {
   static String? deepLinkFor(Map<String, dynamic> data) {
     for (final key in const ['deepLink', 'deep_link', 'deeplink']) {

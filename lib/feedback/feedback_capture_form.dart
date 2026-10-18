@@ -1,3 +1,4 @@
+// HikerFeedbackCaptureForm collects a screenshot preview before the separate feedback upload step.
 import 'dart:async';
 
 import 'package:feedback/feedback.dart';

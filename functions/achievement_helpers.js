@@ -1,3 +1,4 @@
+// Achievement event identities and progress hashes, including Malaysian state reward rules.
 'use strict';
 
 const crypto = require('crypto');
@@ -38,6 +39,7 @@ function malaysiaStateSlug(value) {
   return MALAYSIA_STATE_SLUGS.has(canonical) ? canonical : '';
 }
 
+// completedHikeAchievementEvents: Use stable event keys so retries cannot award the same hike, trail, or state twice.
 function completedHikeAchievementEvents({ sessionId, trailId, state, country }) {
   const normalizedSessionId = String(sessionId || '').trim();
   if (!normalizedSessionId) return [];
@@ -66,6 +68,7 @@ function completedHikeAchievementEvents({ sessionId, trailId, state, country }) 
   return events;
 }
 
+// achievementProgressHash: Hash sorted achievement progress so unchanged mobile state can be reused.
 function achievementProgressHash({ definitions = [], awards = [] }) {
   const awardsById = new Map(
     awards.map((award) => [String(award.achievementId || ''), award]),

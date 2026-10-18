@@ -1,3 +1,4 @@
+// HikerBleProtocol encodes and validates BLE pairing, location, log, and SOS packet fields.
 package com.leongziqi.hikercircle
 
 import android.bluetooth.le.ScanResult

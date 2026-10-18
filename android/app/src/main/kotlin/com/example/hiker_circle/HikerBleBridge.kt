@@ -1,3 +1,4 @@
+// HikerBleBridge connects Flutter BLE calls, paired-button setup, log transfer, and SOS events.
 package com.leongziqi.hikercircle
 
 import android.Manifest
@@ -324,6 +325,7 @@ class HikerBleBridge(
         isActivityResumed = false
     }
 
+    // drainPendingEvents: Replay saved SOS events when Flutter attaches to the native stream.
     private fun drainPendingEvents() {
         drainPendingOwnerEvents()
         drainPendingNearbyEvents()
@@ -673,6 +675,7 @@ class HikerBleBridge(
         }
     }
 
+    // handleMethodCall: Route Flutter BLE requests to pairing, readiness, and button operations.
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "setButtonDebugCapture" -> {
@@ -987,21 +990,8 @@ class HikerBleBridge(
             }
             "startTeamLocationExchange",
             "updateTeamLocation" -> {
-                val payload = teamPayloadFrom(call)
-                if (payload == null) {
-                    result.error(
-                        "ble_team_location_invalid",
-                        "Team BLE location payload is invalid.",
-                        null,
-                    )
-                    return
-                }
-                latestTeamPayload = payload
-                withBlePermissions(result, includeAdvertisePermission = true) {
-                    startTeamScanner()
-                    restartTeamAdvertiser()
-                    result.success(null)
-                }
+                stopTeamLocationExchange()
+                result.error("team_exchange_disabled", "Local team position exchange is disabled.", null)
             }
             "stopTeamLocationExchange" -> {
                 stopTeamLocationExchange()
@@ -1885,6 +1875,7 @@ class HikerBleBridge(
         )
     }
 
+    // beginLocationHandoff: Send the current phone location to a paired SOS button over GATT.
     private fun beginLocationHandoff(
         deviceIdHex: String,
         eventId: Long,
@@ -2111,6 +2102,7 @@ class HikerBleBridge(
         }.isSuccess
     }
 
+    // beginLogDownload: Authenticate and download bounded log pages from the paired button.
     private fun beginLogDownload(
         deviceIdHex: String,
         result: MethodChannel.Result,
@@ -2636,6 +2628,7 @@ class HikerBleBridge(
         resetLogTransferBuffers()
     }
 
+    // beginPairing: Start the physical-button pairing handshake and persist only confirmed credentials.
     private fun beginPairing(
         address: String,
         displayName: String,

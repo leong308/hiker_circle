@@ -1,3 +1,4 @@
+// PreparationSharingPage and PreparationBatteryPage edit per-hike sharing and battery choices.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';

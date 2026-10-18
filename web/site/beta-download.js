@@ -1,3 +1,4 @@
+// Public beta download state, release metadata, and platform-specific installation help.
 "use strict";
   const loadBetaDownload = async () => {
     const link = document.querySelector('[data-beta-download]');

@@ -1,3 +1,4 @@
+# Verify the beta APK identity, signature, and public configuration before distribution.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $betaApk = (Resolve-Path 'build/public-beta-source/build/app/outputs/flutter-apk/app-release.apk').Path

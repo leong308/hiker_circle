@@ -1,8 +1,10 @@
+// Canonical profile/device lookups and weather projections prevent stale writes and duplicated storage sources.
 'use strict';
 const {isDeepStrictEqual} = require('node:util');
 
 function sameWeather(left, right) { return isDeepStrictEqual(left, right); }
 function weatherMillis(weather) { return Date.parse(weather?.cachedAtLocal || ''); }
+// syncTrailWeather: Recheck coordinates and freshness in the transaction before replacing a forecast.
 async function syncTrailWeather(db, reference, observed, weather) {
   if (sameWeather(observed.weather, weather)) return {written: false, weather};
   return db.runTransaction(async tx => {
@@ -20,6 +22,7 @@ async function syncTrailWeather(db, reference, observed, weather) {
   });
 }
 
+// latestFcmTokensForUser: Choose the token for the canonical bound installation instead of old token copies.
 function latestFcmTokensForUser(user = {}) {
   const currentApp = typeof user.boundAppInstanceId === 'string' ? user.boundAppInstanceId.trim() : '';
   const token = currentApp && user.fcmTokenByAppId?.[currentApp];
@@ -40,6 +43,7 @@ function compactHistoricalWeather(weather) {
   }
   return summary;
 }
+// historicalForecastProjection: Keep compact historical weather while returning the complete source forecast for archiving.
 function historicalForecastProjection(trail) {
   const weather = trail?.weather;
   const compact = compactHistoricalWeather(weather);

@@ -1,3 +1,4 @@
+// TrailCautionDetailsSheet displays caution evidence and exposes the allowed resolution actions.
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -329,6 +330,7 @@ String cautionError(Object error) {
       .replaceFirst('Exception: ', '');
 }
 
+/// Collect additional report evidence before invoking the selected caution action.
 Future<void> showCautionEvidenceDialog(
   BuildContext context,
   CommunityHazard report,

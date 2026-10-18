@@ -1,3 +1,4 @@
+# Generate Android launcher icon densities from the approved HikerCircle artwork.
 param(
     [string]$Source = "assets/icons/AppIcon-Default-1024.png",
     [string]$Destination = "assets/icons/AppIcon-Android-1024.png"

@@ -1,3 +1,4 @@
+// MeRepository derives the profile overview and initial account sections from AppSession.
 import 'package:flutter/material.dart';
 
 import '../../app/Model/app_session.dart';

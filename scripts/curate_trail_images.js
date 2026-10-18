@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// curate_trail_images selects attributable trail photos and updates image credits.
 
 'use strict';
 

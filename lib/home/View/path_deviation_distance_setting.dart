@@ -1,3 +1,4 @@
+// PathDeviationDistanceSetting edits the bounded off-route warning distance.
 import 'package:flutter/material.dart';
 
 import '../Model/path_deviation_policy.dart';

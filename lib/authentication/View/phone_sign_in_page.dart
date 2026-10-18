@@ -1,19 +1,24 @@
+// PhoneSignInPage switches login/register forms and presents WhatsApp OTP verification.
+import 'session_security_dialogs.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../core/services/mobile_security_service.dart';
 
 import '../../app/Data/session_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../core/widgets/loading_toast.dart';
-import '../../core/widgets/privacy_policy_link.dart';
 import '../../core/widgets/verification_code_input.dart';
 import '../Model/auth_status.dart';
+import '../Data/auth_flow_diagnostics.dart';
 import '../ModelView/auth_view_model.dart';
-import 'auth_brand_panel.dart';
+import 'auth_trail_signal_shell.dart';
 import 'forgot_password_page.dart';
 import 'inline_notice.dart';
 import 'security_verification_page.dart';
 
+/// Keep the login/register card state while routing OTP and any required security verification.
 class PhoneSignInPage extends StatefulWidget {
   const PhoneSignInPage({
     super.key,
@@ -235,9 +240,41 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
     });
     _setLoadingOverlayVisible(true);
 
+    var stage = 'prepare-mobile-session';
     try {
+      AuthFlowDiagnostics.event(stage, 'start');
+      final login = await MobileSecurityService.prepareLogin();
+      AuthFlowDiagnostics.event(stage, 'success');
+      if (!mounted) return;
+      if (login['replacementRequired'] == true) {
+        _setLoadingOverlayVisible(false);
+        final previous =
+            login['previousDeviceName'] as String? ?? 'another phone';
+        final confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) =>
+              DeviceSessionReplacementDialog(previousDevice: previous),
+        );
+        if (confirmed != true) {
+          await FirebaseAuth.instance.signOut();
+          if (mounted) _resetOtpEntry();
+          return;
+        }
+        _setLoadingOverlayVisible(true);
+      }
+      stage = 'activate-mobile-session';
+      AuthFlowDiagnostics.event(stage, 'start');
+      await MobileSecurityService.activateLogin(
+        login['expectedPreviousSessionId'] as String? ?? '',
+      );
+      AuthFlowDiagnostics.event(stage, 'success');
+      stage = 'persist-app-session';
+      AuthFlowDiagnostics.event(stage, 'start');
       await widget.onSignedIn(session);
+      AuthFlowDiagnostics.event(stage, 'success');
     } catch (error) {
+      AuthFlowDiagnostics.event(stage, 'failure', error: error);
       if (!mounted) {
         return;
       }
@@ -302,194 +339,121 @@ class _PhoneSignInPageState extends State<PhoneSignInPage> {
         },
       ),
       child: Scaffold(
-        body: SafeArea(
-          child: Stack(
-            children: [
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  return SingleChildScrollView(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minHeight: constraints.maxHeight,
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 24,
+        body: AuthTrailSignalShell(
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    isSignUp ? 'Find your circle' : 'Welcome back',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    isSignUp
+                        ? 'Create an account for safer adventures.'
+                        : 'Sign in to your trails, friends and adventures.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _ModeToggle(
+                    currentMode: _viewModel.authMode,
+                    enabled:
+                        !_viewModel.isBusy &&
+                        !_isCompletingSignIn &&
+                        !_viewModel.hasCodeBeenSent,
+                    onChanged: (mode) {
+                      _resendCooldownTimer?.cancel();
+                      _otpController.clear();
+                      _passwordController.clear();
+                      _resendCountdown.value = 0;
+                      _viewModel.setAuthMode(mode);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Theme(
+                    data: theme.copyWith(
+                      inputDecorationTheme: InputDecorationTheme(
+                        filled: true,
+                        fillColor: scheme.primary.withValues(alpha: 0.045),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 18,
                         ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 520),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                AuthBrandPanel(color: scheme.primary),
-                                const SizedBox(height: 20),
-                                Container(
-                                  padding: const EdgeInsets.all(24),
-                                  decoration: BoxDecoration(
-                                    color: scheme.surface,
-                                    borderRadius: BorderRadius.circular(28),
-                                    border: Border.all(
-                                      color: scheme.outlineVariant.withValues(
-                                        alpha: 0.5,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Form(
-                                    key: _formKey,
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Text(
-                                          isSignUp
-                                              ? 'Find your circle'
-                                              : 'Welcome back',
-                                          style: theme.textTheme.titleLarge
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          isSignUp
-                                              ? 'Create an account for safer adventures.'
-                                              : 'Sign in to your trails, friends and adventures.',
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(
-                                                color: scheme.onSurfaceVariant,
-                                              ),
-                                        ),
-                                        const SizedBox(height: 16),
-                                        _ModeToggle(
-                                          currentMode: _viewModel.authMode,
-                                          enabled:
-                                              !_viewModel.isBusy &&
-                                              !_isCompletingSignIn &&
-                                              !_viewModel.hasCodeBeenSent,
-                                          onChanged: (mode) {
-                                            _resendCooldownTimer?.cancel();
-                                            _otpController.clear();
-                                            _passwordController.clear();
-                                            _resendCountdown.value = 0;
-                                            _viewModel.setAuthMode(mode);
-                                          },
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Theme(
-                                          data: theme.copyWith(
-                                            inputDecorationTheme:
-                                                InputDecorationTheme(
-                                                  filled: true,
-                                                  fillColor: scheme.primary
-                                                      .withValues(alpha: 0.045),
-                                                  contentPadding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 18,
-                                                        vertical: 18,
-                                                      ),
-                                                  border: OutlineInputBorder(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          16,
-                                                        ),
-                                                    borderSide: BorderSide.none,
-                                                  ),
-                                                  enabledBorder:
-                                                      OutlineInputBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              16,
-                                                            ),
-                                                        borderSide: BorderSide(
-                                                          color: scheme
-                                                              .outlineVariant
-                                                              .withValues(
-                                                                alpha: 0.4,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                  focusedBorder:
-                                                      OutlineInputBorder(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              16,
-                                                            ),
-                                                        borderSide: BorderSide(
-                                                          color: scheme.primary,
-                                                          width: 2,
-                                                        ),
-                                                      ),
-                                                ),
-                                            filledButtonTheme:
-                                                FilledButtonThemeData(
-                                                  style: FilledButton.styleFrom(
-                                                    minimumSize:
-                                                        const Size.fromHeight(
-                                                          52,
-                                                        ),
-                                                    shape: RoundedRectangleBorder(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            16,
-                                                          ),
-                                                    ),
-                                                  ),
-                                                ),
-                                          ),
-                                          child: AnimatedSize(
-                                            duration: const Duration(
-                                              milliseconds: 250,
-                                            ),
-                                            alignment: Alignment.topCenter,
-                                            child: _buildWhatsAppForm(),
-                                          ),
-                                        ),
-                                        if (_viewModel.message != null) ...[
-                                          const SizedBox(height: 16),
-                                          InlineNotice(
-                                            icon: Icons.check_circle_outline,
-                                            color: scheme.primary,
-                                            text: _viewModel.message!,
-                                          ),
-                                        ],
-                                        if (_viewModel.error != null) ...[
-                                          const SizedBox(height: 16),
-                                          InlineNotice(
-                                            icon: Icons.error_outline,
-                                            color: scheme.error,
-                                            text: _viewModel.error!,
-                                          ),
-                                        ],
-                                        if (_signInError != null) ...[
-                                          const SizedBox(height: 16),
-                                          InlineNotice(
-                                            icon: Icons.error_outline,
-                                            color: scheme.error,
-                                            text: _signInError!,
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                const Align(
-                                  alignment: Alignment.center,
-                                  child: PrivacyPolicyLink(),
-                                ),
-                              ],
-                            ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: scheme.outlineVariant.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: scheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      filledButtonTheme: FilledButtonThemeData(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
                           ),
                         ),
                       ),
                     ),
-                  );
-                },
+                    child: AnimatedSize(
+                      duration: const Duration(milliseconds: 250),
+                      alignment: Alignment.topCenter,
+                      child: _buildWhatsAppForm(),
+                    ),
+                  ),
+                  if (_viewModel.message != null) ...[
+                    const SizedBox(height: 16),
+                    InlineNotice(
+                      icon: Icons.check_circle_outline,
+                      color: scheme.primary,
+                      text: _viewModel.message!,
+                    ),
+                  ],
+                  if (_viewModel.error != null) ...[
+                    const SizedBox(height: 16),
+                    InlineNotice(
+                      icon: Icons.error_outline,
+                      color: scheme.error,
+                      text: _viewModel.error!,
+                    ),
+                  ],
+                  if (_signInError != null) ...[
+                    const SizedBox(height: 16),
+                    InlineNotice(
+                      icon: Icons.error_outline,
+                      color: scheme.error,
+                      text: _signInError!,
+                    ),
+                  ],
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),

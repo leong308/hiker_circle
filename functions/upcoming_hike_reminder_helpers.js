@@ -1,3 +1,4 @@
+// Upcoming-hike reminder eligibility combines per-user preferences, repeat limits, and departure cutoffs.
 'use strict';
 
 function dateMillis(value) {
@@ -48,6 +49,7 @@ function normalizeUpcomingHikeReminderPreference(raw, { legacy = false } = {}) {
   };
 }
 
+// upcomingHikeReminderDue: Combine enabled preferences, sent-count bounds, and the final pre-departure cutoff.
 function upcomingHikeReminderDue({
   rawPreference,
   departureMillis,

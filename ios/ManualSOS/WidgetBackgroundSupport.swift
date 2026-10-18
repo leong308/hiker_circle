@@ -1,3 +1,4 @@
+// hikerWidgetBackground adapts widget backgrounds across iOS extension versions.
 import SwiftUI
 import WidgetKit
 

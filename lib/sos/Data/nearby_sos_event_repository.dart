@@ -1,3 +1,4 @@
+// NearbySosEventRepository requests authorized nearby emergency events within the selected radius.
 import '../../app/Data/local_session_database.dart';
 import '../Model/nearby_sos_event.dart';
 

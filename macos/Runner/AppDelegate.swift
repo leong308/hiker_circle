@@ -1,3 +1,4 @@
+// AppDelegate handles macOS window termination and secure state restoration.
 import Cocoa
 import FlutterMacOS
 

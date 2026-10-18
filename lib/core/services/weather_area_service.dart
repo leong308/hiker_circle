@@ -1,3 +1,6 @@
+// WeatherAreaService composes and caches a geographic weather image from proxied map tiles for the
+// selected weather layer.
+import 'private_provider_client.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -183,9 +186,16 @@ class WeatherAreaService {
               .replaceAll('{z}', '${WeatherAreaGrid.zoom}')
               .replaceAll('{x}', '${x % WeatherAreaGrid.tilesPerWorld}')
               .replaceAll('{y}', '$y');
-          final response = await client
-              .get(Uri.parse(url))
-              .timeout(const Duration(seconds: 12));
+          final response =
+              await (_client == null
+                      ? PrivateProviderClient.request('weatherTile', {
+                          'layer': layer.tileName,
+                          'z': WeatherAreaGrid.zoom,
+                          'x': x % WeatherAreaGrid.tilesPerWorld,
+                          'y': y,
+                        })
+                      : client.get(Uri.parse(url)))
+                  .timeout(const Duration(seconds: 12));
           if (response.statusCode != 200) {
             throw StateError(
               'Weather tiles unavailable (${response.statusCode})',

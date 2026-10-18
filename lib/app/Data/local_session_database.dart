@@ -1,5 +1,10 @@
+// LocalSessionDatabase owns encrypted mobile SQLite, incremental schema upgrades and operational
+// offline hike, SOS, chat and cache records.
+import '../../core/services/content_hash.dart';
 import 'dart:convert';
 import 'dart:math' as math;
+
+import 'package:crypto/crypto.dart' as crypto;
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
@@ -11,6 +16,9 @@ import '../../home/Model/hike_session_models.dart';
 import '../../sos/Model/nearby_sos_event.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/app_session.dart';
+import 'secure_local_database.dart';
+
+part 'local_community_database.dart';
 
 @immutable
 class LocalAchievementProgressCache {
@@ -126,67 +134,6 @@ class LocalSyncOperation {
   final String lastError;
   final DateTime createdAt;
   final DateTime updatedAt;
-}
-
-@immutable
-class LocalOfflineMapRegion {
-  const LocalOfflineMapRegion({
-    required this.trailId,
-    required this.regionId,
-    required this.styleUri,
-    required this.bounds,
-    required this.minZoom,
-    required this.maxZoom,
-    required this.status,
-    required this.completedResourceCount,
-    required this.requiredResourceCount,
-    required this.completedBytes,
-    required this.updatedAt,
-    this.downloadedAt,
-    this.lastError = '',
-  });
-
-  factory LocalOfflineMapRegion.fromRow(Map<String, Object?> row) {
-    final bounds = jsonDecode(row['bounds_json'] as String? ?? '{}');
-    return LocalOfflineMapRegion(
-      trailId: row['trail_id'] as String? ?? '',
-      regionId: row['region_id'] as String? ?? '',
-      styleUri: row['style_uri'] as String? ?? '',
-      bounds: bounds is Map ? Map<String, dynamic>.from(bounds) : const {},
-      minZoom: (row['min_zoom'] as num?)?.toInt() ?? 0,
-      maxZoom: (row['max_zoom'] as num?)?.toInt() ?? 0,
-      status: row['status'] as String? ?? 'pending',
-      completedResourceCount:
-          (row['completed_resource_count'] as num?)?.toInt() ?? 0,
-      requiredResourceCount:
-          (row['required_resource_count'] as num?)?.toInt() ?? 0,
-      completedBytes: (row['completed_bytes'] as num?)?.toInt() ?? 0,
-      downloadedAt: DateTime.tryParse(row['downloaded_at'] as String? ?? ''),
-      updatedAt:
-          DateTime.tryParse(row['updated_at'] as String? ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
-      lastError: row['last_error'] as String? ?? '',
-    );
-  }
-
-  final String trailId;
-  final String regionId;
-  final String styleUri;
-  final Map<String, dynamic> bounds;
-  final int minZoom;
-  final int maxZoom;
-  final String status;
-  final int completedResourceCount;
-  final int requiredResourceCount;
-  final int completedBytes;
-  final DateTime? downloadedAt;
-  final DateTime updatedAt;
-  final String lastError;
-
-  bool get isComplete =>
-      status == 'complete' &&
-      requiredResourceCount > 0 &&
-      completedResourceCount >= requiredResourceCount;
 }
 
 @immutable
@@ -424,6 +371,8 @@ class LocalSessionDatabase {
     );
   }
 
+  // loadSession restores only the account/profile row; pending hikes and safety queues are
+  // independent.
   Future<AppSession?> loadSession() async {
     final database = await _openDatabase();
     final rows = await database.query(
@@ -437,6 +386,7 @@ class LocalSessionDatabase {
     return _sessionFromRow(rows.first);
   }
 
+  // saveSession updates the signed-in profile without replacing unrelated operational tables.
   Future<void> saveSession(AppSession session) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
@@ -449,6 +399,7 @@ class LocalSessionDatabase {
     });
   }
 
+  // clearUserSessionOnly removes visible account state while preserving owner-scoped offline work.
   Future<void> clearUserSessionOnly() async {
     final database = await _openDatabase();
     await database.delete('users');
@@ -508,6 +459,8 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  // saveActiveHikeSession persists the local hike snapshot before later cloud recovery or app
+  // restart.
   Future<void> saveActiveHikeSession({
     required String phoneNumber,
     required ActiveHikeSession activeHike,
@@ -629,21 +582,15 @@ class LocalSessionDatabase {
     required String newSessionId,
   }) async {
     await database.rawDelete(
-      '''DELETE FROM local_location_points WHERE session_id = ? AND owner_phone_number = ? AND sample_key IS NOT NULL AND sample_key IN (SELECT sample_key FROM local_location_points WHERE session_id = ? AND owner_phone_number = ?)''',
+      '''DELETE FROM footprints WHERE session_id = ? AND owner_phone_number = ? AND sample_key IS NOT NULL AND sample_key IN (SELECT sample_key FROM footprints WHERE session_id = ? AND owner_phone_number = ?)''',
       [oldSessionId, ownerPhoneNumber, newSessionId, ownerPhoneNumber],
     );
     await database.update(
-      'local_location_points',
+      'footprints',
       {'session_id': newSessionId},
       where:
           'session_id = ? AND (owner_phone_number = ? OR owner_phone_number = ?)',
       whereArgs: [oldSessionId, ownerPhoneNumber, ''],
-    );
-    await database.update(
-      'network_observations',
-      {'session_id': newSessionId},
-      where: 'session_id = ?',
-      whereArgs: [oldSessionId],
     );
     await database.update(
       'queued_alerts',
@@ -702,7 +649,7 @@ class LocalSessionDatabase {
         await database.rawQuery(
           '''
           SELECT COUNT(*)
-          FROM local_location_points
+          FROM footprints
           WHERE session_id = ?
             AND is_synced = 0
             AND latitude BETWEEN -90 AND 90
@@ -981,6 +928,8 @@ class LocalSessionDatabase {
     );
   }
 
+  // queuePendingHikeEnd retains the original end time and route/summary snapshot for a safe cloud
+  // retry.
   Future<void> queuePendingHikeEnd({
     required String ownerPhoneNumber,
     required ActiveHikeSession activeHike,
@@ -1125,8 +1074,29 @@ class LocalSessionDatabase {
     });
   }
 
+  // saveCachedEntity avoids rewriting identical JSON while retaining its scope, revision time and
+  // expiry.
   Future<void> saveCachedEntity(LocalCachedEntity entity) async {
     final database = await _openDatabase();
+    final existing = await database.query(
+      'cached_entities',
+      columns: ['payload_json', 'source_updated_at', 'expires_at'],
+      where: 'owner_phone_number=? AND entity_type=? AND entity_id=?',
+      whereArgs: [
+        entity.ownerPhoneNumber.trim(),
+        entity.entityType.trim(),
+        entity.entityId.trim(),
+      ],
+      limit: 1,
+    );
+    if (existing.isNotEmpty &&
+        stableContentHash(
+              jsonDecode(existing.single['payload_json'] as String),
+            ) ==
+            stableContentHash(entity.payload)
+        && existing.single['source_updated_at'] == entity.sourceUpdatedAt?.toUtc().toIso8601String()
+        && existing.single['expires_at'] == entity.expiresAt?.toUtc().toIso8601String())
+      return;
     await database.insert('cached_entities', {
       'owner_phone_number': entity.ownerPhoneNumber.trim(),
       'entity_type': entity.entityType.trim(),
@@ -1206,6 +1176,8 @@ class LocalSessionDatabase {
     return rows.isEmpty ? null : LocalCachedEntity.fromRow(rows.first);
   }
 
+  // replaceCachedEntitySet replaces one scoped cache result atomically without disturbing other
+  // entity types.
   Future<void> replaceCachedEntitySet({
     required String ownerPhoneNumber,
     required String entityType,
@@ -1240,6 +1212,8 @@ class LocalSessionDatabase {
     });
   }
 
+  // enqueueSyncOperation retains owner scope and a stable idempotency key for retryable offline
+  // work.
   Future<void> enqueueSyncOperation(LocalSyncOperation operation) async {
     final database = await _openDatabase();
     await database.insert('sync_outbox', {
@@ -1358,6 +1332,8 @@ class LocalSessionDatabase {
     return deleted > 0;
   }
 
+  // saveLocalPreferenceIfClean accepts cloud values only when no unsynced local edit would be
+  // overwritten.
   Future<bool> saveLocalPreferenceIfClean({
     required String ownerPhoneNumber,
     required String key,
@@ -1406,6 +1382,8 @@ class LocalSessionDatabase {
     return result;
   }
 
+  // markLocalPreferenceSynced acknowledges the uploaded value only if the local value still
+  // matches.
   Future<void> markLocalPreferenceSynced({
     required String ownerPhoneNumber,
     required String key,
@@ -1421,54 +1399,6 @@ class LocalSessionDatabase {
         key.trim(),
         jsonEncode(expectedValue),
       ],
-    );
-  }
-
-  Future<void> upsertOfflineMapRegion(LocalOfflineMapRegion region) async {
-    final database = await _openDatabase();
-    await database.insert('offline_map_regions', {
-      'trail_id': region.trailId,
-      'region_id': region.regionId,
-      'style_uri': region.styleUri,
-      'bounds_json': jsonEncode(region.bounds),
-      'min_zoom': region.minZoom,
-      'max_zoom': region.maxZoom,
-      'status': region.status,
-      'completed_resource_count': region.completedResourceCount,
-      'required_resource_count': region.requiredResourceCount,
-      'completed_bytes': region.completedBytes,
-      'downloaded_at': region.downloadedAt?.toUtc().toIso8601String(),
-      'updated_at': region.updatedAt.toUtc().toIso8601String(),
-      'last_error': region.lastError,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  Future<List<LocalOfflineMapRegion>> loadOfflineMapRegions() async {
-    final database = await _openDatabase();
-    final rows = await database.query(
-      'offline_map_regions',
-      orderBy: 'updated_at DESC',
-    );
-    return rows.map(LocalOfflineMapRegion.fromRow).toList();
-  }
-
-  Future<LocalOfflineMapRegion?> loadOfflineMapRegion(String trailId) async {
-    final database = await _openDatabase();
-    final rows = await database.query(
-      'offline_map_regions',
-      where: 'trail_id = ?',
-      whereArgs: [trailId],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : LocalOfflineMapRegion.fromRow(rows.first);
-  }
-
-  Future<void> deleteOfflineMapRegion(String trailId) async {
-    final database = await _openDatabase();
-    await database.delete(
-      'offline_map_regions',
-      where: 'trail_id = ?',
-      whereArgs: [trailId],
     );
   }
 
@@ -2111,6 +2041,8 @@ class LocalSessionDatabase {
     return events;
   }
 
+  // _openDatabase shares one protected connection and applies incremental schema upgrades without
+  // resetting queues.
   Future<Database> _openDatabase() async {
     final existingDatabase = _database;
     if (existingDatabase != null) {
@@ -2143,9 +2075,9 @@ class LocalSessionDatabase {
       debugPrint('HikerCircle SQLite database path: $databasePath');
     }
 
-    final opening = openDatabase(
+    final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 28,
+      version: 31,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2163,7 +2095,7 @@ class LocalSessionDatabase {
         ''');
         await _createSafetyTables(database);
         await database.execute(
-          'CREATE UNIQUE INDEX IF NOT EXISTS location_sample_identity ON local_location_points(owner_phone_number, session_id, sample_key)',
+          'CREATE UNIQUE INDEX IF NOT EXISTS footprint_sample_identity ON footprints(owner_phone_number, session_id, sample_key)',
         );
         await _createDeviceBindingTables(database);
         await _createEmergencyContactsTable(database);
@@ -2179,8 +2111,27 @@ class LocalSessionDatabase {
         await _createOfflineFirstTables(database);
         await _createStaticHazardTables(database);
         await _createButtonDebugTables(database);
+        await _createCommunityTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
+        // One-time rename keeps pending samples, IDs and owner isolation intact.
+        if (oldVersion < 29) {
+          final oldTable = await database.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'local_location_points'",
+          );
+          if (oldTable.isNotEmpty) {
+            await database.execute(
+              'ALTER TABLE local_location_points RENAME TO footprints',
+            );
+          }
+          await database.execute(
+            'DROP INDEX IF EXISTS location_sample_identity',
+          );
+          await database.execute(
+            'DROP INDEX IF EXISTS idx_location_points_session_sync_time',
+          );
+        }
+
         if (oldVersion < 3) {
           await _createSafetyTables(database);
         }
@@ -2298,7 +2249,7 @@ class LocalSessionDatabase {
         if (oldVersion < 17) {
           await _addColumnIfMissing(
             database,
-            tableName: 'local_location_points',
+            tableName: 'footprints',
             columnName: 'owner_phone_number',
             definition: "TEXT NOT NULL DEFAULT ''",
           );
@@ -2434,19 +2385,36 @@ class LocalSessionDatabase {
           await _createSafetyTables(database);
           await _addColumnIfMissing(
             database,
-            tableName: 'local_location_points',
+            tableName: 'footprints',
             columnName: 'sample_key',
             definition: 'TEXT',
           );
           await _addColumnIfMissing(
             database,
-            tableName: 'local_location_points',
+            tableName: 'footprints',
             columnName: 'fix_captured_at',
             definition: 'TEXT',
           );
           await database.execute(
-            'CREATE UNIQUE INDEX IF NOT EXISTS location_sample_identity ON local_location_points(owner_phone_number, session_id, sample_key)',
+            'CREATE UNIQUE INDEX IF NOT EXISTS footprint_sample_identity ON footprints(owner_phone_number, session_id, sample_key)',
           );
+        }
+        if (oldVersion < 29) {
+          await _createSafetyTables(database);
+          await database.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS footprint_sample_identity ON footprints(owner_phone_number, session_id, sample_key)',
+          );
+        }
+        if (oldVersion < 30) {
+          await _createCommunityTables(database);
+          await _migrateCommunityCache(database);
+        }
+        if (oldVersion < 31) {
+          // These dormant map/network caches have no readers or replay path.
+          // Preserve operational users, footprints, drafts and every sync queue.
+          await database.execute('DROP TABLE IF EXISTS downloaded_maps');
+          await database.execute('DROP TABLE IF EXISTS offline_map_regions');
+          await database.execute('DROP TABLE IF EXISTS network_observations');
         }
       },
     );
@@ -2479,7 +2447,9 @@ class LocalSessionDatabase {
     await database?.close();
   }
 
-  Future<int> insertLocationPoint({
+  // insertFootprint saves a timestamp-identified sample locally before upload; replay preserves
+  // the first stored sample.
+  Future<int> insertFootprint({
     String ownerPhoneNumber = '',
     required String sessionId,
     required double latitude,
@@ -2504,7 +2474,7 @@ class LocalSessionDatabase {
       (recordedAt ?? DateTime.now()).millisecondsSinceEpoch,
       isUtc: true,
     );
-    return database.insert('local_location_points', {
+    return database.insert('footprints', {
       'owner_phone_number': ownerPhoneNumber.trim(),
       'session_id': normalizedSessionId,
       'latitude': latitude,
@@ -2522,6 +2492,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
+  // insertQueuedAlert makes an SOS dispatch retry durable before cloud or messaging work begins.
   Future<int> insertQueuedAlert({
     required String ownerPhoneNumber,
     required String sessionId,
@@ -2644,47 +2615,7 @@ class LocalSessionDatabase {
     );
   }
 
-  Future<int> insertDownloadedMap({
-    required String trailId,
-    required String trailName,
-    required String localFilePath,
-    int? fileSize,
-  }) async {
-    final database = await _openDatabase();
-    return database.insert('downloaded_maps', {
-      'trail_id': trailId,
-      'trail_name': trailName,
-      'local_file_path': localFilePath,
-      'file_size': fileSize,
-      'downloaded_at': DateTime.now().toUtc().toIso8601String(),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  Future<int> insertNetworkObservation({
-    required String sessionId,
-    required double latitude,
-    required double longitude,
-    double? accuracy,
-    required bool networkAvailable,
-    required bool apiRequestSuccess,
-    String? networkType,
-    bool isSynced = false,
-  }) async {
-    final database = await _openDatabase();
-    return database.insert('network_observations', {
-      'session_id': sessionId,
-      'latitude': latitude,
-      'longitude': longitude,
-      'accuracy': accuracy,
-      'network_available': networkAvailable ? 1 : 0,
-      'api_request_success': apiRequestSuccess ? 1 : 0,
-      'network_type': networkType,
-      'recorded_at': DateTime.now().toUtc().toIso8601String(),
-      'is_synced': isSynced ? 1 : 0,
-    });
-  }
-
-  Future<int> countUnsentLocationPoints(
+  Future<int> countUnsentFootprints(
     String sessionId, {
     String? ownerPhoneNumber,
   }) async {
@@ -2692,7 +2623,7 @@ class LocalSessionDatabase {
     final result = await database.rawQuery(
       '''
       SELECT COUNT(*) AS total
-      FROM local_location_points
+      FROM footprints
       WHERE session_id = ?
         ${ownerPhoneNumber != null ? 'AND owner_phone_number = ?' : ''}
         AND is_synced = 0
@@ -2704,7 +2635,7 @@ class LocalSessionDatabase {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
-  Future<List<LocalLocationPoint>> loadUnsentLocationPoints({
+  Future<List<LocalFootprint>> loadUnsentFootprints({
     required String sessionId,
     String? ownerPhoneNumber,
     int limit = 200,
@@ -2715,7 +2646,7 @@ class LocalSessionDatabase {
     }
     final database = await _openDatabase();
     final rows = await database.query(
-      'local_location_points',
+      'footprints',
       where:
           '''
         session_id = ?
@@ -2732,29 +2663,31 @@ class LocalSessionDatabase {
       limit: limit,
     );
     return rows
-        .map(LocalLocationPoint.fromRow)
+        .map(LocalFootprint.fromRow)
         .where((point) => point.hasValidCoordinate)
         .toList();
   }
 
-  Future<List<LocalLocationPoint>> loadLocationPoints({
+  Future<List<LocalFootprint>> loadFootprints({
     required String sessionId,
     required String ownerPhoneNumber,
   }) async {
     final database = await _openDatabase();
     final rows = await database.query(
-      'local_location_points',
+      'footprints',
       where: 'session_id = ? AND owner_phone_number = ?',
       whereArgs: [sessionId, ownerPhoneNumber],
       orderBy: 'recorded_at ASC, id ASC',
     );
     return rows
-        .map(LocalLocationPoint.fromRow)
+        .map(LocalFootprint.fromRow)
         .where((p) => p.hasValidCoordinate)
         .toList();
   }
 
-  Future<void> markLocationPointsSynced(Iterable<int> pointIds) async {
+  // markFootprintsSynced accepts only the sample IDs that its caller has confirmed in the server
+  // acknowledgement.
+  Future<void> markFootprintsSynced(Iterable<int> pointIds) async {
     final ids = pointIds.where((id) => id > 0).toSet();
     if (ids.isEmpty) {
       return;
@@ -2763,7 +2696,7 @@ class LocalSessionDatabase {
     final batch = database.batch();
     for (final id in ids) {
       batch.update(
-        'local_location_points',
+        'footprints',
         {'is_synced': 1},
         where: 'id = ?',
         whereArgs: [id],
@@ -2772,7 +2705,7 @@ class LocalSessionDatabase {
     await batch.commit(noResult: true);
   }
 
-  Future<int> deleteSyncedLocationPoints({
+  Future<int> deleteSyncedFootprints({
     String? sessionId,
     DateTime? recordedBefore,
   }) async {
@@ -2789,13 +2722,13 @@ class LocalSessionDatabase {
     }
     final database = await _openDatabase();
     return database.delete(
-      'local_location_points',
+      'footprints',
       where: clauses.join(' AND '),
       whereArgs: arguments,
     );
   }
 
-  /// Deletes location/network tracking rows after the canonical route capture
+  /// Deletes recorded tracking rows after the canonical route capture
   /// is saved, while deliberately preserving every queued SOS alert.
   Future<void> discardHikeTrackingTelemetry({required String sessionId}) async {
     final normalizedSessionId = sessionId.trim();
@@ -2803,12 +2736,7 @@ class LocalSessionDatabase {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
       await transaction.delete(
-        'local_location_points',
-        where: 'session_id = ?',
-        whereArgs: [normalizedSessionId],
-      );
-      await transaction.delete(
-        'network_observations',
+        'footprints',
         where: 'session_id = ?',
         whereArgs: [normalizedSessionId],
       );
@@ -2821,14 +2749,7 @@ class LocalSessionDatabase {
     required bool preserveUnsent,
   }) async {
     await database.delete(
-      'local_location_points',
-      where: preserveUnsent
-          ? 'session_id = ? AND is_synced = 1'
-          : 'session_id = ?',
-      whereArgs: [sessionId],
-    );
-    await database.delete(
-      'network_observations',
+      'footprints',
       where: preserveUnsent
           ? 'session_id = ? AND is_synced = 1'
           : 'session_id = ?',
@@ -2845,7 +2766,7 @@ class LocalSessionDatabase {
 
   Future<void> _createSafetyTables(Database database) async {
     await database.execute('''
-      CREATE TABLE IF NOT EXISTS local_location_points (
+      CREATE TABLE IF NOT EXISTS footprints (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         owner_phone_number TEXT NOT NULL DEFAULT '',
         session_id TEXT NOT NULL,
@@ -2884,49 +2805,17 @@ class LocalSessionDatabase {
       )
     ''');
 
-    await database.execute('''
-      CREATE TABLE IF NOT EXISTS downloaded_maps (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        trail_id TEXT NOT NULL UNIQUE,
-        trail_name TEXT NOT NULL,
-        local_file_path TEXT NOT NULL,
-        file_size INTEGER,
-        downloaded_at TEXT NOT NULL,
-        last_weather_cached_at TEXT,
-        weather_expiry_time TEXT
-      )
-    ''');
-
-    await database.execute('''
-      CREATE TABLE IF NOT EXISTS network_observations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        latitude REAL NOT NULL,
-        longitude REAL NOT NULL,
-        accuracy REAL,
-        network_available INTEGER NOT NULL,
-        api_request_success INTEGER NOT NULL,
-        network_type TEXT,
-        recorded_at TEXT NOT NULL,
-        is_synced INTEGER NOT NULL DEFAULT 0
-      )
-    ''');
-
     await _createSafetyIndexes(database);
   }
 
   Future<void> _createSafetyIndexes(Database database) async {
     await database.execute('''
-      CREATE INDEX IF NOT EXISTS idx_location_points_session_sync_time
-      ON local_location_points(session_id, is_synced, recorded_at)
+      CREATE INDEX IF NOT EXISTS idx_footprints_session_sync_time
+      ON footprints(session_id, is_synced, recorded_at)
     ''');
     await database.execute('''
       CREATE INDEX IF NOT EXISTS idx_queued_alerts_session_status
       ON queued_alerts(session_id, send_status, created_at)
-    ''');
-    await database.execute('''
-      CREATE INDEX IF NOT EXISTS idx_network_observations_session_sync
-      ON network_observations(session_id, is_synced, recorded_at)
     ''');
   }
 
@@ -3089,27 +2978,6 @@ class LocalSessionDatabase {
     await database.execute('''
       CREATE INDEX IF NOT EXISTS idx_local_preferences_owner_dirty
       ON local_preferences(owner_phone_number, is_dirty, updated_at)
-    ''');
-    await database.execute('''
-      CREATE TABLE IF NOT EXISTS offline_map_regions (
-        trail_id TEXT PRIMARY KEY,
-        region_id TEXT NOT NULL UNIQUE,
-        style_uri TEXT NOT NULL,
-        bounds_json TEXT NOT NULL,
-        min_zoom INTEGER NOT NULL,
-        max_zoom INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        completed_resource_count INTEGER NOT NULL DEFAULT 0,
-        required_resource_count INTEGER NOT NULL DEFAULT 0,
-        completed_bytes INTEGER NOT NULL DEFAULT 0,
-        downloaded_at TEXT,
-        updated_at TEXT NOT NULL,
-        last_error TEXT NOT NULL DEFAULT ''
-      )
-    ''');
-    await database.execute('''
-      CREATE INDEX IF NOT EXISTS idx_offline_map_regions_status_updated
-      ON offline_map_regions(status, updated_at DESC)
     ''');
     await _createPendingMessagesTable(database);
     await _createChatReadReceiptsTable(database);
@@ -3327,6 +3195,8 @@ class LocalSessionDatabase {
     );
   }
 
+  // insertPendingMessage retains a local message identity so reconnect retries can reuse the same
+  // cloud document.
   Future<void> insertPendingMessage({
     required String localId,
     required String chatId,
@@ -3468,6 +3338,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  // saveRouteCache keeps the provider route under its trail/checkpoint identity for offline reuse.
   Future<void> saveRouteCache({
     required String trailId,
     required String checkpointsHash,
@@ -3507,6 +3378,8 @@ class LocalSessionDatabase {
     return rows.first;
   }
 
+  // dumpAllTables exposes application tables for diagnostics, excluding SQLite and Android engine
+  // metadata.
   Future<Map<String, List<Map<String, dynamic>>>> dumpAllTables() async {
     final database = await _openDatabase();
     final tableRows = await database.rawQuery('''
@@ -3733,8 +3606,8 @@ class LocalPendingHikeEnd {
   }
 }
 
-class LocalLocationPoint {
-  const LocalLocationPoint({
+class LocalFootprint {
+  const LocalFootprint({
     required this.id,
     required this.ownerPhoneNumber,
     required this.sessionId,
@@ -3749,13 +3622,13 @@ class LocalLocationPoint {
     required this.isSynced,
   });
 
-  factory LocalLocationPoint.fromRow(Map<String, Object?> row) {
+  factory LocalFootprint.fromRow(Map<String, Object?> row) {
     final latitude = row['latitude'];
     final longitude = row['longitude'];
     final altitude = row['altitude'];
     final accuracy = row['accuracy'];
     final batteryLevel = row['battery_level'];
-    return LocalLocationPoint(
+    return LocalFootprint(
       id: row['id'] is int ? row['id'] as int : 0,
       ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
       sessionId: row['session_id'] as String? ?? '',

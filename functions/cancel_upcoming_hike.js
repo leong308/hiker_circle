@@ -1,5 +1,7 @@
+// Upcoming-hike cancellation checks host ownership and launch state within one transaction.
 // Atomic soft cancellation. Reads the same schedule document as launch/join,
 // so a racing launch cannot be silently cancelled after tracking has started.
+// cancelUpcomingHike: Read the host and linked launch state before committing cancellation.
 async function cancelUpcomingHike(db, { hikeId, uid, phoneNumber }, HttpsError, timestamp) {
   const reference = db.collection('upcomingHikes').doc(hikeId);
   return db.runTransaction(async (transaction) => {

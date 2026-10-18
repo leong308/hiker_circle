@@ -1,3 +1,4 @@
+// HelpCenterPage organizes onboarding guides, hiking basics and offline support articles.
 import '../../core/widgets/static_hazard_marker.dart';
 import '../../core/widgets/community_hazard_marker.dart';
 import '../../trail/Model/trail_hazard_categories.dart';

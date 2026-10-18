@@ -1,3 +1,4 @@
+// FeedbackRepository validates feedback and uploads one stable draft across retries.
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -56,6 +57,7 @@ class FeedbackDraft {
   final Uint8List? screenshot;
 }
 
+/// Keep submission validation and upload error mapping outside the feedback screens.
 class FeedbackRepository {
   FirebaseFirestore get _db => FirebaseFirestore.instance;
 

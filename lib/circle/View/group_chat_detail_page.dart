@@ -1,3 +1,5 @@
+// GroupChatDetailPage combines durable messages, read receipts, attachments and team hike actions.
+import '../../core/services/phone_privacy.dart';
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:typed_data';
@@ -551,6 +553,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         );
   }
 
+  /// Merge cloud messages with pending local messages before updating unread position and receipts.
   Future<void> _onMessagesUpdated(List<ChatMessage> firestoreMessages) async {
     if (!mounted) return;
 
@@ -620,6 +623,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     }
   }
 
+  /// Keep the opening read cutoff stable while incoming messages and local receipts continue to change.
   Future<void> _loadInitialCutoff() async {
     final myPhone = widget.session.phoneNumber;
     final fromWidget = widget.chat.lastReadAtFor(myPhone);
@@ -738,6 +742,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     });
   }
 
+  /// Show the local message immediately; remove it and restore the input only if durable saving fails.
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _isSendingMessage) return;
@@ -924,6 +929,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
     );
   }
 
+  /// Persist the attachment message through the repository so reconnect handling can retry delivery.
   Future<void> _sendAttachment({
     required ChatAttachmentType type,
     required Uint8List bytes,
@@ -1055,6 +1061,42 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         };
   }
 
+  final _reminderSending = <String>{};
+  Future<void> _sendReminder(String phone) async {
+    if (!_reminderSending.add(phone)) return;
+    try {
+      final result = await widget.repository.sendChatReminder(
+        chatId: widget.chat.id,
+        recipientPhone: phone,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result['status'] == 'sent'
+                ? 'Reminder sent through WhatsApp.'
+                : 'The reminder was requested, but delivery could not be confirmed.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is HikerCircleFirebaseRepositoryException
+                  ? error.message
+                  : 'Unable to send the reminder. Please try again later.',
+            ),
+          ),
+        );
+    } finally {
+      _reminderSending.remove(phone);
+    }
+  }
+
   void _showReadReceipts(ChatMessage msg) {
     final allPhones = widget.chat.participantPhones;
     final seenPhones = msg.seenBy;
@@ -1123,6 +1165,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                     phone: phone,
                     isYou: phone == widget.session.phoneNumber,
                     username: widget.session.username,
+                    onReminder: phone == widget.session.phoneNumber
+                        ? null
+                        : () => _sendReminder(phone),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -1154,6 +1199,9 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
                     phone: phone,
                     isYou: phone == widget.session.phoneNumber,
                     username: widget.session.username,
+                    onReminder: phone == widget.session.phoneNumber
+                        ? null
+                        : () => _sendReminder(phone),
                   ),
                 ),
             ],
@@ -1476,7 +1524,12 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => _HikeDetailSheet(hike: hike, chat: widget.chat),
+      builder: (ctx) => _HikeDetailSheet(
+        hike: hike,
+        chat: widget.chat,
+        onReminder: _sendReminder,
+        currentPhone: widget.session.phoneNumber,
+      ),
     );
   }
 }
@@ -1854,7 +1907,7 @@ class _SystemMessagePill extends StatelessWidget {
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
-                  '${message.senderName} just joined!',
+                  '${privateChatLabel(message.senderName)} just joined!',
                   style: TextStyle(
                     color: _green,
                     fontSize: 13,
@@ -1968,7 +2021,7 @@ class _MessageBubble extends StatelessWidget {
               Padding(
                 padding: EdgeInsets.only(left: bubbleLeftPadding, bottom: 3),
                 child: Text(
-                  message.senderName,
+                  privateChatLabel(message.senderName),
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -2830,7 +2883,14 @@ class _ChatInput extends StatelessWidget {
 }
 
 class _HikeDetailSheet extends StatelessWidget {
-  const _HikeDetailSheet({required this.hike, required this.chat});
+  const _HikeDetailSheet({
+    required this.hike,
+    required this.chat,
+    required this.onReminder,
+    required this.currentPhone,
+  });
+  final void Function(String) onReminder;
+  final String currentPhone;
   final UpcomingHike hike;
   final GroupChat chat;
 
@@ -3001,7 +3061,9 @@ class _HikeDetailSheet extends StatelessWidget {
             const SizedBox(height: 8),
             ...chat.participantPhones.map((phone) {
               final phoneKey = phone.replaceAll(RegExp(r'[^0-9]'), '');
-              final name = chat.participantNames[phoneKey]?.trim() ?? phone;
+              final name = privateChatLabel(
+                chat.participantNames[phoneKey]?.trim() ?? phone,
+              );
               final isHost = phone == hike.creatorPhone;
               return Padding(
                 padding: const EdgeInsets.only(bottom: 6),
@@ -3053,7 +3115,7 @@ class _HikeDetailSheet extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            phone,
+                            maskPhoneNumber(phone),
                             style: TextStyle(
                               fontSize: 11,
                               color: _secondaryTextFor(context),
@@ -3062,6 +3124,11 @@ class _HikeDetailSheet extends StatelessWidget {
                         ],
                       ),
                     ),
+                    if (phone != currentPhone)
+                      TextButton(
+                        onPressed: () => onReminder(phone),
+                        child: const Text('Send reminder now'),
+                      ),
                   ],
                 ),
               );
@@ -3078,8 +3145,10 @@ class _ParticipantCard extends StatelessWidget {
     required this.phone,
     required this.isYou,
     required this.username,
+    this.onReminder,
   });
 
+  final VoidCallback? onReminder;
   final String phone;
   final bool isYou;
   final String username;
@@ -3087,8 +3156,12 @@ class _ParticipantCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final displayName = isYou && username.isNotEmpty ? username : phone;
-    final subtitle = isYou && username.isNotEmpty ? phone : null;
+    final displayName = isYou && username.isNotEmpty
+        ? username
+        : maskPhoneNumber(phone);
+    final subtitle = isYou && username.isNotEmpty
+        ? maskPhoneNumber(phone)
+        : null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
@@ -3143,6 +3216,12 @@ class _ParticipantCard extends StatelessWidget {
               ],
             ),
           ),
+          if (onReminder != null)
+            TextButton.icon(
+              onPressed: onReminder,
+              icon: const Icon(Icons.notifications_active_outlined, size: 16),
+              label: const Text('Send reminder now'),
+            ),
           if (isYou)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

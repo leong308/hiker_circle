@@ -1,3 +1,4 @@
+// FeedbackPage provides feedback capture, composition, inbox and submission detail screens.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:typed_data';
@@ -271,6 +272,7 @@ class _FeedbackChoiceCardState extends State<_FeedbackChoiceCard> {
   }
 }
 
+/// Review the screenshot and message together before submitting the stable FeedbackDraft.
 class FeedbackComposePage extends StatefulWidget {
   const FeedbackComposePage({
     super.key,

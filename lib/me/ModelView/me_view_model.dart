@@ -1,3 +1,4 @@
+// MeViewModel exposes profile overview data from MeRepository to the account screen.
 import 'package:flutter/foundation.dart';
 
 import '../../app/Model/app_session.dart';

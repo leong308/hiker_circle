@@ -4,6 +4,7 @@
         android:protectionLevel="signature"/>
     <uses-permission android:name="${applicationId}.permission.INTERNAL_BLE_SOS"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.READ_CONTACTS"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
@@ -37,9 +38,9 @@
         </intent>
     </queries>
 
-    <application
+    <application android:usesCleartextTraffic="false" android:networkSecurityConfig="@xml/network_security_config"
         android:label="HikerCircle"
-        android:name="${applicationName}"
+        android:name=".HikerCircleApplication"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
@@ -48,9 +49,6 @@
         <meta-data
             android:name="asset_statements"
             android:resource="@string/asset_statements" />
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${GOOGLE_MAPS_API_KEY}" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

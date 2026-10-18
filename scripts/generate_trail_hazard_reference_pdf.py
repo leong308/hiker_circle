@@ -1,3 +1,4 @@
+# generate_trail_hazard_reference_pdf builds the illustrated trail hazard reference.
 import json
 import math
 import os

@@ -1,3 +1,5 @@
+// WeatherMapOverlay loads the selected weather layer and manages its native-map image, legend and
+// refresh lifecycle.
 import 'dart:async';
 
 import 'package:flutter/material.dart';

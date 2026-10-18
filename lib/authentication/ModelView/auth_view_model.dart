@@ -1,8 +1,10 @@
+// AuthViewModel coordinates sign-in, registration, verification, recovery and session changes.
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../Data/multi_factor_auth_service.dart';
+import '../Data/auth_flow_diagnostics.dart';
 import '../Data/phone_number_formatter.dart';
 import '../Model/auth_status.dart';
 import '../Model/mfa_models.dart';
@@ -57,11 +59,14 @@ class AuthViewModel extends ChangeNotifier {
     return null;
   }
 
+  /// Begin the current login or registration OTP flow and expose its processing state to the form.
   Future<void> sendCode(
     String phoneNumber, {
     String? password,
     bool authenticatedReverification = false,
   }) async {
+    final stopwatch = Stopwatch()..start();
+    AuthFlowDiagnostics.event('whatsapp-code-request', 'start');
     final normalized = PhoneNumberFormatter.normalize(phoneNumber);
     _status = AuthStatus.sendingCode;
     _message = _authMode == AuthMode.login && !authenticatedReverification
@@ -92,10 +97,21 @@ class AuthViewModel extends ChangeNotifier {
         );
       }
       _greenApiChallengeId = data['challengeId'] as String;
+      AuthFlowDiagnostics.event(
+        'whatsapp-code-request',
+        'success',
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      );
       _status = AuthStatus.enteringCode;
       _message = 'OTP sent to $normalized via WhatsApp.';
       _error = null;
     } catch (error) {
+      AuthFlowDiagnostics.event(
+        'whatsapp-code-request',
+        'failure',
+        error: error,
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      );
       _status = AuthStatus.enteringPhone;
       _message = null;
       _error = _friendlyFunctionsError(error);
@@ -128,6 +144,7 @@ class AuthViewModel extends ChangeNotifier {
     return false;
   }
 
+  /// Continue to MFA when required; create the signed-in session only after successful verification.
   Future<MfaContinuation?> verifyOtp(String code) async {
     final challengeId = _greenApiChallengeId;
     if (challengeId == null) {
@@ -203,6 +220,8 @@ class AuthViewModel extends ChangeNotifier {
   List<String> get resetRecoveryMethods => _resetRecoveryMethods;
 
   Future<void> sendPasswordResetCode(String phoneNumber) async {
+    final stopwatch = Stopwatch()..start();
+    AuthFlowDiagnostics.event('password-reset-code-request', 'start');
     final normalized = PhoneNumberFormatter.normalize(phoneNumber);
     _message = 'Sending a verification code through WhatsApp...';
     _error = null;
@@ -226,9 +245,20 @@ class AuthViewModel extends ChangeNotifier {
         );
       }
       _resetChallengeId = data['challengeId'] as String;
+      AuthFlowDiagnostics.event(
+        'password-reset-code-request',
+        'success',
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      );
       _message = 'A password reset code was sent through WhatsApp.';
       _error = null;
     } catch (error) {
+      AuthFlowDiagnostics.event(
+        'password-reset-code-request',
+        'failure',
+        error: error,
+        elapsedMilliseconds: stopwatch.elapsedMilliseconds,
+      );
       _message = null;
       _error = _friendlyFunctionsError(error);
     }
@@ -253,6 +283,7 @@ class AuthViewModel extends ChangeNotifier {
     return false;
   }
 
+  /// Retain the reset challenge for the next recovery factor rather than signing the user in.
   Future<bool> verifyPasswordResetOtp(String code) async {
     final challengeId = _resetChallengeId;
     if (challengeId == null || challengeId.isEmpty) {
@@ -375,6 +406,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  /// Submit the verified reset challenge and the replacement password through the recovery backend.
   Future<bool> resetPassword(String newPassword) async {
     final token = _resetToken;
     if (token == null || token.isEmpty) {

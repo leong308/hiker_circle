@@ -1,3 +1,4 @@
+// Start the Linux MyApplication runner and forward command-line arguments.
 #include "my_application.h"
 
 int main(int argc, char** argv) {

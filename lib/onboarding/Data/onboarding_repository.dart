@@ -1,3 +1,4 @@
+// OnboardingRepository saves first-time profile details and prepares the selected profile photo.
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../app/Data/user_module_paths.dart';
 
@@ -59,6 +60,7 @@ class OnboardingRepository {
     }
   }
 
+  /// Save the selected profile fields and optional photo through the authenticated account repository.
   Future<void> saveProfile({
     required AppSession session,
     required OnboardingProfile profile,
@@ -82,6 +84,7 @@ class OnboardingRepository {
     }
   }
 
+  /// Mark setup complete only after the required profile values have been saved.
   Future<void> completeOnboarding(AppSession session) async {
     _ensureFirebaseAvailable();
     try {

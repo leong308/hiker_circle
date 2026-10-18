@@ -1,3 +1,6 @@
+// GoogleRoutesService requests walking directions through the private provider proxy and validates
+// returned route geometry.
+import 'private_provider_client.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -93,7 +96,7 @@ class GoogleRoutesService {
     required TrailCheckpoint destination,
     List<TrailCheckpoint> intermediates = const [],
   }) async {
-    if (_apiKey.trim().isEmpty) {
+    if (_client != null && _apiKey.trim().isEmpty) {
       throw const GoogleRoutesServiceException(
         'Google Routes API key is not configured.',
       );
@@ -101,51 +104,63 @@ class GoogleRoutesService {
 
     final client = _client ?? http.Client();
     try {
-      final response = await client.post(
-        Uri.https('routes.googleapis.com', '/directions/v2:computeRoutes'),
-        headers: {
-          ...GoogleApiConfig.androidBetaHeaders,
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': _apiKey,
-          'X-Goog-FieldMask':
-              'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline',
-        },
-        body: jsonEncode({
-          'origin': {
-            'location': {
-              'latLng': {
-                'latitude': origin.latitude,
-                'longitude': origin.longitude,
+      final response = _client == null
+          ? await PrivateProviderClient.request('googleRoute', {
+              'coordinates': [
+                [origin.longitude, origin.latitude],
+                for (final point in intermediates)
+                  [point.longitude, point.latitude],
+                [destination.longitude, destination.latitude],
+              ],
+            })
+          : await client.post(
+              Uri.https(
+                'routes.googleapis.com',
+                '/directions/v2:computeRoutes',
+              ),
+              headers: {
+                ...GoogleApiConfig.androidBetaHeaders,
+                'Content-Type': 'application/json',
+                'X-Goog-Api-Key': _apiKey,
+                'X-Goog-FieldMask':
+                    'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline',
               },
-            },
-          },
-          'destination': {
-            'location': {
-              'latLng': {
-                'latitude': destination.latitude,
-                'longitude': destination.longitude,
-              },
-            },
-          },
-          if (intermediates.isNotEmpty)
-            'intermediates': intermediates
-                .map(
-                  (checkpoint) => {
-                    'location': {
-                      'latLng': {
-                        'latitude': checkpoint.latitude,
-                        'longitude': checkpoint.longitude,
-                      },
+              body: jsonEncode({
+                'origin': {
+                  'location': {
+                    'latLng': {
+                      'latitude': origin.latitude,
+                      'longitude': origin.longitude,
                     },
                   },
-                )
-                .toList(),
-          'travelMode': 'WALK',
-          'polylineQuality': 'HIGH_QUALITY',
-          'polylineEncoding': 'ENCODED_POLYLINE',
-          'computeAlternativeRoutes': false,
-        }),
-      );
+                },
+                'destination': {
+                  'location': {
+                    'latLng': {
+                      'latitude': destination.latitude,
+                      'longitude': destination.longitude,
+                    },
+                  },
+                },
+                if (intermediates.isNotEmpty)
+                  'intermediates': intermediates
+                      .map(
+                        (checkpoint) => {
+                          'location': {
+                            'latLng': {
+                              'latitude': checkpoint.latitude,
+                              'longitude': checkpoint.longitude,
+                            },
+                          },
+                        },
+                      )
+                      .toList(),
+                'travelMode': 'WALK',
+                'polylineQuality': 'HIGH_QUALITY',
+                'polylineEncoding': 'ENCODED_POLYLINE',
+                'computeAlternativeRoutes': false,
+              }),
+            );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw GoogleRoutesServiceException(

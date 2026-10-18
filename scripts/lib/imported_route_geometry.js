@@ -1,3 +1,4 @@
+// imported_route_geometry validates exact GPX geometry and deterministic checkpoint hashes.
 'use strict';
 const { createHash } = require('crypto');
 const { haversine, routeDistanceMeters } = require('./trail_route_geometry');

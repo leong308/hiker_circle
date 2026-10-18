@@ -1,3 +1,5 @@
+// FirebaseUserRepository resolves the signed-in account and profile modules before building the
+// local AppSession.
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -47,111 +49,17 @@ class FirebaseUserRepository {
   }
 
   Future<AppSession> registerOrLoadUser(AppSession session) async {
-    if (!_firebaseBootstrapResult.isAvailable) {
-      throw FirebaseUserRepositoryException(
-        'Firebase is not ready yet. ${_firebaseBootstrapResult.errorMessage ?? ''}'
-            .trim(),
-      );
-    }
+    // Login activation and device ownership are committed by the server.
+    return refreshBoundSession(session);
+  }
 
-    try {
-      await _requireAuthenticatedMfaSession(session);
-      final now = DateTime.now().toUtc();
-      final userDocument = _users.doc(
-        documentIdForPhoneNumber(session.phoneNumber),
-      );
-
-      final registeredSession = await _resolvedFirestore.runTransaction((
-        transaction,
-      ) async {
-        final snapshot = await transaction.get(userDocument);
-        final profileDocument = userModuleDocument(
-          userDocument,
-          UserModule.profile,
-        );
-        final deviceDocument = userModuleDocument(
-          userDocument,
-          UserModule.devices,
-        );
-        final profileSnapshot = await transaction.get(profileDocument);
-        final deviceSnapshot = await transaction.get(deviceDocument);
-        final appInstanceId = session.appInstanceId;
-        if (!snapshot.exists) {
-          transaction.set(userDocument, {
-            'phoneNumber': session.phoneNumber,
-            'createdAt': FieldValue.serverTimestamp(),
-            'createdAtLocal': now.toIso8601String(),
-          });
-          transaction.set(profileDocument, {
-            'requiresOnboarding': true,
-            'profileSetupCompleted': false,
-            'onboardingVersion': 1,
-          });
-          transaction.set(deviceDocument, {
-            'boundAppInstanceId': appInstanceId,
-            'boundAppInstanceUpdatedAt': FieldValue.serverTimestamp(),
-            'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
-            'lastSignedInAt': FieldValue.serverTimestamp(),
-            'lastSignedInAtLocal': now.toIso8601String(),
-          });
-
-          return session.copyWith(
-            createdAt: now,
-            signedInAt: now,
-            appInstanceId: appInstanceId,
-            username: '',
-            requiresOnboarding: true,
-            isOnboardingProfileComplete: false,
-          );
-        }
-
-        final data = <String, dynamic>{
-          ...?snapshot.data(),
-          ...?profileSnapshot.data(),
-          ...?deviceSnapshot.data(),
-        };
-        final createdAt =
-            _dateFromValue(data['createdAt']) ??
-            _dateFromValue(data['createdAtLocal']) ??
-            now;
-        final existingAppInstanceId = _stringFrom(data['boundAppInstanceId']);
-        final isRebinding =
-            appInstanceId.isNotEmpty &&
-            existingAppInstanceId.isNotEmpty &&
-            existingAppInstanceId != appInstanceId;
-        final requiresOnboarding = _requiresOnboarding(data);
-        final isOnboardingProfileComplete = _isProfileSetupComplete(data);
-
-        transaction.set(deviceDocument, {
-          'boundAppInstanceId': appInstanceId,
-          'boundAppInstanceUpdatedAt': FieldValue.serverTimestamp(),
-          'boundAppInstanceUpdatedAtLocal': now.toIso8601String(),
-          if (isRebinding) ...{
-            'previousBoundAppInstanceId': existingAppInstanceId,
-            'deviceReboundAt': FieldValue.serverTimestamp(),
-            'deviceReboundAtLocal': now.toIso8601String(),
-            'deviceRebindVerifiedBy': 'whatsapp_otp',
-          },
-          'lastSignedInAt': FieldValue.serverTimestamp(),
-          'lastSignedInAtLocal': now.toIso8601String(),
-        }, SetOptions(merge: true));
-
-        return session.copyWith(
-          createdAt: createdAt,
-          signedInAt: now,
-          appInstanceId: appInstanceId,
-          isAdmin: _isAdmin(data),
-          username: _username(data),
-          requiresOnboarding: requiresOnboarding,
-          isOnboardingProfileComplete: isOnboardingProfileComplete,
-        );
-      });
-      return registeredSession;
-    } on FirebaseException catch (error) {
-      throw FirebaseUserRepositoryException(
-        'Firebase ${error.code}: ${error.message ?? 'No details provided.'}',
-      );
-    }
+  Stream<Map<String, dynamic>> watchSessionState(String phoneNumber) {
+    return _resolvedFirestore
+        .collection('mobileSessions')
+        .doc(documentIdForPhoneNumber(phoneNumber))
+        .snapshots(includeMetadataChanges: true)
+        .where((event) => !event.metadata.isFromCache)
+        .map((event) => event.data() ?? <String, dynamic>{});
   }
 
   Future<AppSession> refreshBoundSession(AppSession session) async {
@@ -182,6 +90,12 @@ class FirebaseUserRepository {
         ...?snapshots[2].data(),
       };
 
+      if (data['accountDisabled'] == true || data['status'] == 'disabled') {
+        throw const FirebaseUserRepositoryException(
+          'This account is disabled.',
+          requiresSignIn: true,
+        );
+      }
       final boundAppInstanceId = _stringFrom(data['boundAppInstanceId']);
       if (boundAppInstanceId.isNotEmpty &&
           session.appInstanceId.isNotEmpty &&
@@ -246,6 +160,7 @@ class FirebaseUserRepository {
       }
       final claims = token.claims ?? const <String, dynamic>{};
       if (claims['mfa'] != true ||
+          (claims['mobileSessionId'] as String? ?? '').isEmpty ||
           claims['phoneNumber'] != session.phoneNumber) {
         // The session owner decides whether this result still applies. A late
         // refresh must never sign out a newer Firebase login here.
@@ -269,16 +184,6 @@ class FirebaseUserRepository {
 
   Future<void> signOut() async {
     await _resolvedFirebaseAuth.signOut();
-  }
-
-  DateTime? _dateFromValue(Object? value) {
-    if (value is Timestamp) {
-      return value.toDate();
-    }
-    if (value is String) {
-      return DateTime.tryParse(value);
-    }
-    return null;
   }
 
   bool _isAdmin(Map<String, dynamic>? data) {

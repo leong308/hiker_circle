@@ -1,3 +1,4 @@
+// ManualSOSActions provides instant, medical, and duress SOS deep links.
 //
 //  ManualSOSActions.swift
 //  Runner

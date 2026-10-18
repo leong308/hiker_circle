@@ -1,3 +1,4 @@
+// CautionEvidenceEditor and CautionMediaViewer manage report photos and video evidence previews.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -16,6 +17,7 @@ class CautionEvidenceEditor extends StatefulWidget {
   State<CautionEvidenceEditor> createState() => CautionEvidenceEditorState();
 }
 
+/// Hold selected evidence locally until the caller submits the report or evidence update.
 class CautionEvidenceEditorState extends State<CautionEvidenceEditor> {
   final note = TextEditingController();
   final files = <PendingCautionMedia>[];
@@ -188,6 +190,7 @@ class CautionMediaStrip extends StatelessWidget {
   }
 }
 
+/// Open report evidence independently from the editable evidence selection.
 class CautionMediaViewer extends StatefulWidget {
   const CautionMediaViewer({
     super.key,

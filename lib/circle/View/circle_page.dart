@@ -1,6 +1,8 @@
+// CirclePage combines community stories, buddy discovery, teams and group chat navigation.
 import '../../core/widgets/page_header_style.dart';
 import '../../core/widgets/running_border.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
@@ -16,6 +18,7 @@ import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../home/Model/hike_session_models.dart';
 import 'group_chat_detail_page.dart';
+import 'community_post_composer.dart';
 
 class CirclePage extends StatefulWidget {
   const CirclePage({
@@ -46,7 +49,14 @@ class _CirclePageState extends State<CirclePage> {
   late List<_CommunityPost> _posts = const [];
   final List<_TeamPlan> _teams = const [];
   bool _isLoadingPosts = false;
+  bool _isLoadingMorePosts = false;
+  bool _hasMorePosts = true;
+  int _feedGeneration = 0;
+  final Set<String> _likingPostIds = {};
+  final Set<String> _deletingPostIds = {};
+  bool _composerOpen = false;
   String? _postsLoadError;
+  bool _postsErrorFromPagination = false;
   List<GroupChat> _groupChats = const [];
   bool _isLoadingChats = false;
   String? _chatsLoadError;
@@ -287,6 +297,7 @@ class _CirclePageState extends State<CirclePage> {
     unawaited(_persistPinnedChat(chat, desiredPinned, generation));
   }
 
+  /// Serialize pin writes so a slow earlier request cannot undo the user's latest chat pin choice.
   Future<void> _persistPinnedChat(
     GroupChat chat,
     bool desiredPinned,
@@ -378,31 +389,165 @@ class _CirclePageState extends State<CirclePage> {
     }
   }
 
+  /// Ignore stale refresh responses so an earlier feed request cannot replace a newer result.
   Future<void> _loadCommunityPosts() async {
+    final generation = ++_feedGeneration;
     setState(() {
       _isLoadingPosts = true;
+      _isLoadingMorePosts = false;
       _postsLoadError = null;
+      _postsErrorFromPagination = false;
     });
     try {
-      final posts = await widget.hikerCircleRepository.loadCommunityPosts();
-      if (!mounted) return;
+      final posts = await widget.hikerCircleRepository.loadCommunityPosts(
+        session: widget.session,
+      );
+      if (!mounted || generation != _feedGeneration) return;
       setState(() {
         _posts = posts.map(_communityPostFromFirestore).toList();
+        _hasMorePosts = posts.length >= 20;
         _isLoadingPosts = false;
         _postsLoadError = null;
       });
     } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _feedGeneration) return;
       setState(() {
         _isLoadingPosts = false;
         _postsLoadError = error.message;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _feedGeneration) return;
       setState(() {
         _isLoadingPosts = false;
         _postsLoadError = 'Unable to load community posts right now.';
       });
+    }
+  }
+
+  /// Page after the last post ID and discard duplicate IDs when merging the next feed batch.
+  Future<void> _loadMoreCommunityPosts() async {
+    if (_isLoadingPosts ||
+        _isLoadingMorePosts ||
+        !_hasMorePosts ||
+        _posts.isEmpty) {
+      return;
+    }
+    final generation = _feedGeneration;
+    setState(() {
+      _isLoadingMorePosts = true;
+      _postsLoadError = null;
+    });
+    try {
+      final next = await widget.hikerCircleRepository.loadCommunityPosts(
+        session: widget.session,
+        afterPostId: _posts.last.postId,
+      );
+      if (!mounted || generation != _feedGeneration) return;
+      final existing = _posts.map((post) => post.postId).toSet();
+      final additions = next
+          .map(_communityPostFromFirestore)
+          .where((post) => !existing.contains(post.postId))
+          .toList();
+      setState(() {
+        _posts = [..._posts, ...additions];
+        _hasMorePosts = next.length >= 20 && additions.isNotEmpty;
+      });
+    } catch (_) {
+      if (mounted && generation == _feedGeneration) {
+        setState(() {
+          _postsLoadError = 'More stories couldn’t be loaded. Try again.';
+          _postsErrorFromPagination = true;
+        });
+      }
+    } finally {
+      if (mounted && generation == _feedGeneration) {
+        setState(() => _isLoadingMorePosts = false);
+      }
+    }
+  }
+
+  /// Update the heart immediately, then apply the canonical count or restore the previous reaction on failure.
+  Future<_CommunityPost> _togglePostLike(_CommunityPost post) async {
+    final id = post.postId;
+    if (id == null || id.isEmpty || _likingPostIds.contains(id)) return post;
+    final current =
+        _posts.where((item) => item.postId == id).firstOrNull ?? post;
+    final updated = current.copyWith(
+      isLiked: !current.isLiked,
+      likes: math.max(0, current.likes + (current.isLiked ? -1 : 1)),
+    );
+    void apply(_CommunityPost value) {
+      _posts = _posts.map((item) => item.postId == id ? value : item).toList();
+    }
+
+    setState(() {
+      _likingPostIds.add(id);
+      apply(updated);
+    });
+    try {
+      final count = await widget.hikerCircleRepository.setCommunityPostLiked(
+        session: widget.session,
+        postId: id,
+        liked: updated.isLiked,
+      );
+      final confirmed = updated.copyWith(likes: count);
+      if (mounted) setState(() => apply(confirmed));
+      return confirmed;
+    } catch (_) {
+      if (mounted) {
+        setState(() => apply(current));
+        _showCircleMessage('Your like couldn’t be saved. Try again.');
+      }
+      return current;
+    } finally {
+      if (mounted) setState(() => _likingPostIds.remove(id));
+    }
+  }
+
+  Future<bool> _deleteCommunityPost(_CommunityPost post) async {
+    final id = post.postId;
+    if (id == null || id.isEmpty || _deletingPostIds.contains(id)) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this story?'),
+        content: const Text('This removes your post from the community.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep story'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete story'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return false;
+    setState(() => _deletingPostIds.add(id));
+    try {
+      await widget.hikerCircleRepository.deleteCommunityPost(
+        session: widget.session,
+        postId: id,
+      );
+      if (mounted) {
+        setState(
+          () => _posts = _posts.where((item) => item.postId != id).toList(),
+        );
+        _showCircleMessage('Your story was deleted.');
+      }
+      return true;
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (mounted) _showCircleMessage(error.message);
+      return false;
+    } catch (_) {
+      if (mounted) {
+        _showCircleMessage('Your story couldn’t be deleted. Please try again.');
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _deletingPostIds.remove(id));
     }
   }
 
@@ -622,81 +767,133 @@ class _CirclePageState extends State<CirclePage> {
     }
   }
 
-  Future<void> _createCommunityPost(String caption) async {
+  /// Persist one postId before publishing and serialize draft saves across retries and navigation.
+  Future<void> _openCommunityComposer() async {
+    if (_composerOpen) return;
+    _composerOpen = true;
+    CommunityPostDraftData? saved;
     try {
-      await widget.hikerCircleRepository.createCommunityPost(
+      saved = await widget.hikerCircleRepository.loadCommunityPostDraft(
         session: widget.session,
-        caption: caption,
+        draftKey: 'community',
       );
-      await _loadCommunityPosts();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Community post shared.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(error.message),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
     } catch (_) {
-      _showCircleMessage('Unable to share the community post right now.');
-    }
-  }
-
-  Future<void> _shareActiveHikeUpdate() async {
-    final hike = widget.activeHike;
-    if (hike == null) {
+      _composerOpen = false;
+      if (mounted) {
+        _showCircleMessage(
+          'Your saved draft couldn’t be opened. Please try again.',
+        );
+      }
       return;
     }
-    try {
-      await widget.hikerCircleRepository.createCompletedHikePost(
-        session: widget.session,
-        activeHike: hike,
-        postType: 'active_hike_update',
-        caption:
-            'Live update from ${hike.trail.name}: ${hike.checkIns} check-ins, ${hike.manualPins} pins, ${hike.recordedDistanceKm.toStringAsFixed(2)} km tracked so far.',
-      );
-      await _loadCommunityPosts();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Hike route shared to community.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(error.message),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    } catch (_) {
-      _showCircleMessage('Unable to share this hike update right now.');
+    if (!mounted) {
+      _composerOpen = false;
+      return;
     }
+    final postId =
+        saved?.postId ??
+        'post_${DateTime.now().microsecondsSinceEpoch}_${math.Random.secure().nextInt(1 << 32).toRadixString(16)}';
+    final hike = widget.activeHike;
+    Timer? debounce;
+    CommunityPostDraft? pending;
+    Future<void> writes = Future.value();
+    var published = false;
+    var cloudPublished = false;
+    Future<void> savePending() {
+      if (cloudPublished) return Future.value();
+      debounce?.cancel();
+      final draft = pending;
+      pending = null;
+      if (draft == null) return writes;
+      writes = writes
+          .catchError((_) {})
+          .then(
+            (_) => widget.hikerCircleRepository.saveCommunityPostDraft(
+              session: widget.session,
+              draftKey: 'community',
+              postId: postId,
+              caption: draft.caption,
+              images: draft.images,
+              includeHike: draft.includeHike,
+            ),
+          );
+      return writes;
+    }
+
+    Future<void> discard() async {
+      debounce?.cancel();
+      pending = null;
+      await writes.catchError((_) {});
+      await widget.hikerCircleRepository.deleteCommunityPostDraft(
+        session: widget.session,
+        draftKey: 'community',
+      );
+    }
+
+    try {
+      published = await showCommunityPostComposer(
+        context,
+        authorName: widget.session.username,
+        photoURL: _currentUserPhotoURL,
+        photoBytes: _currentUserPhotoURL == (widget.session.photoURL ?? '')
+            ? widget.session.photoBytes
+            : null,
+        hikeAttachment: hike == null ? null : _LiveHikeAttachment(hike: hike),
+        hikeLabel: hike == null ? null : 'Attach current hike',
+        initialCaption: saved?.caption ?? '',
+        initialImages: saved?.images ?? const [],
+        includeHikeInitially: saved?.includeHike ?? false,
+        onDraftChanged: (draft) {
+          if (cloudPublished) return;
+          pending = draft;
+          debounce?.cancel();
+          debounce = Timer(
+            const Duration(milliseconds: 400),
+            () => unawaited(savePending().catchError((_) {})),
+          );
+        },
+        onDiscard: discard,
+        onSaveDraft: (draft) {
+          pending = draft;
+          return savePending();
+        },
+        onPublish: (draft) async {
+          pending = draft;
+          try {
+            await savePending();
+          } catch (_) {
+            throw const HikerCircleFirebaseRepositoryException(
+              'Your draft couldn’t be saved. Please try again before posting.',
+            );
+          }
+          await widget.hikerCircleRepository.createCommunityPost(
+            session: widget.session,
+            postId: postId,
+            caption: draft.caption,
+            images: draft.images,
+            activeHike: draft.includeHike ? hike : null,
+          );
+          cloudPublished = true;
+          pending = null;
+          debounce?.cancel();
+          try {
+            await discard();
+          } catch (_) {
+            // The confirmed cloud post remains successful if local cleanup fails.
+          }
+        },
+      );
+    } finally {
+      await savePending().catchError((_) {
+        if (mounted) {
+          _showCircleMessage('Your draft couldn’t be saved on this device.');
+        }
+      });
+      _composerOpen = false;
+    }
+    if (!mounted || !published) return;
+    _showCircleMessage('Your story is shared with the community.');
+    await _loadCommunityPosts();
   }
 
   void _openPostDetail(_CommunityPost post) {
@@ -714,6 +911,20 @@ class _CirclePageState extends State<CirclePage> {
                 : null,
             onOpenProfile: () => _showCommunityProfile(post),
             onShare: () => _sharePostToGroupChat(post),
+            onToggleLike: _togglePostLike,
+            onDeletePost: _deleteCommunityPost,
+            onCommentCountChanged: (count) {
+              if (!mounted) return;
+              setState(() {
+                _posts = _posts
+                    .map(
+                      (item) => item.postId == post.postId
+                          ? item.copyWith(replies: count)
+                          : item,
+                    )
+                    .toList();
+              });
+            },
           );
         },
       ),
@@ -760,6 +971,7 @@ class _CirclePageState extends State<CirclePage> {
 
   Widget _buildSegment(int value, String label, IconData icon) {
     final isSelected = _selectedSection == value;
+    final stacked = MediaQuery.textScalerOf(context).scale(13) > 18;
     return Expanded(
       child: GestureDetector(
         onTap: () {
@@ -775,8 +987,10 @@ class _CirclePageState extends State<CirclePage> {
             color: isSelected ? _CircleColors.green : Colors.transparent,
             borderRadius: BorderRadius.circular(9),
           ),
-          child: Row(
+          child: Flex(
+            direction: stacked ? Axis.vertical : Axis.horizontal,
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 icon,
@@ -785,17 +999,35 @@ class _CirclePageState extends State<CirclePage> {
                     ? Colors.white
                     : _CircleColors.secondaryTextFor(context),
               ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                  color: isSelected
-                      ? Colors.white
-                      : _CircleColors.secondaryTextFor(context),
+              SizedBox(width: stacked ? 0 : 6, height: stacked ? 6 : 0),
+              if (stacked)
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                    color: isSelected
+                        ? Colors.white
+                        : _CircleColors.secondaryTextFor(context),
+                  ),
+                )
+              else
+                Flexible(
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: isSelected
+                          ? FontWeight.w700
+                          : FontWeight.w600,
+                      color: isSelected
+                          ? Colors.white
+                          : _CircleColors.secondaryTextFor(context),
+                    ),
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -812,103 +1044,128 @@ class _CirclePageState extends State<CirclePage> {
     return ColoredBox(
       color: _CircleColors.backgroundFor(context),
       child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 112),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(
-                    requestCount: _buddyRequests.length,
-                    onOpenFriendRequests: _openBuddyRequests,
-                    onOpenSettings: _openSettings,
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: _CircleColors.surfaceFor(context),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _CircleColors.separatorFor(
-                          context,
-                        ).withValues(alpha: 0.5),
+        child: RefreshIndicator(
+          color: _CircleColors.green,
+          onRefresh: _selectedSection == 0
+              ? () async {
+                  await Future.wait([
+                    _loadCommunityPosts(),
+                    _loadCommunityPeople(),
+                  ]);
+                }
+              : () async => _loadPinnedChats(),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 112),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _Header(
+                      requestCount: _buddyRequests.length,
+                      onOpenFriendRequests: _openBuddyRequests,
+                      onOpenSettings: _openSettings,
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: _CircleColors.surfaceFor(context),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _CircleColors.separatorFor(
+                            context,
+                          ).withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          _buildSegment(0, 'Community', Icons.people_rounded),
+                          if (_isAdmin)
+                            _buildSegment(1, 'Teams', Icons.groups_2_rounded),
+                          _buildSegment(
+                            _isAdmin ? 2 : 1,
+                            'Chats',
+                            Icons.chat_rounded,
+                          ),
+                        ],
                       ),
                     ),
-                    child: Row(
-                      children: [
-                        _buildSegment(0, 'Community', Icons.people_rounded),
-                        if (_isAdmin)
-                          _buildSegment(1, 'Teams', Icons.groups_2_rounded),
-                        _buildSegment(
-                          _isAdmin ? 2 : 1,
-                          'Chats',
-                          Icons.chat_rounded,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: KeyedSubtree(
-                      key: ValueKey(_selectedSection),
-                      child: _selectedSection == 0
-                          ? _CommunitySection(
-                              activeHike: widget.activeHike,
-                              people: _people,
-                              posts: _posts,
-                              isLoadingPosts: _isLoadingPosts,
-                              postsLoadError: _postsLoadError,
-                              onRetryPosts: _loadCommunityPosts,
-                              buddyPhones: _buddyPhones,
-                              outgoingBuddyRequestPhones:
-                                  _outgoingBuddyRequestPhones,
-                              currentUserPhone: widget.session.phoneNumber,
-                              currentUserPhotoURL: _currentUserPhotoURL,
-                              currentUserPhotoBytes:
-                                  _currentUserPhotoURL ==
-                                      (widget.session.photoURL ?? '')
-                                  ? widget.session.photoBytes
-                                  : null,
-                              onAddBuddy: (person) =>
-                                  unawaited(_addBuddy(person)),
-                              onMessageBuddy: (person) =>
-                                  unawaited(_openDirectChat(person)),
-                              onOpenPersonProfile: (person) => unawaited(
-                                _showCommunityPersonProfile(person),
+                    const SizedBox(height: 18),
+                    AnimatedSwitcher(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180),
+                      child: KeyedSubtree(
+                        key: ValueKey(_selectedSection),
+                        child: _selectedSection == 0
+                            ? _CommunitySection(
+                                activeHike: widget.activeHike,
+                                people: _people,
+                                posts: _posts,
+                                isLoadingPosts: _isLoadingPosts,
+                                postsLoadError: _postsLoadError,
+                                onRetryPosts: _postsErrorFromPagination
+                                    ? _loadMoreCommunityPosts
+                                    : _loadCommunityPosts,
+                                isLoadingMore: _isLoadingMorePosts,
+                                hasMorePosts: _hasMorePosts,
+                                onLoadMore: _loadMoreCommunityPosts,
+                                likingPostIds: _likingPostIds,
+                                deletingPostIds: _deletingPostIds,
+                                onDeletePost: (post) =>
+                                    unawaited(_deleteCommunityPost(post)),
+                                onLikePost: (post) =>
+                                    unawaited(_togglePostLike(post)),
+                                buddyPhones: _buddyPhones,
+                                outgoingBuddyRequestPhones:
+                                    _outgoingBuddyRequestPhones,
+                                currentUserPhone: widget.session.phoneNumber,
+                                currentUserPhotoURL: _currentUserPhotoURL,
+                                currentUserPhotoBytes:
+                                    _currentUserPhotoURL ==
+                                        (widget.session.photoURL ?? '')
+                                    ? widget.session.photoBytes
+                                    : null,
+                                onAddBuddy: (person) =>
+                                    unawaited(_addBuddy(person)),
+                                onMessageBuddy: (person) =>
+                                    unawaited(_openDirectChat(person)),
+                                onOpenPersonProfile: (person) => unawaited(
+                                  _showCommunityPersonProfile(person),
+                                ),
+                                onOpenProfile: _showCommunityProfile,
+                                onSharePost: _sharePostToGroupChat,
+                                onCreatePost: () =>
+                                    unawaited(_openCommunityComposer()),
+                                onOpenPost: _openPostDetail,
+                              )
+                            : _isAdmin && _selectedSection == 1
+                            ? _TeamsSection(
+                                buddies: buddies,
+                                teams: _teams,
+                                onCreateTeam: _createTeam,
+                              )
+                            : _ChatsSection(
+                                chats: _groupChats,
+                                isLoading: _isLoadingChats,
+                                loadError: _chatsLoadError,
+                                onRetry: _listenToGroupChats,
+                                phoneNumber: widget.session.phoneNumber,
+                                pinnedChatIds: _pinnedChatIds,
+                                currentUserName: widget.session.username,
+                                localLastReadAt: _localLastReadAt,
+                                onOpenChat: _openGroupChat,
+                                onChatNotifications: _showChatNotifications,
+                                onDeleteChat: _deleteChat,
+                                onPinChat: _pinChat,
                               ),
-                              onOpenProfile: _showCommunityProfile,
-                              onSharePost: _sharePostToGroupChat,
-                              onCreatePost: _createCommunityPost,
-                              onShareHike: _shareActiveHikeUpdate,
-                              onOpenPost: _openPostDetail,
-                            )
-                          : _isAdmin && _selectedSection == 1
-                          ? _TeamsSection(
-                              buddies: buddies,
-                              teams: _teams,
-                              onCreateTeam: _createTeam,
-                            )
-                          : _ChatsSection(
-                              chats: _groupChats,
-                              isLoading: _isLoadingChats,
-                              loadError: _chatsLoadError,
-                              onRetry: _listenToGroupChats,
-                              phoneNumber: widget.session.phoneNumber,
-                              pinnedChatIds: _pinnedChatIds,
-                              currentUserName: widget.session.username,
-                              localLastReadAt: _localLastReadAt,
-                              onOpenChat: _openGroupChat,
-                              onChatNotifications: _showChatNotifications,
-                              onDeleteChat: _deleteChat,
-                              onPinChat: _pinChat,
-                            ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -981,6 +1238,13 @@ class _CommunityPost {
     this.routePointCount = 0,
     this.routePreviewPoints = const [],
     this.authorPhotoURL = '',
+    this.imageUrls = const [],
+    this.isLiked = false,
+    this.isOwnPost = false,
+    this.kind = 'note',
+    this.hikeState = '',
+    this.distanceKm,
+    this.durationMinutes,
   });
 
   final String? postId;
@@ -1000,12 +1264,48 @@ class _CommunityPost {
   final int routePointCount;
   final List<HikeCoordinate> routePreviewPoints;
   final String authorPhotoURL;
+  final List<String> imageUrls;
+  final bool isLiked;
+  final bool isOwnPost;
+  final String kind;
+  final String hikeState;
+  final double? distanceKm;
+  final int? durationMinutes;
 
   bool get hasRouteMap => routePreviewPoints.length >= 2;
+
+  _CommunityPost copyWith({int? likes, bool? isLiked, int? replies}) =>
+      _CommunityPost(
+        postId: postId,
+        authorId: authorId,
+        authorPhoneNumber: authorPhoneNumber,
+        author: author,
+        handle: handle,
+        levelBadge: levelBadge,
+        level: level,
+        timeLabel: timeLabel,
+        trail: trail,
+        body: body,
+        likes: likes ?? this.likes,
+        replies: replies ?? this.replies,
+        color: color,
+        routeCaptureId: routeCaptureId,
+        routePointCount: routePointCount,
+        routePreviewPoints: routePreviewPoints,
+        authorPhotoURL: authorPhotoURL,
+        imageUrls: imageUrls,
+        isLiked: isLiked ?? this.isLiked,
+        isOwnPost: isOwnPost,
+        kind: kind,
+        hikeState: hikeState,
+        distanceKm: distanceKm,
+        durationMinutes: durationMinutes,
+      );
 }
 
 class _CommunityComment {
   const _CommunityComment({
+    required this.commentId,
     required this.author,
     required this.handle,
     required this.levelBadge,
@@ -1016,6 +1316,7 @@ class _CommunityComment {
   });
 
   final String author;
+  final String commentId;
   final String handle;
   final String levelBadge;
   final int level;
@@ -1094,6 +1395,13 @@ class _CommunitySection extends StatefulWidget {
     required this.isLoadingPosts,
     required this.postsLoadError,
     required this.onRetryPosts,
+    required this.isLoadingMore,
+    required this.hasMorePosts,
+    required this.onLoadMore,
+    required this.likingPostIds,
+    required this.deletingPostIds,
+    required this.onDeletePost,
+    required this.onLikePost,
     required this.buddyPhones,
     required this.outgoingBuddyRequestPhones,
     required this.currentUserPhone,
@@ -1105,7 +1413,6 @@ class _CommunitySection extends StatefulWidget {
     required this.onOpenProfile,
     required this.onSharePost,
     required this.onCreatePost,
-    required this.onShareHike,
     required this.onOpenPost,
   });
 
@@ -1115,6 +1422,13 @@ class _CommunitySection extends StatefulWidget {
   final bool isLoadingPosts;
   final String? postsLoadError;
   final VoidCallback onRetryPosts;
+  final bool isLoadingMore;
+  final bool hasMorePosts;
+  final VoidCallback onLoadMore;
+  final Set<String> likingPostIds;
+  final Set<String> deletingPostIds;
+  final ValueChanged<_CommunityPost> onDeletePost;
+  final ValueChanged<_CommunityPost> onLikePost;
   final Set<String> buddyPhones;
   final Set<String> outgoingBuddyRequestPhones;
   final String currentUserPhone;
@@ -1125,8 +1439,7 @@ class _CommunitySection extends StatefulWidget {
   final ValueChanged<_CommunityPerson> onOpenPersonProfile;
   final ValueChanged<_CommunityPost> onOpenProfile;
   final ValueChanged<_CommunityPost> onSharePost;
-  final Future<void> Function(String caption) onCreatePost;
-  final Future<void> Function() onShareHike;
+  final VoidCallback onCreatePost;
   final ValueChanged<_CommunityPost> onOpenPost;
 
   @override
@@ -1138,6 +1451,7 @@ class _CommunitySectionState extends State<_CommunitySection> {
   String _query = '';
   bool _showPeople = false;
   bool _onlyBuddies = false;
+  bool _showSearch = false;
 
   @override
   Widget build(BuildContext context) {
@@ -1156,7 +1470,7 @@ class _CommunitySectionState extends State<_CommunitySection> {
           (post) =>
               (_filter != 'Buddies' ||
                   widget.buddyPhones.contains(post.authorPhoneNumber)) &&
-              (_filter != 'Hike stories' || post.hasRouteMap) &&
+              (_filter != 'Hike stories' || post.kind == 'hike') &&
               '${post.author} ${post.body} ${post.trail}'
                   .toLowerCase()
                   .contains(_query),
@@ -1165,83 +1479,65 @@ class _CommunitySectionState extends State<_CommunitySection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                _CircleColors.green.withValues(alpha: 0.16),
-                _CircleColors.surfaceFor(context),
-              ],
-            ),
-            border: Border.all(
-              color: _CircleColors.green.withValues(alpha: 0.14),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Better together',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: _CircleColors.textFor(context),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Find your hiking people. Share the moments along the way.',
-                style: TextStyle(
-                  color: _CircleColors.secondaryTextFor(context),
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Wrap(
+        Row(
+          children: [
+            Expanded(
+              child: Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
                   ChoiceChip(
-                    avatar: const Icon(CupertinoIcons.chat_bubble_2, size: 18),
                     label: const Text('Stories'),
                     selected: !_showPeople,
                     onSelected: (_) => setState(() {
                       _showPeople = false;
+                      _query = '';
                     }),
                   ),
                   ChoiceChip(
-                    avatar: const Icon(CupertinoIcons.person_2, size: 18),
                     label: const Text('Find hikers'),
                     selected: _showPeople,
                     onSelected: (_) => setState(() {
                       _showPeople = true;
+                      _query = '';
                     }),
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+            if (!_showPeople)
+              IconButton(
+                tooltip: _showSearch ? 'Close search' : 'Search stories',
+                onPressed: () => setState(() {
+                  _showSearch = !_showSearch;
+                  _query = '';
+                }),
+                icon: Icon(
+                  _showSearch ? Icons.close_rounded : CupertinoIcons.search,
+                  size: 20,
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: 16),
-        TextField(
-          onChanged: (value) =>
-              setState(() => _query = value.trim().toLowerCase()),
-          decoration: InputDecoration(
-            hintText: _showPeople
-                ? 'Search hikers or interests'
-                : 'Search stories, hikers or trails',
-            prefixIcon: const Icon(CupertinoIcons.search, size: 20),
-            filled: true,
-            fillColor: _CircleColors.surfaceFor(context),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(18),
-              borderSide: BorderSide.none,
+        if (_showPeople || _showSearch)
+          TextField(
+            key: ValueKey('community-search-$_showPeople'),
+            onChanged: (value) =>
+                setState(() => _query = value.trim().toLowerCase()),
+            decoration: InputDecoration(
+              hintText: _showPeople
+                  ? 'Search hikers or interests'
+                  : 'Search stories, hikers or trails',
+              prefixIcon: const Icon(CupertinoIcons.search, size: 20),
+              filled: true,
+              fillColor: _CircleColors.surfaceFor(context),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
+              ),
             ),
           ),
-        ),
         const SizedBox(height: 16),
         if (_showPeople) ...[
           Row(
@@ -1333,7 +1629,6 @@ class _CommunitySectionState extends State<_CommunitySection> {
             currentUserPhotoURL: widget.currentUserPhotoURL,
             currentUserPhotoBytes: widget.currentUserPhotoBytes,
             onCreatePost: widget.onCreatePost,
-            onShareHike: widget.onShareHike,
           ),
           const SizedBox(height: 20),
           Wrap(
@@ -1349,12 +1644,12 @@ class _CommunitySectionState extends State<_CommunitySection> {
             ],
           ),
           const SizedBox(height: 16),
-          if (widget.isLoadingPosts)
+          if (widget.isLoadingPosts && widget.posts.isEmpty)
             const Padding(
               padding: EdgeInsets.all(24),
               child: Center(child: HikerCircleMinorLoadingIndicator(size: 56)),
-            )
-          else if (widget.postsLoadError != null)
+            ),
+          if (widget.postsLoadError != null)
             ListTile(
               leading: const Icon(CupertinoIcons.cloud),
               title: Text(widget.postsLoadError!),
@@ -1362,8 +1657,10 @@ class _CommunitySectionState extends State<_CommunitySection> {
                 onPressed: widget.onRetryPosts,
                 child: const Text('Retry'),
               ),
-            )
-          else if (posts.isEmpty)
+            ),
+          if (!widget.isLoadingPosts &&
+              posts.isEmpty &&
+              widget.postsLoadError == null)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 30),
               child: Column(
@@ -1395,14 +1692,44 @@ class _CommunitySectionState extends State<_CommunitySection> {
             ),
           for (final post in posts) ...[
             _CommunityPostCard(
+              key: ValueKey(post.postId),
               post: post,
-              isOwnPost: post.authorPhoneNumber == widget.currentUserPhone,
+              isOwnPost:
+                  post.isOwnPost ||
+                  post.authorPhoneNumber == widget.currentUserPhone,
               onOpenPost: () => widget.onOpenPost(post),
               onOpenProfile: () => widget.onOpenProfile(post),
               onShare: () => widget.onSharePost(post),
+              onLike: () => widget.onLikePost(post),
+              likeBusy:
+                  widget.likingPostIds.contains(post.postId) ||
+                  widget.deletingPostIds.contains(post.postId),
+              deleteBusy: widget.deletingPostIds.contains(post.postId),
+              onDelete:
+                  post.isOwnPost ||
+                      post.authorPhoneNumber == widget.currentUserPhone
+                  ? () => widget.onDeletePost(post)
+                  : null,
             ),
             const SizedBox(height: 16),
           ],
+          if (widget.hasMorePosts && widget.posts.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 16),
+              child: OutlinedButton.icon(
+                onPressed: widget.isLoadingMore ? null : widget.onLoadMore,
+                icon: widget.isLoadingMore
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.expand_more_rounded),
+                label: Text(
+                  widget.isLoadingMore ? 'Loading stories…' : 'More stories',
+                ),
+              ),
+            ),
         ],
       ],
     );
@@ -1415,368 +1742,716 @@ class _ComposerCard extends StatelessWidget {
     required this.currentUserPhotoURL,
     required this.currentUserPhotoBytes,
     required this.onCreatePost,
-    required this.onShareHike,
   });
-
   final ActiveHikeSession? activeHike;
   final String currentUserPhotoURL;
   final Uint8List? currentUserPhotoBytes;
-  final Future<void> Function(String caption) onCreatePost;
-  final Future<void> Function() onShareHike;
+  final VoidCallback onCreatePost;
 
   @override
-  Widget build(BuildContext context) {
-    final isDark = _CircleColors.isDark(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: _CircleColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: _CircleColors.green.withValues(alpha: 0.15)),
-      ),
+  Widget build(BuildContext context) => Material(
+    color: _CircleColors.surfaceFor(context),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(24),
+      side: BorderSide(color: _CircleColors.green.withValues(alpha: .2)),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: onCreatePost,
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        padding: const EdgeInsets.all(18),
+        child: Row(
           children: [
-            Row(
-              children: [
-                _Avatar(
-                  label: 'Y',
-                  color: _CircleColors.green,
-                  imageUrl: currentUserPhotoURL,
-                  imageBytes: currentUserPhotoBytes,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(22),
-                    onTap: () => unawaited(_openComposer(context)),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF1B261F)
-                            : const Color(0xFFF5F7F5),
-                        borderRadius: BorderRadius.circular(22),
-                        border: Border.all(
-                          color: _CircleColors.separatorFor(
-                            context,
-                          ).withValues(alpha: 0.5),
-                        ),
-                      ),
-                      child: Text(
-                        activeHike == null
-                            ? 'What did you discover today?'
-                            : 'Share live progress from ${activeHike!.trail.name}...',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: _CircleColors.secondaryTextFor(context),
-                          fontWeight: FontWeight.w400,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+            _Avatar(
+              label: 'Y',
+              color: _CircleColors.green,
+              imageUrl: currentUserPhotoURL,
+              imageBytes: currentUserPhotoBytes,
             ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _CircleColors.green,
-                      side: BorderSide(
-                        color: _CircleColors.green.withValues(alpha: 0.3),
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    onPressed: () => unawaited(_openComposer(context)),
-                    icon: const Icon(Icons.edit_rounded, size: 18),
-                    label: const Text('Write a story'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _CircleColors.green,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    onPressed: activeHike == null
-                        ? null
-                        : () => unawaited(onShareHike()),
-                    icon: const Icon(Icons.hiking_rounded, size: 18),
-                    label: const Text('Share Hike'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openComposer(BuildContext context) async {
-    final controller = TextEditingController();
-    final caption = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: _CircleColors.surfaceFor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-        return Padding(
-          padding: EdgeInsets.fromLTRB(20, 8, 20, 20 + bottomInset),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _Avatar(
-                    label: 'Y',
-                    color: _CircleColors.green,
-                    size: 36,
-                    imageUrl: currentUserPhotoURL,
-                    imageBytes: currentUserPhotoBytes,
-                  ),
-                  const SizedBox(width: 10),
                   Text(
-                    'Create a post',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: _CircleColors.textFor(context),
+                    'Write a story',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w800,
-                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    activeHike == null
+                        ? 'A moment, a photo, a question…'
+                        : 'Share a moment from your hike',
+                    style: TextStyle(
+                      color: _CircleColors.secondaryTextFor(context),
+                      fontSize: 12,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: controller,
-                minLines: 4,
-                maxLines: 6,
-                maxLength: 280,
-                decoration: InputDecoration(
-                  hintText: 'Share a trail note, question, or safety update.',
-                  hintStyle: TextStyle(
-                    color: _CircleColors.secondaryTextFor(context),
-                  ),
-                  filled: true,
-                  fillColor: _CircleColors.isDark(context)
-                      ? const Color(0xFF1B261F)
-                      : const Color(0xFFF5F7F5),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(22),
-                    borderSide: BorderSide.none,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(22),
-                    borderSide: BorderSide(
-                      color: _CircleColors.green.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  counterStyle: TextStyle(
-                    color: _CircleColors.secondaryTextFor(context),
-                    fontSize: 11,
-                  ),
-                ),
+            ),
+            const SizedBox(width: 8),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: _CircleColors.greenSoftFor(context),
+                borderRadius: BorderRadius.circular(15),
               ),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: _CircleColors.green,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(22),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: Icon(Icons.add_rounded, color: _CircleColors.green),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _LiveHikeAttachment extends StatelessWidget {
+  const _LiveHikeAttachment({required this.hike});
+  final ActiveHikeSession hike;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: _CircleColors.greenSoftFor(context),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.route_rounded, color: _CircleColors.green, size: 30),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                hike.trail.name,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                '${hike.recordedDistanceKm.toStringAsFixed(2)} km · ${hike.elapsedDuration.inMinutes} min · In progress',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _CircleColors.secondaryTextFor(context),
                 ),
-                onPressed: () =>
-                    Navigator.of(context).pop(controller.text.trim()),
-                icon: const Icon(Icons.send_rounded, size: 18),
-                label: const Text('Post'),
               ),
             ],
           ),
-        );
-      },
-    );
-    controller.dispose();
-
-    if (caption == null || caption.trim().isEmpty) {
-      return;
-    }
-    await onCreatePost(caption.trim());
-  }
+        ),
+      ],
+    ),
+  );
 }
 
-class _CommunityPostCard extends StatelessWidget {
+class _CommunityPostCard extends StatefulWidget {
   const _CommunityPostCard({
+    super.key,
     required this.post,
     required this.isOwnPost,
     required this.onOpenPost,
     required this.onOpenProfile,
     required this.onShare,
+    required this.onLike,
+    this.likeBusy = false,
+    this.expanded = false,
+    this.onDelete,
+    this.deleteBusy = false,
   });
-
   final _CommunityPost post;
   final bool isOwnPost;
   final VoidCallback onOpenPost;
   final VoidCallback onOpenProfile;
   final VoidCallback onShare;
+  final VoidCallback onLike;
+  final bool likeBusy;
+  final bool expanded;
+  final VoidCallback? onDelete;
+  final bool deleteBusy;
+  @override
+  State<_CommunityPostCard> createState() => _CommunityPostCardState();
+}
 
+class _CommunityPostCardState extends State<_CommunityPostCard> {
+  bool _expandedCaption = false;
   @override
   Widget build(BuildContext context) {
+    final post = widget.post;
+    final theme = Theme.of(context);
+    final quiet = _CircleColors.secondaryTextFor(context);
+    final hasLongCaption =
+        post.body.length > 240 || '\n'.allMatches(post.body).length > 3;
     return Container(
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: _CircleColors.surfaceFor(context),
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: _CircleColors.separatorFor(context).withValues(alpha: 0.5),
+          color: _CircleColors.separatorFor(context).withValues(alpha: .7),
         ),
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(22),
-          onTap: onOpenPost,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Row(
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GestureDetector(
-                      onTap: onOpenProfile,
-                      child: _Avatar(
-                        label: _circleInitial(post.author),
-                        color: post.color,
-                        imageUrl: post.authorPhotoURL,
-                      ),
+                Semantics(
+                  button: true,
+                  label: 'View ${post.author}’s profile',
+                  child: InkWell(
+                    onTap: widget.onOpenProfile,
+                    borderRadius: BorderRadius.circular(28),
+                    child: _Avatar(
+                      label: _circleInitial(post.author),
+                      color: post.color,
+                      imageUrl: post.authorPhotoURL,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  isOwnPost
-                                      ? '${post.author} (You)'
-                                      : post.author,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodyLarge
-                                      ?.copyWith(
-                                        color: _CircleColors.textFor(context),
-                                        fontWeight: FontWeight.w800,
-                                        letterSpacing: 0,
-                                      ),
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: InkWell(
+                    onTap: widget.onOpenProfile,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                widget.isOwnPost
+                                    ? '${post.author} (You)'
+                                    : post.author,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              _LevelBadge(level: post.level),
-                            ],
+                            ),
+                            const SizedBox(width: 6),
+                            _LevelBadge(level: post.level),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          post.timeLabel,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: quiet,
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${post.timeLabel} - ${post.trail}',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: _CircleColors.secondaryTextFor(
-                                    context,
-                                  ),
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0,
-                                ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  post.body,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _CircleColors.textFor(context),
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0,
-                    height: 1.45,
                   ),
                 ),
-                const SizedBox(height: 12),
-                if (post.hasRouteMap) ...[
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: SizedBox(
-                      height: 160,
-                      width: double.infinity,
-                      child: _CommunityRouteThumbnail(post: post),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(
-                        color: _CircleColors.separatorFor(
-                          context,
-                        ).withValues(alpha: 0.4),
-                      ),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      _PostAction(
-                        icon: CupertinoIcons.heart,
-                        label: '${post.likes}',
-                        onTap: onOpenPost,
-                      ),
-                      const SizedBox(width: 18),
-                      _PostAction(
-                        icon: CupertinoIcons.chat_bubble,
-                        label: '${post.replies}',
-                        onTap: onOpenPost,
-                      ),
-                      const Spacer(),
-                      _PostAction(
-                        icon: CupertinoIcons.arrowshape_turn_up_right,
-                        label: 'Share',
-                        onTap: onShare,
+                if (widget.onDelete != null)
+                  PopupMenuButton<String>(
+                    tooltip: 'Story options',
+                    enabled: !widget.deleteBusy,
+                    icon: widget.deleteBusy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.more_horiz_rounded),
+                    onSelected: (_) => widget.onDelete?.call(),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline_rounded, size: 20),
+                            SizedBox(width: 10),
+                            Text('Delete story'),
+                          ],
+                        ),
                       ),
                     ],
+                  ),
+                if (post.kind == 'hike')
+                  Tooltip(
+                    message: post.hikeState == 'active'
+                        ? 'Hike in progress'
+                        : 'Hike story',
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: _CircleColors.greenSoftFor(context),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.hiking_rounded,
+                        color: _CircleColors.green,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (post.body.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    post.body,
+                    maxLines: widget.expanded || _expandedCaption ? null : 5,
+                    overflow: widget.expanded || _expandedCaption
+                        ? null
+                        : TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(height: 1.55),
+                  ),
+                  if (hasLongCaption && !widget.expanded)
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 0),
+                        minimumSize: const Size(48, 44),
+                      ),
+                      onPressed: () =>
+                          setState(() => _expandedCaption = !_expandedCaption),
+                      child: Text(_expandedCaption ? 'Show less' : 'Read more'),
+                    ),
+                ],
+              ),
+            ),
+          if (post.imageUrls.isNotEmpty)
+            _PostPhotoGallery(
+              imageUrls: post.imageUrls,
+              postId: post.postId ?? '',
+            ),
+          if (post.kind == 'hike' || post.hasRouteMap)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: Material(
+                color: _CircleColors.greenSoftFor(context),
+                borderRadius: BorderRadius.circular(18),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: widget.expanded ? null : widget.onOpenPost,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (post.hasRouteMap)
+                        SizedBox(
+                          height: widget.expanded ? 220 : 130,
+                          child: widget.expanded
+                              ? _CommunityRouteThumbnail(post: post)
+                              : CustomPaint(
+                                  painter: _FeedRoutePainter(
+                                    post.routePreviewPoints,
+                                    _CircleColors.green,
+                                    _CircleColors.greenSoftFor(context),
+                                  ),
+                                  child: const SizedBox.expand(),
+                                ),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.terrain_rounded,
+                                  size: 17,
+                                  color: _CircleColors.green,
+                                ),
+                                const SizedBox(width: 7),
+                                Expanded(
+                                  child: Text(
+                                    post.trail,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                if (!widget.expanded)
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    size: 20,
+                                  ),
+                              ],
+                            ),
+                            if (post.distanceKm != null ||
+                                post.durationMinutes != null) ...[
+                              const SizedBox(height: 7),
+                              Text(
+                                [
+                                  if (post.distanceKm != null)
+                                    '${post.distanceKm!.toStringAsFixed(2)} km',
+                                  if (post.durationMinutes != null)
+                                    '${post.durationMinutes} min',
+                                  if (post.hikeState == 'active') 'In progress',
+                                ].join(' · '),
+                                style: TextStyle(fontSize: 12, color: quiet),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Divider(
+              height: 1,
+              color: _CircleColors.separatorFor(context).withValues(alpha: .55),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              children: [
+                Semantics(
+                  toggled: post.isLiked,
+                  button: true,
+                  label: post.isLiked ? 'Unlike story' : 'Like story',
+                  child: TextButton.icon(
+                    key: ValueKey('like-${post.postId}'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: post.isLiked
+                          ? _CircleColors.redFor(context)
+                          : quiet,
+                      minimumSize: const Size(64, 48),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                    ),
+                    onPressed: widget.likeBusy ? null : widget.onLike,
+                    icon: AnimatedSwitcher(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180),
+                      transitionBuilder: (child, animation) =>
+                          ScaleTransition(scale: animation, child: child),
+                      child: Icon(
+                        post.isLiked
+                            ? CupertinoIcons.heart_fill
+                            : CupertinoIcons.heart,
+                        key: ValueKey(post.isLiked),
+                        size: 21,
+                      ),
+                    ),
+                    label: Text(
+                      '${post.likes}',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  key: ValueKey('comments-${post.postId}'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: quiet,
+                    minimumSize: const Size(64, 48),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  onPressed: widget.onOpenPost,
+                  icon: const Icon(CupertinoIcons.chat_bubble, size: 20),
+                  label: Text(
+                    '${post.replies}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Share story to chat',
+                  onPressed: widget.onShare,
+                  icon: Icon(
+                    CupertinoIcons.arrowshape_turn_up_right,
+                    color: quiet,
+                    size: 21,
                   ),
                 ),
               ],
             ),
           ),
-        ),
+        ],
       ),
     );
   }
+}
+
+/// Draw lightweight feed geometry without creating a native map for every story card.
+class _FeedRoutePainter extends CustomPainter {
+  const _FeedRoutePainter(this.points, this.color, this.background);
+  final List<HikeCoordinate> points;
+  final Color color;
+  final Color background;
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = background);
+    final grid = Paint()
+      ..color = color.withValues(alpha: .07)
+      ..strokeWidth = 1;
+    for (var x = 0.0; x < size.width; x += 28) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (var y = 0.0; y < size.height; y += 28) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    if (points.length < 2) return;
+    final minLat = points.map((p) => p.latitude).reduce(math.min);
+    final maxLat = points.map((p) => p.latitude).reduce(math.max);
+    final minLng = points.map((p) => p.longitude).reduce(math.min);
+    final maxLng = points.map((p) => p.longitude).reduce(math.max);
+    final aspect = math
+        .cos((minLat + maxLat) / 2 * math.pi / 180)
+        .abs()
+        .clamp(.1, 1);
+    final width = math.max((maxLng - minLng) * aspect, .00001);
+    final height = math.max(maxLat - minLat, .00001);
+    final scale = math.min(
+      (size.width - 50) / width,
+      (size.height - 40) / height,
+    );
+    Offset project(HikeCoordinate point) => Offset(
+      size.width / 2 +
+          (point.longitude - (minLng + maxLng) / 2) * aspect * scale,
+      size.height / 2 - (point.latitude - (minLat + maxLat) / 2) * scale,
+    );
+    final path = Path()
+      ..moveTo(project(points.first).dx, project(points.first).dy);
+    for (final point in points.skip(1)) {
+      final p = project(point);
+      path.lineTo(p.dx, p.dy);
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color.withValues(alpha: .14)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 10
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+    for (final point in [points.first, points.last]) {
+      canvas.drawCircle(project(point), 6, Paint()..color = Colors.white);
+      canvas.drawCircle(project(point), 3.5, Paint()..color = color);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _FeedRoutePainter oldDelegate) =>
+      oldDelegate.points != points ||
+      oldDelegate.color != color ||
+      oldDelegate.background != background;
+}
+
+class _PostPhotoGallery extends StatefulWidget {
+  const _PostPhotoGallery({required this.imageUrls, required this.postId});
+  final List<String> imageUrls;
+  final String postId;
+  @override
+  State<_PostPhotoGallery> createState() => _PostPhotoGalleryState();
+}
+
+class _PostPhotoGalleryState extends State<_PostPhotoGallery> {
+  final _controller = PageController();
+  int _index = 0;
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      AspectRatio(
+        aspectRatio: 4 / 3,
+        child: Stack(
+          children: [
+            PageView.builder(
+              controller: _controller,
+              itemCount: widget.imageUrls.length,
+              onPageChanged: (index) => setState(() => _index = index),
+              itemBuilder: (context, index) => Semantics(
+                button: true,
+                label: 'Open photo ${index + 1} of ${widget.imageUrls.length}',
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      fullscreenDialog: true,
+                      builder: (_) => _PhotoViewer(
+                        imageUrls: widget.imageUrls,
+                        initialIndex: index,
+                      ),
+                    ),
+                  ),
+                  child: _CommunityNetworkPhoto(url: widget.imageUrls[index]),
+                ),
+              ),
+            ),
+            if (widget.imageUrls.length > 1)
+              Positioned(
+                top: 12,
+                right: 12,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: .6),
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    child: Text(
+                      '${_index + 1}/${widget.imageUrls.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      if (widget.imageUrls.length > 1)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var index = 0; index < widget.imageUrls.length; index++)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: GestureDetector(
+                    onTap: () => _controller.animateToPage(
+                      index,
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 220),
+                      curve: Curves.easeOut,
+                    ),
+                    child: AnimatedContainer(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180),
+                      width: index == _index ? 18 : 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: index == _index
+                            ? _CircleColors.green
+                            : _CircleColors.separatorFor(context),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+    ],
+  );
+}
+
+class _CommunityNetworkPhoto extends StatelessWidget {
+  const _CommunityNetworkPhoto({required this.url, this.fit = BoxFit.cover});
+  final String url;
+  final BoxFit fit;
+  @override
+  Widget build(BuildContext context) => Image.network(
+    url,
+    fit: fit,
+    width: double.infinity,
+    height: double.infinity,
+    loadingBuilder: (context, child, progress) => progress == null
+        ? child
+        : ColoredBox(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: Center(
+              child: Icon(
+                CupertinoIcons.photo,
+                size: 32,
+                color: _CircleColors.secondaryTextFor(context),
+              ),
+            ),
+          ),
+    errorBuilder: (context, _, _) => ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              CupertinoIcons.photo,
+              color: _CircleColors.secondaryTextFor(context),
+            ),
+            const SizedBox(height: 8),
+            const Text('Photo unavailable', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _PhotoViewer extends StatefulWidget {
+  const _PhotoViewer({required this.imageUrls, required this.initialIndex});
+  final List<String> imageUrls;
+  final int initialIndex;
+  @override
+  State<_PhotoViewer> createState() => _PhotoViewerState();
+}
+
+class _PhotoViewerState extends State<_PhotoViewer> {
+  late final PageController _controller = PageController(
+    initialPage: widget.initialIndex,
+  );
+  late int _index = widget.initialIndex;
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: Text('${_index + 1} of ${widget.imageUrls.length}'),
+    ),
+    body: SafeArea(
+      child: PageView.builder(
+        controller: _controller,
+        itemCount: widget.imageUrls.length,
+        onPageChanged: (index) => setState(() => _index = index),
+        itemBuilder: (_, index) => InteractiveViewer(
+          minScale: 1,
+          maxScale: 5,
+          child: _CommunityNetworkPhoto(
+            url: widget.imageUrls[index],
+            fit: BoxFit.contain,
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _CommunityPostDetailPage extends StatefulWidget {
@@ -1788,8 +2463,10 @@ class _CommunityPostDetailPage extends StatefulWidget {
     required this.currentUserPhotoBytes,
     required this.onOpenProfile,
     required this.onShare,
+    required this.onToggleLike,
+    required this.onDeletePost,
+    required this.onCommentCountChanged,
   });
-
   final AppSession session;
   final HikerCircleFirebaseRepository repository;
   final _CommunityPost post;
@@ -1797,7 +2474,9 @@ class _CommunityPostDetailPage extends StatefulWidget {
   final Uint8List? currentUserPhotoBytes;
   final VoidCallback onOpenProfile;
   final VoidCallback onShare;
-
+  final Future<_CommunityPost> Function(_CommunityPost post) onToggleLike;
+  final ValueChanged<int> onCommentCountChanged;
+  final Future<bool> Function(_CommunityPost post) onDeletePost;
   @override
   State<_CommunityPostDetailPage> createState() =>
       _CommunityPostDetailPageState();
@@ -1805,91 +2484,162 @@ class _CommunityPostDetailPage extends StatefulWidget {
 
 class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
   final _commentController = TextEditingController();
+  final _commentFocus = FocusNode();
+  final _scroll = ScrollController();
+  late _CommunityPost _post = widget.post;
   List<_CommunityComment> _comments = const [];
-  bool _isLoadingComments = false;
+  bool _isLoadingComments = true;
+  bool _isLoadingMore = false;
+  bool _hasMoreComments = false;
   bool _isPostingComment = false;
+  bool _likeBusy = false;
+  bool _deleting = false;
+  String? _commentsError;
+  bool _commentsPaginationError = false;
+  int _commentsGeneration = 0;
+  String? _pendingCommentId;
+  String? _pendingCommentBody;
 
   @override
   void initState() {
     super.initState();
+    _commentController.addListener(_commentChanged);
     unawaited(_loadComments());
+  }
+
+  void _commentChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _commentController.dispose();
+    _commentFocus.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
-  Future<void> _loadComments() async {
+  Future<void> _loadComments({bool more = false}) async {
     final postId = widget.post.postId;
-    if (postId == null || postId.isEmpty) {
-      return;
-    }
-
+    if (postId == null || postId.isEmpty) return;
+    if (more && (_isLoadingMore || !_hasMoreComments)) return;
+    final generation = more ? _commentsGeneration : ++_commentsGeneration;
     setState(() {
-      _isLoadingComments = true;
+      if (more) {
+        _isLoadingMore = true;
+      } else {
+        _isLoadingComments = true;
+      }
+      _commentsError = null;
     });
     try {
       final comments = await widget.repository.loadCommunityComments(
         postId: postId,
+        afterCommentId: more && _comments.isNotEmpty
+            ? _comments.last.commentId
+            : null,
       );
-      if (!mounted) {
-        return;
-      }
+      if (!mounted || generation != _commentsGeneration) return;
+      final known = more
+          ? _comments.map((item) => item.commentId).toSet()
+          : <String>{};
+      final additions = comments
+          .map(_communityCommentFromFirestore)
+          .where((item) => !known.contains(item.commentId))
+          .toList();
       setState(() {
-        _comments = comments.map(_communityCommentFromFirestore).toList();
+        _comments = more ? [..._comments, ...additions] : additions;
+        _hasMoreComments = comments.length >= 50 && additions.isNotEmpty;
       });
     } catch (_) {
-      _showDetailSnack('Unable to load comments right now.');
+      if (mounted && generation == _commentsGeneration) {
+        setState(() {
+          _commentsError = 'Comments couldn’t be loaded. Please try again.';
+          _commentsPaginationError = more;
+        });
+      }
     } finally {
-      if (mounted) {
+      if (mounted && generation == _commentsGeneration) {
         setState(() {
           _isLoadingComments = false;
+          _isLoadingMore = false;
         });
       }
     }
   }
 
+  /// Reuse the comment ID when retrying the same text after an uncertain network result.
   Future<void> _postComment() async {
-    final postId = widget.post.postId;
+    final postId = _post.postId;
     final body = _commentController.text.trim();
-    if (_isPostingComment || body.isEmpty) {
+    if (_isPostingComment || body.isEmpty || postId == null || postId.isEmpty) {
       return;
     }
-    if (postId == null || postId.isEmpty) {
-      _showDetailSnack('Only Firebase community posts support comments.');
-      return;
+    if (_pendingCommentBody != body) {
+      _pendingCommentId =
+          'comment_${DateTime.now().microsecondsSinceEpoch}_${math.Random.secure().nextInt(1 << 32).toRadixString(16)}';
+      _pendingCommentBody = body;
     }
-
-    setState(() {
-      _isPostingComment = true;
-    });
+    setState(() => _isPostingComment = true);
     try {
       await widget.repository.addCommunityComment(
         session: widget.session,
         postId: postId,
         body: body,
+        commentId: _pendingCommentId,
       );
+      if (!mounted) return;
       _commentController.clear();
+      _pendingCommentId = null;
+      _pendingCommentBody = null;
+      setState(() => _post = _post.copyWith(replies: _post.replies + 1));
+      widget.onCommentCountChanged(_post.replies);
       await _loadComments();
+      if (mounted) _showDetailSnack('Comment added.');
     } on HikerCircleFirebaseRepositoryException catch (error) {
       _showDetailSnack(error.message);
     } catch (_) {
-      _showDetailSnack('Unable to add comment right now.');
+      _showDetailSnack(
+        'Your comment couldn’t be sent. Your text is still here.',
+      );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isPostingComment = false;
-        });
-      }
+      if (mounted) setState(() => _isPostingComment = false);
+    }
+  }
+
+  Future<void> _toggleLike() async {
+    if (_likeBusy) return;
+    final previous = _post;
+    setState(() {
+      _likeBusy = true;
+      _post = _post.copyWith(
+        isLiked: !_post.isLiked,
+        likes: math.max(0, _post.likes + (_post.isLiked ? -1 : 1)),
+      );
+    });
+    final confirmed = await widget.onToggleLike(previous);
+    if (mounted) {
+      setState(() {
+        _post = confirmed.copyWith(replies: _post.replies);
+        _likeBusy = false;
+      });
+    }
+  }
+
+  Future<void> _deleteStory() async {
+    if (_deleting) return;
+    setState(() => _deleting = true);
+    final deleted = await widget.onDeletePost(_post);
+    if (!mounted) return;
+    if (deleted) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _deleting = false);
     }
   }
 
   void _showDetailSnack(String message) {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -1899,183 +2649,242 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final post = widget.post;
-
+    final quiet = _CircleColors.secondaryTextFor(context);
     return Scaffold(
       backgroundColor: _CircleColors.backgroundFor(context),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 640),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _DetailHeader(
-                        title: post.author,
-                        subtitle: '${post.timeLabel} - ${post.trail}',
-                        onBack: () => Navigator.of(context).pop(),
+      appBar: AppBar(
+        backgroundColor: _CircleColors.backgroundFor(context),
+        title: const Text('Story'),
+        centerTitle: false,
+        actions: [
+          IconButton(
+            tooltip: 'Refresh comments',
+            onPressed: _isLoadingComments ? null : () => _loadComments(),
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        color: _CircleColors.green,
+        onRefresh: _loadComments,
+        child: SingleChildScrollView(
+          controller: _scroll,
+          physics: const AlwaysScrollableScrollPhysics(),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _CommunityPostCard(
+                    post: _post,
+                    isOwnPost:
+                        _post.isOwnPost ||
+                        _post.authorPhoneNumber == widget.session.phoneNumber,
+                    onOpenPost: () => _commentFocus.requestFocus(),
+                    onOpenProfile: widget.onOpenProfile,
+                    onShare: widget.onShare,
+                    onLike: _toggleLike,
+                    likeBusy: _likeBusy,
+                    expanded: true,
+                    deleteBusy: _deleting,
+                    onDelete:
+                        _post.isOwnPost ||
+                            _post.authorPhoneNumber ==
+                                widget.session.phoneNumber
+                        ? _deleteStory
+                        : null,
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      children: [
+                        const Text(
+                          'Conversation',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${_post.replies}',
+                          style: TextStyle(color: quiet),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (_isLoadingComments && _comments.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(30),
+                      child: Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                      const SizedBox(height: 16),
-                      _CommunityPostCard(
-                        post: post,
-                        isOwnPost:
-                            post.authorPhoneNumber ==
-                            widget.session.phoneNumber,
-                        onOpenPost: () {},
-                        onOpenProfile: widget.onOpenProfile,
-                        onShare: widget.onShare,
+                    )
+                  else if (_comments.isEmpty && _commentsError == null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 36,
+                        horizontal: 20,
                       ),
-                      const SizedBox(height: 22),
-                      _SectionTitle(label: 'Comments'),
-                      const SizedBox(height: 10),
-                      Container(
+                      child: Column(
+                        children: [
+                          Icon(
+                            CupertinoIcons.chat_bubble_2,
+                            color: quiet,
+                            size: 32,
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'Start the conversation',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Ask a question or leave a little encouragement.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: quiet, height: 1.5),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_commentsError != null)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: _CircleColors.surfaceFor(context),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_commentsError!),
+                          TextButton(
+                            onPressed: () =>
+                                _loadComments(more: _commentsPaginationError),
+                            child: const Text('Try again'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  for (final comment in _comments)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Container(
                         decoration: BoxDecoration(
                           color: _CircleColors.surfaceFor(context),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: _CircleColors.separatorFor(
-                              context,
-                            ).withValues(alpha: 0.5),
-                          ),
+                          borderRadius: BorderRadius.circular(18),
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Row(
-                            children: [
-                              _Avatar(
-                                label: 'Y',
-                                color: _CircleColors.green,
-                                size: 36,
-                                imageUrl: widget.currentUserPhotoURL,
-                                imageBytes: widget.currentUserPhotoBytes,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: TextField(
-                                  controller: _commentController,
-                                  minLines: 1,
-                                  maxLines: 3,
-                                  decoration: InputDecoration(
-                                    hintText: 'Write a comment...',
-                                    hintStyle: TextStyle(
-                                      color: _CircleColors.secondaryTextFor(
-                                        context,
-                                      ),
-                                    ),
-                                    filled: true,
-                                    fillColor: _CircleColors.isDark(context)
-                                        ? const Color(0xFF1B261F)
-                                        : const Color(0xFFF5F7F5),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    isDense: true,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  color: _CircleColors.green,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: IconButton(
-                                  padding: EdgeInsets.zero,
-                                  onPressed: _isPostingComment
-                                      ? null
-                                      : () => unawaited(_postComment()),
-                                  icon: const Icon(
-                                    Icons.send_rounded,
-                                    color: Colors.white,
-                                    size: 18,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        child: _CommentRow(comment: comment),
                       ),
-                      const SizedBox(height: 10),
-                      if (_isLoadingComments)
-                        const HikerCircleLoadingView(
-                          message: 'Loading comments…',
-                          detail: 'Getting the latest trail discussion.',
-                          compact: true,
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                        )
-                      else if (_comments.isEmpty)
-                        Container(
-                          decoration: BoxDecoration(
-                            color: _CircleColors.surfaceFor(context),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: _CircleColors.separatorFor(
-                                context,
-                              ).withValues(alpha: 0.5),
-                            ),
-                          ),
-                          child: const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Center(
-                              child: Text(
-                                'No comments yet.\nBe the first to share your thoughts!',
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ),
-                        )
-                      else
-                        Container(
-                          decoration: BoxDecoration(
-                            color: _CircleColors.surfaceFor(context),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: _CircleColors.separatorFor(
-                                context,
-                              ).withValues(alpha: 0.5),
-                            ),
-                          ),
-                          child: Column(
-                            children: [
-                              for (
-                                var index = 0;
-                                index < _comments.length;
-                                index++
-                              ) ...[
-                                _CommentRow(comment: _comments[index]),
-                                if (index != _comments.length - 1)
-                                  const _HorizontalSeparator(),
-                              ],
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
+                    ),
+                  if (_hasMoreComments)
+                    TextButton.icon(
+                      onPressed: _isLoadingMore
+                          ? null
+                          : () => _loadComments(more: true),
+                      icon: _isLoadingMore
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.expand_more_rounded),
+                      label: const Text('More comments'),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: _CircleColors.surfaceFor(context),
+              border: Border(
+                top: BorderSide(
+                  color: _CircleColors.separatorFor(
+                    context,
+                  ).withValues(alpha: .6),
                 ),
               ),
             ),
-            if (_isPostingComment)
-              HikerCircleLoadingToastOverlay(
-                compact: true,
-                message: 'Posting comment…',
-                detail: 'Adding your comment to this community hike.',
-                timeout: const Duration(seconds: 30),
-                onTimeout: () {
-                  if (mounted) setState(() => _isPostingComment = false);
-                },
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Center(
+              heightFactor: 1,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('community-comment'),
+                        controller: _commentController,
+                        focusNode: _commentFocus,
+                        enabled: !_isPostingComment,
+                        minLines: 1,
+                        maxLines: 4,
+                        maxLength: 2000,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: InputDecoration(
+                          hintText: 'Add to the conversation…',
+                          counterText: '',
+                          filled: true,
+                          fillColor: _CircleColors.backgroundFor(context),
+                          border: OutlineInputBorder(
+                            borderSide: BorderSide.none,
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      tooltip: 'Send comment',
+                      style: IconButton.styleFrom(
+                        backgroundColor: _CircleColors.green,
+                        minimumSize: const Size(48, 48),
+                      ),
+                      onPressed:
+                          _isPostingComment ||
+                              _commentController.text.trim().isEmpty
+                          ? null
+                          : _postComment,
+                      icon: _isPostingComment
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.arrow_upward_rounded,
+                              color: Colors.white,
+                            ),
+                    ),
+                  ],
+                ),
               ),
-          ],
+            ),
+          ),
         ),
       ),
     );
@@ -3580,55 +4389,6 @@ class _TeamFlowRow extends StatelessWidget {
   }
 }
 
-class _PostAction extends StatelessWidget {
-  const _PostAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: onTap == null ? 'This action is not available yet.' : label,
-      child: Opacity(
-        opacity: onTap == null ? 0.55 : 1,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  icon,
-                  size: 17,
-                  color: _CircleColors.secondaryTextFor(context),
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  label,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: _CircleColors.secondaryTextFor(context),
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _InfoLine extends StatelessWidget {
   const _InfoLine({required this.label, required this.value});
 
@@ -4482,9 +5242,7 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
   final trailName = _stringFrom(data['trailName']).isEmpty
       ? 'Community'
       : _stringFrom(data['trailName']);
-  final caption = _stringFrom(data['caption']).isEmpty
-      ? 'Shared a trail update.'
-      : _stringFrom(data['caption']);
+  final caption = _stringFrom(data['caption']);
   final routePreviewPoints = _listOfMaps(
     data['routePreviewPoints'],
   ).map(HikeCoordinate.tryFromFirestore).nonNulls.toList();
@@ -4511,6 +5269,23 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
     routePointCount: _intFrom(data['routePointCount']),
     routePreviewPoints: routePreviewPoints,
     authorPhotoURL: _stringFrom(data['authorPhotoURL']),
+    imageUrls: data['imageUrls'] is List
+        ? (data['imageUrls'] as List)
+              .whereType<String>()
+              .where((url) => url.isNotEmpty)
+              .take(6)
+              .toList()
+        : const [],
+    isLiked: data['isLiked'] == true,
+    isOwnPost: data['isOwnPost'] == true,
+    kind: _stringFrom(data['kind']),
+    hikeState: _stringFrom(data['hikeState']),
+    distanceKm: data['distanceKm'] is num
+        ? (data['distanceKm'] as num).toDouble()
+        : null,
+    durationMinutes: data['durationMinutes'] is num
+        ? (data['durationMinutes'] as num).toInt()
+        : null,
   );
 }
 
@@ -4521,6 +5296,7 @@ _CommunityComment _communityCommentFromFirestore(Map<String, dynamic> data) {
       : _stringFrom(data['authorName']);
 
   return _CommunityComment(
+    commentId: _stringFrom(data['commentId']),
     author: authorName,
     handle: _stringFrom(data['authorHandle']).isEmpty
         ? _handleForPhone(authorPhone)

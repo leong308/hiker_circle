@@ -1,3 +1,4 @@
+// PathDeviationPolicy normalizes warning distances and accounts for GPS accuracy.
 import 'dart:math' as math;
 
 abstract final class PathDeviationPolicy {

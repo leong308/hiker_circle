@@ -1,3 +1,5 @@
+// MapboxTravelDistanceService batches driving-distance lookups and caches results; unavailable
+// distances remain unknown.
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;

@@ -1,3 +1,5 @@
+// AppSession is the local account/profile snapshot used by the UI; Firebase credentials and mobile
+// session claims remain separate.
 import 'dart:typed_data';
 
 class AppSession {

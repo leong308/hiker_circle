@@ -1,3 +1,4 @@
+// SecurityVerificationPage completes the pending multi-factor login or enrollment flow.
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../Data/multi_factor_auth_service.dart';
 import '../Data/passkey_build_support.dart';
 import '../Model/mfa_models.dart';
 
+/// Finish the pending MFA continuation before returning an authenticated session to the caller.
 class SecurityVerificationPage extends StatefulWidget {
   const SecurityVerificationPage({
     super.key,

@@ -1,3 +1,5 @@
+// HikingRouteService selects and validates provider routes, adds elevation estimates and reuses
+// SQLite routes keyed by checkpoint hashes.
 import 'dart:async';
 import 'dart:convert';
 
@@ -93,6 +95,8 @@ class HikingRouteService {
   final OpenTopoDataService _openTopoDataService;
   final LocalSessionDatabase? _localDatabase;
 
+  // findHikingRouteForTrail tries supported route providers and validates geometry against the
+  // requested checkpoints.
   Future<HikingRouteResult> findHikingRouteForTrail(Trail trail) async {
     if (trail.checkpoints.length < 2 ||
         trail.checkpoints.length > 12 ||
@@ -338,6 +342,8 @@ class HikingRouteService {
     return buffer.toString().hashCode.toRadixString(16);
   }
 
+  // findHikingRouteForTrailWithCache keys cached geometry by checkpoint content so edited routes
+  // cannot reuse stale results.
   Future<HikingRouteResult> findHikingRouteForTrailWithCache(
     Trail trail,
   ) async {

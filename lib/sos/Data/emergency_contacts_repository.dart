@@ -1,3 +1,4 @@
+// EmergencyContactsRepository keeps account-scoped emergency contacts synchronized locally and remotely.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -28,6 +29,7 @@ class EmergencyContactsChange {
   final List<EmergencyContact> contacts;
 }
 
+/// Keep device contact reads available while account-scoped cloud synchronization is pending.
 class EmergencyContactsRepository {
   const EmergencyContactsRepository({
     FirebaseFirestore? firestore,

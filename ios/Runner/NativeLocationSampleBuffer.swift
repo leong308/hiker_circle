@@ -1,6 +1,7 @@
+// NativeLocationSampleBuffer stores encrypted GPS samples with separate local and cloud ACKs.
 import Foundation
 import CoreLocation
-import SQLite3
+import SQLCipher
 
 /// Two independent acknowledgements preserve both the local route and cloud retry queue.
 final class NativeLocationSampleBuffer {
@@ -19,6 +20,7 @@ final class NativeLocationSampleBuffer {
     var errorDescription: String? { message }
   }
 
+  // connection: Open the encrypted GPS buffer under the shared migration lease.
   private func connection() throws -> OpaquePointer {
     if let database { return database }
     let url: URL
@@ -26,8 +28,10 @@ final class NativeLocationSampleBuffer {
     else {
       let directory = try FileManager.default.url(for: .applicationSupportDirectory,
         in: .userDomainMask, appropriateFor: nil, create: true)
-      url = directory.appendingPathComponent("native_hike_locations.sqlite")
+      url = directory.appendingPathComponent("native_hike_locations_encrypted.sqlite")
+      try migratePlaintextIfNeeded(from: directory.appendingPathComponent("native_hike_locations.sqlite"), to: url)
     }
+    let key = try LocalDatabaseKeyStore.key("native-location")
     var opened: OpaquePointer?
     guard sqlite3_open_v2(url.path, &opened, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
           let opened else {
@@ -35,6 +39,13 @@ final class NativeLocationSampleBuffer {
       throw DatabaseError(message: "Unable to open the native GPS buffer.")
     }
     database = opened
+    let keyed = key.utf8CString.withUnsafeBufferPointer { bytes in
+      sqlite3_key(opened, bytes.baseAddress, Int32(bytes.count - 1))
+    }
+    guard keyed == SQLITE_OK else {
+      sqlite3_close(opened); database = nil
+      throw DatabaseError(message: "The native GPS encryption key is unavailable.")
+    }
     sqlite3_busy_timeout(opened, 5000)
     do {
       try execute("PRAGMA journal_mode=WAL")
@@ -47,12 +58,66 @@ final class NativeLocationSampleBuffer {
           cloud_acknowledged INTEGER NOT NULL DEFAULT 0)
         """)
       try execute("CREATE INDEX IF NOT EXISTS samples_session_time ON samples(session_id, owner_uid, sampled_at)")
+      try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: url.path)
+      var protectedURL = url
+      var values = URLResourceValues(); values.isExcludedFromBackup = true
+      try protectedURL.setResourceValues(values)
     } catch {
       sqlite3_close(opened)
       database = nil
       throw error
     }
     return opened
+  }
+
+  // migratePlaintextIfNeeded: Verify the SQLCipher export before removing the original plaintext buffer.
+  private func migratePlaintextIfNeeded(from original: URL, to target: URL) throws {
+    let files = FileManager.default
+    let key = try LocalDatabaseKeyStore.key("native-location")
+    func open(_ url: URL, password: String?) throws -> OpaquePointer {
+      var db: OpaquePointer?
+      guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let db else {
+        if let db { sqlite3_close(db) }
+        throw DatabaseError(message: "Unable to open the native GPS migration source.")
+      }
+      if let password {
+        let status = password.utf8CString.withUnsafeBufferPointer { sqlite3_key(db, $0.baseAddress, Int32($0.count - 1)) }
+        guard status == SQLITE_OK else { sqlite3_close(db); throw DatabaseError(message: "GPS migration key failed.") }
+      }
+      return db
+    }
+    func run(_ db: OpaquePointer, _ sql: String) throws {
+      guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw DatabaseError(message: "The native GPS encryption migration failed.") }
+    }
+    func removeOriginal() throws {
+      for suffix in ["", "-wal", "-shm", "-journal"] {
+        let path = original.path + suffix
+        if files.fileExists(atPath: path) { try files.removeItem(atPath: path) }
+      }
+    }
+    if files.fileExists(atPath: target.path) {
+      let db = try open(target, password: key); defer { sqlite3_close(db) }
+      try run(db, "SELECT count(*) FROM sqlite_master")
+      try removeOriginal()
+      return
+    }
+    guard files.fileExists(atPath: original.path) else { return }
+    let pending = URL(fileURLWithPath: target.path + ".pending")
+    if files.fileExists(atPath: pending.path) { try files.removeItem(at: pending) }
+    let source = try open(original, password: nil)
+    do {
+      try run(source, "PRAGMA wal_checkpoint(TRUNCATE)")
+      let path = pending.path.replacingOccurrences(of: "'", with: "''")
+      try run(source, "ATTACH DATABASE '\(path)' AS encrypted KEY '\(key)'")
+      try run(source, "SELECT sqlcipher_export('encrypted')")
+      try run(source, "DETACH DATABASE encrypted")
+      sqlite3_close(source)
+    } catch { sqlite3_close(source); throw error }
+    let encrypted = try open(pending, password: key)
+    do { try run(encrypted, "SELECT count(*) FROM samples"); sqlite3_close(encrypted) }
+    catch { sqlite3_close(encrypted); throw error }
+    try files.moveItem(at: pending, to: target)
+    try removeOriginal()
   }
 
   private func execute(_ sql: String, values: [Any?] = []) throws {
@@ -157,6 +222,7 @@ final class NativeLocationSampleBuffer {
     }
   }
 
+  // pending: Read this account's ordered batch for local import or cloud upload.
   func pending(sessionId: String, ownerUid: String, limit: Int = 500, forCloud: Bool = false) throws -> [[String: Any]] {
     guard !sessionId.isEmpty, !ownerUid.isEmpty else { return [] }
     lock.lock(); defer { lock.unlock() }
@@ -191,6 +257,7 @@ final class NativeLocationSampleBuffer {
   }
 
   @discardableResult
+  // acknowledge: Keep each sample until both independent consumers have acknowledged it.
   func acknowledge(sessionId: String, ownerUid: String, sampleIds: [String], cloud: Bool = false) throws -> Int {
     guard !sessionId.isEmpty, !ownerUid.isEmpty, !sampleIds.isEmpty else { return 0 }
     lock.lock(); defer { lock.unlock() }

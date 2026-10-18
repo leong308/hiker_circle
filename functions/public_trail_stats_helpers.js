@@ -1,3 +1,4 @@
+// Public trail totals mirror catalogue eligibility, rating-derived difficulty, and Malaysian region rules.
 'use strict';
 
 const { malaysiaStateSlug } = require('./achievement_helpers');
@@ -5,6 +6,7 @@ const { communityDifficultyFromVotes } = require('./trail_rating_helpers');
 
 // Mirror the catalogue's required ordering fields and named-checkpoint filter.
 // Return only aggregate numbers, never trail documents or contributor details.
+// publicTrailStats: Count only catalogue-eligible trails and derive difficulty from current community votes.
 function publicTrailStats(trails) {
   const totals = { totalTrails: 0, trailDistanceKm: 0, regionsCovered: 0,
     easyTrails: 0, moderateTrails: 0, hardTrails: 0 };

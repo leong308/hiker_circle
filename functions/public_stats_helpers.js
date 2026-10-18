@@ -1,3 +1,4 @@
+// Public landing-page statistics expose bounded aggregate numbers without source records.
 'use strict';
 
 function nonNegativeInteger(value) {
@@ -12,6 +13,7 @@ function nonNegativeDistance(value) {
   return Math.max(0, Math.round(parsed * 10) / 10);
 }
 
+// publicStatsPayload: Normalize aggregate values without exposing counts from malformed source fields.
 function publicStatsPayload(raw, calculatedAt = new Date()) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const safeDate = calculatedAt instanceof Date && Number.isFinite(calculatedAt.getTime())

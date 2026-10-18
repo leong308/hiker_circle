@@ -1,3 +1,4 @@
+// ManualSosWidgetProvider opens the manual SOS flow from the Android home screen.
 package com.leongziqi.hikercircle
 
 import android.app.PendingIntent

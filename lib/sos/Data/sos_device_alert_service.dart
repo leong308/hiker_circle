@@ -1,3 +1,4 @@
+// SosDeviceAlertService bridges native location, speech, sound, vibration and emergency device controls.
 import 'package:flutter/services.dart';
 
 import '../Model/sos_models.dart';

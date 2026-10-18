@@ -1,3 +1,4 @@
+// StartHikeWizardPage collects hike type, route, participants, timing and safety settings.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'solo_hike_distance_dialog.dart';
 import 'hike_start_navigation.dart';
@@ -15,9 +16,12 @@ import '../../app/Model/app_session.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/services/hiker_ble_service.dart';
 import '../../core/widgets/loading_toast.dart';
+import '../../core/widgets/gps_starting_progress.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
+import '../Model/location_update_interval.dart';
+import '../Data/location_update_interval_controller.dart';
 import 'hike_reminder_preferences_sheet.dart';
 
 enum _StartHikeWizardStep { type, timing, trail, reminder, safety }
@@ -100,12 +104,15 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
             if (name.trim().isNotEmpty) name.trim(),
         }.toList(),
         shareLiveLocation: widget.initialShareLiveLocation,
+        locationRecordingInterval:
+            LocationUpdateIntervalController.instance.interval,
       ),
     );
   }
 
   bool _checkingDistance = false;
 
+  /// Validate the current wizard step and keep the draft within the active step sequence.
   Future<void> _next() async {
     if (_isScheduling || _isStarting || _checkingDistance) {
       return;
@@ -203,6 +210,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     }
   }
 
+  /// Gate starting on the current draft's safety checks and required user acknowledgements.
   Future<bool> _confirmPreHikeSafety() async {
     SosButtonReadiness? readiness;
     String? inspectionError;
@@ -311,6 +319,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     );
   }
 
+  /// Persist the scheduled hike before completing this wizard route.
   Future<void> _scheduleAndFinish() async {
     final repo = widget.repository;
     final session = widget.session;
@@ -540,36 +549,39 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
               ),
             ),
           ),
-          if (_isScheduling || _isStarting)
+          if (_isScheduling)
             HikerCircleLoadingToastOverlay(
-              message: _isScheduling
-                  ? 'Scheduling your hike…'
-                  : 'Preparing your hike…',
-              detail: _isScheduling
-                  ? 'Saving the route, reminders, and join settings.'
-                  : 'Completing safety checks and preparing live tracking.',
+              message: 'Scheduling your hike…',
+              detail: 'Saving the route, reminders, and join settings.',
               timeout: const Duration(seconds: 30),
-              onTimeout: () {
-                if (!mounted) {
-                  return;
-                }
-                setState(() {
-                  _isScheduling = false;
-                  _isStarting = false;
-                });
-                ScaffoldMessenger.of(context)
-                  ..hideCurrentSnackBar()
-                  ..showSnackBar(
-                    const SnackBar(
-                      content: Text('The request timed out. Please try again.'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-              },
+              onTimeout: _handleRequestTimeout,
+            ),
+          if (_isStarting)
+            GpsStartingOverlay(
+              title: 'Starting your hike…',
+              message: 'Completing safety checks and preparing live tracking.',
+              timeout: const Duration(seconds: 30),
+              onTimeout: _handleRequestTimeout,
             ),
         ],
       ),
     );
+  }
+
+  void _handleRequestTimeout() {
+    if (!mounted) return;
+    setState(() {
+      _isScheduling = false;
+      _isStarting = false;
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('The request timed out. Please try again.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   Widget _stepForIndex(int index) {
@@ -1356,12 +1368,8 @@ class _TimingStep extends StatelessWidget {
   final ValueChanged<bool> onStartNowChanged;
   final ValueChanged<HikeSessionDraft> onChanged;
 
-  static const List<Duration> _recordingOptions = [
-    Duration(seconds: 5),
-    Duration(seconds: 15),
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-  ];
+  static const List<Duration> _recordingOptions =
+      LocationUpdateInterval.options;
 
   void _selectStartNow() {
     onStartNowChanged(true);
@@ -1576,9 +1584,9 @@ class _TimingStep extends StatelessWidget {
       context: context,
       builder: (context) {
         return CupertinoAlertDialog(
-          title: const Text('Frequent GPS Recording'),
+          title: const Text('Frequent Location Updates'),
           content: const Text(
-            'Recording below 1 minute can drain battery faster than usual, but it is recommended when you want stronger safety tracking.',
+            'More frequent uploads can use more battery and mobile data. Each upload updates your saved route and live sharing together. GPS is recorded on this phone every 5 seconds.',
           ),
           actions: [
             CupertinoDialogAction(
@@ -2691,8 +2699,6 @@ class _StatusRow extends StatelessWidget {
     );
   }
 }
-
-
 
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon, this.color = _WizardColors.green});

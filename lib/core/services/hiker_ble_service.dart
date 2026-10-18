@@ -1,3 +1,5 @@
+// HikerBleService bridges native BLE button events, pairing/readiness and nearby SOS/team
+// observations into typed Flutter streams.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';

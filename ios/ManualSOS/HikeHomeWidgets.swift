@@ -1,3 +1,4 @@
+// HikeHomeProvider reads shared hike/weather snapshots for next-hike and upcoming-hike widgets.
 import SwiftUI
 import WidgetKit
 

@@ -1,3 +1,4 @@
+// SecurityMethodsPage manages authenticator and passkey enrollment for the signed-in account.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../Data/passkey_build_support.dart';
 import '../Model/mfa_models.dart';
 import 'recent_security_verification_page.dart';
 
+/// Show enrolled factors and their enrollment/removal actions using MultiFactorAuthService.
 class SecurityMethodsPage extends StatefulWidget {
   const SecurityMethodsPage({super.key, MultiFactorAuthService? service})
     : _service = service;
@@ -72,6 +74,7 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
     }
   }
 
+  /// Require recent security verification before applying sensitive enrolled-factor changes.
   Future<bool> _verifyRecentLogin() async {
     final phoneNumber = await _service.authenticatedPhoneNumber();
     if (!mounted) return false;
@@ -112,6 +115,7 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
     if (added == true) _reload();
   }
 
+  /// Honor the current factor-removal rule and refresh enrollment state after the backend accepts removal.
   Future<void> _remove(MfaFactor factor, bool canRemove) async {
     if (!canRemove) {
       ScaffoldMessenger.of(context).showSnackBar(

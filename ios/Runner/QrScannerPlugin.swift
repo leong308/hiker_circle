@@ -1,3 +1,4 @@
+// QrScannerPlugin registers the iOS camera preview and streams QR scan results to Flutter.
 import Flutter
 import UIKit
 import AVFoundation

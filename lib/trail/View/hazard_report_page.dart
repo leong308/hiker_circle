@@ -1,3 +1,4 @@
+// HazardReportPage collects a trail caution, location and supporting evidence for submission.
 import 'package:flutter/material.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
@@ -41,6 +42,7 @@ class _HazardReportPageState extends State<HazardReportPage> {
     }
   }
 
+  /// Validate the report and upload its selected evidence before creating the trail caution.
   Future<void> submit() async {
     if (busy || selected == null || evidence.currentState?.picking == true) {
       return;

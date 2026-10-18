@@ -1,3 +1,4 @@
+// PairedSosButtonRegistry persists pairing credentials, replay counters, and passive presence.
 package com.leongziqi.hikercircle
 
 import android.content.Context

@@ -1,3 +1,4 @@
+// SosPage coordinates manual countdowns, queued alert feedback, device alerts and nearby emergencies.
 import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:collection';
@@ -299,6 +300,7 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
+  /// Retry queued SOS dispatch work after confirmed reachability returns.
   Future<void> _flushQueueAfterNetworkRestore() async {
     if (viewModel.queuedAlertCount == 0) {
       await viewModel.loadQueuedAlertCount();
@@ -510,6 +512,7 @@ class _SosPageState extends State<SosPage> {
     );
   }
 
+  /// Serialize incoming SOS requests instead of letting multiple trigger sources race the same UI flow.
   Future<void> _enqueueAlert(
     SosAlertMode mode, {
     SosAlertTriggerSource? triggerSource,
@@ -554,6 +557,7 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
+  /// Capture trigger context and submit the selected mode while keeping local alarm output independent.
   Future<void> _triggerAlert(_QueuedSosRequest request) async {
     final mode = request.mode;
     ScaffoldMessenger.of(context)
@@ -661,6 +665,7 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
+  /// Describe queued, partial and confirmed outcomes using their actual dispatch result.
   String _messageForResult(SosAlertResult result) {
     final alert = result.alert;
     if (alert.status == SosAlertStatus.noContacts) {

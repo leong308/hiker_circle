@@ -1,3 +1,4 @@
+// NearbySosMapPage explains nearby alerts and shows walking routes to the selected event.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;
@@ -287,6 +288,7 @@ class _RouteMapPlaceholder extends StatelessWidget {
 }
 
 @visibleForTesting
+/// Build a display route to the selected nearby event without replacing the hiker's active session.
 Trail buildNearbySosRouteTrail({
   required NearbySosEvent event,
   required SosTriggerLocation phoneLocation,

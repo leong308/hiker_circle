@@ -1,3 +1,4 @@
+// HikerBleBridge manages iOS BLE restoration, pairing, SOS reception, and button log transfer.
 import CoreBluetooth
 import CryptoKit
 import Flutter
@@ -368,22 +369,11 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
       advertiseSosHelp(durationMillis: payload.durationMillis)
       result(nil)
     case "startTeamLocationExchange", "updateTeamLocation":
-      guard let payload = teamPayload(from: call) else {
-        result(FlutterError(
-          code: "ble_team_location_invalid",
-          message: "Team BLE location payload is invalid.",
-          details: nil
-        ))
-        return
-      }
-      latestTeamPayload = payload.raw
-      latestTeamPacket = HikerBleProtocol.encodeTeamLocation(payload)
-      isTeamExchangeRequested = true
-      _ = centralManager
-      _ = peripheralManager
-      startScanIfReady()
-      advertiseTeamLocationIfReady()
-      result(nil)
+      isTeamExchangeRequested = false
+      latestTeamPayload = nil
+      latestTeamPacket = nil
+      if advertisedMode == .teamLocation { stopAdvertising() }
+      result(FlutterError(code: "team_exchange_disabled", message: "Local team position exchange is disabled.", details: nil))
     case "stopTeamLocationExchange":
       isTeamExchangeRequested = false
       latestTeamPayload = nil
@@ -1459,6 +1449,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     return status == errSecSuccess ? data : nil
   }
 
+  // beginPairing: Begin the physical-button pairing handshake.
   private func beginPairing(address: String, displayName: String, result: @escaping FlutterResult) {
     if let loadFailure = pairedButtonsLoadFailure {
       result(FlutterError(code: "paired_button_registry_read_failed", message: loadFailure, details: nil))
@@ -1547,6 +1538,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     return defaults.data(forKey: Self.pendingEventsKey) == data
   }
 
+  // drainPendingEvents: Replay saved native SOS events after Flutter reconnects.
   private func drainPendingEvents() {
     guard isApplicationActive,
           UIApplication.shared.applicationState == .active,
@@ -1917,6 +1909,7 @@ final class HikerBleBridge: NSObject, FlutterStreamHandler {
     }
   }
 
+  // beginLogDownload: Authenticate the paired button before reading its log pages.
   private func beginLogDownload(deviceId: String, result: @escaping FlutterResult) {
     if let loadFailure = pairedButtonsLoadFailure {
       result(FlutterError(code: "paired_button_registry_read_failed", message: loadFailure, details: nil))

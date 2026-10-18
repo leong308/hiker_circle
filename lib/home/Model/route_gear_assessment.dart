@@ -1,3 +1,4 @@
+// RouteGearAssessment records cached terrain findings used by TrailGearPlan.
 class RouteGearAssessment {
   const RouteGearAssessment({
     required this.routeKey,
@@ -22,6 +23,7 @@ class RouteGearAssessment {
       surfaceMapped;
   bool get isFresh =>
       DateTime.now().difference(checkedAt) < const Duration(days: 7);
+  /// Allow complete or partial terrain findings while retaining their status for explanatory packing advice.
   bool get usable => status == 'complete' || status == 'partial';
   Map<String, dynamic> toJson() => {
     'routeKey': routeKey,

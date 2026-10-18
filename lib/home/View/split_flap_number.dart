@@ -1,3 +1,4 @@
+// SplitFlapNumber animates changing countdown digits with hinged top and bottom panels.
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 

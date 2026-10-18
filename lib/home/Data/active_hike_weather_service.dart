@@ -1,3 +1,4 @@
+// ActiveHikeWeatherService loads and persists the active hike's location-based weather snapshot.
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -146,6 +147,7 @@ class ActiveHikeWeatherService {
 
   final http.Client? _client;
 
+  /// Sample the current position and listed-route points ahead; unlisted hikes use the recorded location only.
   Future<ActiveHikeWeatherSnapshot> fetchForHike(
     ActiveHikeSession activeHike,
   ) async {

@@ -1,3 +1,4 @@
+// ensureIosSosOutputVolumeReady checks audible emergency output before continuing on iOS.
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../Data/sos_device_alert_service.dart';
 import '../Model/sos_models.dart';
 
+/// Require the iOS volume confirmation before continuing the audible SOS setup flow.
 Future<bool> ensureIosSosOutputVolumeReady({
   required BuildContext context,
   required SosDeviceAlertService deviceAlertService,

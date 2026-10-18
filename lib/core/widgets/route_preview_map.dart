@@ -1,3 +1,5 @@
+// RoutePreviewMap renders planned or recorded geometry with route playback, checkpoint markers,
+// hazard/weather layers and camera controls.
 import 'dart:async';
 import 'dart:math' as math;
 

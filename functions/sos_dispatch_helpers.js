@@ -1,3 +1,4 @@
+// SOS payload validation, message composition, and deterministic dispatch hashes protect emergency delivery semantics.
 'use strict';
 
 const crypto = require('crypto');
@@ -104,6 +105,7 @@ function reasonForSos(mode, triggerSource) {
   return SOS_REASONS[mode];
 }
 
+// parseSosDispatchRequest: Bound emergency contact, coordinate, device, and timing inputs before delivery.
 function parseSosDispatchRequest(data, nowMillis = Date.now()) {
   const payload = data && typeof data === 'object' && !Array.isArray(data)
     ? data
@@ -187,6 +189,7 @@ function parseSosDispatchRequest(data, nowMillis = Date.now()) {
   };
 }
 
+// composeSosMessage: Compose only validated details using the selected local timezone.
 function composeSosMessage({
   ownerPhone,
   mode,
@@ -271,6 +274,7 @@ function sosDispatchPayloadHash(dispatch) {
     .digest('hex');
 }
 
+// classifySosProviderHttpFailure: Separate definite rejection from provider outcomes that may already have accepted the message.
 function classifySosProviderHttpFailure(statusCode) {
   const status = Number(statusCode);
   const deliveryUncertain = status === 408 || status >= 500;

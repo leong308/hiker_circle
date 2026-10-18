@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSAppTransportSecurity</key>
+	<dict><key>NSAllowsArbitraryLoads</key><false/><key>NSAllowsLocalNetworking</key><false/></dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -43,12 +45,14 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to unlock HikerCircle when you enable private-screen unlock.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>HikerCircle uses the camera for trail photos, buddy QR scanning, and the flashlight for manual SOS alerts.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>HikerCircle uses Bluetooth to listen for SOS buttons, broadcast SOS test beacons, and exchange team hike location updates nearby.</string>
+	<string>HikerCircle uses Bluetooth to listen for SOS buttons and nearby requests for help, and to broadcast SOS test beacons.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>HikerCircle uses Bluetooth to broadcast SOS test beacons and nearby team hike location updates.</string>
+	<string>HikerCircle uses Bluetooth to broadcast SOS help and test beacons.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>HikerCircle uses contacts only when you choose SOS emergency contacts from your phone address book.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

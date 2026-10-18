@@ -1,3 +1,4 @@
+// SosRepository supplies initial SOS dashboard values and the static feature sections.
 import 'package:flutter/material.dart';
 
 import '../Model/sos_models.dart';

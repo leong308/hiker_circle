@@ -1,3 +1,4 @@
+// GreenApiClient submits validated WhatsApp SOS dispatch requests through the backend.
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -32,6 +33,7 @@ class GreenApiClient {
 
   FirebaseAuth get _resolvedAuth => _firebaseAuth ?? FirebaseAuth.instance;
 
+  /// Validate SOS dispatch identity and preserve retryable or uncertain delivery results from the backend.
   Future<GreenApiSendResult> sendMessage({
     required String chatId,
     required String dispatchId,

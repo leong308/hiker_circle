@@ -1,3 +1,4 @@
+// Landing-page navigation, trail preview, and accessible evolution timeline interactions.
 (() => {
   "use strict";
 

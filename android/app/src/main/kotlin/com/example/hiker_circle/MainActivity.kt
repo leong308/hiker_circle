@@ -1,3 +1,4 @@
+// MainActivity exposes Android alarms, contacts, location, widgets, and sharing to Flutter.
 package com.leongziqi.hikercircle
 
 import android.Manifest
@@ -28,14 +29,14 @@ import android.speech.tts.UtteranceProgressListener
 import android.provider.ContactsContract
 import com.google.firebase.auth.FirebaseAuth
 import io.flutter.FlutterInjector
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
     companion object {
         private const val CHANNEL = "hiker_circle/sos_device_alerts"
         private const val DEEP_LINK_CHANNEL = "hiker_circle/deeplinks"
@@ -130,8 +131,10 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+    // configureFlutterEngine: Register platform channels and attach lifecycle-aware native bridges.
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MobileSecurityBridge(this, flutterEngine.dartExecutor.binaryMessenger)
         cameraManager = getSystemService(CameraManager::class.java)
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
         pendingDeepLink = intent?.dataString
@@ -440,6 +443,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // onNewIntent: Forward widget and notification deep links to the existing Flutter activity.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -523,6 +527,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // onDestroy: Dispose activity-owned resources while the safety service keeps its own outputs.
     override fun onDestroy() {
         // Do not cancel the system vibrator here. The native hike-safety
         // foreground service may own an urgent response prompt after Flutter
@@ -983,6 +988,7 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
+    // getCurrentTriggerLocation: Resolve a fresh SOS location with a bounded last-known fallback.
     private fun getCurrentTriggerLocation(
         call: io.flutter.plugin.common.MethodCall,
         result: MethodChannel.Result,
@@ -1018,6 +1024,7 @@ class MainActivity : FlutterActivity() {
         requestOneShotLocation()
     }
 
+    // shareText: Open Android's share sheet with the prepared hike text.
     private fun shareText(
         call: io.flutter.plugin.common.MethodCall,
         result: MethodChannel.Result,

@@ -1,3 +1,4 @@
+// AdminUi centralizes admin colors, panels, headings, tags and empty states.
 import 'package:flutter/material.dart';
 import '../../core/widgets/page_header_style.dart';
 

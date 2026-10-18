@@ -4,8 +4,14 @@
       "collectionGroup": "groupChats",
       "queryScope": "COLLECTION",
       "fields": [
-        {"fieldPath": "chatType", "order": "ASCENDING"},
-        {"fieldPath": "isDeleted", "order": "ASCENDING"}
+        {
+          "fieldPath": "chatType",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isDeleted",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
@@ -59,9 +65,26 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "createdAtLocal",
+          "fieldPath": "createdAt",
           "order": "DESCENDING"
         }
+      ]
+    },
+    {
+      "collectionGroup": "communityPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "authorId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "communityPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "authorId", "order": "ASCENDING" },
+        { "fieldPath": "visibility", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
     {
@@ -209,7 +232,54 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "footprints",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "sessionId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastRecordedAtMillis",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "firstRecordedAtMillis",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    { "collectionGroup": "communityPosts", "fieldPath": "author", "indexes": [] },
+    { "collectionGroup": "communityPosts", "fieldPath": "caption", "indexes": [] },
+    { "collectionGroup": "communityPosts", "fieldPath": "images", "indexes": [] },
+    { "collectionGroup": "communityPosts", "fieldPath": "hike", "indexes": [] },
+    { "collectionGroup": "communityPosts", "fieldPath": "moderation", "indexes": [] },
+    { "collectionGroup": "comments", "fieldPath": "author", "indexes": [] },
+    { "collectionGroup": "comments", "fieldPath": "body", "indexes": [] },
+    {
+      "collectionGroup": "hikeSessions",
+      "fieldPath": "footprint",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "footprints",
+      "fieldPath": "samples",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live_location_route_chunks",
+      "fieldPath": "points",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live_location_route_chunks",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    }
+  ]
 }

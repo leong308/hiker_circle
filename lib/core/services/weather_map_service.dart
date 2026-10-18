@@ -1,6 +1,7 @@
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-
+// WeatherMapService defines weather layers and selects forecast rain probabilities using forecast
+// time and real cache freshness separately.
 import '../../trail/Model/trail_models.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 enum WeatherMapLayer {
   off('Off', ''),
@@ -14,11 +15,12 @@ enum WeatherMapLayer {
 }
 
 abstract final class WeatherMapService {
+  // Availability marker only. Actual tile credentials stay on the server.
   static String get apiKey {
-    const configured = String.fromEnvironment('OPENWEATHER_API_KEY');
-    if (configured.trim().isNotEmpty) return configured.trim();
     try {
-      return dotenv.env['OPENWEATHER_API_KEY']?.trim() ?? '';
+      return dotenv.env['OPENWEATHER_TILES_ENABLED'] == 'true'
+          ? 'server-managed'
+          : '';
     } catch (_) {
       return '';
     }

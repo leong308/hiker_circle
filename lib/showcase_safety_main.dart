@@ -1,3 +1,4 @@
+// Safety showcase entrypoint uses demo repositories for isolated SOS presentation previews.
 // Separate media-capture entry point. No Firebase initialization or real dispatch.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

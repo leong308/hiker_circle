@@ -1,3 +1,4 @@
+// NativeSosAlarmController plays the SOS alarm and torch pattern without a visible activity.
 package com.leongziqi.hikercircle
 
 import android.Manifest

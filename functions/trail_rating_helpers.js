@@ -1,3 +1,4 @@
+// Completed-hike rating aggregates derive public trail scores and community difficulty from valid votes.
 'use strict';
 
 function validRating(value) {
@@ -30,6 +31,7 @@ function communityDifficultyFromVotes(rawCounts) {
   return average < 1.5 ? 'easy' : average < 2.5 ? 'moderate' : 'hard';
 }
 
+// trailDifficultyAggregate: Recompute community difficulty while keeping a defined unrated result.
 function trailDifficultyAggregate(trail, previousDifficulty, nextDifficulty) {
   const next = normalizedDifficultyVote(nextDifficulty);
   const previous = validDifficultyVote(previousDifficulty)
@@ -65,6 +67,7 @@ function trailDifficultyAggregate(trail, previousDifficulty, nextDifficulty) {
   };
 }
 
+// trailRatingAggregate: Derive rating totals from validated completed-hike votes rather than trusting client counters.
 function trailRatingAggregate(trail, previousRating, nextRating) {
   if (!validRating(nextRating)) {
     throw new TypeError('Rating must be an integer from 1 to 5.');

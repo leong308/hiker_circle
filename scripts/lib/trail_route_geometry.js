@@ -1,3 +1,4 @@
+// trail_route_geometry orders mapped hiking geometry and preserves route topology.
 /* eslint-disable no-console */
 'use strict';
 

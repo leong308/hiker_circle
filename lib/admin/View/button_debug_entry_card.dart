@@ -1,3 +1,4 @@
+// ButtonDebugEntryCard renders captured BLE fields, payload bytes and operation labels.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'admin_ui.dart';

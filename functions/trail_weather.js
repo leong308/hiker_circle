@@ -1,3 +1,4 @@
+// A shared Firestore weather cache leases Open-Meteo refreshes across callable and scheduled workers.
 'use strict';
 
 const { randomUUID } = require('node:crypto');
@@ -14,6 +15,7 @@ function weatherUrl(latitude, longitude) {
   return url;
 }
 
+// parseWeather: Keep the weather fields consumed by current forecasts and precaution calculations.
 function parseWeather(body) {
   if (!body?.daily?.time?.length || !body?.hourly?.time?.length || !body.current) {
     throw new Error('Incomplete weather response');
@@ -36,6 +38,7 @@ function parseWeather(body) {
 }
 
 // A Firestore lease coordinates ALL function instances, including the scheduler.
+// sharedTrailWeather: A database lease shares refresh work across instances while respecting freshness and retry cooldowns.
 async function sharedTrailWeather(db, latitude, longitude, { fetcher = fetch, maxAgeMs = TTL } = {}) {
   const lat = latitude.toFixed(4);
   const lon = longitude.toFixed(4);

@@ -1,3 +1,4 @@
+// SosAlertRepository durably queues emergency alerts and reconciles backend delivery acknowledgements.
 import 'dart:async';
 import 'dart:convert';
 
@@ -353,6 +354,7 @@ class SosAlertRepository {
     return submission.acknowledgement;
   }
 
+  /// Attempt durable queuing first; the returned pending submission still awaits delivery acknowledgement.
   Future<SosAlertSubmission> submitAlert({
     required AppSession session,
     required SosAlertMode mode,
@@ -636,6 +638,7 @@ class SosAlertRepository {
         .toList(growable: false);
   }
 
+  /// Retry account-owned queued alerts only when reachability permits, retaining incomplete dispatch work.
   Future<SosQueueFlushResult> flushQueuedAlerts({
     required AppSession session,
     required List<EmergencyContact> contacts,
@@ -869,6 +872,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Persist recipient progress so later retries do not repeat already completed dispatches.
   Future<void> _checkpointQueuedAlert({
     required int? queueId,
     required SosAlert alert,

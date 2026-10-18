@@ -1,3 +1,4 @@
+// QrScannerPage parses HikerCircle profile QR data and confirms the add-buddy action.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 

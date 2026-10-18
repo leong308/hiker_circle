@@ -1,3 +1,4 @@
+// AdminAnalyticsDashboard presents backend statistics, time ranges and operational charts.
 import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
@@ -52,6 +53,7 @@ const _palette = [
   Color(0xFF6BBFC1),
 ];
 
+/// Render server-computed analytics and expose refresh state without recomputing cloud totals locally.
 class AdminAnalyticsDashboard extends StatefulWidget {
   const AdminAnalyticsDashboard({
     super.key,

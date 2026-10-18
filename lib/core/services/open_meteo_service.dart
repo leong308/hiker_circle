@@ -1,3 +1,4 @@
+// OpenMeteoService fetches and parses public forecast data into the trail weather model.
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;

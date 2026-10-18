@@ -1,3 +1,4 @@
+// UpcomingHikeJoinRequestDialog presents requester details and the host's join decision.
 import 'dart:async';
 
 import 'package:flutter/material.dart';

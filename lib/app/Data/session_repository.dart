@@ -1,9 +1,12 @@
+// SessionRepository serializes sign-in/sign-out persistence and observes the active server session
+// without discarding offline safety queues.
 import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
 import '../Model/app_session.dart';
+import '../../core/services/mobile_security_service.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
 
@@ -21,8 +24,12 @@ class SessionRepository {
     LocalSessionDatabase? localSessionDatabase,
     FirebaseUserRepository? firebaseUserRepository,
     Duration cloudTimeout = const Duration(seconds: 8),
+    Future<String> Function()? readSessionId,
+    Future<void> Function()? endServerSession,
   }) : _localSessionDatabase = localSessionDatabase ?? LocalSessionDatabase(),
        _cloudTimeout = cloudTimeout,
+       _readSessionId = readSessionId ?? MobileSecurityService.currentSessionId,
+       _endServerSession = endServerSession ?? MobileSecurityService.endSession,
        _firebaseUserRepository =
            firebaseUserRepository ?? FirebaseUserRepository();
 
@@ -30,16 +37,65 @@ class SessionRepository {
   final FirebaseUserRepository _firebaseUserRepository;
 
   final Duration _cloudTimeout;
+  final Future<String> Function() _readSessionId;
+  final Future<void> Function() _endServerSession;
   final _changes = StreamController<AppSession?>.broadcast();
   Stream<AppSession?> get changes => _changes.stream;
   AppSession? _session;
   int _generation = 0;
   Future<void> _localWrites = Future<void>.value();
   Future<void> _signOutFuture = Future<void>.value();
+  StreamSubscription<Map<String, dynamic>>? _sessionStateSubscription;
+  String? _watchedSession;
+  String? securityMessage;
+
+  // _watchServerSession detects server revocation or replacement without treating transient read
+  // failures as sign-out.
+  Future<void> _watchServerSession(AppSession session) async {
+    final generation = _generation;
+    try {
+      final sid = await _readSessionId();
+      if (generation != _generation || sid.isEmpty) return;
+      final key = '${session.phoneNumber}:$sid';
+      if (_watchedSession == key) return;
+      await _sessionStateSubscription?.cancel();
+      if (generation != _generation) return;
+      _watchedSession = key;
+      _sessionStateSubscription = _firebaseUserRepository
+          .watchSessionState(session.phoneNumber)
+          .listen(
+            (state) {
+              if (generation != _generation || state['activeSessionId'] == sid)
+                return;
+              final reason = state['reason'];
+              final device = state['device'];
+              final name = device is Map ? device['name'] as String? : null;
+              final message = reason == 'password-reset'
+                  ? 'You have been signed out because your account password was reset. Sign in again to continue.'
+                  : reason == 'account-disabled'
+                  ? 'You have been signed out because this account is disabled.'
+                  : 'You have been signed out because this account was signed in on ${name ?? 'another device'}. If this was not you, reset your password.';
+              unawaited(signOut(securityNotice: message));
+            },
+            onError: (Object error) {
+              // Offline listeners reconnect themselves. Do not erase local safety queues.
+            },
+          );
+    } catch (_) {
+      // Cloud authorization remains fail-closed; a transient watch failure is retried on refresh.
+    }
+  }
 
   void _publishSession(AppSession? session) {
     _session = session;
     _changes.add(session);
+    if (session != null) {
+      unawaited(_watchServerSession(session));
+    } else {
+      _watchedSession = null;
+      unawaited(_sessionStateSubscription?.cancel());
+      _sessionStateSubscription = null;
+    }
   }
 
   Future<void> _persistIfCurrent(int generation, AppSession? session) {
@@ -59,6 +115,8 @@ class SessionRepository {
 
   bool get isSignedIn => _session != null;
 
+  // loadSavedSession restores local state first, then validates the current Firebase
+  // account/session asynchronously.
   Future<void> loadSavedSession() async {
     final generation = ++_generation;
     try {
@@ -108,6 +166,8 @@ class SessionRepository {
     }
   }
 
+  // signIn serializes local profile persistence and starts the server-session observer for the new
+  // account.
   Future<void> signIn(AppSession session) async {
     await _signOutFuture;
     final generation = ++_generation;
@@ -171,7 +231,10 @@ class SessionRepository {
     }
   }
 
-  Future<void> signOut() {
+  // signOut invalidates pending profile writes, ends the server session and removes only local
+  // account state.
+  Future<void> signOut({String? securityNotice}) {
+    securityMessage = securityNotice;
     final generation = ++_generation;
     _publishSession(null);
     // Queue local deletion behind an in-flight save; a later sign-in waits for
@@ -180,7 +243,14 @@ class SessionRepository {
     final cleanup = Future.wait<void>([
       _ignoreSignOutFailure(localCleanup),
       _ignoreSignOutFailure(
-        _firebaseUserRepository.signOut().timeout(_cloudTimeout),
+        (() async {
+          if (securityNotice == null) {
+            try {
+                await _endServerSession().timeout(_cloudTimeout);
+            } catch (_) {}
+          }
+          await _firebaseUserRepository.signOut().timeout(_cloudTimeout);
+        })(),
       ),
     ]).then((_) {});
     _signOutFuture = cleanup;

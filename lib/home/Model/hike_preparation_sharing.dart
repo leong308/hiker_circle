@@ -1,16 +1,12 @@
 import 'hike_session_models.dart';
+import 'location_update_interval.dart';
 
 /// The hiker's choices for this session, independent of account-wide sharing.
 class HikePreparationSharing {
   const HikePreparationSharing({required this.enabled, required this.interval});
   final bool enabled;
   final Duration interval;
-  static const intervals = [
-    Duration(seconds: 5),
-    Duration(seconds: 15),
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-  ];
+  static const intervals = LocationUpdateInterval.options;
 
   factory HikePreparationSharing.fromPlan(PlannedHike plan) =>
       HikePreparationSharing(
@@ -38,7 +34,5 @@ class HikePreparationSharing {
     'enabled': enabled,
     'seconds': interval.inSeconds,
   };
-  String get intervalLabel => interval == const Duration(minutes: 1)
-      ? 'Every 1 minute'
-      : 'Every ${interval.inSeconds} seconds';
+  String get intervalLabel => LocationUpdateInterval.label(interval);
 }

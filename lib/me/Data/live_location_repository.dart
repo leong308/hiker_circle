@@ -1,3 +1,4 @@
+// LiveLocationRepository manages authenticated live-share records and durable stop requests.
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -7,6 +8,8 @@ import 'package:flutter/foundation.dart';
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/firebase_user_repository.dart';
+import '../../app/Data/hiker_circle_firebase_repository.dart'
+    show LiveLocationContactNotificationResult;
 import '../../app/Data/local_session_database.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/live_location_models.dart';
@@ -30,12 +33,14 @@ class LiveLocationRepository {
     FirebaseFunctions? functions,
     LocalSessionDatabase? localDatabase,
     Duration cloudTimeout = const Duration(seconds: 5),
+    Duration activationTimeout = const Duration(seconds: 30),
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
   }) : _firestore = firestore,
        _functions = functions,
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
        _cloudTimeout = cloudTimeout,
+       _activationTimeout = activationTimeout,
        _firebaseBootstrapResult = firebaseBootstrapResult;
 
   static const String _hostingBaseUrl =
@@ -45,6 +50,7 @@ class LiveLocationRepository {
   final FirebaseFunctions? _functions;
   final LocalSessionDatabase _localDatabase;
   final Duration _cloudTimeout;
+  final Duration _activationTimeout;
 
   final FirebaseFirestore? _firestore;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
@@ -113,7 +119,7 @@ class LiveLocationRepository {
     try {
       final snapshot = await _userDocumentFor(
         phoneNumber,
-      ).get().timeout(_cloudTimeout);
+      ).get(const GetOptions(source: Source.server)).timeout(_cloudTimeout);
       final data = snapshot.data();
       if (data == null || data['liveLocationEnabled'] != true) {
         return null;
@@ -139,6 +145,9 @@ class LiveLocationRepository {
             : _shareUrlFor(shareId),
         isActive: true,
         expiresAt: expiresAt,
+        startedAt:
+            _dateFromValue(data['liveLocationStartedAt']) ??
+            _dateFromValue(data['liveLocationStartedAtLocal']),
       );
     } on FirebaseException catch (error) {
       throw LiveLocationRepositoryException(
@@ -154,10 +163,13 @@ class LiveLocationRepository {
     _throwIfFirebaseUnavailable();
     await retryPendingStop(phoneNumber);
     try {
-      final data = await activateCloudShare(location).timeout(_cloudTimeout);
+      final data = await activateCloudShare(
+        location,
+      ).timeout(_activationTimeout);
       final shareId = data['shareId'];
       final shareUrl = data['shareUrl'];
       final expiresMillis = data['expiresAtMillis'];
+      final startedMillis = data['startedAtMillis'];
       if (shareId is! String ||
           shareId.isEmpty ||
           shareUrl is! String ||
@@ -165,7 +177,12 @@ class LiveLocationRepository {
           expiresMillis is! num ||
           !expiresMillis.isFinite ||
           expiresMillis <= 0 ||
-          expiresMillis > 8640000000000000) {
+          expiresMillis > 8640000000000000 ||
+          (startedMillis != null &&
+              (startedMillis is! num ||
+                  !startedMillis.isFinite ||
+                  startedMillis <= 0 ||
+                  startedMillis > expiresMillis))) {
         throw const LiveLocationRepositoryException(
           'The sharing server returned an invalid response.',
         );
@@ -178,12 +195,38 @@ class LiveLocationRepository {
           expiresMillis.toInt(),
           isUtc: true,
         ),
+        startedAt: startedMillis is num
+            ? DateTime.fromMillisecondsSinceEpoch(
+                startedMillis.toInt(),
+                isUtc: true,
+              )
+            : null,
         latestLocation: location,
       );
+    } on TimeoutException {
+      final confirmed = await _reconcileActivation(phoneNumber);
+      if (confirmed != null) return confirmed;
+      throw const LiveLocationRepositoryException(
+        'Live sharing could not be confirmed yet. Check your connection and try again.',
+      );
     } on FirebaseFunctionsException catch (error) {
+      if (error.code == 'deadline-exceeded' || error.code == 'unavailable') {
+        final confirmed = await _reconcileActivation(phoneNumber);
+        if (confirmed != null) return confirmed;
+      }
       throw LiveLocationRepositoryException(
         error.message ?? 'Unable to activate live location.',
       );
+    }
+  }
+
+  // A response can be lost after the server commits. Read its authoritative
+  // result before reporting failure; never issue a second activation here.
+  Future<LiveLocationShare?> _reconcileActivation(String phoneNumber) async {
+    try {
+      return await loadForUser(phoneNumber: phoneNumber);
+    } catch (_) {
+      return null;
     }
   }
 
@@ -194,10 +237,62 @@ class LiveLocationRepository {
     final result = await (_functions ?? FirebaseFunctions.instance)
         .httpsCallable(
           'activateLiveLocationShare',
-          options: HttpsCallableOptions(timeout: _cloudTimeout),
+          options: HttpsCallableOptions(timeout: _activationTimeout),
         )
         .call<Map<String, dynamic>>(location.toFirestore());
     return result.data;
+  }
+
+  /// The backend chooses saved SOS contacts and canonical message details.
+  /// Repeating this request checks the same per-share delivery identities.
+  Future<LiveLocationContactNotificationResult> notifyStandaloneContacts({
+    required String shareId,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    if (!RegExp(r'^[A-Za-z0-9_-]{8,240}$').hasMatch(shareId)) {
+      throw const LiveLocationRepositoryException(
+        'The live location link is invalid.',
+      );
+    }
+    try {
+      final data = await notifyStandaloneContactsCloud(
+        shareId,
+      ).timeout(const Duration(seconds: 120));
+      int count(String key) {
+        final value = data[key];
+        return value is num && value.isFinite && value >= 0 ? value.toInt() : 0;
+      }
+
+      return LiveLocationContactNotificationResult(
+        contactCount: count('contactCount'),
+        sentCount: count('sentCount'),
+        retryableFailureCount: count('retryableFailureCount'),
+        uncertainCount: count('uncertainCount'),
+        inProgressCount: count('inProgressCount'),
+        failedCount: count('failedCount'),
+      );
+    } on FirebaseFunctionsException catch (error) {
+      throw LiveLocationRepositoryException(
+        error.message ?? 'The WhatsApp contact update could not be confirmed.',
+      );
+    } on TimeoutException {
+      throw const LiveLocationRepositoryException(
+        'WhatsApp delivery is still being processed. Retry the contact notification to check its status.',
+      );
+    }
+  }
+
+  @protected
+  Future<Map<String, dynamic>> notifyStandaloneContactsCloud(
+    String shareId,
+  ) async {
+    final response = await (_functions ?? FirebaseFunctions.instance)
+        .httpsCallable(
+          'notifyEmergencyContactsOfLiveLocation',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 120)),
+        )
+        .call<Map<String, dynamic>>({'mode': 'standalone', 'shareId': shareId});
+    return response.data;
   }
 
   Future<void> updateLocation({
@@ -259,6 +354,7 @@ class LiveLocationRepository {
     return value is Map && value['pending'] == true;
   }
 
+  /// Persist the stop request before contacting the backend so an offline opt-out remains retryable.
   Future<void> deactivate({
     required String phoneNumber,
     required LiveLocationShare? share,
@@ -283,6 +379,7 @@ class LiveLocationRepository {
     await _sendStop(phoneNumber, pending);
   }
 
+  /// Retry the saved stop identity before allowing a stale cloud share to be treated as active.
   Future<void> retryPendingStop(String phoneNumber) async {
     final value = await _localDatabase.loadLocalPreference(
       ownerPhoneNumber: phoneNumber,

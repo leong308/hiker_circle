@@ -1,9 +1,14 @@
+// Cloud Storage authorization: current mobile session authority plus feature-specific owner, media, and size constraints.
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     function signedIn() {
       return request.auth != null
-        && request.auth.token.phoneNumber is string;
+        && request.auth.token.phoneNumber == request.auth.uid
+        && request.auth.token.get('mfa', false) == true
+        && request.auth.token.get('mobileSessionId', '') != ''
+        && firestore.get(/databases/(default)/documents/mobileSessions/$(request.auth.uid)).data.activeSessionId
+          == request.auth.token.mobileSessionId;
     }
 
     function admin() {
@@ -106,18 +111,24 @@ service firebase.storage {
 
     match /community_hikes/{userId}/{sessionId}/{fileName} {
       allow read: if signedIn();
-      allow create: if signedIn()
+      // Existing images keep their original URLs; all new media is scoped to
+      // its post rather than sharing an ambiguous hike directory.
+      allow create, update: if false;
+      allow delete: if admin();
+    }
+
+    match /community_posts/{userId}/{postId}/{fileName} {
+      allow read: if signedIn();
+      allow create: if resource == null && signedIn()
         && request.auth.uid == userId
         && request.resource.metadata.ownerUserId == userId
-        && request.resource.metadata.sessionId == sessionId
-        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.metadata.postId == postId
+        && request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
         && supportedImage(request.resource.contentType, fileName);
       allow update: if false;
-      allow delete: if admin() || (
-        signedIn()
-        && request.auth.uid == userId
+      allow delete: if admin() || (signedIn() && request.auth.uid == userId
         && resource.metadata.ownerUserId == userId
-      );
+        && !firestore.exists(/databases/(default)/documents/communityPosts/$(postId)));
     }
 
     match /group_chats/{chatId}/attachments/{fileName} {

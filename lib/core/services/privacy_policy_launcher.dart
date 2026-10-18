@@ -1,3 +1,4 @@
+// launchPrivacyPolicy opens the hosted privacy policy using the shared in-app browser flow.
 import 'package:url_launcher/url_launcher.dart';
 
 const privacyPolicyUrl = 'https://hiker-circle.web.app/privacy-policy';

@@ -1,3 +1,4 @@
+// EmergencyContactsViewModel validates contact edits and exposes local/cloud synchronization state.
 import 'package:flutter/foundation.dart';
 
 import '../../app/Model/app_session.dart';
@@ -115,6 +116,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     await _saveContacts();
   }
 
+  /// Expose save progress and a recoverable validation/storage error while preserving the edited contact list.
   Future<void> _saveContacts() async {
     _isSaving = true;
     _saveErrorMessage = null;

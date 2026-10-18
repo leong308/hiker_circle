@@ -1,3 +1,4 @@
+// SoloHikePolicy defines the distance acknowledgement threshold for starting a solo hike.
 class SoloHikePolicy {
   const SoloHikePolicy._();
   static bool requiresGroup(double km) => km > 20;

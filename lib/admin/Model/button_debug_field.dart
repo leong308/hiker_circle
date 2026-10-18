@@ -1,3 +1,4 @@
+// ButtonDebugField maps byte offsets to safe, readable BLE payload fields.
 import 'dart:typed_data';
 
 /// Byte ranges use zero-based, inclusive offsets, matching the captured payload.

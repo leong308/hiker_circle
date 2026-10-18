@@ -1,5 +1,7 @@
+// MFA removal retains a supported security method while updating canonical factor metadata atomically.
 const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 'use strict';
+// removeMfaFactor: Read all bound factors before removal so concurrent changes cannot leave no supported method.
 async function removeMfaFactor(db, userId, factorId, ErrorType, timestamp) {
   const userRef = db.collection('users').doc(userId);
   return db.runTransaction(async tx => {

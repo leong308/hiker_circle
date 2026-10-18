@@ -1,3 +1,4 @@
+// OnboardingProfile holds the hiker details and preferences collected during first-time setup.
 class OnboardingProfile {
   const OnboardingProfile({
     this.username = '',

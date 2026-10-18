@@ -1,3 +1,4 @@
+// ActiveHikeLiveStatusService bridges hike status, native GPS buffers and native safety events.
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -21,6 +22,7 @@ class ActiveHikeLiveStatusService {
     );
   }
 
+  /// Send the current session identity and recording interval to native background tracking.
   Future<void> startOrUpdate(
     ActiveHikeSession activeHike, {
     String ownerUid = '',
@@ -59,6 +61,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Acknowledge only samples already accepted by the durable Flutter storage path.
   Future<void> acknowledgeNativeLocationSamples(
     String sessionId,
     List<String> sampleIds,

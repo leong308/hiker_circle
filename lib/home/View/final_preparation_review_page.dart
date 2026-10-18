@@ -1,3 +1,4 @@
+// FinalPreparationReviewPage checks packing, battery, sharing and safety choices before hike start.
 import 'dart:async';
 import '../../sos/Model/sos_models.dart';
 import '../Data/hike_briefing_weather_service.dart';
@@ -56,6 +57,7 @@ class FinalPreparationReviewPage extends StatefulWidget {
   State<FinalPreparationReviewPage> createState() => _PreparationState();
 }
 
+/// Keep the final review's draft answers local until the caller accepts the preparation result.
 class _PreparationState extends State<FinalPreparationReviewPage>
     with WidgetsBindingObserver {
   late PlannedHike? _plan = widget.plan;

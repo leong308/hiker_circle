@@ -1,3 +1,4 @@
+// NearbySosEvent parses the limited location and timing data exposed for nearby emergencies.
 import 'dart:math' as math;
 
 import 'sos_models.dart';

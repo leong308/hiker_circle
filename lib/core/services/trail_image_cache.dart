@@ -1,3 +1,4 @@
+// TrailImageCache shares the bounded disk-cache policy used by downloaded trail images.
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 
 class TrailImageCache {

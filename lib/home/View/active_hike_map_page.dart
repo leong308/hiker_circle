@@ -1,3 +1,4 @@
+// ActiveHikeMapPage presents the current hike's tracking map and status controls.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 

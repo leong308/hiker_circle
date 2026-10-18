@@ -1,3 +1,4 @@
+// Route endpoint marker helpers draw start/finish artwork for native map annotations.
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 

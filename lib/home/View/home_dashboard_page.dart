@@ -1,3 +1,4 @@
+// HomeDashboardPage switches between scheduled hike preparation and trail discovery.
 import '../../core/widgets/page_header_style.dart';
 import 'dart:async';
 import '../../core/services/mapbox_travel_distance_service.dart';
@@ -226,6 +227,7 @@ class HomeDashboardPage extends StatelessWidget {
     }
   }
 
+  /// Confirm the end-hike action before delegating final persistence to the owning home page.
   Future<void> _confirmEndHike(BuildContext context) async {
     final shouldEnd = await showCupertinoDialog<bool>(
       context: context,
@@ -545,6 +547,7 @@ class _BestMatchesSectionState extends State<_BestMatchesSection>
     super.dispose();
   }
 
+  /// Discard an older travel-distance response after a newer location/filter refresh has started.
   Future<void> _refreshRoadDistances() async {
     final location = _userLocation;
     if (location == null) return;

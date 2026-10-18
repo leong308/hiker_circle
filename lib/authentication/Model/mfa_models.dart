@@ -1,3 +1,4 @@
+// MfaContinuation, MfaStatus and TotpEnrollment carry pending multi-factor authentication state.
 class MfaContinuation {
   const MfaContinuation({
     required this.token,

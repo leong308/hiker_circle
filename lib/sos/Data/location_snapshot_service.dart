@@ -1,3 +1,4 @@
+// LocationSnapshotService obtains and validates fresh device fixes for SOS and live sharing.
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import '../Model/sos_models.dart';
 import 'sos_device_alert_service.dart';
 
+/// Share the native snapshot path while checking timestamp, coordinate and accuracy validity.
 class LocationSnapshotService with WidgetsBindingObserver {
   LocationSnapshotService._();
 

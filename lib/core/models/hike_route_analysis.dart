@@ -1,3 +1,5 @@
+// HikeRouteAnalysis derives checkpoint progress, moving/stopped time and pace samples from
+// chronological recorded GPS coordinates.
 import 'dart:math' as math;
 
 import '../../home/Model/hike_session_models.dart';
@@ -78,6 +80,8 @@ class HikeAnalysisCheckpoint {
   final double longitude;
 }
 
+// analyzeHikeRoute orders valid fixes, separates movement from stops and matches checkpoints
+// against recorded progress.
 HikeRouteAnalysis analyzeHikeRoute({
   required List<HikeCoordinate> routePoints,
   required List<HikeAnalysisCheckpoint> checkpoints,

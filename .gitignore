@@ -72,9 +72,23 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Documentation, scripts, and tests
+# Documentation and scripts
 /docs/
 /scripts/
+
+# Keep the security build guards reviewable.
+!/scripts/
+/scripts/*
+!/scripts/prepare_mobile_public_config.py
+!/scripts/audit_mobile_artifact.py
+
+# Tests are local-only and must not be committed.
+/test/
+/integration_test/
+/test_driver/
+/firebase_rules_tests/
 **/test/
 **/tests/
-/firebase_rules_tests/
+**/*Tests/
+**/*_test.*
+**/*.test.*

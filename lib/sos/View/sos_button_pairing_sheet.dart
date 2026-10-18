@@ -1,3 +1,4 @@
+// SosButtonPairingSheet guides BLE discovery, candidate confirmation and SOS button pairing.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 // ignore_for_file: sort_child_properties_last
 
@@ -21,6 +22,7 @@ enum _PairingStep {
   failure,
 }
 
+/// Advance from BLE discovery to a confirmed candidate before persisting the paired button.
 class SosButtonPairingSheet extends StatefulWidget {
   const SosButtonPairingSheet({
     super.key,

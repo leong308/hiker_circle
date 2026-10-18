@@ -1,3 +1,4 @@
+// Trail, TrailWeather and TrailHazard model discovery data, forecast samples and trail cautions.
 class TrailCheckpoint {
   const TrailCheckpoint({
     required this.name,
@@ -88,6 +89,7 @@ class HourlyForecast {
   String get weatherLabel => _wmoSummary(weatherCode);
 }
 
+/// Keep raw forecast data with its cache time for trail-local weather presentation.
 class TrailWeather {
   const TrailWeather({
     required this.summary,
@@ -265,6 +267,7 @@ class TrailImageCredit {
   };
 }
 
+/// Represent the trail catalog entry and its route, forecast, caution and attribution data.
 class Trail {
   const Trail({
     required this.trailId,

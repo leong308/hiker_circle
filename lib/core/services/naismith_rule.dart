@@ -1,3 +1,5 @@
+// naismithDurationMinutes estimates hiking duration from distance and ascent when a route needs a
+// walking-time estimate.
 int naismithDurationMinutes(int distanceMeters, double elevationGainMeters) {
   final distanceKm = distanceMeters / 1000;
   final baseMinutes = distanceKm * 12;

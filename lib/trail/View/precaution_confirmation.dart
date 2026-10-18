@@ -1,3 +1,4 @@
+// confirmHikePrecautions presents the trail's safety observations and records acknowledgement.
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import '../Model/precaution_check_service.dart';
 import '../Model/trail_models.dart';
 import 'weather_presentation.dart';
 
+/// Return the hiker's explicit precaution acknowledgement to the caller's start/preparation flow.
 Future<bool> confirmHikePrecautions(BuildContext context, Trail trail) async {
   final check = PrecautionCheckService.check(trail);
   return await showDialog<bool>(

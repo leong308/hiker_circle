@@ -1,3 +1,5 @@
+// AppSettingsController persists appearance and reminder choices, including the device-theme default
+// when no theme preference is saved.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -26,16 +28,24 @@ enum HikerCircleThemeSetting {
 }
 
 class AppSettingsController extends ChangeNotifier {
-  AppSettingsController._() {
+  AppSettingsController._({String? settingsPath})
+    : _settingsPathOverride = settingsPath {
     _initialization = _loadFromDisk();
   }
 
+  @visibleForTesting
+  AppSettingsController.forTesting({required String settingsPath})
+    : this._(settingsPath: settingsPath);
+
   static final AppSettingsController instance = AppSettingsController._();
+
+  final String? _settingsPathOverride;
 
   HikerCircleThemeSetting _themeSetting = HikerCircleThemeSetting.system;
   String _language = 'English';
   String _preferredTimeZone = PreferredTimeZone.fallbackId;
   bool _preciseLocationEnabled = true;
+  bool _privateScreenUnlockEnabled = false;
   bool _anonymousTrailRecommendationsEnabled = false;
   bool _hapticSafetyFeedbackEnabled = true;
   bool _lowBatterySafetyWarningEnabled = true;
@@ -47,9 +57,20 @@ class AppSettingsController extends ChangeNotifier {
 
   HikerCircleThemeSetting get themeSetting => _themeSetting;
   ThemeMode get themeMode => _themeSetting.themeMode;
+
+  /// Completes once persisted device preferences have been restored.
+  Future<void> get ready => _initialization;
+
   String get language => _language;
   String get preferredTimeZone => _preferredTimeZone;
   bool get preciseLocationEnabled => _preciseLocationEnabled;
+  bool get privateScreenUnlockEnabled => _privateScreenUnlockEnabled;
+  void setPrivateScreenUnlockEnabled(bool value) {
+    if (_privateScreenUnlockEnabled == value) return;
+    _privateScreenUnlockEnabled = value;
+    _settingsChanged();
+  }
+
   bool get anonymousTrailRecommendationsEnabled =>
       _anonymousTrailRecommendationsEnabled;
   bool get hapticSafetyFeedbackEnabled => _hapticSafetyFeedbackEnabled;
@@ -138,6 +159,8 @@ class AppSettingsController extends ChangeNotifier {
   }
 
   Future<String> _settingsPath() async {
+    final override = _settingsPathOverride;
+    if (override != null) return override;
     final separator = Platform.pathSeparator;
     final directory = await getDatabasesPath();
     return '$directory${directory.endsWith(separator) ? '' : separator}'
@@ -161,6 +184,8 @@ class AppSettingsController extends ChangeNotifier {
             : HikerCircleThemeSetting.system.label,
       );
       _language = 'English';
+      _privateScreenUnlockEnabled =
+          values['privateScreenUnlockEnabled'] == true;
       _preferredTimeZone = PreferredTimeZone.normalize(
         values['preferredTimeZone'] is String
             ? values['preferredTimeZone'] as String
@@ -197,6 +222,7 @@ class AppSettingsController extends ChangeNotifier {
         final data = jsonEncode({
           'themeSetting': _themeSetting.label,
           'language': _language,
+          'privateScreenUnlockEnabled': _privateScreenUnlockEnabled,
           'preferredTimeZone': _preferredTimeZone,
           'preciseLocationEnabled': _preciseLocationEnabled,
           'anonymousTrailRecommendationsEnabled':

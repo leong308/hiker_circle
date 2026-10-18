@@ -1,3 +1,4 @@
+// RecentSecurityVerificationPage confirms a current security factor before sensitive account changes.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,7 @@ import '../ModelView/auth_view_model.dart';
 import 'inline_notice.dart';
 import 'security_verification_page.dart';
 
+/// Recheck a current factor for sensitive settings without restarting the ordinary sign-in screen.
 class RecentSecurityVerificationPage extends StatefulWidget {
   const RecentSecurityVerificationPage({
     super.key,

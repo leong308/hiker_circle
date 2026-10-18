@@ -1,3 +1,4 @@
+// Public upcoming-hike previews expose joinable plan details while withholding member and safety information.
 'use strict';
 
 function dateMillis(value) {
@@ -35,6 +36,7 @@ function effectiveUpcomingHikeType(rawHike) {
     : 'solo';
 }
 
+// buildUpcomingHikePreview: Expose only joinable plan data and the caller's own membership marker.
 function buildUpcomingHikePreview(
   hikeId,
   rawHike,

@@ -7,7 +7,10 @@ const path = require('path');
 const {execFileSync} = require('child_process');
 const {firebaseAccessToken, firestoreRequest, projectId} = require('./seed_malaysia_trails');
 const root = path.resolve(__dirname, '..');
-const files = execFileSync('rg', ['--files', 'lib', 'functions', 'scripts', 'tool', 'test', 'android', 'ios', 'web', 'windows', 'macos', 'linux', '-g', '!**/node_modules/**', '-g', '!**/build/**', '-g', '!**/Pods/**', '-g', '!**/package-lock.json'], {cwd: root, encoding: 'utf8'}).trim().split(/\r?\n/).map(f => f.replaceAll('\\', '/'));
+// Optional source trees can be absent in a checkout; inspect only existing paths.
+const sourceTrees = ['lib', 'functions', 'scripts', 'tool', 'test', 'android', 'ios', 'web', 'windows', 'macos', 'linux']
+  .filter(directory => fs.existsSync(path.join(root, directory)));
+const files = execFileSync('rg', ['--files', ...sourceTrees, '-g', '!**/node_modules/**', '-g', '!**/build/**', '-g', '!**/Pods/**', '-g', '!**/package-lock.json'], {cwd: root, encoding: 'utf8'}).trim().split(/\r?\n/).map(f => f.replaceAll('\\', '/'));
 const source = new Map(files.filter(f => /\.(dart|js|cjs|kt|java|swift|html|json|xml|yaml|py|ps1)$/.test(f)).map(f => [f, fs.readFileSync(path.join(root, f), 'utf8')]));
 const production = [...source].filter(([f]) => !/\/test\/|^test\/|^scripts\/|^tool\//.test(f));
 const appText = production.map(([,t]) => t).join('\n');
@@ -93,7 +96,7 @@ async function main(){
  const ids=collection=>new Set((documents.get(collection)||[]).map(d=>d.name.split('/').at(-1)));
  const sessions=ids('hikeSessions'),trails=ids('trails'),teamSessions=ids('teamHikeSessions');
  report.live.relationships={};
- for(const collection of ['hikeRouteCaptures','localLocationPoints','networkObservations','checkIns']) {const docs=documents.get(collection)||[];report.live.relationships[collection]={count:docs.length,missingHikeSession:docs.filter(d=>{const v=fields(d);return v.sessionId&&!sessions.has(v.sessionId);}).length};}
+ for(const collection of ['hikeRouteCaptures','footprints','networkObservations','checkIns']) {const docs=documents.get(collection)||[];report.live.relationships[collection]={count:docs.length,missingHikeSession:docs.filter(d=>{const v=fields(d);return v.sessionId&&!sessions.has(v.sessionId);}).length};}
  const weatherKeys=new Set((documents.get('trails')||[]).map(d=>{const v=fields(d);return Number(v.latitude).toFixed(4)+'_'+Number(v.longitude).toFixed(4);}));
  report.live.relationships.trailWeatherCache={withoutCurrentTrailCoordinates:(documents.get('trailWeatherCache')||[]).filter(d=>!weatherKeys.has(d.name.split('/').at(-1))).length};
  report.live.relationships.groupChats={...Object.fromEntries(['direct','group'].map(type=>[type,(documents.get('groupChats')||[]).filter(d=>fields(d).chatType===type).length])),softDeleted:(documents.get('groupChats')||[]).filter(d=>fields(d).isDeleted===true).length,pastRemovalTime:(documents.get('groupChats')||[]).filter(d=>milliseconds(fields(d).chatRemovesAtLocal)<Date.now()).length,missingReferencedTeamSession:(documents.get('groupChats')||[]).filter(d=>{const v=fields(d);return v.teamHikeSessionId&&!teamSessions.has(v.teamHikeSessionId);}).length};

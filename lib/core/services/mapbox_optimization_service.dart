@@ -1,3 +1,5 @@
+// MapboxOptimizationService proposes a checkpoint visit order while preserving the caller-selected
+// route endpoints.
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;

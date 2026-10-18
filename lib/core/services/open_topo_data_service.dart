@@ -1,3 +1,5 @@
+// OpenTopoDataService samples route elevations and derives an elevation range/ascent estimate from
+// the returned profile.
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;

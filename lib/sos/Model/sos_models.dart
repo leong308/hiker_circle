@@ -1,3 +1,4 @@
+// SOS models describe contacts, trigger locations, queued alerts, dispatch results and safety settings.
 import 'package:flutter/material.dart';
 
 import '../../app/Model/preferred_time_zone.dart';
@@ -348,6 +349,7 @@ class SosTriggerLocation {
   }
 }
 
+/// Build emergency message text from the trigger, available location and selected time zone.
 abstract final class SosAlertMessageComposer {
   static const String defaultCustomNote =
       'I need urgent help during my hike. Please call me now. If I do not answer, use the map link below and contact local emergency services.';

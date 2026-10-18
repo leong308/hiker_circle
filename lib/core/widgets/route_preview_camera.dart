@@ -1,3 +1,5 @@
+// Route preview camera helpers smooth heading and sample camera frames for normal and first-person
+// route playback.
 import 'dart:math' as math;
 
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;

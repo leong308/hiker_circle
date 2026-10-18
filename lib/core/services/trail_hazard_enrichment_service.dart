@@ -1,3 +1,5 @@
+// TrailHazardEnrichmentService relates OSM water/bridge features and terrain-derived steep sections
+// to positions along a trail route.
 import 'dart:convert';
 import 'dart:math' as math;
 

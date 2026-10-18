@@ -1,3 +1,4 @@
+// RecordedTrailRequestsPage reviews proposed trails derived from recorded hikes.
 import 'package:flutter/material.dart';
 import '../../app/Model/app_session.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
@@ -8,6 +9,7 @@ import '../../trail/Model/recorded_trail_request.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import 'admin_ui.dart';
 
+/// Separate the request list from the detailed recorded-route review and approval flow.
 class RecordedTrailRequestsPage extends StatefulWidget {
   const RecordedTrailRequestsPage({
     super.key,

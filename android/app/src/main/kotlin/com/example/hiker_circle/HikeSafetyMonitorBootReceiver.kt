@@ -1,3 +1,4 @@
+// HikeSafetyMonitorBootReceiver restores configured safety monitoring after Android restarts.
 package com.leongziqi.hikercircle
 
 import android.content.BroadcastReceiver

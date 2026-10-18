@@ -1,3 +1,4 @@
+// ActiveHikeWeatherSheet displays the active hike forecast and its freshness state.
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
