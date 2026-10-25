@@ -88,8 +88,9 @@ abstract final class SecureLocalDatabase {
     final backup = File('$path.migration-original');
     final target = File('$path.encrypted-pending');
     // Recover a crash between the two atomic renames without dropping records.
-    if (!await source.exists() && await backup.exists())
+    if (!await source.exists() && await backup.exists()) {
       await backup.rename(path);
+    }
     if (!await _plain(source)) {
       if (await source.exists() && await backup.exists()) {
         final check = await cipher.openDatabase(

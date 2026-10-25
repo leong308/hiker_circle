@@ -54,7 +54,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.recordedTrackPoints,
     this.highlightedCheckpointIndex,
     this.customCheckpoints,
-    this.showLayerToggle = false,
+    this.showLayerToggle = true,
     this.animateRoute = true,
     this.animationDuration = const Duration(seconds: 15),
     this.pinnedPoints = const [],
@@ -67,6 +67,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.localDatabase,
     this.departureTime,
     this.onAnimationProgress,
+    this.mapBuilder,
   });
 
   final ValueChanged<RouteCheckpointProgress>? onAnimationProgress;
@@ -90,6 +91,7 @@ class RoutePreviewMap extends StatefulWidget {
   final int initialStyleIndex;
   final RoutePreviewMode previewMode;
   final LocalSessionDatabase? localDatabase;
+  final Widget Function(mapbox.MapWidget configuration)? mapBuilder;
 
   List<TrailCheckpoint> get effectiveCheckpoints => recordedTrackPoints != null
       ? const []
@@ -186,6 +188,17 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   List<CommunityHazardCluster> _communityHazards = const [];
   var _styleIndex = 0;
+  bool _usesFpvSatelliteStyle = false;
+  var _dimension = MapDimension.threeD;
+  int _nativeMapGeneration = 0;
+  int _settingsChangeGeneration = 0;
+  int? _pendingStyleLoadGeneration;
+  int? _requestedStyleLoadGeneration;
+  mapbox.CameraOptions? _styleCameraToRestore;
+  double? _stylePlaybackProgress;
+  bool _stylePlaybackWasAnimating = false;
+  MapViewSettings get _mapSettings =>
+      MapViewSettings(styleIndex: _styleIndex, dimension: _dimension);
   var _styleLoaded = false;
   var _routeRendered = false;
   late final AnimationController _routeAnimController;
@@ -233,6 +246,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   void initState() {
     super.initState();
     _styleIndex = widget.initialStyleIndex.clamp(0, mapStyleUrls.length - 1);
+    if (widget.previewMode == RoutePreviewMode.firstPerson &&
+        widget.initialStyleIndex == 0) {
+      _styleIndex = 2;
+      _usesFpvSatelliteStyle = true;
+    }
     _fallbackLocalDatabase = LocalSessionDatabase();
     _routeAnimController = AnimationController(
       vsync: this,
@@ -279,7 +297,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _routeDistances.isEmpty ? 0 : _routeDistances.last;
 
   String get _activeStyleUrl =>
-      widget.previewMode == RoutePreviewMode.firstPerson
+      widget.previewMode == RoutePreviewMode.firstPerson &&
+          _usesFpvSatelliteStyle
       ? fpvMapStyleUrl
       : mapStyleUrls[_styleIndex];
 
@@ -753,16 +772,20 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     final geometryChanged =
         oldWidget.effectiveCheckpoints != widget.effectiveCheckpoints ||
         oldWidget.route != widget.route ||
-        oldWidget.recordedTrackPoints != widget.recordedTrackPoints;
+        !mapPointListsEqual(
+          oldWidget.recordedTrackPoints,
+          widget.recordedTrackPoints,
+        );
     final overlayPointsChanged =
-        oldWidget.pinnedPoints != widget.pinnedPoints ||
-        oldWidget.checkInPoints != widget.checkInPoints;
+        !mapPointListsEqual(oldWidget.pinnedPoints, widget.pinnedPoints) ||
+        !mapPointListsEqual(oldWidget.checkInPoints, widget.checkInPoints);
     if (geometryChanged) {
       final previouslyHadGeometry = _hasUsableGeometry;
       _buildPoints();
       _syncRouteAnimationDuration();
       _fpvTelemetry.value = _telemetryAt(distanceMeters: 0);
       if (previouslyHadGeometry != _hasUsableGeometry) {
+        _nativeMapGeneration++;
         _mapGeneration++;
         _styleLoaded = false;
         _mapboxMap = null;
@@ -803,6 +826,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _fpvZoomOffset = 0;
       _fpvLookAheadMeters = 25;
       _syncRouteAnimationDuration();
+      _nativeMapGeneration++;
       _mapGeneration++;
       _styleLoaded = false;
       _routeRendered = false;
@@ -902,11 +926,22 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   Future<void> _onStyleLoaded(int generation) async {
     final map = _mapboxMap;
     if (map == null || !_isCurrentMap(map, generation)) return;
+    if (_pendingStyleLoadGeneration == generation &&
+        _requestedStyleLoadGeneration != generation) {
+      return;
+    }
+    try {
+      if (await map.style.getStyleURI() != _activeStyleUrl) return;
+    } catch (_) {
+      if (!_isCurrentMap(map, generation)) return;
+    }
+    if (!_isCurrentMap(map, generation)) return;
     _styleWatchdogTimer?.cancel();
+    _pendingStyleLoadGeneration = null;
     if (!_styleLoaded) {
       _styleLoaded = true;
       _routeRendered = false;
-      _initialFitComplete = false;
+      if (_styleCameraToRestore == null) _initialFitComplete = false;
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
@@ -919,21 +954,23 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _renderGeneration++;
     }
     if (!await _ensureAnnotationManagers(generation)) return;
-    await _renderRouteIfReady();
-    if (_isCurrentMap(map, generation)) {
-      unawaited(enableTerrain3D(map));
+    if (!_isCurrentMap(map, generation)) return;
+    try {
+      await _applyCurrentMapDimension(map, generation);
+    } catch (_) {
+      // A style may have no terrain source; route overlays still remain useful.
     }
+    await _renderRouteIfReady();
   }
 
   Future<void> _onMapLoaded(int generation) async {
     final map = _mapboxMap;
     if (map == null || !_isCurrentMap(map, generation)) return;
-    _styleWatchdogTimer?.cancel();
     if (!_styleLoaded) {
-      _styleLoaded = true;
-      _routeRendered = false;
-      _initialFitComplete = false;
+      await _onStyleLoaded(generation);
+      return;
     }
+    _styleWatchdogTimer?.cancel();
     await _ensureAnnotationManagers(generation);
     await _renderRouteIfReady();
   }
@@ -958,16 +995,27 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     mapbox.MapboxMap map,
     int generation,
   ) async {
+    final created = <mapbox.BaseAnnotationManager>[];
+    var accepted = false;
     try {
       var polylineManager = _polylineManager;
       var circleManager = _circleManager;
       var pointManager = _pointManager;
-      polylineManager ??= await map.annotations
-          .createPolylineAnnotationManager();
+      if (polylineManager == null) {
+        polylineManager = await map.annotations
+            .createPolylineAnnotationManager();
+        created.add(polylineManager);
+      }
       if (!_isCurrentMap(map, generation)) return false;
-      circleManager ??= await map.annotations.createCircleAnnotationManager();
+      if (circleManager == null) {
+        circleManager = await map.annotations.createCircleAnnotationManager();
+        created.add(circleManager);
+      }
       if (!_isCurrentMap(map, generation)) return false;
-      pointManager ??= await map.annotations.createPointAnnotationManager();
+      if (pointManager == null) {
+        pointManager = await map.annotations.createPointAnnotationManager();
+        created.add(pointManager);
+      }
       if (!_isCurrentMap(map, generation)) return false;
       await pointManager.setIconAllowOverlap(true);
       await pointManager.setTextAllowOverlap(true);
@@ -981,6 +1029,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _polylineManager = polylineManager;
       _circleManager = circleManager;
       _pointManager = pointManager;
+      accepted = true;
       unawaited(_communityCautionLayer.attach(map, generation));
       return _polylineManager != null &&
           _circleManager != null &&
@@ -990,6 +1039,16 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         _scheduleRenderRetry();
       }
       return false;
+    } finally {
+      if (!accepted) {
+        for (final manager in created) {
+          try {
+            await map.annotations.removeAnnotationManager(manager);
+          } catch (_) {
+            // Stale style setup must not retain managers on the live map.
+          }
+        }
+      }
     }
   }
 
@@ -1009,6 +1068,15 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     if (!await _ensureAnnotationManagers(mapGeneration)) {
       return;
     }
+    if (!_isCurrentMap(map, mapGeneration) || !_styleLoaded) return;
+    final polylineManager = _polylineManager;
+    final circleManager = _circleManager;
+    final pointManager = _pointManager;
+    if (polylineManager == null ||
+        circleManager == null ||
+        pointManager == null) {
+      return;
+    }
 
     final generation = ++_renderGeneration;
     _isRendering = true;
@@ -1023,9 +1091,9 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       _hazardsByAnnotationId.clear();
       _cautionMarkerSizer.clear();
       _lastAnimatedIndex = 0;
-      await _polylineManager!.deleteAll();
-      await _circleManager!.deleteAll();
-      await _pointManager!.deleteAll();
+      await polylineManager.deleteAll();
+      await circleManager.deleteAll();
+      await pointManager.deleteAll();
       if (!_isCurrentMap(map, mapGeneration) ||
           generation != _renderGeneration) {
         return;
@@ -1044,7 +1112,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         if (hasDetailedRoute &&
             widget.animateRoute &&
             displayPoints.length > 2) {
-          await _polylineManager!.create(
+          await polylineManager.create(
             mapbox.PolylineAnnotationOptions(
               geometry: mapbox.LineString(coordinates: coordinates),
               lineColor: _routeTrailColor.toARGB32(),
@@ -1055,7 +1123,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           );
           _cometLayers.clear();
           for (var layer = 0; layer < 2; layer++) {
-            final tail = await _polylineManager!.create(
+            final tail = await polylineManager.create(
               mapbox.PolylineAnnotationOptions(
                 geometry: mapbox.LineString(
                   coordinates: coordinates.take(2).toList(),
@@ -1068,7 +1136,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             );
             _cometLayers.add(tail);
           }
-          _animatedPolyline = await _polylineManager!.create(
+          _animatedPolyline = await polylineManager.create(
             mapbox.PolylineAnnotationOptions(
               geometry: mapbox.LineString(
                 coordinates: coordinates.take(2).toList(),
@@ -1083,7 +1151,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             _lastAnimatedIndex = 1;
           }
         } else {
-          await _polylineManager!.create(
+          await polylineManager.create(
             mapbox.PolylineAnnotationOptions(
               geometry: mapbox.LineString(coordinates: coordinates),
               lineColor:
@@ -1116,7 +1184,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           ),
       ];
       if (circleOptions.isNotEmpty) {
-        _checkpointCircleAnnotations = await _circleManager!.createMulti(
+        _checkpointCircleAnnotations = await circleManager.createMulti(
           circleOptions,
         );
       }
@@ -1130,7 +1198,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         _startPoint,
         _endPoint,
       );
-      await _pointManager!.createMulti([
+      await pointManager.createMulti([
         routeEndpointAnnotation(
           geometry: _startPoint,
           label: widget.recordedTrackPoints != null && _routePoints.length == 1
@@ -1155,7 +1223,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           generation != _renderGeneration) {
         return;
       }
-      final hazardAnnotations = await _pointManager!.createMulti([
+      final hazardAnnotations = await pointManager.createMulti([
         for (var index = 0; index < _staticHazards.length; index++)
           staticHazardAnnotation(
             _staticHazards[index],
@@ -1178,7 +1246,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           .where(_isValidMapPoint)
           .toList();
       if (validPinnedPoints.isNotEmpty) {
-        await _pointManager!.createMulti(
+        await pointManager.createMulti(
           validPinnedPoints
               .map(
                 (pin) => mapbox.PointAnnotationOptions(
@@ -1196,7 +1264,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           .where(_isValidMapPoint)
           .toList();
       if (validCheckInPoints.isNotEmpty) {
-        await _pointManager!.createMulti(
+        await pointManager.createMulti(
           validCheckInPoints
               .map(
                 (ci) => mapbox.PointAnnotationOptions(
@@ -1222,7 +1290,29 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         _routeRendered = true;
       });
       await Future.delayed(const Duration(milliseconds: 180));
-      await _positionCameraForPreviewMode();
+      if (!_isCurrentMap(map, mapGeneration) ||
+          generation != _renderGeneration) {
+        return;
+      }
+      final restoreCamera = _styleCameraToRestore;
+      if (restoreCamera != null) {
+        await map.setCamera(
+          mapbox.CameraOptions(
+            center: restoreCamera.center,
+            zoom: restoreCamera.zoom,
+            bearing: restoreCamera.bearing,
+            padding: restoreCamera.padding,
+            pitch: _dimension == MapDimension.twoD ? 0 : restoreCamera.pitch,
+          ),
+        );
+        if (!_isCurrentMap(map, mapGeneration)) return;
+        await _applyCurrentMapDimension(map, mapGeneration);
+        if (!_isCurrentMap(map, mapGeneration)) return;
+        _styleCameraToRestore = null;
+        setState(() => _initialFitComplete = true);
+      } else if (!_initialFitComplete) {
+        await _positionCameraForPreviewMode();
+      }
     } catch (_) {
       if (mounted && generation == _renderGeneration) {
         setState(() {
@@ -1256,25 +1346,35 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       if (!mounted || generation != _mapGeneration || _styleLoaded) {
         return;
       }
-      setState(() {
-        _mapGeneration++;
-        _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
-        _routeRendered = false;
-        _initialFitComplete = false;
-        _polylineManager = null;
-        _circleManager = null;
-        _pointManager = null;
-        _communityCautionLayer.reset();
-        _annotationManagersFuture = null;
-        _mapboxMap = null;
-        _renderGeneration++;
-      });
+      unawaited(
+        _changeMapSettings(
+          _mapSettings.copyWith(
+            styleIndex: (_styleIndex + 1) % mapStyleUrls.length,
+          ),
+        ),
+      );
     });
   }
 
   void _animateRoute(mapbox.PolylineAnnotation annotation) {
     if (!mounted) return;
-    _routeAnimController.forward(from: 0);
+    final preservedProgress = _stylePlaybackProgress;
+    _stylePlaybackProgress = null;
+    if (preservedProgress != null) {
+      _lastAnimatedIndex =
+          (1 +
+                  (preservedProgress * math.max(0, _routePoints.length - 1))
+                      .round())
+              .clamp(2, math.max(2, _routePoints.length));
+      _routeAnimController.value = preservedProgress;
+      if (_stylePlaybackWasAnimating) {
+        _routeAnimController.forward(
+          from: preservedProgress >= 1 ? 0 : preservedProgress,
+        );
+      }
+    } else {
+      _routeAnimController.forward(from: 0);
+    }
   }
 
   mapbox.GesturesSettings get _gestureSettingsForPreviewMode {
@@ -1284,7 +1384,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       scrollEnabled: !cameraIsFollowing,
       pinchToZoomEnabled: !cameraIsFollowing,
       rotateEnabled: !cameraIsFollowing,
-      pitchEnabled: !cameraIsFollowing,
+      pitchEnabled: !cameraIsFollowing && _dimension == MapDimension.threeD,
     );
   }
 
@@ -1382,7 +1482,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         center: cameraTarget ?? frame.center,
         zoom: (_fpvZoom + _fpvZoomOffset).clamp(14.5, kMapMaxZoom).toDouble(),
         bearing: heading,
-        pitch: _fpvPitch,
+        pitch: _dimension == MapDimension.threeD ? _fpvPitch : 0,
         padding: mapbox.MbxEdgeInsets(top: 84, left: 20, bottom: 24, right: 20),
       );
       if (!_initialFitComplete || force) {
@@ -1529,7 +1629,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               ),
               mapbox.MbxEdgeInsets(top: 48, left: 48, bottom: 48, right: 48),
               null,
-              null,
+              _dimension == MapDimension.threeD ? 50 : 0,
               null,
               null,
             );
@@ -1542,6 +1642,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         throw StateError('Mapbox did not return a valid route camera.');
       }
 
+      if (!_isCurrentMap(map, mapGeneration)) return;
       await map.flyTo(camera, mapbox.MapAnimationOptions(duration: 350));
       await Future.delayed(const Duration(milliseconds: 380));
       if (!_isCurrentMap(map, mapGeneration)) return;
@@ -1592,7 +1693,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           mapbox.CameraOptions(
             center: centerFor(_visibleMapPoints),
             zoom: fallbackZoom,
-            pitch: 0,
+            pitch: _dimension == MapDimension.threeD ? 50 : 0,
           ),
           mapbox.MapAnimationOptions(duration: 350),
         );
@@ -1641,22 +1742,155 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     await _syncScaleFromCamera();
   }
 
-  void _cycleStyle() {
-    if (widget.previewMode == RoutePreviewMode.firstPerson) return;
+  Future<void> _changeMapSettings(MapViewSettings next) async {
+    final previous = _mapSettings;
+    if (next == previous) return;
+    final styleChanged = previous.safeStyleIndex != next.safeStyleIndex;
+    final request = styleChanged
+        ? ++_settingsChangeGeneration
+        : _settingsChangeGeneration;
+    // Publish the desired style immediately. A dimension selection made while
+    // camera capture is pending must retain that style and its pending load.
     setState(() {
+      _styleIndex = next.safeStyleIndex;
+      _dimension = next.dimension;
+      if (previous.dimension != next.dimension &&
+          _styleCameraToRestore != null) {
+        _styleCameraToRestore!.pitch = next.is3D
+            ? (widget.previewMode == RoutePreviewMode.firstPerson
+                  ? _fpvPitch
+                  : 50)
+            : 0;
+      }
+      if (styleChanged) _usesFpvSatelliteStyle = false;
+    });
+    final map = _mapboxMap;
+    final oldMapGeneration = _mapGeneration;
+    mapbox.CameraState? camera;
+    if (styleChanged && map != null && _initialFitComplete) {
+      try {
+        camera = await map.getCameraState();
+      } catch (_) {
+        // Route bounds remain the fallback if the native camera is unavailable.
+      }
+    }
+    if (!mounted ||
+        request != _settingsChangeGeneration ||
+        oldMapGeneration != _mapGeneration) {
+      return;
+    }
+    if (!styleChanged) {
+      if (map != null) {
+        try {
+          await _applyCurrentMapDimension(map, _mapGeneration);
+          if (widget.previewMode == RoutePreviewMode.firstPerson) {
+            _queueFpvCameraUpdate(_routeAnimProgress.value, force: true);
+          }
+        } catch (_) {
+          // A later style load restores the selected terrain mode.
+        }
+      }
+      return;
+    }
+
+    final oldManagers = [
+      if (_polylineManager != null) _polylineManager!,
+      if (_circleManager != null) _circleManager!,
+      if (_pointManager != null) _pointManager!,
+    ];
+    _stylePlaybackProgress = _routeAnimProgress.value;
+    _stylePlaybackWasAnimating =
+        _routeAnimController.isAnimating ||
+        _isPaused ||
+        (_loopPauseTimer?.isActive ?? false);
+    _routeAnimController.stop();
+    _pauseTimer?.cancel();
+    _loopPauseTimer?.cancel();
+    _renderRetryTimer?.cancel();
+    _fitRetryTimer?.cancel();
+    _pointTapEvents?.cancel();
+    _pointTapEvents = null;
+    _cancelCheckpointGlows();
+    final resetCautions = _communityCautionLayer.resetAndWait();
+    final savedCamera = camera;
+    setState(() {
+      _styleIndex = next.safeStyleIndex;
+      _usesFpvSatelliteStyle = false;
       _mapGeneration++;
-      _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
+      _pendingStyleLoadGeneration = map == null ? null : _mapGeneration;
+      _requestedStyleLoadGeneration = null;
+      _renderGeneration++;
+      _terrainQueryGeneration++;
       _styleLoaded = false;
       _routeRendered = false;
-      _initialFitComplete = false;
       _polylineManager = null;
       _circleManager = null;
       _pointManager = null;
-      _communityCautionLayer.reset();
       _annotationManagersFuture = null;
-      _mapboxMap = null;
-      _renderGeneration++;
+      _animatedPolyline = null;
+      _cometLayers.clear();
+      _hazardsByAnnotationId.clear();
+      _cautionMarkerSizer.clear();
+      _styleCameraToRestore = savedCamera == null
+          ? null
+          : mapbox.CameraOptions(
+              center: savedCamera.center,
+              zoom: savedCamera.zoom,
+              bearing: savedCamera.bearing,
+              pitch: _dimension == MapDimension.threeD
+                  ? (previous.is3D ? savedCamera.pitch : 50)
+                  : 0,
+              padding: savedCamera.padding,
+            );
     });
+    final generation = _mapGeneration;
+    _scheduleStyleWatchdog(generation);
+    final removeOldManagers = Future.wait([
+      for (final manager in oldManagers)
+        map == null
+            ? Future<void>.value()
+            : map.annotations.removeAnnotationManager(manager).catchError((
+                Object _,
+              ) {
+                // Style replacement may already have invalidated this old manager.
+              }),
+    ]);
+    // Register the new generation's callbacks before requesting native style.
+    await WidgetsBinding.instance.endOfFrame;
+    await removeOldManagers;
+    await resetCautions;
+    if (!mounted ||
+        request != _settingsChangeGeneration ||
+        map == null ||
+        !_isCurrentMap(map, generation)) {
+      return;
+    }
+    if (!_isCurrentMap(map, generation) ||
+        request != _settingsChangeGeneration) {
+      return;
+    }
+    try {
+      _requestedStyleLoadGeneration = generation;
+      await map.loadStyleURI(next.styleUrl);
+    } catch (_) {
+      // The style watchdog retries with another available base map.
+    }
+  }
+
+  Future<void> _applyCurrentMapDimension(
+    mapbox.MapboxMap map,
+    int generation,
+  ) async {
+    while (_isCurrentMap(map, generation)) {
+      final dimension = _dimension;
+      final pitch =
+          _styleCameraToRestore?.pitch ??
+          (widget.previewMode == RoutePreviewMode.firstPerson ? _fpvPitch : 50);
+      await applyMapDimension(map, dimension, pitch: pitch);
+      if (!_isCurrentMap(map, generation)) return;
+      await map.gestures.updateSettings(_gestureSettingsForPreviewMode);
+      if (dimension == _dimension) return;
+    }
   }
 
   void _onCameraChange(mapbox.CameraChangedEventData data) {
@@ -1811,48 +2045,49 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         !_styleLoaded || !_routeRendered || !_initialFitComplete;
     final mapGeneration = _mapGeneration;
     final activeStyleUrl = _activeStyleUrl;
+    final nativeMap = mapbox.MapWidget(
+      key: ValueKey('route-preview-native-$_nativeMapGeneration'),
+      styleUri: activeStyleUrl,
+      // Initial framing only. A new viewport object on rebuild resets user pans.
+      // ignore: deprecated_member_use
+      cameraOptions: mapbox.CameraOptions(
+        center: centerFor(_visibleMapPoints),
+        zoom: _currentZoom,
+        pitch: _dimension == MapDimension.threeD ? 50 : 0,
+      ),
+      gestureRecognizers: widget.captureAllGestures
+          ? eagerMapGestureRecognizers
+          : mapGestureRecognizers,
+      onMapCreated: (map) => _onMapCreated(map, mapGeneration),
+      onStyleLoadedListener: (_) => _onStyleLoaded(mapGeneration),
+      onMapLoadedListener: (_) => _onMapLoaded(mapGeneration),
+      onCameraChangeListener: (data) {
+        if (mapGeneration == _mapGeneration) _onCameraChange(data);
+      },
+      onMapIdleListener: (_) {
+        if (mapGeneration == _mapGeneration) _onMapIdle();
+      },
+    );
     return Stack(
       fit: StackFit.expand,
       children: [
-        DeferredMap(
-          child: mapbox.MapWidget(
-            key: ValueKey('$activeStyleUrl#$mapGeneration'),
-            styleUri: activeStyleUrl,
-            gestureRecognizers: widget.captureAllGestures
-                ? eagerMapGestureRecognizers
-                : mapGestureRecognizers,
-            onMapCreated: (map) => _onMapCreated(map, mapGeneration),
-            onStyleLoadedListener: (_) => _onStyleLoaded(mapGeneration),
-            onMapLoadedListener: (_) => _onMapLoaded(mapGeneration),
-            onCameraChangeListener: (data) {
-              if (mapGeneration == _mapGeneration) {
-                _onCameraChange(data);
-              }
-            },
-            onMapIdleListener: (_) {
-              if (mapGeneration == _mapGeneration) {
-                _onMapIdle();
-              }
-            },
-          ),
-        ),
+        DeferredMap(child: widget.mapBuilder?.call(nativeMap) ?? nativeMap),
         if (widget.previewMode == RoutePreviewMode.normal)
           Align(
-            alignment: Alignment.topRight,
+            alignment: Alignment.topLeft,
             child: Padding(
               padding: const EdgeInsets.all(10),
               child: MapZoomControls(
                 onZoomIn: () => _zoomBy(1),
                 onZoomOut: () => _zoomBy(-1),
                 onReset: _resetCameraForPreviewMode,
-                onLayer: widget.showLayerToggle ? _cycleStyle : null,
               ),
             ),
           ),
         if (widget.previewMode == RoutePreviewMode.firstPerson &&
             !isPreparingMap)
           Positioned(
-            right: 10,
+            left: 10,
             top: 10,
             width: 132,
             child: ValueListenableBuilder<_FpvTelemetry>(
@@ -1880,8 +2115,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         if (widget.previewMode == RoutePreviewMode.firstPerson &&
             !isPreparingMap)
           Positioned(
-            left: 10,
-            bottom: 10,
+            right: 10,
+            top: 72,
             child: _FpvSpeedControl(
               speed: _fpvPlaybackSpeed,
               onChanged: _setFpvPlaybackSpeed,
@@ -1897,29 +2132,18 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               builder: (context, bearing, _) => _FpvCompass(bearing: bearing),
             ),
           ),
-        if (widget.previewMode == RoutePreviewMode.normal)
-          Align(
-            alignment: Alignment.bottomLeft,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
-            ),
-          ),
         if (isPreparingMap)
           Positioned.fill(
             child: ColoredBox(
               color: Theme.of(
                 context,
               ).colorScheme.surface.withValues(alpha: 0.82),
-              child: HikerCircleLoadingView(
+              child: RoutePreviewLoadingView(
                 message: !_styleLoaded
                     ? 'Preparing map…'
                     : !_routeRendered
                     ? 'Drawing route…'
                     : 'Focusing route…',
-                detail: 'This can take longer on a slow connection.',
-                compact: true,
-                padding: const EdgeInsets.all(8),
               ),
             ),
           )
@@ -1969,9 +2193,73 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               ),
             ),
           ),
+        Positioned(
+          left: 10,
+          right: widget.previewMode == RoutePreviewMode.firstPerson ? 70 : 10,
+          bottom: 10,
+          child: MapScaleWithStyle(
+            zoom: _currentZoom,
+            latitude: _scaleLatitude,
+            settings: _mapSettings,
+          ),
+        ),
+        if (widget.showLayerToggle)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: MapStyleControls(
+              settings: _mapSettings,
+              onChanged: (next) => unawaited(_changeMapSettings(next)),
+            ),
+          ),
       ],
     );
   }
+}
+
+/// Small route cards cannot fit the full branded loading illustration.
+class RoutePreviewLoadingView extends StatelessWidget {
+  const RoutePreviewLoadingView({super.key, required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (constraints.maxHeight >= 280 && constraints.maxWidth >= 280) {
+        return HikerCircleLoadingView(
+          message: message,
+          detail: 'This can take longer on a slow connection.',
+          compact: true,
+          padding: const EdgeInsets.all(8),
+        );
+      }
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Semantics(
+            liveRegion: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    message,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _FpvTelemetryPanel extends StatelessWidget {

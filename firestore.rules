@@ -38,10 +38,28 @@ service cloud.firestore {
       return phoneNumber().replace('[^0-9]', '');
     }
 
+    // Account roles are server/admin-owned. Read current authority rather than
+    // a login-time claim so promotion and revocation apply to existing sessions.
+    function administratorAccount(account) {
+      return account.get('isAdmin', false) == true
+        || (account.get('role', '') is string
+          && account.get('role', '').lower() in ['admin', 'super_admin'])
+        // Rules cannot map list strings to lowercase. These exact variants
+        // match the app's case-insensitive role policy without substring grants.
+        || (account.get('roles', []) is list
+          && account.get('roles', []).hasAny([
+            'admin', 'admiN', 'admIn', 'admIN', 'adMin', 'adMiN', 'adMIn', 'adMIN',
+            'aDmin', 'aDmiN', 'aDmIn', 'aDmIN', 'aDMin', 'aDMiN', 'aDMIn', 'aDMIN',
+            'Admin', 'AdmiN', 'AdmIn', 'AdmIN', 'AdMin', 'AdMiN', 'AdMIn', 'AdMIN',
+            'ADmin', 'ADmiN', 'ADmIn', 'ADmIN', 'ADMin', 'ADMiN', 'ADMIn', 'ADMIN'
+          ]));
+    }
+
     function admin() {
       return signedIn()
-        && request.auth.token.keys().hasAny(['isAdmin'])
-        && request.auth.token.isAdmin == true;
+        && administratorAccount(
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        );
     }
 
     function participant(data) {

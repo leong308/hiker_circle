@@ -495,6 +495,7 @@ class _UpcomingHikeCardState extends State<UpcomingHikeCard>
         session: widget.session,
         hikeId: widget.hike.id,
         preference: preference,
+        hike: widget.hike,
       );
       _showMessage(
         preference.enabled
@@ -1058,8 +1059,6 @@ class _DetailHeader extends StatelessWidget {
   Widget build(BuildContext context) =>
       PageHeader(title: title, subtitle: subtitle, onBack: onBack);
 }
-
-
 
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon});

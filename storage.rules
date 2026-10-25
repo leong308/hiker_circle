@@ -11,10 +11,28 @@ service firebase.storage {
           == request.auth.token.mobileSessionId;
     }
 
+    // Keep role authority in the protected account document, not a stale token.
+    function administratorAccount(account) {
+      return account.get('accountDisabled', false) == false
+        && account.get('status', 'active') != 'disabled'
+        && (account.get('isAdmin', false) == true
+          || (account.get('role', '') is string
+            && account.get('role', '').lower() in ['admin', 'super_admin'])
+          // Match exact case-insensitive entries without joining list values.
+          || (account.get('roles', []) is list
+            && account.get('roles', []).hasAny([
+              'admin', 'admiN', 'admIn', 'admIN', 'adMin', 'adMiN', 'adMIn', 'adMIN',
+              'aDmin', 'aDmiN', 'aDmIn', 'aDmIN', 'aDMin', 'aDMiN', 'aDMIn', 'aDMIN',
+              'Admin', 'AdmiN', 'AdmIn', 'AdmIN', 'AdMin', 'AdMiN', 'AdMIn', 'AdMIN',
+              'ADmin', 'ADmiN', 'ADmIn', 'ADmIN', 'ADMin', 'ADMiN', 'ADMIn', 'ADMIN'
+            ])));
+    }
+
     function admin() {
       return signedIn()
-        && request.auth.token.keys().hasAny(['isAdmin'])
-        && request.auth.token.isAdmin == true;
+        && administratorAccount(
+          firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data
+        );
     }
 
     function chatMember(chatId) {
@@ -126,9 +144,12 @@ service firebase.storage {
         && request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
         && supportedImage(request.resource.contentType, fileName);
       allow update: if false;
-      allow delete: if admin() || (signedIn() && request.auth.uid == userId
+      // Owner cleanup uses the session and post documents; check it before
+      // administrator access to stay within Storage's two-document budget.
+      allow delete: if (signedIn() && request.auth.uid == userId
         && resource.metadata.ownerUserId == userId
-        && !firestore.exists(/databases/(default)/documents/communityPosts/$(postId)));
+        && !firestore.exists(/databases/(default)/documents/communityPosts/$(postId)))
+        || admin();
     }
 
     match /group_chats/{chatId}/attachments/{fileName} {
@@ -143,10 +164,8 @@ service firebase.storage {
           || supportedDocument(request.resource.contentType, fileName)
         );
       allow update: if false;
-      allow delete: if admin() || (
-        chatMember(chatId)
-        && resource.metadata.senderPhone == request.auth.token.phoneNumber
-      );
+      allow delete: if (resource.metadata.senderPhone == request.auth.token.phoneNumber
+        && chatMember(chatId)) || admin();
     }
 
     match /app_feedback/{uid}/{reportId}/screenshot.png {

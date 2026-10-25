@@ -83,8 +83,9 @@ class ConditionalCloudCache {
     final checked = _checked[key] ?? cached?.cachedAt;
     if (cached != null &&
         (!online ||
-            (!force && checked != null && now.difference(checked) < freshness)))
+            (!force && checked != null && now.difference(checked) < freshness))) {
       return cached.payload;
+    }
     if (!online) return const {};
     try {
       _requireOwner(owner);
@@ -107,8 +108,9 @@ class ConditionalCloudCache {
       _checked[key] = now;
       if (data['notModified'] == true) {
         if (cached == null ||
-            data['contentHash'] != cached.payload['contentHash'])
+            data['contentHash'] != cached.payload['contentHash']) {
           throw const FormatException('Invalid cache validation');
+        }
         if (data['revisionHash'] != revision || data['payloadChecked'] == true) {
           await database.saveCachedEntity(LocalCachedEntity(ownerPhoneNumber: owner,
             entityType: '$type:validation', entityId: id, parentId: '', cachedAt: now,
@@ -134,8 +136,9 @@ class ConditionalCloudCache {
           'fullCheckedAtMillis': now.millisecondsSinceEpoch}));
       return data;
     } on FirebaseFunctionsException catch (error) {
-      if (const {'unauthenticated', 'permission-denied'}.contains(error.code))
+      if (const {'unauthenticated', 'permission-denied'}.contains(error.code)) {
         rethrow;
+      }
       if (cached != null) return cached.payload;
       rethrow;
     } catch (_) {

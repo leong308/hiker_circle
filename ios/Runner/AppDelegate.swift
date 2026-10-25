@@ -54,7 +54,7 @@ import ActivityKit
   private var activeHikeLiveStatusChannel: FlutterMethodChannel?
   private var latestManualHikeStatus: ManualHikeLiveStatus?
   private var hikerBleBridge: HikerBleBridge?
-  private lazy var iosHikeSafetyMonitor = IOSHikeSafetyMonitor(
+  private lazy var iosHikeSafetyMonitor: IOSHikeSafetyMonitor = IOSHikeSafetyMonitor(
     warningStarted: { [weak self] in
       guard let self else { return }
       self.startFallStillnessCountdownVibration()
@@ -71,22 +71,34 @@ import ActivityKit
       )
     },
     escalationStarted: { [weak self] in
-      guard let self else { return }
-      self.stopSpokenPrompt()
-      try? self.startManualSosPattern()
-      self.updateLiveActivitySafetyState()
-      self.activeHikeLiveStatusChannel?.invokeMethod(
-        "onNativeSafetyEvent",
-        arguments: nil
-      )
+      self?.handleNativeSosEscalationStarted()
     },
     monitoringReset: { [weak self] in
       guard let self else { return }
       self.stopSpokenPrompt()
+      self.stopFallStillnessCountdownVibration()
       self.stopManualSosPattern()
       self.updateLiveActivitySafetyState()
     }
   )
+
+  private func handleNativeSosEscalationStarted() {
+    stopSpokenPrompt()
+    let pendingId = iosHikeSafetyMonitor.currentEventIdentifier
+    activeHikeLiveStatusChannel?.invokeMethod(
+      "onNativeSafetyEvent",
+      arguments: nil
+    )
+    updateLiveActivitySafetyState()
+    // Publish the response surface before potentially blocking audio setup.
+    DispatchQueue.main.async { [weak self] in
+      guard let self, let pendingId,
+            self.iosHikeSafetyMonitor.currentEventIdentifier == pendingId,
+            !self.iosHikeSafetyMonitor.localAlarmStopped else { return }
+      try? self.startManualSosPattern()
+    }
+  }
+
   private let sosTorchPattern: [(enabled: Bool, duration: TimeInterval)] = [
     (true, 0.22),
     (false, 0.18),
@@ -112,8 +124,11 @@ import ActivityKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    AppCheck.setAppCheckProviderFactory(HikerCircleAppCheckFactory())
     GeneratedPluginRegistrant.register(with: self)
+    // FlutterFire installs its own factory during registration. Override it
+    // afterwards, before Firebase is configured, so native/headless calls use
+    // the same signing-aware provider as Flutter.
+    AppCheck.setAppCheckProviderFactory(HikerCircleAppCheckFactory())
     speechSynthesizer.delegate = self
     if let registrar = registrar(forPlugin: "QrScannerPlugin") {
       let factory = QrScannerPlatformViewFactory(messenger: registrar.messenger())
@@ -298,6 +313,8 @@ import ActivityKit
         result(nil)
       case "shareText":
         self.shareText(call, result)
+      case "shareHike":
+        self.shareHike(call, result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -390,8 +407,14 @@ import ActivityKit
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     if response.actionIdentifier == IOSHikeSafetyMonitor.safeActionIdentifier {
-      iosHikeSafetyMonitor.cancelAlert(reason: "Notification response received")
-      let deepLink = "hikercircle://hike/safety-safe?source=ios_notification"
+      let eventId = response.notification.request.content.userInfo["eventId"] as? String ?? ""
+      _ = iosHikeSafetyMonitor.stopTriggeredAlarm(eventId: eventId)
+      var components = URLComponents()
+      components.scheme = "hikercircle"
+      components.host = "hike"
+      components.path = "/safety-alarm-stopped"
+      components.queryItems = [URLQueryItem(name: "eventId", value: eventId)]
+      let deepLink = components.string ?? "hikercircle://hike/safety"
       pendingDeepLink = deepLink
       deepLinkChannel?.invokeMethod("onDeepLink", arguments: deepLink)
       completionHandler()
@@ -527,8 +550,17 @@ import ActivityKit
         result(nil)
         #endif
       case "consumePendingSafetyEvent":
-        result(self.iosHikeSafetyMonitor.pendingEvent())
-      case "acknowledgeSafetyEvent", "cancelNativeSafetyAlert":
+        let arguments = call.arguments as? [String: Any]
+        result(self.iosHikeSafetyMonitor.pendingEvent(
+          preferCurrent: arguments?["preferCurrent"] as? Bool ?? false
+        ))
+      case "acknowledgeSafetyEvent":
+        let arguments = call.arguments as? [String: Any]
+        self.iosHikeSafetyMonitor.acknowledgeEvent(
+          eventId: arguments?["eventId"] as? String
+        )
+        result(nil)
+      case "cancelNativeSafetyAlert":
         self.iosHikeSafetyMonitor.cancelAlert(reason: "Safe response received")
         result(nil)
       case "markSafetyEventDispatched":
@@ -538,6 +570,16 @@ import ActivityKit
           message: arguments?["message"] as? String
         )
         result(nil)
+      case "stopTriggeredSafetyAlarm":
+        let arguments = call.arguments as? [String: Any]
+        result(self.iosHikeSafetyMonitor.stopTriggeredAlarm(
+          eventId: arguments?["eventId"] as? String
+        ))
+      case "wasSafetyAlarmStopped":
+        let arguments = call.arguments as? [String: Any]
+        result(self.iosHikeSafetyMonitor.wasSafetyAlarmStopped(
+          eventId: arguments?["eventId"] as? String
+        ))
       case "getNativeSafetyStatus":
         self.iosNativeSafetyStatus(result)
       case "requestIosSafetyPermissions":
@@ -950,8 +992,36 @@ import ActivityKit
       return
     }
 
+    presentShareItems([text], result: result)
+  }
+
+  private func shareHike(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+    guard let arguments = call.arguments as? [String: Any],
+          let text = arguments["text"] as? String,
+          let image = arguments["image"] as? FlutterStandardTypedData,
+          !text.isEmpty, !image.data.isEmpty, image.data.count <= 5 * 1024 * 1024 else {
+      result(FlutterError(code: "share_hike_missing", message: "The hike card is unavailable.", details: nil)); return
+    }
+    do {
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hike_shares", isDirectory: true)
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      for file in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+        if let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+           modified < Date().addingTimeInterval(-86400) { try? FileManager.default.removeItem(at: file) }
+      }
+      let shareDirectory = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+      try FileManager.default.createDirectory(at: shareDirectory, withIntermediateDirectories: true)
+      let file = shareDirectory.appendingPathComponent("HikerCircle hike.png")
+      try image.data.write(to: file, options: .atomic)
+      presentShareItems([file, text], result: result)
+    } catch {
+      result(FlutterError(code: "share_hike_failed", message: "Unable to prepare the hike card.", details: nil))
+    }
+  }
+
+  private func presentShareItems(_ items: [Any], result: @escaping FlutterResult) {
     let activityController = UIActivityViewController(
-      activityItems: [text],
+      activityItems: items,
       applicationActivities: nil
     )
 
@@ -1248,6 +1318,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private(set) var warningDeadline: Date?
   private var triggeredAt: Date?
   private var dispatchMessage: String?
+  private(set) var localAlarmStopped = false
   private var fallImpactAt: Date?
   private var fallQuietSince: Date?
 
@@ -1255,7 +1326,9 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private func key(_ suffix: String) -> String { Self.defaultsPrefix + suffix }
 
   var isActive: Bool { defaults.bool(forKey: key("active")) && !sessionId.isEmpty }
+  var currentEventIdentifier: String? { eventId }
   var safetyPhase: String {
+    if localAlarmStopped { return "monitoring" }
     switch phase {
     case .monitoring: return "monitoring"
     case .warning: return "warning"
@@ -1287,6 +1360,17 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     let incomingShareLiveLocation =
       (data["shareLiveLocation"] as? Bool) == true
     let previousSessionId = defaults.string(forKey: key("session_id"))
+    let incomingOwnerUid = data["ownerUid"] as? String ?? ""
+    let previousOwnerUid = defaults.string(forKey: key("owner_uid")) ?? ""
+    let replacingSession = previousSessionId != incomingSessionId
+      || previousOwnerUid != incomingOwnerUid
+    if replacingSession {
+      // A new hike must not overwrite a stopped SOS that Flutter has not yet
+      // durably accepted. Keep its original owner/session in a separate receipt.
+      archivePendingDispatchIfNeeded()
+      if eventId != nil { monitoringReset() }
+      clearEventState()
+    }
     sessionId = incomingSessionId
     trailName = (data["trailName"] as? String)?.trimmingCharacters(
       in: .whitespacesAndNewlines
@@ -1298,12 +1382,12 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     sensitivity = min(10, max(1, Self.doubleValue(data["sensorSensitivity"], fallback: 5)))
     fallDetectionEnabled = incomingFallDetectionEnabled
     shareLiveLocation = incomingShareLiveLocation
-    ownerUid = data["ownerUid"] as? String ?? ""
+    ownerUid = incomingOwnerUid
     locationUploadInterval = min(86400, max(5,
       Self.doubleValue(data["locationUploadIntervalMillis"], fallback: 60000) / 1000))
     firebaseTelemetryReady = true
 
-    if previousSessionId != incomingSessionId {
+    if replacingSession {
       phase = .monitoring
       lastMotionAt = Date()
       clearEventState()
@@ -1331,22 +1415,25 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       refreshTerminationWatchdog(force: true)
     } else {
       motionManager.stopDeviceMotionUpdates()
-      clearEventState()
-      phase = .monitoring
+      if phase == .readyForFlutterDispatch, let eventId {
+        _ = stopTriggeredAlarm(eventId: eventId)
+      } else {
+        clearEventState()
+        phase = .monitoring
+      }
       UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.watchdogNotificationIdentifier])
     }
     publishTelemetry(force: true)
     if fallDetectionEnabled && phase == .warning {
       warningStarted()
     } else if fallDetectionEnabled
-      && (phase == .readyForFlutterDispatch || phase == .dispatched) {
+      && !localAlarmStopped && (phase == .readyForFlutterDispatch || phase == .dispatched) {
       escalationStarted()
     }
   }
 
   func restorePersistedSessionIfNeeded() {
-    guard defaults.bool(forKey: key("active")),
-          let savedSessionId = defaults.string(forKey: key("session_id")),
+    guard let savedSessionId = defaults.string(forKey: key("session_id")),
           !savedSessionId.isEmpty else { return }
     sessionId = savedSessionId
     trailName = defaults.string(forKey: key("trail_name")) ?? "Active hike"
@@ -1359,6 +1446,9 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     ownerUid = defaults.string(forKey: key("owner_uid")) ?? ""
     locationUploadInterval = max(5, defaults.double(forKey: key("location_upload_interval")))
     restoreState()
+    // Ending a hike stops tracking, but an escalated receipt may still need
+    // Flutter dispatch after the process restarts.
+    guard defaults.bool(forKey: key("active")) else { return }
     startLocationUpdates()
     startTimer()
     if fallDetectionEnabled {
@@ -1369,7 +1459,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     if fallDetectionEnabled && phase == .warning {
       warningStarted()
     } else if fallDetectionEnabled
-      && (phase == .readyForFlutterDispatch || phase == .dispatched) {
+      && !localAlarmStopped && (phase == .readyForFlutterDispatch || phase == .dispatched) {
       escalationStarted()
     }
   }
@@ -1397,9 +1487,14 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       ]
     )
     defaults.set(false, forKey: key("active"))
-    clearEventState()
-    phase = .monitoring
-    sessionId = ""
+    if phase == .readyForFlutterDispatch, eventId != nil {
+      localAlarmStopped = true
+      persistEventState()
+    } else {
+      clearEventState()
+      phase = .monitoring
+      sessionId = ""
+    }
     fallDetectionEnabled = false
     shareLiveLocation = false
     latestLocation = nil
@@ -1420,23 +1515,52 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     scheduleMonitoringStoppedNotification(after: 1)
   }
 
-  func pendingEvent() -> [String: Any]? {
+  func pendingEvent(preferCurrent: Bool = false) -> [String: Any]? {
+    let current = currentEventPayload()
+    let currentOwner = FirebaseApp.app() == nil
+      ? ownerUid : (Auth.auth().currentUser?.uid ?? "")
+    let archived = archivedDispatchReceipts().first { receipt in
+      let receiptOwner = receipt["ownerUid"] as? String ?? ""
+      if !receiptOwner.isEmpty {
+        return !currentOwner.isEmpty && receiptOwner == currentOwner
+      }
+      // Legacy receipts lack an independent owner, so only the same active
+      // session can safely recover them. Never use a later account's contacts.
+      return isActive && receipt["sessionId"] as? String == sessionId
+    }
+    // Explicit alarm cleanup must inspect the live monitor rather than a
+    // stopped receipt that is being drained in the background.
+    if preferCurrent { return current ?? archived }
+    // Once the live event is durable, older silent receipts can drain without
+    // waiting for the hiker to stop the live alarm.
+    if phase == .dispatched, let archived { return archived }
+    return current ?? archived
+  }
+
+  private func currentEventPayload() -> [String: Any]? {
     guard let eventId else { return nil }
     var value: [String: Any] = [
       "eventId": eventId,
       "sessionId": sessionId,
+      "ownerUid": ownerUid,
       "kind": eventKind,
       "phase": phase.rawValue,
       "detectedAtMillis": Self.millis(detectedAt),
       "deadlineAtMillis": Self.millis(warningDeadline),
       "triggeredAtMillis": Self.millis(triggeredAt),
+      "localAlarmStopped": localAlarmStopped,
     ]
     if let dispatchMessage { value["dispatchMessage"] = dispatchMessage }
     return value
   }
 
   func cancelAlert(reason: String) {
-    guard isActive else { return }
+    if phase == .readyForFlutterDispatch, let eventId {
+      // A stale countdown or acknowledgement may arrive after escalation.
+      // It silences local output without withdrawing the pending emergency.
+      _ = stopTriggeredAlarm(eventId: eventId)
+      return
+    }
     UNUserNotificationCenter.current().removePendingNotificationRequests(
       withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
     )
@@ -1447,15 +1571,119 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     phase = .monitoring
     lastMotionAt = Date()
     persistMotionClock()
-    refreshTerminationWatchdog(force: true)
+    if isActive { refreshTerminationWatchdog(force: true) }
     monitoringReset()
   }
 
+  func acknowledgeEvent(eventId requestedEventId: String?) {
+    guard let requestedEventId, !requestedEventId.isEmpty,
+          requestedEventId == eventId else { return }
+    cancelAlert(reason: "Matching safety event acknowledged")
+  }
+
   func markDispatched(eventId requestedEventId: String?, message: String?) {
-    guard requestedEventId == eventId else { return }
+    guard let requestedEventId, !requestedEventId.isEmpty else { return }
+    if requestedEventId != eventId {
+      removeArchivedDispatchReceipt(eventId: requestedEventId)
+      return
+    }
+    removeArchivedDispatchReceipt(eventId: requestedEventId)
     phase = .dispatched
     dispatchMessage = message
     persistEventState()
+    if localAlarmStopped {
+      // Flutter has now durably saved/sent the alert. Only now may the stopped
+      // event be cleared; a quick slide must not discard pending dispatch.
+      cancelAlert(reason: "Stopped alert dispatch was saved")
+    }
+  }
+
+  @discardableResult
+  func stopTriggeredAlarm(eventId requestedEventId: String?) -> Bool {
+    guard let requestedEventId, !requestedEventId.isEmpty else { return false }
+    if requestedEventId != eventId {
+      // Archived receipts are already silent and remain pending until the
+      // matching durable dispatch acknowledgement arrives.
+      return archivedDispatchReceipts().contains {
+        $0["eventId"] as? String == requestedEventId
+      }
+    }
+    if phase == .warning {
+      recordStoppedSafetyAlarm(eventId: requestedEventId)
+      cancelAlert(reason: "Countdown safe response received")
+      return true
+    }
+    guard phase == .readyForFlutterDispatch || phase == .dispatched else { return false }
+    recordStoppedSafetyAlarm(eventId: requestedEventId)
+    localAlarmStopped = true
+    persistEventState()
+    UNUserNotificationCenter.current().removePendingNotificationRequests(
+      withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
+    )
+    UNUserNotificationCenter.current().removeDeliveredNotifications(
+      withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
+    )
+    monitoringReset()
+    if phase == .dispatched {
+      cancelAlert(reason: "Dispatched alarm stopped")
+    }
+    return true
+  }
+
+  func wasSafetyAlarmStopped(eventId requestedEventId: String?) -> Bool {
+    guard let requestedEventId, !requestedEventId.isEmpty else { return false }
+    let receipts = defaults.array(forKey: key("stopped_alarm_receipts")) as? [[String: Any]] ?? []
+    let currentOwner = FirebaseApp.app() == nil ? nil : Auth.auth().currentUser?.uid
+    return receipts.contains {
+      guard $0["eventId"] as? String == requestedEventId else { return false }
+      let receiptOwner = $0["ownerUid"] as? String ?? ""
+      // Legacy ownerless events remain scoped by Flutter's active session.
+      return receiptOwner.isEmpty || receiptOwner == currentOwner
+    }
+  }
+
+  private func recordStoppedSafetyAlarm(eventId: String) {
+    var receipts = defaults.array(forKey: key("stopped_alarm_receipts")) as? [[String: Any]] ?? []
+    receipts.removeAll { $0["eventId"] as? String == eventId }
+    receipts.append([
+      "eventId": eventId,
+      "ownerUid": ownerUid,
+      "stoppedAtMillis": Int64(Date().timeIntervalSince1970 * 1000),
+    ])
+    // Proof survives removal of the dispatch receipt, without growing forever.
+    defaults.set(Array(receipts.suffix(32)), forKey: key("stopped_alarm_receipts"))
+  }
+
+  private func archivedDispatchReceipts() -> [[String: Any]] {
+    defaults.array(forKey: key("pending_dispatch_receipts")) as? [[String: Any]] ?? []
+  }
+
+  private func archivePendingDispatchIfNeeded() {
+    guard phase == .readyForFlutterDispatch,
+          var receipt = currentEventPayload(), let eventId else { return }
+    receipt["localAlarmStopped"] = true
+    var receipts = archivedDispatchReceipts()
+    if !receipts.contains(where: { $0["eventId"] as? String == eventId }) {
+      receipts.append(receipt)
+      defaults.set(receipts, forKey: key("pending_dispatch_receipts"))
+    }
+    UNUserNotificationCenter.current().removePendingNotificationRequests(
+      withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
+    )
+    UNUserNotificationCenter.current().removeDeliveredNotifications(
+      withIdentifiers: [Self.warningNotificationIdentifier, Self.escalationNotificationIdentifier]
+    )
+  }
+
+  private func removeArchivedDispatchReceipt(eventId: String) {
+    let receipts = archivedDispatchReceipts()
+    let remaining = receipts.filter { $0["eventId"] as? String != eventId }
+    guard remaining.count != receipts.count else { return }
+    if remaining.isEmpty {
+      defaults.removeObject(forKey: key("pending_dispatch_receipts"))
+    } else {
+      defaults.set(remaining, forKey: key("pending_dispatch_receipts"))
+    }
   }
 
   private func startLocationUpdates() {
@@ -1587,6 +1815,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     warningDeadline = now.addingTimeInterval(Self.warningDuration)
     triggeredAt = nil
     dispatchMessage = nil
+    localAlarmStopped = false
     phase = .warning
     persistEventState()
     scheduleWarningNotification()
@@ -1816,6 +2045,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     warningDeadline = defaults.object(forKey: key("warning_deadline")) as? Date
     triggeredAt = defaults.object(forKey: key("triggered_at")) as? Date
     dispatchMessage = defaults.string(forKey: key("dispatch_message"))
+    localAlarmStopped = defaults.bool(forKey: key("local_alarm_stopped"))
   }
 
   private func persistMotionClock() {
@@ -1830,6 +2060,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     defaults.set(warningDeadline, forKey: key("warning_deadline"))
     defaults.set(triggeredAt, forKey: key("triggered_at"))
     defaults.set(dispatchMessage, forKey: key("dispatch_message"))
+    defaults.set(localAlarmStopped, forKey: key("local_alarm_stopped"))
   }
 
   private func clearEventState() {
@@ -1839,9 +2070,10 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     warningDeadline = nil
     triggeredAt = nil
     dispatchMessage = nil
+    localAlarmStopped = false
     for suffix in [
       "phase", "event_id", "event_kind", "detected_at",
-      "warning_deadline", "triggered_at", "dispatch_message",
+      "warning_deadline", "triggered_at", "dispatch_message", "local_alarm_stopped",
     ] {
       defaults.removeObject(forKey: key(suffix))
     }

@@ -183,6 +183,8 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
                             MaterialPageRoute<void>(
                               builder: (detailContext) => _FirstAidCategoryPage(
                                 category: category,
+                                emergencyTargetFuture: _emergencyTargetFuture,
+                                onCallEmergencyServices: _callEmergencyServices,
                                 onOpenSos: () {
                                   Navigator.of(detailContext).pop();
                                   Navigator.of(context).pop('sos');
@@ -243,6 +245,19 @@ class FirstAidTopic {
   final String guidanceSourceUrl;
 
   static const List<FirstAidTopic> defaults = [
+    FirstAidTopic(
+      id: 'cpr',
+      title: 'Adult CPR and AED',
+      category: 'CPR',
+      guidanceSource: 'St John Ambulance — How to do CPR (reviewed April 2025)',
+      guidanceSourceUrl: 'https://www.sja.org.uk/first-aid-advice/cpr/',
+      steps: [
+        'If an adult is unresponsive, call emergency services on speaker and check breathing.',
+        'If breathing is absent or abnormal, including gasping, start compressions at 100–120 per minute, 5–6 cm deep.',
+        'If trained, give 30 compressions and 2 breaths. Otherwise keep compressing. Follow the dispatcher and any AED prompts.',
+        'Continue until rescuers take over, normal breathing and signs of life return, or you cannot continue. Swap with a helper when possible.',
+      ],
+    ),
     FirstAidTopic(
       id: 'sprain',
       title: 'Sprain or Twisted Ankle',
@@ -318,6 +333,8 @@ class _FirstAidCategory {
   final String title;
   final List<FirstAidTopic> topics;
 
+  bool get isCpr => topics.any((topic) => topic.id == 'cpr');
+
   static List<_FirstAidCategory> fromTopics(List<FirstAidTopic> topics) {
     final grouped = <String, List<FirstAidTopic>>{};
     for (final topic in topics) {
@@ -329,10 +346,14 @@ class _FirstAidCategory {
           (entry) => _FirstAidCategory(title: entry.key, topics: entry.value),
         )
         .toList()
-      ..sort((a, b) => a.title.compareTo(b.title));
+      ..sort((a, b) {
+        if (a.isCpr != b.isCpr) return a.isCpr ? -1 : 1;
+        return a.title.compareTo(b.title);
+      });
   }
 
   IconData get icon {
+    if (isCpr) return Icons.monitor_heart_rounded;
     final lower = title.toLowerCase();
     if (lower.contains('bleeding')) {
       return Icons.bloodtype_rounded;
@@ -353,6 +374,7 @@ class _FirstAidCategory {
   }
 
   Color get color {
+    if (isCpr) return _GuideColors.red;
     final lower = title.toLowerCase();
     if (lower.contains('bleeding') || lower.contains('snake')) {
       return _GuideColors.red;
@@ -364,6 +386,7 @@ class _FirstAidCategory {
   }
 
   String get summary {
+    if (isCpr) return 'Adult chest compressions, rescue breaths and AED use.';
     final lower = title.toLowerCase();
     if (lower.contains('bleeding')) {
       return 'Control bleeding, keep the person still, and escalate early.';
@@ -401,10 +424,14 @@ class _FirstAidCategoryPage extends StatelessWidget {
   const _FirstAidCategoryPage({
     required this.category,
     required this.onOpenSos,
+    required this.emergencyTargetFuture,
+    required this.onCallEmergencyServices,
   });
 
   final _FirstAidCategory category;
   final VoidCallback onOpenSos;
+  final Future<EmergencyDialTarget> emergencyTargetFuture;
+  final Future<void> Function(EmergencyDialTarget) onCallEmergencyServices;
 
   @override
   Widget build(BuildContext context) {
@@ -457,10 +484,14 @@ class _FirstAidCategoryPage extends StatelessWidget {
                     ),
                   ],
                   const SizedBox(height: 10),
-                  if (scenarios.isEmpty)
+                  if (scenarios.isEmpty || category.isCpr)
                     _GuidanceSourceCard(topic: category.topics.first),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'When to use SOS'),
+                  _SectionTitle(
+                    label: category.isCpr
+                        ? 'Get emergency help now'
+                        : 'When to use SOS',
+                  ),
                   const SizedBox(height: 8),
                   _InsetGroup(
                     child: Padding(
@@ -478,7 +509,9 @@ class _FirstAidCategoryPage extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Escalate when safety is uncertain',
+                                  category.isCpr
+                                      ? 'Call emergency services'
+                                      : 'Escalate when safety is uncertain',
                                   style: Theme.of(context).textTheme.titleMedium
                                       ?.copyWith(
                                         color: _GuideColors.textFor(context),
@@ -488,7 +521,9 @@ class _FirstAidCategoryPage extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Use SOS if the person cannot move safely, symptoms worsen, or the group cannot return without help.',
+                                  category.isCpr
+                                      ? 'Use speakerphone and follow the dispatcher. Ask a helper to use HikerCircle SOS; do not pause CPR to use the app.'
+                                      : 'Use SOS if the person cannot move safely, symptoms worsen, or the group cannot return without help.',
                                   style: Theme.of(context).textTheme.bodySmall
                                       ?.copyWith(
                                         color: _GuideColors.secondaryTextFor(
@@ -501,10 +536,27 @@ class _FirstAidCategoryPage extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          FilledButton(
-                            onPressed: onOpenSos,
-                            child: const Text('Open SOS'),
-                          ),
+                          if (category.isCpr)
+                            FutureBuilder<EmergencyDialTarget>(
+                              future: emergencyTargetFuture,
+                              builder: (context, snapshot) => FilledButton(
+                                onPressed: snapshot.data == null
+                                    ? null
+                                    : () => unawaited(
+                                        onCallEmergencyServices(snapshot.data!),
+                                      ),
+                                child: Text(
+                                  snapshot.data == null
+                                      ? 'Call'
+                                      : 'Call ${snapshot.data!.number}',
+                                ),
+                              ),
+                            )
+                          else
+                            FilledButton(
+                              onPressed: onOpenSos,
+                              child: const Text('Open SOS'),
+                            ),
                         ],
                       ),
                     ),
@@ -528,6 +580,10 @@ class _CategoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _InsetGroup(
+      color: category.isCpr ? _GuideColors.cprSurfaceFor(context) : null,
+      borderColor: category.isCpr
+          ? _GuideColors.red.withValues(alpha: 0.22)
+          : null,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -619,6 +675,16 @@ class _CategoryHero extends StatelessWidget {
                   _InfoPill(label: topic.title, color: category.color),
               ],
             ),
+            if (category.isCpr) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Adult guidance. For a child, infant or drowning, tell the emergency dispatcher and follow their instructions. Practical CPR training is recommended.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _GuideColors.secondaryTextFor(context),
+                  height: 1.4,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1181,6 +1247,9 @@ class _ScenarioActionSheetState extends State<_ScenarioActionSheet> {
 }
 
 IconData _scenarioIcon(String id) => switch (id) {
+  'cpr_adult_collapse' || 'cpr_rescue_breaths' => Icons.monitor_heart_rounded,
+  'cpr_aed' => Icons.bolt_rounded,
+  'cpr_breathing_normally' => Icons.air_rounded,
   'life_threatening_external' ||
   'major_fall_multiple_injuries' ||
   'heat_stroke' ||
@@ -1218,6 +1287,8 @@ IconData _scenarioIcon(String id) => switch (id) {
 };
 
 Color _scenarioColor(String id) => switch (id) {
+  'cpr_adult_collapse' || 'cpr_rescue_breaths' || 'cpr_aed' => _GuideColors.red,
+  'cpr_breathing_normally' => const Color(0xFF5478C8),
   'life_threatening_external' ||
   'suspected_internal' ||
   'suspected_spinal_injury' ||
@@ -1490,8 +1561,6 @@ class _InfoPill extends StatelessWidget {
   }
 }
 
-
-
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon, this.color = _GuideColors.green});
 
@@ -1513,9 +1582,11 @@ class _Glyph extends StatelessWidget {
 }
 
 class _InsetGroup extends StatelessWidget {
-  const _InsetGroup({required this.child});
+  const _InsetGroup({required this.child, this.color, this.borderColor});
 
   final Widget child;
+  final Color? color;
+  final Color? borderColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1523,7 +1594,8 @@ class _InsetGroup extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: _GuideColors.surfaceFor(context),
+          color: color ?? _GuideColors.surfaceFor(context),
+          border: borderColor == null ? null : Border.all(color: borderColor!),
           borderRadius: BorderRadius.circular(12),
         ),
         child: child,
@@ -1550,6 +1622,9 @@ abstract final class _GuideColors {
 
   static Color surfaceFor(BuildContext context) =>
       isDark(context) ? const Color(0xFF141C17) : Colors.white;
+
+  static Color cprSurfaceFor(BuildContext context) =>
+      isDark(context) ? const Color(0xFF342224) : const Color(0xFFFFF0EB);
 
   static Color greenSoftFor(BuildContext context) =>
       isDark(context) ? const Color(0xFF183625) : greenSoft;

@@ -1,15 +1,15 @@
 // Community trail cautions validate evidence and transact confirmations, resolutions, and reopened report cycles.
 'use strict';
 const {randomUUID} = require('node:crypto');
+const {TYPE_CATEGORIES, classifyHazard, hazardExpiry, REPORT_LIFETIME_MS} = require('./trail_hazard_policy');
 const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
-const LIFETIME_MS = 7 * 86400000;
-const TYPES = new Set(['Slippery pathway','Loose rock','Deep mud','Ice or snow','Fallen tree','Landslide','Closed trail','Other obstruction','Flooded route','Fast river crossing','Damaged bridge','Wild animal sighting','Snakes','Stinging insects','Damaged steps','Unsafe ladder or rope','Missing sign','Unsafe human activity','Poor visibility','Other']);
+const LIFETIME_MS = REPORT_LIFETIME_MS;
+const TYPES = TYPE_CATEGORIES;
 const MIME = {'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp','gif':'image/gif','heic':'image/heic','heif':'image/heif','mp4':'video/mp4','mov':'video/quicktime','m4v':'video/x-m4v'};
 function fail(code, message) { const e = Error(message); e.code = code; throw e; }
 function id(value) { if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,180}$/.test(value)) fail('invalid-argument','Invalid caution identity.'); return value; }
 function note(value) { if (value == null) return ''; if (typeof value !== 'string' || value.length > 1000) fail('invalid-argument','Keep your note under 1,000 characters.'); return value.trim(); }
-function millis(value) { return value?.toMillis ? value.toMillis() : typeof value === 'string' ? Date.parse(value) : NaN; }
-function expires(report) { return millis(report.expiresAt) || millis(report.reportedAt) + LIFETIME_MS || Date.parse(report.reportedAtLocal) + LIFETIME_MS; }
+function expires(report) { return hazardExpiry(report); }
 function active(report, now) { return !['rejected','deleted'].includes(report.status) && Number.isFinite(expires(report)) && now < expires(report); }
 
 // mediaFor: Verify owner paths, MIME types, file sizes, and the combined media budget.
@@ -59,7 +59,7 @@ async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp
     }
     const reportedAt = timestamp(now);
     tx.create(reference, {hazardId, trailId, trailName:data.trailName.trim(), hazardType:data.hazardType,
-      description, latitude:data.latitude, longitude:data.longitude, media, severity:'moderate',
+      description, latitude:data.latitude, longitude:data.longitude, media, ...classifyHazard(data.hazardType),
       reportedBy:uid, reportedByPhoneNumber:phone, status:'unverified', reportLabel:'Community report',
       reportedAt, reportedAtLocal:new Date(now).toISOString(), expiresAt:timestamp(now + LIFETIME_MS),
       reportCount:1, resolutionCount:0, cycle:0, resolutionId:null});
@@ -107,7 +107,7 @@ async function update({db, bucket, uid, data, now = Date.now(), timestamp}) {
       }
       return {hazardId, duplicate:true};
     }
-    const patch = {cycle, updatedAt:at};
+    const patch = {cycle, updatedAt:at, ...classifyHazard(report.hazardType)};
     if (kind === 'resolution') {
       patch.resolutionCount = (report.resolutionCount || 0) + 1;
       patch.resolutionId = report.resolutionId || requestId;

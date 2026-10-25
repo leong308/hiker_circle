@@ -19,6 +19,7 @@ import '../Model/app_session.dart';
 import 'secure_local_database.dart';
 
 part 'local_community_database.dart';
+part 'local_planning_database.dart';
 
 @immutable
 class LocalAchievementProgressCache {
@@ -710,6 +711,7 @@ class LocalSessionDatabase {
     required String ownerPhoneNumber,
     required Iterable<UpcomingHike> upcomingHikes,
     bool pruneMissing = false,
+    bool localEdit = false,
   }) async {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty) {
@@ -729,22 +731,23 @@ class LocalSessionDatabase {
       for (final entry in hikes.entries) {
         final hike = entry.value;
         final payload = hike.toPersistence();
-        if (hike.draft == null) {
-          final existing = await transaction.query(
-            'planned_hike_state',
-            columns: ['upcoming_payload_json'],
-            where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
-            whereArgs: [owner, entry.key],
-            limit: 1,
+        final existing = await transaction.query(
+          'planned_hike_state',
+          where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+          whereArgs: [owner, entry.key],
+          limit: 1,
+        );
+        if (!localEdit && existing.isNotEmpty) {
+          final saved = _decodeJsonMap(
+            existing.first['upcoming_payload_json'] as String?,
           );
-          if (existing.isNotEmpty) {
-            final saved = _decodeJsonMap(
-              existing.first['upcoming_payload_json'] as String?,
-            );
-            final savedDraft = saved['draft'];
-            if (savedDraft is Map) {
-              payload['draft'] = Map<String, dynamic>.from(savedDraft);
-            }
+          final savedDraft = saved['draft'];
+          // A different cloud hash does not make it newer than preparation
+          // edited on this phone. Cloud membership/timing can still refresh.
+          if (savedDraft is Map &&
+              stableContentHash(savedDraft) !=
+                  stableContentHash(payload['draft'])) {
+            payload['draft'] = Map<String, dynamic>.from(savedDraft);
           }
         }
         final initialChecklist = GearChecklistCatalog.sanitize(
@@ -760,7 +763,21 @@ class LocalSessionDatabase {
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
         await transaction.update(
           'planned_hike_state',
-          {'upcoming_payload_json': jsonEncode(payload), 'updated_at': now},
+          {
+            'upcoming_payload_json': jsonEncode(payload),
+            if (!localEdit) 'has_cloud_snapshot': 1,
+            if (localEdit)
+              'completed_checklist_json': jsonEncode(initialChecklist),
+            'preparation_hash': _preparationHash(
+              payload,
+              localEdit || existing.isEmpty
+                  ? initialChecklist
+                  : _decodeJsonStringList(
+                      existing.first['completed_checklist_json'] as String?,
+                    ),
+            ),
+            'updated_at': now,
+          },
           where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
           whereArgs: [owner, entry.key],
         );
@@ -819,18 +836,30 @@ class LocalSessionDatabase {
                 pendingPayload['draft'] as Map,
               );
             }
-            final existingChecklist = _decodeJsonStringList(
-              targetRows.first['completed_checklist_json'] as String?,
-            );
-            final transferredChecklist = existingChecklist.isEmpty
-                ? pendingState.completedChecklistItems.toList()
-                : existingChecklist;
+            final transferredChecklist = pendingState.completedChecklistItems
+                .toList();
             transferredChecklist.sort();
             await transaction.update(
               'planned_hike_state',
               {
                 'upcoming_payload_json': jsonEncode(confirmedPayload),
                 'completed_checklist_json': jsonEncode(transferredChecklist),
+                'preparation_hash': _preparationHash(
+                  confirmedPayload,
+                  transferredChecklist,
+                ),
+                'creation_key': pendingRow['creation_key'] ?? '',
+                'join_policy': pendingRow['join_policy'] ?? 'approval',
+                'reminder_preference_json':
+                    pendingRow['reminder_preference_json'] ??
+                    targetRows.first['reminder_preference_json'],
+                'reminder_sync_pending':
+                    pendingRow['reminder_sync_pending'] ?? 0,
+                'is_consumed':
+                    pendingState.isConsumed ||
+                        targetRows.first['is_consumed'] == 1
+                    ? 1
+                    : 0,
                 'updated_at': now,
               },
               where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
@@ -842,14 +871,25 @@ class LocalSessionDatabase {
             where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
             whereArgs: [owner, pendingState.upcomingHike.id],
           );
+          await transaction.update(
+            'local_preferences',
+            {'preference_key': 'hike_preparation_sharing:${confirmed.id}'},
+            where: 'owner_phone_number = ? AND preference_key = ?',
+            whereArgs: [
+              owner,
+              'hike_preparation_sharing:${pendingState.upcomingHike.id}',
+            ],
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
         }
       }
       if (!pruneMissing) return;
       if (hikes.isEmpty) {
         await transaction.delete(
           'planned_hike_state',
-          where: 'owner_phone_number = ?',
-          whereArgs: [owner],
+          where:
+              'owner_phone_number = ? AND schedule_sync_pending = 0 AND has_cloud_snapshot = 1 AND upcoming_hike_id NOT LIKE ?',
+          whereArgs: [owner, 'local_pending_%'],
         );
         return;
       }
@@ -857,8 +897,8 @@ class LocalSessionDatabase {
       await transaction.delete(
         'planned_hike_state',
         where:
-            'owner_phone_number = ? AND upcoming_hike_id NOT IN ($placeholders)',
-        whereArgs: [owner, ...hikes.keys],
+            'owner_phone_number = ? AND schedule_sync_pending = 0 AND has_cloud_snapshot = 1 AND upcoming_hike_id NOT LIKE ? AND upcoming_hike_id NOT IN ($placeholders)',
+        whereArgs: [owner, 'local_pending_%', ...hikes.keys],
       );
     });
   }
@@ -874,7 +914,6 @@ class LocalSessionDatabase {
       where: 'owner_phone_number = ?',
       whereArgs: [owner],
       orderBy: 'updated_at DESC',
-      limit: 100,
     );
     final states = <LocalPlannedHikeState>[];
     for (final row in rows) {
@@ -893,20 +932,37 @@ class LocalSessionDatabase {
     required Iterable<String> completedItems,
   }) async {
     final owner = ownerPhoneNumber.trim();
-    final hikeId = upcomingHikeId.trim();
-    if (owner.isEmpty || hikeId.isEmpty) return;
+    if (owner.isEmpty || upcomingHikeId.trim().isEmpty) return;
     final items = GearChecklistCatalog.sanitize(completedItems).toList()
       ..sort();
     final database = await _openDatabase();
-    await database.update(
-      'planned_hike_state',
-      {
-        'completed_checklist_json': jsonEncode(items),
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      },
-      where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
-      whereArgs: [owner, hikeId],
-    );
+    await database.transaction((transaction) async {
+      final hikeId = await _resolvePlannedHikeId(
+        transaction,
+        owner,
+        upcomingHikeId.trim(),
+      );
+      final rows = await transaction.query(
+        'planned_hike_state',
+        where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+        whereArgs: [owner, hikeId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      await transaction.update(
+        'planned_hike_state',
+        {
+          'completed_checklist_json': jsonEncode(items),
+          'preparation_hash': _preparationHash(
+            _decodeJsonMap(rows.first['upcoming_payload_json'] as String?),
+            items,
+          ),
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+        whereArgs: [owner, hikeId],
+      );
+    });
   }
 
   Future<void> markPlannedHikeConsumed({
@@ -1093,10 +1149,13 @@ class LocalSessionDatabase {
         stableContentHash(
               jsonDecode(existing.single['payload_json'] as String),
             ) ==
-            stableContentHash(entity.payload)
-        && existing.single['source_updated_at'] == entity.sourceUpdatedAt?.toUtc().toIso8601String()
-        && existing.single['expires_at'] == entity.expiresAt?.toUtc().toIso8601String())
+            stableContentHash(entity.payload) &&
+        existing.single['source_updated_at'] ==
+            entity.sourceUpdatedAt?.toUtc().toIso8601String() &&
+        existing.single['expires_at'] ==
+            entity.expiresAt?.toUtc().toIso8601String()) {
       return;
+    }
     await database.insert('cached_entities', {
       'owner_phone_number': entity.ownerPhoneNumber.trim(),
       'entity_type': entity.entityType.trim(),
@@ -2077,7 +2136,7 @@ class LocalSessionDatabase {
 
     final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 31,
+      version: 32,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2107,6 +2166,7 @@ class LocalSessionDatabase {
         await _createNearbySosEventsTable(database);
         await _createPendingHikeEndsTable(database);
         await _createPlannedHikeStateTable(database);
+        await _createUpcomingHikeRemindersTable(database);
         await _createAchievementProgressCacheTable(database);
         await _createOfflineFirstTables(database);
         await _createStaticHazardTables(database);
@@ -2416,6 +2476,40 @@ class LocalSessionDatabase {
           await database.execute('DROP TABLE IF EXISTS offline_map_regions');
           await database.execute('DROP TABLE IF EXISTS network_observations');
         }
+        if (oldVersion < 32) {
+          for (final column in const {
+            'preparation_hash': "TEXT NOT NULL DEFAULT ''",
+            'schedule_sync_pending': 'INTEGER NOT NULL DEFAULT 0',
+            'creation_key': "TEXT NOT NULL DEFAULT ''",
+            'join_policy': "TEXT NOT NULL DEFAULT 'approval'",
+            'reminder_preference_json': 'TEXT',
+            'reminder_sync_pending': 'INTEGER NOT NULL DEFAULT 0',
+            'has_cloud_snapshot': 'INTEGER NOT NULL DEFAULT 1',
+          }.entries) {
+            await _addColumnIfMissing(
+              database,
+              tableName: 'planned_hike_state',
+              columnName: column.key,
+              definition: column.value,
+            );
+          }
+          await _createUpcomingHikeRemindersTable(database);
+          for (final row in await database.query('planned_hike_state')) {
+            await database.update(
+              'planned_hike_state',
+              {
+                'preparation_hash': _preparationHash(
+                  _decodeJsonMap(row['upcoming_payload_json'] as String?),
+                  _decodeJsonStringList(
+                    row['completed_checklist_json'] as String?,
+                  ),
+                ),
+              },
+              where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
+              whereArgs: [row['owner_phone_number'], row['upcoming_hike_id']],
+            );
+          }
+        }
       },
     );
     _openingDatabase = opening;
@@ -2528,7 +2622,7 @@ class LocalSessionDatabase {
 
   Future<List<LocalQueuedAlert>> loadQueuedAlerts({
     required String ownerPhoneNumber,
-    int limit = 20,
+    int? limit = 20,
   }) async {
     final database = await _openDatabase();
     final owner = ownerPhoneNumber.trim();
@@ -2539,7 +2633,7 @@ class LocalSessionDatabase {
       'queued_alerts',
       where: 'owner_phone_number = ? AND send_status IN (?, ?)',
       whereArgs: [owner, 'queued', 'retry'],
-      orderBy: 'created_at ASC',
+      orderBy: 'created_at ASC, id ASC',
       limit: limit,
     );
     return rows.map(LocalQueuedAlert.fromRow).toList();
@@ -2903,6 +2997,13 @@ class LocalSessionDatabase {
         upcoming_hike_id TEXT NOT NULL,
         upcoming_payload_json TEXT NOT NULL,
         completed_checklist_json TEXT NOT NULL DEFAULT '[]',
+        preparation_hash TEXT NOT NULL DEFAULT '',
+        schedule_sync_pending INTEGER NOT NULL DEFAULT 0,
+        creation_key TEXT NOT NULL DEFAULT '',
+        join_policy TEXT NOT NULL DEFAULT 'approval',
+        reminder_preference_json TEXT,
+        reminder_sync_pending INTEGER NOT NULL DEFAULT 0,
+        has_cloud_snapshot INTEGER NOT NULL DEFAULT 0,
         is_consumed INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (owner_phone_number, upcoming_hike_id)
@@ -3512,6 +3613,12 @@ class LocalPlannedHikeState {
     required this.completedChecklistItems,
     required this.isConsumed,
     required this.updatedAt,
+    this.preparationHash = '',
+    this.scheduleSyncPending = false,
+    this.creationKey = '',
+    this.joinPolicy = 'approval',
+    this.reminderPreference,
+    this.reminderSyncPending = false,
   });
 
   factory LocalPlannedHikeState.fromRow(Map<String, Object?> row) {
@@ -3533,6 +3640,16 @@ class LocalPlannedHikeState {
     return LocalPlannedHikeState(
       ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
       upcomingHike: UpcomingHike.fromFirestore(hikeId, payload),
+      preparationHash: row['preparation_hash'] as String? ?? '',
+      scheduleSyncPending: row['schedule_sync_pending'] == 1,
+      creationKey: row['creation_key'] as String? ?? '',
+      joinPolicy: row['join_policy'] as String? ?? 'approval',
+      reminderPreference: row['reminder_preference_json'] == null
+          ? null
+          : HikeReminderPreference.fromFirestore(
+              _decodeJsonMap(row['reminder_preference_json'] as String?),
+            ),
+      reminderSyncPending: row['reminder_sync_pending'] == 1,
       completedChecklistItems: GearChecklistCatalog.sanitize(checklist),
       isConsumed: row['is_consumed'] == 1,
       updatedAt:
@@ -3543,6 +3660,12 @@ class LocalPlannedHikeState {
 
   final String ownerPhoneNumber;
   final UpcomingHike upcomingHike;
+  final String preparationHash;
+  final bool scheduleSyncPending;
+  final String creationKey;
+  final String joinPolicy;
+  final HikeReminderPreference? reminderPreference;
+  final bool reminderSyncPending;
   final Set<String> completedChecklistItems;
   final bool isConsumed;
   final DateTime updatedAt;

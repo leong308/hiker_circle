@@ -15,6 +15,7 @@ class HikerBottomNavBar extends StatelessWidget {
     required this.currentIndex,
     required this.onDestinationSelected,
     this.destinations = standardDestinations,
+    this.queuedSosCount = 0,
   }) : assert(destinations.length >= 2),
        assert(currentIndex >= 0),
        assert(currentIndex < destinations.length);
@@ -29,6 +30,7 @@ class HikerBottomNavBar extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onDestinationSelected;
   final List<HikerBottomNavDestination> destinations;
+  final int queuedSosCount;
 
   @override
   Widget build(BuildContext context) {
@@ -45,10 +47,27 @@ class HikerBottomNavBar extends StatelessWidget {
 
     return LiquidGlassBar(
       items: [
-        for (final destination in destinations)
+        for (var index = 0; index < destinations.length; index++)
           LiquidGlassBarItem(
-            iconData: destination.icon,
-            label: destination.label,
+            iconData: destinations[index].icon,
+            iconWidget: destinations[index].label == 'SOS' && queuedSosCount > 0
+                ? Semantics(
+                    label: '$queuedSosCount queued SOS alerts',
+                    child: Badge.count(
+                      count: queuedSosCount,
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      textColor: Theme.of(context).colorScheme.onError,
+                      child: Icon(
+                        destinations[index].icon,
+                        size: 23,
+                        color: currentIndex == index
+                            ? activeColor
+                            : inactiveColor,
+                      ),
+                    ),
+                  )
+                : null,
+            label: destinations[index].label,
           ),
       ],
       currentIndex: currentIndex,

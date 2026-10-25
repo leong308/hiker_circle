@@ -724,10 +724,12 @@ class SosQueuedDispatch {
     required this.pendingContactCount,
     required this.lastError,
     required this.message,
+    this.alertId = '',
     this.triggerLocation,
   });
 
   final int id;
+  final String alertId;
   final SosAlertMode mode;
   final DateTime triggeredAt;
   final DateTime createdAt;

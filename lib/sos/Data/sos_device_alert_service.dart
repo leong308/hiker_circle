@@ -38,15 +38,8 @@ class SosDeviceAlertService {
     };
   }
 
-  Future<void> stopManualSosPattern() async {
-    try {
-      await _channel.invokeMethod<void>('stopManualSosPattern');
-    } on MissingPluginException {
-      // Optional native cleanup.
-    } on PlatformException {
-      // Cleanup is best-effort when the native activity is already stopping.
-    }
-  }
+  Future<void> stopManualSosPattern({bool strict = false}) =>
+      _stopNativeOutput('stopManualSosPattern', strict: strict);
 
   Future<void> startFlashlightPattern() async {
     await _channel.invokeMethod<void>('startFlashlightPattern');
@@ -70,13 +63,23 @@ class SosDeviceAlertService {
     }
   }
 
-  Future<void> stopFallStillnessCountdownVibration() async {
+  Future<void> stopFallStillnessCountdownVibration({bool strict = false}) =>
+      _stopNativeOutput('stopFallStillnessCountdownVibration', strict: strict);
+
+  /// Explicit slide cancellation must report failure and release its busy state
+  /// if native cleanup stalls. Other lifecycle callers retain best-effort stops.
+  Future<void> _stopNativeOutput(String method, {required bool strict}) async {
     try {
-      await _channel.invokeMethod<void>('stopFallStillnessCountdownVibration');
+      final operation = _channel.invokeMethod<void>(method);
+      if (strict) {
+        await operation.timeout(const Duration(seconds: 4));
+      } else {
+        await operation;
+      }
     } on MissingPluginException {
-      // Optional native helper. The fallback haptic call is one-shot only.
+      // Desktop/web do not provide the optional hardware outputs.
     } on PlatformException {
-      // Cleanup is best-effort during lifecycle transitions.
+      if (strict) rethrow;
     }
   }
 
@@ -161,15 +164,8 @@ class SosDeviceAlertService {
     });
   }
 
-  Future<void> stopSpokenPrompt() async {
-    try {
-      await _channel.invokeMethod<void>('stopSpokenPrompt');
-    } on MissingPluginException {
-      // Optional native cleanup.
-    } on PlatformException {
-      // Cleanup is best-effort during lifecycle transitions.
-    }
-  }
+  Future<void> stopSpokenPrompt({bool strict = false}) =>
+      _stopNativeOutput('stopSpokenPrompt', strict: strict);
 
   Future<SosOutputVolumeStatus> getOutputVolumeStatus({
     double minimumRequiredVolume = minimumAudibleOutputVolume,
@@ -227,6 +223,23 @@ class SosDeviceAlertService {
     await _channel.invokeMethod<void>('shareText', {
       'subject': subject,
       'text': text,
+    });
+  }
+
+  /// Keep ordinary text sharing unchanged; hike cards use a separate native
+  /// action with a cached PNG and temporary read access for the receiving app.
+  Future<void> shareHike({
+    required String subject,
+    required String text,
+    Uint8List? routeImage,
+  }) async {
+    if (routeImage == null || routeImage.isEmpty) {
+      return shareText(subject: subject, text: text);
+    }
+    await _channel.invokeMethod<void>('shareHike', {
+      'subject': subject,
+      'text': text,
+      'image': routeImage,
     });
   }
 }

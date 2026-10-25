@@ -53,7 +53,7 @@ function createMobileSessionSecurity({db, auth, HttpsError, timestamp, setUser})
     if (state.data()?.activeSessionId !== sid) {
       fail('This account was signed out because a new session started on another device.', 'session-replaced');
     }
-    return {uid, sid, state: state.data()};
+    return {uid, sid, state: state.data(), account: account.data()};
   }
   function requireRecent(request) {
     if (!recentVerification(request.auth)) {

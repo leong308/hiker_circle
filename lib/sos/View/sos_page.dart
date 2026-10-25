@@ -14,7 +14,8 @@ import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../home/View/first_aid_guide_page.dart';
-import '../../home/View/gear_checklist_page.dart';
+import '../../home/View/gears_required_page.dart';
+import '../../home/View/hike_start_navigation.dart';
 import '../../me/View/location_sharing_page.dart';
 import '../../core/services/hiker_ble_service.dart';
 import '../../core/services/network_reachability_service.dart';
@@ -25,6 +26,7 @@ import '../Data/nearby_sos_event_repository.dart';
 import '../Data/sos_alert_repository.dart';
 import '../Data/sos_device_alert_service.dart';
 import '../Model/sos_models.dart';
+import '../Model/sos_presentation_controller.dart';
 import '../Model/nearby_sos_event.dart';
 import '../ModelView/sos_view_model.dart';
 import 'emergency_contacts_page.dart';
@@ -37,11 +39,13 @@ class _QueuedSosRequest {
     required this.mode,
     required this.triggeredAt,
     required this.triggerSource,
+    required this.presentationId,
   });
 
   final SosAlertMode mode;
   final DateTime triggeredAt;
   final SosAlertTriggerSource triggerSource;
+  final int presentationId;
 }
 
 class SosPage extends StatefulWidget {
@@ -57,6 +61,7 @@ class SosPage extends StatefulWidget {
     this.nearbySosEventRepository,
     this.sosAlertRepository,
     this.emergencyContactsRepository,
+    this.presentationController,
     this.nearbySosRevision = 0,
     this.networkStatusOverride,
     this.firebaseBootstrapResult = const FirebaseBootstrapResult.available(),
@@ -72,6 +77,7 @@ class SosPage extends StatefulWidget {
   final NearbySosEventRepository? nearbySosEventRepository;
   final SosAlertRepository? sosAlertRepository;
   final EmergencyContactsRepository? emergencyContactsRepository;
+  final SosPresentationController? presentationController;
   final int nearbySosRevision;
 
   /// Optional presentation state for isolated previews; dispatch is unchanged.
@@ -87,6 +93,10 @@ class _SosPageState extends State<SosPage> {
       const SosDeviceAlertService();
   final HikerBleService _bleService = const HikerBleService();
   final Queue<_QueuedSosRequest> _queuedSosRequests = Queue();
+  final SosPresentationController _ownedPresentationController =
+      SosPresentationController();
+  SosPresentationController get _presentationController =>
+      widget.presentationController ?? _ownedPresentationController;
   late final NearbySosEventRepository _nearbySosEventRepository;
   Future<void>? _sosRequestDrain;
   late final SosViewModel viewModel;
@@ -103,6 +113,9 @@ class _SosPageState extends State<SosPage> {
   bool _nearbySosReloadPending = false;
   Timer? _nearbySosRefreshTimer;
   StreamSubscription<NetworkReachabilitySnapshot>? _networkSubscription;
+  StreamSubscription<void>? _connectionSubscription;
+  final ValueNotifier<int> _eventsRevision = ValueNotifier(0);
+  bool _isRefreshingEvents = false;
   NetworkReachabilitySnapshot _networkSnapshot =
       const NetworkReachabilitySnapshot(
         state: NetworkReachabilityState.checking,
@@ -131,6 +144,12 @@ class _SosPageState extends State<SosPage> {
     _networkSubscription = NetworkReachabilityService.instance.snapshots.listen(
       _handleNetworkReachabilityChanged,
     );
+    _connectionSubscription = NetworkReachabilityService
+        .instance
+        .connectionAvailable
+        .listen((_) {
+          unawaited(viewModel.flushQueuedAlerts());
+        });
     unawaited(NetworkReachabilityService.instance.start());
     unawaited(_loadEmergencyContactsAndFlushQueue());
     unawaited(_loadCustomWhatsAppNotes());
@@ -173,16 +192,27 @@ class _SosPageState extends State<SosPage> {
       unawaited(_deviceAlertService.stopManualSosPattern());
     }
     _networkSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    _eventsRevision.dispose();
     _nearbySosRefreshTimer?.cancel();
     unawaited(NetworkReachabilityService.instance.stop());
     viewModel.removeListener(_refresh);
     viewModel.dispose();
+    _ownedPresentationController.dispose();
     super.dispose();
   }
 
   void _refresh() {
     if (!mounted) return;
+    final result = viewModel.latestSosAlertResult;
+    if (result != null) {
+      _presentationController.updateDelivery(
+        result.alert,
+        queuedForRetry: result.queuedForRetry,
+      );
+    }
     setState(() {});
+    _eventsRevision.value++;
   }
 
   Future<void> _loadNearbySosEvents() async {
@@ -210,6 +240,7 @@ class _SosPageState extends State<SosPage> {
       debugPrint('Unable to load nearby SOS events: $error');
     } finally {
       _isLoadingNearbySosEvents = false;
+      if (mounted) _eventsRevision.value++;
       if (_nearbySosReloadPending && mounted) {
         _nearbySosReloadPending = false;
         unawaited(_loadNearbySosEvents());
@@ -295,19 +326,14 @@ class _SosPageState extends State<SosPage> {
     setState(() {
       _networkSnapshot = snapshot;
     });
-    if (!wasOnline && snapshot.isOnline) {
+    if (snapshot.isOnline && (!wasOnline || viewModel.queuedAlertCount > 0)) {
       unawaited(_flushQueueAfterNetworkRestore());
     }
   }
 
   /// Retry queued SOS dispatch work after confirmed reachability returns.
   Future<void> _flushQueueAfterNetworkRestore() async {
-    if (viewModel.queuedAlertCount == 0) {
-      await viewModel.loadQueuedAlertCount();
-    }
-    if (viewModel.queuedAlertCount > 0) {
-      await viewModel.flushQueuedAlerts();
-    }
+    await viewModel.flushQueuedAlerts();
   }
 
   String _customWhatsAppNoteFor(SosAlertMode mode) {
@@ -351,6 +377,7 @@ class _SosPageState extends State<SosPage> {
         setState(() {
           _isLoadingAdminSosSystemLogs = false;
         });
+        _eventsRevision.value++;
       }
     }
   }
@@ -392,6 +419,15 @@ class _SosPageState extends State<SosPage> {
   }
 
   Future<void> _handleManualSos() async {
+    // This is a preflight check: once the countdown expires, the triggered
+    // surface and local alarm must not wait behind another volume dialog.
+    final volumeReady = await ensureIosSosOutputVolumeReady(
+      context: context,
+      deviceAlertService: _deviceAlertService,
+      message:
+          '${SosAlertMode.manual.label} uses iPhone media volume for the local alarm. Turn it up before continuing.',
+    );
+    if (!volumeReady || !mounted) return;
     unawaited(HapticFeedback.heavyImpact());
     final shouldSend = await showCupertinoDialog<bool>(
       context: context,
@@ -405,16 +441,6 @@ class _SosPageState extends State<SosPage> {
       return;
     }
 
-    // A user-initiated alert may offer an alarm-volume check, but that dialog
-    // stays outside the dispatch queue so a hardware SOS can still be sent
-    // while the dialog is open.
-    final volumeReady = await ensureIosSosOutputVolumeReady(
-      context: context,
-      deviceAlertService: _deviceAlertService,
-      message:
-          '${SosAlertMode.manual.label} uses iPhone media volume for the local alarm. Turn it up before continuing.',
-    );
-    if (!volumeReady || !mounted) return;
     await _enqueueAlert(SosAlertMode.manual);
   }
 
@@ -462,11 +488,66 @@ class _SosPageState extends State<SosPage> {
   }
 
   void _openQueuedDispatches() {
-    if (viewModel.queuedAlertCount <= 0) return;
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => _QueuedSosDispatchesPage(
+          phoneNumber: widget.session.phoneNumber,
           loadDispatches: viewModel.loadQueuedDispatches,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openEmergencyContacts() async {
+    final contacts = await Navigator.of(context).push<List<EmergencyContact>>(
+      MaterialPageRoute<List<EmergencyContact>>(
+        builder: (_) => EmergencyContactsPage(
+          session: widget.session,
+          initialContacts: viewModel.emergencyContacts,
+          repository: viewModel.emergencyContactsRepository,
+        ),
+      ),
+    );
+    if (contacts != null && mounted) {
+      viewModel.replaceEmergencyContacts(contacts);
+    }
+  }
+
+  Future<void> _refreshSosEvents() async {
+    if (!mounted || _isRefreshingEvents) return;
+    _isRefreshingEvents = true;
+    _eventsRevision.value++;
+    try {
+      await Future.wait([
+        widget.session.isAdmin
+            ? _loadAdminSosSystemLogs()
+            : viewModel.loadCloudAlertLogs(),
+        _loadNearbySosEvents(),
+      ]);
+    } finally {
+      _isRefreshingEvents = false;
+      if (mounted) _eventsRevision.value++;
+    }
+  }
+
+  void _openSosEvents() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => AnimatedBuilder(
+          animation: Listenable.merge([viewModel, _eventsRevision]),
+          builder: (context, _) => _SosEventsPage(
+            logs: widget.session.isAdmin
+                ? _adminSosSystemLogs
+                : viewModel.cloudAlertLogs.map(_eventLogForAlert).toList(),
+            nearbyEvents: _archivedNearbySosEvents,
+            phoneLocation: _nearbyEventsPhoneLocation,
+            isLoading: _isRefreshingEvents || _isLoadingAdminSosSystemLogs,
+            errorMessage: widget.session.isAdmin
+                ? _adminSosSystemLogsError
+                : null,
+            onNearbyEventTap: _openNearbySosEvent,
+            onRefresh: _refreshSosEvents,
+          ),
         ),
       ),
     );
@@ -484,9 +565,9 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
-  void _openGearChecklist() {
+  void _openGearsRequired() {
     Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (context) => const GearChecklistPage()),
+      MaterialPageRoute<void>(builder: (context) => const GearsRequiredPage()),
     );
   }
 
@@ -517,13 +598,23 @@ class _SosPageState extends State<SosPage> {
     SosAlertMode mode, {
     SosAlertTriggerSource? triggerSource,
   }) async {
-    _queuedSosRequests.add(
-      _QueuedSosRequest(
-        mode: mode,
-        triggeredAt: DateTime.now().toUtc(),
-        triggerSource: triggerSource ?? SosAlertTriggerSource.mobilePhone,
-      ),
+    final triggeredAt = DateTime.now().toUtc();
+    late final int presentationId;
+    presentationId = _presentationController.begin(
+      mode: mode,
+      triggeredAt: triggeredAt,
+      onStopAlarm: () => _stopPresentedSosPattern(presentationId),
     );
+    final request = _QueuedSosRequest(
+      mode: mode,
+      triggeredAt: triggeredAt,
+      triggerSource: triggerSource ?? SosAlertTriggerSource.mobilePhone,
+      presentationId: presentationId,
+    );
+    _queuedSosRequests.add(request);
+    if (mode.usesLoudEmergencyPattern) {
+      _startManualSosPattern(mode, presentationId);
+    }
 
     // Keep checking after an existing worker completes. An alert can arrive in
     // the small interval between that worker emptying the queue and clearing
@@ -560,19 +651,6 @@ class _SosPageState extends State<SosPage> {
   /// Capture trigger context and submit the selected mode while keeping local alarm output independent.
   Future<void> _triggerAlert(_QueuedSosRequest request) async {
     final mode = request.mode;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Sending ${mode.label} to your emergency contacts…'),
-          duration: const Duration(days: 1),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    if (mode.usesLoudEmergencyPattern) {
-      unawaited(_startManualSosPattern(mode));
-    }
-
     final triggerLocation = await _captureTriggerLocation();
     final result = await viewModel.triggerAlert(
       mode: mode,
@@ -585,22 +663,18 @@ class _SosPageState extends State<SosPage> {
       return;
     }
 
-    final message = result == null
-        ? viewModel.sosAlertErrorMessage ?? 'SOS alert was not sent.'
-        : _messageForResult(result);
-
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor:
-              result == null || result.alert.status != SosAlertStatus.sent
-              ? _SosColors.destructiveFor(context)
-              : _SosColors.green,
-        ),
-      );
+    final latestResult = viewModel.latestSosAlertResult;
+    final matchingResult =
+        latestResult != null &&
+            latestResult.alert.mode == request.mode &&
+            latestResult.alert.triggeredAt.isAtSameMomentAs(request.triggeredAt)
+        ? latestResult
+        : null;
+    _presentationController.updateResult(
+      request.presentationId,
+      result ?? matchingResult,
+      errorMessage: viewModel.sosAlertErrorMessage,
+    );
   }
 
   Future<SosTriggerLocation?> _captureTriggerLocation() async {
@@ -623,39 +697,35 @@ class _SosPageState extends State<SosPage> {
     }
   }
 
-  Future<void> _startManualSosPattern(SosAlertMode mode) async {
+  void _startManualSosPattern(SosAlertMode mode, int presentationId) {
+    if (!_presentationController.isAlarmRequested(presentationId)) return;
     if (mounted) {
       setState(() {
         _isManualSosPatternActive = true;
       });
     }
-    try {
-      await _deviceAlertService.startSosPatternForMode(mode);
-      if (!mounted) {
-        return;
-      }
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isManualSosPatternActive = false;
-      });
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Unable to start phone alarm or flashlight.'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    }
+    startSosAlarmOutput(
+      controller: _presentationController,
+      eventId: presentationId,
+      start: () => _deviceAlertService.startSosPatternForMode(mode),
+      stop: _deviceAlertService.stopManualSosPattern,
+      onUnavailable: () {
+        if (mounted &&
+            _presentationController.current?.eventId == presentationId) {
+          setState(() => _isManualSosPatternActive = false);
+        }
+      },
+    );
   }
 
-  Future<void> _stopManualSosPattern() async {
+  Future<void> _stopPresentedSosPattern(int presentationId) async {
+    if (_presentationController.current?.eventId != presentationId) return;
+    await _stopManualSosPattern(strict: true);
+  }
+
+  Future<void> _stopManualSosPattern({bool strict = false}) async {
     try {
-      await _deviceAlertService.stopManualSosPattern();
+      await _deviceAlertService.stopManualSosPattern(strict: strict);
     } finally {
       if (mounted) {
         setState(() {
@@ -663,28 +733,6 @@ class _SosPageState extends State<SosPage> {
         });
       }
     }
-  }
-
-  /// Describe queued, partial and confirmed outcomes using their actual dispatch result.
-  String _messageForResult(SosAlertResult result) {
-    final alert = result.alert;
-    if (alert.status == SosAlertStatus.noContacts) {
-      return result.queuedForRetry
-          ? '${alert.mode.label} queued until emergency contacts are available.'
-          : '${alert.mode.label} logged, but no emergency contacts are saved.';
-    }
-    if (alert.status == SosAlertStatus.sent) {
-      return result.queuedForRetry
-          ? '${alert.mode.label} sent to ${alert.sentCount} contacts; cloud sync is queued.'
-          : '${alert.mode.label} sent to ${alert.sentCount} contacts.';
-    }
-    if (alert.status == SosAlertStatus.partial) {
-      return '${alert.mode.label} sent to ${alert.sentCount} contacts; ${alert.failedCount} queued for retry.';
-    }
-    if (alert.status == SosAlertStatus.queued) {
-      return '${alert.mode.label} sending could not be confirmed. Queued for retry.';
-    }
-    return '${alert.mode.label} could not be sent to your contacts.';
   }
 
   Map<String, dynamic> _eventLogForAlert(SosAlert alert) {
@@ -714,12 +762,6 @@ class _SosPageState extends State<SosPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _Header(
-                    session: widget.session,
-                    emergencyContacts: viewModel.emergencyContacts,
-                    emergencyContactsRepository:
-                        viewModel.emergencyContactsRepository,
-                    onEmergencyContactsChanged:
-                        viewModel.replaceEmergencyContacts,
                     onOpenTestSettings: _openTestSettings,
                     onOpenPairedButton: _openPairedSosButton,
                   ),
@@ -749,6 +791,7 @@ class _SosPageState extends State<SosPage> {
                   const SizedBox(height: 14),
                   _MetricsGroup(
                     metrics: viewModel.metrics,
+                    onContactsTap: () => unawaited(_openEmergencyContacts()),
                     onLiveTap: _openLiveLocationPage,
                     onQueuedTap: _openQueuedDispatches,
                   ),
@@ -766,17 +809,16 @@ class _SosPageState extends State<SosPage> {
                   const SizedBox(height: 8),
                   _SosSafetyToolsGrid(
                     onOpenFirstAid: () => unawaited(_openFirstAidGuide()),
-                    onOpenGearChecklist: () => _openGearChecklist(),
+                    onOpenGearsRequired: _openGearsRequired,
                   ),
                   const SizedBox(height: 22),
                   if (widget.session.isAdmin)
                     _AdminSosSystemLogsPanel(
+                      onOpen: _openSosEvents,
                       logs: _adminSosSystemLogs,
                       nearbyEvents: archivedNearbyEvents,
-                      phoneLocation: _nearbyEventsPhoneLocation,
                       isLoading: _isLoadingAdminSosSystemLogs,
                       errorMessage: _adminSosSystemLogsError,
-                      onNearbyEventTap: _openNearbySosEvent,
                       onRefresh: () {
                         unawaited(_loadAdminSosSystemLogs());
                         unawaited(_loadNearbySosEvents());
@@ -803,12 +845,11 @@ class _SosPageState extends State<SosPage> {
                     ),
                     const SizedBox(height: 12),
                     _AdminSosSystemLogsPanel(
+                      onOpen: _openSosEvents,
                       logs: userEventLogs,
                       nearbyEvents: archivedNearbyEvents,
-                      phoneLocation: _nearbyEventsPhoneLocation,
                       isLoading: false,
                       errorMessage: null,
-                      onNearbyEventTap: _openNearbySosEvent,
                       onRefresh: () {
                         unawaited(viewModel.loadCloudAlertLogs());
                         unawaited(_loadNearbySosEvents());
@@ -827,18 +868,10 @@ class _SosPageState extends State<SosPage> {
 
 class _Header extends StatelessWidget {
   const _Header({
-    required this.session,
-    required this.emergencyContacts,
-    required this.emergencyContactsRepository,
-    required this.onEmergencyContactsChanged,
     required this.onOpenTestSettings,
     required this.onOpenPairedButton,
   });
 
-  final AppSession session;
-  final List<EmergencyContact> emergencyContacts;
-  final EmergencyContactsRepository emergencyContactsRepository;
-  final ValueChanged<List<EmergencyContact>> onEmergencyContactsChanged;
   final VoidCallback onOpenTestSettings;
   final VoidCallback onOpenPairedButton;
 
@@ -874,12 +907,6 @@ class _Header extends StatelessWidget {
             ),
           ),
           _HeaderAction(
-            tooltip: 'Emergency contacts',
-            icon: Icons.contacts_rounded,
-            onPressed: () => unawaited(_openEmergencyContacts(context)),
-          ),
-          const SizedBox(width: 8),
-          _HeaderAction(
             tooltip: 'Paired SOS button',
             icon: Icons.settings_remote_rounded,
             onPressed: onOpenPairedButton,
@@ -893,26 +920,6 @@ class _Header extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _openEmergencyContacts(BuildContext context) async {
-    final contacts = await Navigator.of(context).push<List<EmergencyContact>>(
-      MaterialPageRoute<List<EmergencyContact>>(
-        builder: (context) {
-          return EmergencyContactsPage(
-            session: session,
-            initialContacts: emergencyContacts,
-            repository: emergencyContactsRepository,
-          );
-        },
-      ),
-    );
-
-    if (contacts == null || !context.mounted) {
-      return;
-    }
-
-    onEmergencyContactsChanged(contacts);
   }
 }
 
@@ -981,7 +988,10 @@ class _ManualSosCountdownDialogState extends State<_ManualSosCountdownDialog> {
 
     _didComplete = true;
     _timer?.cancel();
-    Navigator.of(context).pop(true);
+    HikeStartNavigation.closeOwnedRoute<bool>(
+      ModalRoute.of<bool>(context),
+      true,
+    );
   }
 
   void _cancel() {
@@ -991,7 +1001,10 @@ class _ManualSosCountdownDialogState extends State<_ManualSosCountdownDialog> {
 
     _didComplete = true;
     _timer?.cancel();
-    Navigator.of(context).pop(false);
+    HikeStartNavigation.closeOwnedRoute<bool>(
+      ModalRoute.of<bool>(context),
+      false,
+    );
   }
 
   @override
@@ -1131,33 +1144,53 @@ class _NetworkSosStatusCard extends StatelessWidget {
 class _MetricsGroup extends StatelessWidget {
   const _MetricsGroup({
     required this.metrics,
+    required this.onContactsTap,
     required this.onLiveTap,
     required this.onQueuedTap,
   });
 
   final List<SosMetric> metrics;
+  final VoidCallback onContactsTap;
   final VoidCallback onLiveTap;
   final VoidCallback onQueuedTap;
 
   @override
   Widget build(BuildContext context) {
-    return _InsetGroup(
+    final textScaler = MediaQuery.textScalerOf(context);
+    final height = math.max(
+      56.0,
+      textScaler.scale(17) * 1.1 + textScaler.scale(11.5) * 1.2 + 17,
+    );
+    return Material(
+      color: _SosColors.surfaceFor(context),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
       child: SizedBox(
-        height: 68,
+        key: const ValueKey('sos-status-row'),
+        height: height,
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             for (var index = 0; index < metrics.length; index++) ...[
+              if (index > 0)
+                Center(
+                  child: Container(
+                    width: 1,
+                    height: 24,
+                    color: _SosColors.separatorFor(context),
+                  ),
+                ),
               Expanded(
                 child: _MetricCell(
                   metric: metrics[index],
                   onTap: switch (metrics[index].label) {
+                    'Contacts' => onContactsTap,
                     'Live' => onLiveTap,
-                    'Queued' when metrics[index].value != '0' => onQueuedTap,
+                    'Queued' => onQueuedTap,
                     _ => null,
                   },
                 ),
               ),
-              if (index != metrics.length - 1) const _VerticalSeparator(),
             ],
           ],
         ),
@@ -1174,35 +1207,76 @@ class _MetricCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            metric.value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: _SosColors.textFor(context),
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
-            ),
+    final queued =
+        metric.label == 'Queued' && (int.tryParse(metric.value) ?? 0) > 0;
+    final inactive =
+        metric.label == 'Live' && metric.value.toLowerCase() == 'off';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accent = queued
+        ? isDark
+              ? const Color(0xFFFFC578)
+              : const Color(0xFF995600)
+        : inactive
+        ? _SosColors.secondaryTextFor(context)
+        : isDark
+        ? const Color(0xFF9AD7AF)
+        : const Color(0xFF287844);
+    final icon = switch (metric.label) {
+      'Contacts' => Icons.people_outline_rounded,
+      'Queued' => Icons.outbox_outlined,
+      _ => Icons.share_location_rounded,
+    };
+    return Semantics(
+      button: onTap != null,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 18, color: accent),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      metric.value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: queued
+                            ? accent
+                            : inactive
+                            ? _SosColors.secondaryTextFor(context)
+                            : _SosColors.textFor(context),
+                        fontSize: 17,
+                        height: 1.1,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                metric.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: _SosColors.secondaryTextFor(context),
+                  fontSize: 11.5,
+                  height: 1.2,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 1),
-          Text(
-            metric.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: onTap == null
-                  ? _SosColors.secondaryTextFor(context)
-                  : _SosColors.green,
-              fontWeight: onTap == null ? FontWeight.w400 : FontWeight.w800,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1435,21 +1509,19 @@ String _nearbySosTimestamp(DateTime value) {
 
 class _AdminSosSystemLogsPanel extends StatelessWidget {
   const _AdminSosSystemLogsPanel({
+    required this.onOpen,
     required this.logs,
     required this.nearbyEvents,
-    required this.phoneLocation,
     required this.isLoading,
     required this.errorMessage,
-    required this.onNearbyEventTap,
     required this.onRefresh,
   });
 
   final List<Map<String, dynamic>> logs;
+  final VoidCallback onOpen;
   final List<NearbySosEvent> nearbyEvents;
-  final SosTriggerLocation? phoneLocation;
   final bool isLoading;
   final String? errorMessage;
-  final ValueChanged<NearbySosEvent> onNearbyEventTap;
   final VoidCallback onRefresh;
 
   @override
@@ -1465,7 +1537,7 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => _showSosSystemLogsSheet(context),
+          onTap: onOpen,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
             child: Row(
@@ -1520,96 +1592,91 @@ class _AdminSosSystemLogsPanel extends StatelessWidget {
       ),
     );
   }
+}
 
-  void _showSosSystemLogsSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      backgroundColor: _SosColors.surfaceFor(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.72,
-            minChildSize: 0.36,
-            maxChildSize: 0.92,
-            builder: (context, scrollController) {
-              return ListView(
-                controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 22),
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(child: _SectionTitle(label: 'SOS events')),
-                      IconButton(
-                        tooltip: 'Refresh SOS events',
-                        onPressed: isLoading ? null : onRefresh,
-                        icon: isLoading
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child: HikerCircleMinorLoadingIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.refresh_rounded),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  _InsetGroup(
-                    child: Column(
-                      children: [
-                        if (errorMessage != null) ...[
-                          _SosSystemLogEmptyState(
-                            icon: Icons.cloud_off_rounded,
-                            message: errorMessage!,
-                          ),
-                          if (logs.isNotEmpty || nearbyEvents.isNotEmpty)
-                            const _HorizontalSeparator(),
-                        ],
-                        if (logs.isEmpty &&
-                            nearbyEvents.isEmpty &&
-                            errorMessage == null)
-                          const _SosSystemLogEmptyState(
-                            icon: Icons.fact_check_rounded,
-                            message: 'No SOS events found yet.',
-                          )
-                        else if (logs.isNotEmpty ||
-                            nearbyEvents.isNotEmpty) ...[
-                          for (
-                            var index = 0;
-                            index < nearbyEvents.length;
-                            index++
-                          ) ...[
-                            _NearbySosHistoryRow(
-                              event: nearbyEvents[index],
-                              phoneLocation: phoneLocation,
-                              onTap: () =>
-                                  onNearbyEventTap(nearbyEvents[index]),
-                            ),
-                            if (index != nearbyEvents.length - 1 ||
-                                logs.isNotEmpty)
-                              const _HorizontalSeparator(),
-                          ],
-                          for (var index = 0; index < logs.length; index++) ...[
-                            _SosSystemLogRow(log: logs[index]),
-                            if (index != logs.length - 1)
-                              const _HorizontalSeparator(),
-                          ],
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
+class _SosEventsPage extends StatelessWidget {
+  const _SosEventsPage({
+    required this.logs,
+    required this.nearbyEvents,
+    required this.phoneLocation,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.onNearbyEventTap,
+    required this.onRefresh,
+  });
+
+  final List<Map<String, dynamic>> logs;
+  final List<NearbySosEvent> nearbyEvents;
+  final SosTriggerLocation? phoneLocation;
+  final bool isLoading;
+  final String? errorMessage;
+  final ValueChanged<NearbySosEvent> onNearbyEventTap;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _SosColors.backgroundFor(context),
+      appBar: PageHeaderAppBar(
+        title: const Text('SOS events'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh SOS events',
+            onPressed: isLoading ? null : () => unawaited(onRefresh()),
+            icon: const Icon(Icons.refresh_rounded),
           ),
-        );
-      },
+        ],
+      ),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: onRefresh,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
+            children: [
+              if (isLoading) const LinearProgressIndicator(),
+              if (isLoading) const SizedBox(height: 12),
+              _InsetGroup(
+                child: Column(
+                  children: [
+                    if (errorMessage != null)
+                      _SosSystemLogEmptyState(
+                        icon: Icons.cloud_off_rounded,
+                        message: errorMessage!,
+                      ),
+                    if (logs.isEmpty &&
+                        nearbyEvents.isEmpty &&
+                        !isLoading &&
+                        errorMessage == null)
+                      const _SosSystemLogEmptyState(
+                        icon: Icons.fact_check_rounded,
+                        message: 'No SOS events yet.',
+                      ),
+                    for (
+                      var index = 0;
+                      index < nearbyEvents.length;
+                      index++
+                    ) ...[
+                      _NearbySosHistoryRow(
+                        event: nearbyEvents[index],
+                        phoneLocation: phoneLocation,
+                        onTap: () => onNearbyEventTap(nearbyEvents[index]),
+                      ),
+                      if (index != nearbyEvents.length - 1 || logs.isNotEmpty)
+                        const _HorizontalSeparator(),
+                    ],
+                    for (var index = 0; index < logs.length; index++) ...[
+                      _SosSystemLogRow(log: logs[index]),
+                      if (index != logs.length - 1)
+                        const _HorizontalSeparator(),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1732,22 +1799,13 @@ class _SosSystemLogEmptyState extends StatelessWidget {
 }
 
 void _showSosSystemLogDetails(BuildContext context, Map<String, dynamic> log) {
-  showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    backgroundColor: _SosColors.surfaceFor(context),
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-    ),
-    builder: (context) {
-      return _SosSystemLogDetailSheet(log: log);
-    },
+  Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(builder: (_) => _SosSystemLogDetailPage(log: log)),
   );
 }
 
-class _SosSystemLogDetailSheet extends StatelessWidget {
-  const _SosSystemLogDetailSheet({required this.log});
+class _SosSystemLogDetailPage extends StatelessWidget {
+  const _SosSystemLogDetailPage({required this.log});
 
   final Map<String, dynamic> log;
 
@@ -1766,129 +1824,138 @@ class _SosSystemLogDetailSheet extends StatelessWidget {
               .toList(growable: false)
         : const <String>[];
 
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          18,
-          6,
-          18,
-          18 + MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                const _Glyph(icon: Icons.sos_rounded, color: _SosColors.green),
-                const SizedBox(width: 12),
-                Expanded(
+    return Scaffold(
+      backgroundColor: _SosColors.backgroundFor(context),
+      appBar: PageHeaderAppBar(title: const Text('SOS event')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            18,
+            6,
+            18,
+            18 + MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const _Glyph(
+                    icon: Icons.sos_rounded,
+                    color: _SosColors.green,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _friendlySosType(mode),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                color: _SosColors.textFor(context),
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0,
+                              ),
+                        ),
+                        Text(
+                          _sosLogDateLabel(log['triggeredAtLocal']),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: _SosColors.secondaryTextFor(context),
+                                letterSpacing: 0,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _InsetGroup(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'SOS event',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: _SosColors.textFor(context),
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0,
+                      _StatusRow(label: 'Type', value: _friendlySosType(mode)),
+                      const _HorizontalSeparator(),
+                      _StatusRow(
+                        label: 'Status',
+                        value: _friendlySosStatus(status),
+                      ),
+                      const _HorizontalSeparator(),
+                      _StatusRow(
+                        label: 'Hiker',
+                        value: _sosLogString(
+                          log['phoneNumber'],
+                          fallback: _sosLogString(
+                            log['triggeredByPhoneNumber'],
+                            fallback: '-',
+                          ),
                         ),
                       ),
-                      Text(
-                        _sosLogDateLabel(log['triggeredAtLocal']),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _SosColors.secondaryTextFor(context),
-                          letterSpacing: 0,
-                        ),
+                      const _HorizontalSeparator(),
+                      _StatusRow(
+                        label: 'Location',
+                        value: location == null
+                            ? 'Location unavailable'
+                            : location.accuracyMeters == null
+                            ? 'Location captured'
+                            : 'Captured within about ${location.accuracyMeters!.round()} m',
                       ),
+                      if (location != null) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: () => launchUrl(
+                              Uri.parse(location.universalMapLink),
+                              mode: LaunchMode.externalApplication,
+                            ),
+                            icon: const Icon(Icons.map_rounded),
+                            label: const Text('View on map'),
+                          ),
+                        ),
+                      ],
+                      const _HorizontalSeparator(),
+                      _StatusRow(
+                        label: 'Contacts',
+                        value:
+                            '${_sosLogInt(log['sentCount'])} notified · ${_sosLogInt(log['failedCount'])} need attention',
+                      ),
+                      if (contactNames.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Wrap(
+                            spacing: 7,
+                            runSpacing: 7,
+                            children: [
+                              for (final name in contactNames)
+                                Chip(
+                                  avatar: const Icon(
+                                    Icons.person_rounded,
+                                    size: 17,
+                                  ),
+                                  label: Text(name),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            _InsetGroup(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  children: [
-                    _StatusRow(label: 'Type', value: _friendlySosType(mode)),
-                    const _HorizontalSeparator(),
-                    _StatusRow(
-                      label: 'Status',
-                      value: _friendlySosStatus(status),
-                    ),
-                    const _HorizontalSeparator(),
-                    _StatusRow(
-                      label: 'Hiker',
-                      value: _sosLogString(
-                        log['phoneNumber'],
-                        fallback: _sosLogString(
-                          log['triggeredByPhoneNumber'],
-                          fallback: '-',
-                        ),
-                      ),
-                    ),
-                    const _HorizontalSeparator(),
-                    _StatusRow(
-                      label: 'Location',
-                      value: location == null
-                          ? 'Location unavailable'
-                          : location.accuracyMeters == null
-                          ? 'Location captured'
-                          : 'Captured within about ${location.accuracyMeters!.round()} m',
-                    ),
-                    if (location != null) ...[
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: () => launchUrl(
-                            Uri.parse(location.universalMapLink),
-                            mode: LaunchMode.externalApplication,
-                          ),
-                          icon: const Icon(Icons.map_rounded),
-                          label: const Text('View on map'),
-                        ),
-                      ),
-                    ],
-                    const _HorizontalSeparator(),
-                    _StatusRow(
-                      label: 'Contacts',
-                      value:
-                          '${_sosLogInt(log['sentCount'])} notified · ${_sosLogInt(log['failedCount'])} need attention',
-                    ),
-                    if (contactNames.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Wrap(
-                          spacing: 7,
-                          runSpacing: 7,
-                          children: [
-                            for (final name in contactNames)
-                              Chip(
-                                avatar: const Icon(
-                                  Icons.person_rounded,
-                                  size: 17,
-                                ),
-                                label: Text(name),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.check_rounded),
-              label: const Text('Done'),
-            ),
-          ],
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.check_rounded),
+                label: const Text('Done'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2520,9 +2587,13 @@ class _SosDemoResultPanel extends StatelessWidget {
 }
 
 class _QueuedSosDispatchesPage extends StatefulWidget {
-  const _QueuedSosDispatchesPage({required this.loadDispatches});
+  const _QueuedSosDispatchesPage({
+    required this.loadDispatches,
+    required this.phoneNumber,
+  });
 
   final Future<List<SosQueuedDispatch>> Function() loadDispatches;
+  final String phoneNumber;
 
   @override
   State<_QueuedSosDispatchesPage> createState() =>
@@ -2531,15 +2602,29 @@ class _QueuedSosDispatchesPage extends StatefulWidget {
 
 class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
   late Future<List<SosQueuedDispatch>> _dispatches;
+  StreamSubscription<SosQueueChange>? _queueSubscription;
 
   @override
   void initState() {
     super.initState();
     _dispatches = widget.loadDispatches();
+    _queueSubscription = SosAlertRepository.queueChanges.listen((change) {
+      if (change.phoneNumber == widget.phoneNumber) _refresh();
+    });
   }
 
   void _refresh() {
-    setState(() => _dispatches = widget.loadDispatches());
+    if (!mounted) return;
+    final dispatches = widget.loadDispatches();
+    setState(() {
+      _dispatches = dispatches;
+    });
+  }
+
+  @override
+  void dispose() {
+    _queueSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -2557,7 +2642,7 @@ class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
                 children: [
                   _SosDetailHeader(
                     title: 'Queued SOS dispatches',
-                    subtitle: 'Protected alerts waiting for delivery',
+                    subtitle: 'Alerts waiting to be sent',
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 14),
@@ -2586,7 +2671,7 @@ class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
                                 ),
                                 const SizedBox(height: 3),
                                 Text(
-                                  'Queued SOS alerts cannot be removed here. HikerCircle retries them automatically when delivery becomes available.',
+                                  'HikerCircle will retry once network signal is available.',
                                   style: Theme.of(context).textTheme.bodySmall
                                       ?.copyWith(
                                         color: _SosColors.secondaryTextFor(
@@ -2614,7 +2699,8 @@ class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
                     child: FutureBuilder<List<SosQueuedDispatch>>(
                       future: _dispatches,
                       builder: (context, snapshot) {
-                        if (snapshot.connectionState != ConnectionState.done) {
+                        if (snapshot.connectionState != ConnectionState.done &&
+                            !snapshot.hasData) {
                           return const HikerCircleLoadingView(
                             message: 'Loading SOS queue…',
                             detail: 'Checking pending emergency messages.',
@@ -2626,7 +2712,7 @@ class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
                             icon: Icons.sync_problem_rounded,
                             title: 'Queue unavailable',
                             subtitle:
-                                'The protected queue could not be read right now.',
+                                'Unable to load queued alerts. Please try again.',
                             onRetry: _refresh,
                           );
                         }
@@ -2652,6 +2738,8 @@ class _QueuedSosDispatchesPageState extends State<_QueuedSosDispatchesPage> {
                                 MaterialPageRoute<void>(
                                   builder: (_) => _QueuedSosDispatchDetailPage(
                                     dispatch: dispatch,
+                                    phoneNumber: widget.phoneNumber,
+                                    loadDispatches: widget.loadDispatches,
                                   ),
                                 ),
                               ),
@@ -2742,14 +2830,72 @@ class _QueuedSosDispatchCard extends StatelessWidget {
   }
 }
 
-class _QueuedSosDispatchDetailPage extends StatelessWidget {
-  const _QueuedSosDispatchDetailPage({required this.dispatch});
+class _QueuedSosDispatchDetailPage extends StatefulWidget {
+  const _QueuedSosDispatchDetailPage({
+    required this.dispatch,
+    required this.phoneNumber,
+    required this.loadDispatches,
+  });
 
   final SosQueuedDispatch dispatch;
+  final String phoneNumber;
+  final Future<List<SosQueuedDispatch>> Function() loadDispatches;
+
+  @override
+  State<_QueuedSosDispatchDetailPage> createState() =>
+      _QueuedSosDispatchDetailPageState();
+}
+
+class _QueuedSosDispatchDetailPageState
+    extends State<_QueuedSosDispatchDetailPage> {
+  late SosQueuedDispatch dispatch;
+  StreamSubscription<SosQueueChange>? _queueSubscription;
+  bool _isQueued = true;
+  SosAlert? _completedAlert;
+  int _revision = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    dispatch = widget.dispatch;
+    _queueSubscription = SosAlertRepository.queueChanges.listen((change) {
+      if (change.phoneNumber != widget.phoneNumber) return;
+      if (change.alert?.id == dispatch.alertId && !change.queuedForRetry) {
+        _completedAlert = change.alert;
+      }
+      unawaited(_reload());
+    });
+    unawaited(_reload());
+  }
+
+  Future<void> _reload() async {
+    final revision = ++_revision;
+    try {
+      final rows = await widget.loadDispatches();
+      if (!mounted || revision != _revision) return;
+      final updated = rows.where((row) => row.id == dispatch.id).firstOrNull;
+      setState(() {
+        _isQueued = updated != null;
+        if (updated != null) dispatch = updated;
+      });
+    } catch (_) {
+      // Retain the last known dispatch details while storage is unavailable.
+    }
+  }
+
+  @override
+  void dispose() {
+    _queueSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final status = dispatch.sendStatus == 'retry'
+    final status = !_isQueued
+        ? _completedAlert?.status == SosAlertStatus.sent
+              ? 'Sent'
+              : 'No longer queued'
+        : dispatch.sendStatus == 'retry'
         ? 'Waiting to retry'
         : 'Waiting to send';
     return Scaffold(
@@ -2765,7 +2911,7 @@ class _QueuedSosDispatchDetailPage extends StatelessWidget {
                 children: [
                   _SosDetailHeader(
                     title: 'Queued SOS details',
-                    subtitle: 'Read-only dispatch record',
+                    subtitle: 'Delivery status',
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
@@ -2790,8 +2936,14 @@ class _QueuedSosDispatchDetailPage extends StatelessWidget {
                           const SizedBox(height: 4),
                           _StatusPill(
                             label: status,
-                            color: _SosColors.orange,
-                            surface: _SosColors.orange.withValues(alpha: 0.1),
+                            color: _isQueued
+                                ? _SosColors.orange
+                                : _SosColors.green,
+                            surface:
+                                (_isQueued
+                                        ? _SosColors.orange
+                                        : _SosColors.green)
+                                    .withValues(alpha: 0.1),
                           ),
                         ],
                       ),
@@ -2799,38 +2951,44 @@ class _QueuedSosDispatchDetailPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   _InsetGroup(
-                    child: Column(
-                      children: [
-                        _StatusRow(
-                          label: 'Triggered',
-                          value: _queuedSosTimeLabel(dispatch.triggeredAt),
-                        ),
-                        const _HorizontalSeparator(),
-                        _StatusRow(
-                          label: 'Pending contacts',
-                          value:
-                              '${dispatch.pendingContactCount}/${dispatch.contactCount}',
-                        ),
-                        const _HorizontalSeparator(),
-                        _StatusRow(
-                          label: 'Retry attempts',
-                          value: '${dispatch.retryCount}',
-                        ),
-                        const _HorizontalSeparator(),
-                        _StatusRow(
-                          label: 'Location',
-                          value:
-                              dispatch.triggerLocation?.universalMapLink ??
-                              'Unavailable',
-                        ),
-                        if (dispatch.lastError.isNotEmpty) ...[
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: Column(
+                        children: [
+                          _StatusRow(
+                            label: 'Triggered',
+                            value: _queuedSosTimeLabel(dispatch.triggeredAt),
+                          ),
                           const _HorizontalSeparator(),
                           _StatusRow(
-                            label: 'Last delivery result',
-                            value: dispatch.lastError,
+                            label: 'Pending contacts',
+                            value:
+                                '${_isQueued ? dispatch.pendingContactCount : 0}/${dispatch.contactCount}',
                           ),
+                          const _HorizontalSeparator(),
+                          _StatusRow(
+                            label: 'Retry attempts',
+                            value: '${dispatch.retryCount}',
+                          ),
+                          const _HorizontalSeparator(),
+                          _StatusRow(
+                            label: 'Location',
+                            value:
+                                dispatch.triggerLocation?.universalMapLink ??
+                                'Unavailable',
+                          ),
+                          if (_isQueued && dispatch.lastError.isNotEmpty) ...[
+                            const _HorizontalSeparator(),
+                            _StatusRow(
+                              label: 'Last delivery result',
+                              value: dispatch.lastError,
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                   if (dispatch.message.isNotEmpty) ...[
@@ -2842,7 +3000,7 @@ class _QueuedSosDispatchDetailPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Message snapshot',
+                              'SOS message',
                               style: Theme.of(context).textTheme.titleSmall
                                   ?.copyWith(
                                     color: _SosColors.textFor(context),
@@ -2865,7 +3023,9 @@ class _QueuedSosDispatchDetailPage extends StatelessWidget {
                   ],
                   const SizedBox(height: 12),
                   Text(
-                    'This record is protected from manual removal and will leave the queue only after HikerCircle confirms it no longer needs dispatch.',
+                    _isQueued
+                        ? 'This alert will leave the queue once delivery is confirmed.'
+                        : 'This alert is no longer waiting for delivery.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: _SosColors.secondaryTextFor(context),
@@ -2956,11 +3116,11 @@ String _queuedSosTimeLabel(DateTime value) {
 class _SosSafetyToolsGrid extends StatelessWidget {
   const _SosSafetyToolsGrid({
     required this.onOpenFirstAid,
-    required this.onOpenGearChecklist,
+    required this.onOpenGearsRequired,
   });
 
   final VoidCallback onOpenFirstAid;
-  final VoidCallback onOpenGearChecklist;
+  final VoidCallback onOpenGearsRequired;
 
   @override
   Widget build(BuildContext context) {
@@ -2970,7 +3130,8 @@ class _SosSafetyToolsGrid extends StatelessWidget {
       mainAxisSpacing: 10,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 1.62,
+      childAspectRatio:
+          1.62 / math.max(1, MediaQuery.textScalerOf(context).scale(1)),
       children: [
         _SosSafetyToolTile(
           icon: Icons.medical_services_rounded,
@@ -2979,10 +3140,10 @@ class _SosSafetyToolsGrid extends StatelessWidget {
           onTap: onOpenFirstAid,
         ),
         _SosSafetyToolTile(
-          icon: Icons.checklist_rounded,
-          title: 'Gear Checklist',
-          subtitle: 'Pre-hike essentials',
-          onTap: onOpenGearChecklist,
+          icon: Icons.backpack_outlined,
+          title: 'Gears required',
+          subtitle: 'What to bring & why',
+          onTap: onOpenGearsRequired,
         ),
       ],
     );
@@ -4276,22 +4437,6 @@ class _HorizontalSeparator extends StatelessWidget {
       height: 1,
       thickness: 0.7,
       color: _SosColors.separatorFor(context),
-    );
-  }
-}
-
-class _VerticalSeparator extends StatelessWidget {
-  const _VerticalSeparator();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 32,
-      child: VerticalDivider(
-        width: 1,
-        thickness: 0.7,
-        color: _SosColors.separatorFor(context),
-      ),
     );
   }
 }

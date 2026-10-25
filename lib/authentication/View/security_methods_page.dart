@@ -36,7 +36,11 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
   }
 
   void _reload() {
-    setState(() => _statusFuture = _service.loadStatus());
+    if (!mounted) return;
+    final statusFuture = _service.loadStatus();
+    setState(() {
+      _statusFuture = statusFuture;
+    });
   }
 
   void _showError(Object error) {
@@ -108,11 +112,16 @@ class _SecurityMethodsPageState extends State<SecurityMethodsPage> {
     if (!mounted) return;
     final added = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (context) =>
-            _AuthenticatorSetupPage(service: _service, enrollment: enrollment),
+        builder: (context) => _AuthenticatorSetupPage(
+          service: _service,
+          enrollment: enrollment,
+          onEnrolled: _reload,
+        ),
       ),
     );
-    if (added == true) _reload();
+    // Back or a UI timeout can hide a factor already committed by the server.
+    // Successful enrollment refreshes through onEnrolled, including late replies.
+    if (added != true) _reload();
   }
 
   /// Honor the current factor-removal rule and refresh enrollment state after the backend accepts removal.
@@ -347,10 +356,12 @@ class _AuthenticatorSetupPage extends StatefulWidget {
   const _AuthenticatorSetupPage({
     required this.service,
     required this.enrollment,
+    required this.onEnrolled,
   });
 
   final MultiFactorAuthService service;
   final TotpEnrollment enrollment;
+  final VoidCallback onEnrolled;
 
   @override
   State<_AuthenticatorSetupPage> createState() =>
@@ -386,6 +397,8 @@ class _AuthenticatorSetupPageState extends State<_AuthenticatorSetupPage> {
         challengeId: widget.enrollment.challengeId,
         code: code,
       );
+      // A successful server write still matters if setup was closed or timed out.
+      widget.onEnrolled();
       if (mounted && attempt == _codeAttempt) Navigator.of(context).pop(true);
     } catch (error) {
       if (mounted && attempt == _codeAttempt) {

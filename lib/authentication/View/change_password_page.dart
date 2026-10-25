@@ -40,10 +40,11 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
         const SnackBar(content: Text('Your password has been changed.')),
       );
     } on FirebaseFunctionsException catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _error = error.message ?? 'Unable to change your password.',
         );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

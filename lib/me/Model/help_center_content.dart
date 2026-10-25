@@ -14,6 +14,9 @@ class TrailConditionGuide {
   final List<String> types;
 }
 
+// General trail/wildlife and flood precautions:
+// https://home.nps.gov/articles/hikingetiquette.htm
+// https://www.blm.gov/programs/national-conservation-lands/utah/grand-staircase-escalante-national-monument/safety-conditions
 const trailConditionGuides = <TrailConditionGuide>[
   TrailConditionGuide(
     'Slippery pathway',
@@ -47,6 +50,30 @@ const trailConditionGuides = <TrailConditionGuide>[
     'Ground',
     'Frozen surfaces can hide the path and make falls difficult to stop.',
     'Choose another route unless you have suitable equipment and winter skills. Avoid uncertain snow bridges.',
+  ),
+  TrailConditionGuide(
+    'Eroded pathway',
+    'Ground',
+    'Rain or repeated use has worn away part of the path.',
+    'Keep away from undercut edges. Turn back if the marked path is no longer intact; avoid making a new route beside it.',
+  ),
+  TrailConditionGuide(
+    'Unstable ground',
+    'Ground',
+    'The surface may shift, sink or give way underfoot.',
+    'Stop before the affected ground. Keep clear and choose another time rather than testing an uncertain surface.',
+  ),
+  TrailConditionGuide(
+    'Exposed roots',
+    'Ground',
+    'Roots cross the path and can catch a foot or become slippery when wet.',
+    'Watch your footing and avoid stepping on wet roots. Turn back if you cannot pass with secure footing.',
+  ),
+  TrailConditionGuide(
+    'Collapsed trail edge',
+    'Ground',
+    'Part of the path beside a drop or slope has fallen away.',
+    'Stay well back from the damaged edge. Turn back and report the location; do not attempt to squeeze past.',
   ),
   TrailConditionGuide(
     'Steep ascent',
@@ -130,6 +157,30 @@ const trailConditionGuides = <TrailConditionGuide>[
     'Stay off the bridge. Report it from safe ground and follow an official diversion.',
   ),
   TrailConditionGuide(
+    'High water level',
+    'Water',
+    'Water is higher than usual and may rise further after rain upstream.',
+    'Stay clear of the bank and do not attempt the crossing. Turn back or follow an official diversion.',
+  ),
+  TrailConditionGuide(
+    'Strong current',
+    'Water',
+    'Moving water can knock a person off balance or sweep them away.',
+    'Do not enter the water. Move away from the edge and choose another route or another time.',
+  ),
+  TrailConditionGuide(
+    'Washed-out crossing',
+    'Water',
+    'Water has removed part of a crossing or its approach.',
+    'Keep clear of the missing section and unstable banks. Turn back rather than attempting an improvised crossing.',
+  ),
+  TrailConditionGuide(
+    'Contaminated water',
+    'Water',
+    'Water may contain waste, chemicals or other contamination.',
+    'Avoid contact and do not drink or collect it. Carry drinking water and follow local notices about the affected area.',
+  ),
+  TrailConditionGuide(
     'Fallen tree',
     'Obstacles',
     'A tree or large branch blocks the path and may still move.',
@@ -152,6 +203,24 @@ const trailConditionGuides = <TrailConditionGuide>[
     'Obstacles',
     'An unexpected object or damaged section blocks progress.',
     'Stop before the obstacle. Use a marked alternative or turn back and report it.',
+  ),
+  TrailConditionGuide(
+    'Dense overgrowth',
+    'Obstacles',
+    'Vegetation obscures the path, markers or ground beneath it.',
+    'Check your position before continuing. Turn back if the marked route is unclear; avoid forcing a path through unfamiliar vegetation.',
+  ),
+  TrailConditionGuide(
+    'Blocked trail entrance',
+    'Obstacles',
+    'The usual entry is obstructed or access is restricted.',
+    'Check posted notices and use an official entrance. Respect barriers rather than bypassing them.',
+  ),
+  TrailConditionGuide(
+    'Fallen branches',
+    'Obstacles',
+    'Branches lie across the path, and damaged limbs may remain overhead.',
+    'Keep away from hanging limbs and unstable trees. Use a marked alternative or turn back if the route is blocked.',
   ),
   TrailConditionGuide(
     'Rope-assisted section',
@@ -186,6 +255,24 @@ const trailConditionGuides = <TrailConditionGuide>[
     'Stop at the last known point and check your map. Do not guess a route into unfamiliar terrain.',
   ),
   TrailConditionGuide(
+    'Damaged handrail',
+    'Structures',
+    'A rail beside steps, a bridge or an exposed section is loose or broken.',
+    'Do not rely on the rail for support. Keep clear of exposed edges and turn back if the section cannot be passed securely.',
+  ),
+  TrailConditionGuide(
+    'Unstable boardwalk',
+    'Structures',
+    'Boards or supports may move, break or leave gaps in the walkway.',
+    'Stay off the damaged section. Follow an official diversion or turn back rather than stepping around it into unknown ground.',
+  ),
+  TrailConditionGuide(
+    'Missing trail marker',
+    'Structures',
+    'A marker used to follow the route is absent or difficult to identify.',
+    'Stop and confirm your location using your map and the last known marker. Turn back if you cannot identify the marked route.',
+  ),
+  TrailConditionGuide(
     'Wild animal sighting',
     'Wildlife',
     'An animal has been seen nearby; it may still be in the area.',
@@ -202,6 +289,24 @@ const trailConditionGuides = <TrailConditionGuide>[
     'Wildlife',
     'Bees, wasps or a nest may be close to the path.',
     'Keep away from nests and leave the area calmly. Carry prescribed allergy medicine if you need it.',
+  ),
+  TrailConditionGuide(
+    'Animal activity',
+    'Wildlife',
+    'Signs or sounds suggest animals are using the area.',
+    'Keep your distance, leave animals undisturbed and follow local ranger advice. Never approach or feed wildlife.',
+  ),
+  TrailConditionGuide(
+    'Animal tracks or den',
+    'Wildlife',
+    'Tracks, burrows or a den have been noticed near the path.',
+    'Keep clear of dens and nesting areas. Do not follow tracks or approach an animal to investigate.',
+  ),
+  TrailConditionGuide(
+    'Leeches',
+    'Wildlife',
+    'Leeches may be present in damp vegetation or water.',
+    'Wear suitable footwear and cover exposed skin. Check skin and clothing after damp sections and avoid standing in water.',
   ),
   TrailConditionGuide(
     'Rain or thunderstorms',
@@ -250,6 +355,18 @@ const trailConditionGuides = <TrailConditionGuide>[
     'Other',
     'Threatening behaviour or dangerous activity has been reported.',
     'Keep your distance, avoid confrontation and leave safely. Contact emergency services if there is immediate danger.',
+  ),
+  TrailConditionGuide(
+    'Limited mobile signal',
+    'Other',
+    'Calls, messages, live sharing and online maps may be delayed or unavailable.',
+    'Download your route before leaving and tell a trusted contact your plan and return time. Do not rely on an immediate connection.',
+  ),
+  TrailConditionGuide(
+    'Illegal dumping',
+    'Other',
+    'Discarded waste may obstruct the route or include sharp or unknown materials.',
+    'Keep clear and do not handle unknown waste. Report its location and turn back if it blocks the marked path.',
   ),
   TrailConditionGuide(
     'Other',

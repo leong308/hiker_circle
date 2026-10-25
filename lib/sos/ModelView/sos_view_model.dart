@@ -29,10 +29,33 @@ class SosViewModel extends ChangeNotifier {
         replaceEmergencyContacts(change.contacts);
       }
     });
+    _queueSubscription = SosAlertRepository.queueChanges.listen((change) {
+      if (_isDisposed || change.phoneNumber != _session.phoneNumber) return;
+      final alert = change.alert;
+      if (alert != null) {
+        _cloudLogsRevision++;
+        _cloudAlertLogs = [
+          alert,
+          ..._cloudAlertLogs.where((item) => item.id != alert.id),
+        ]..sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
+        if (_latestSosAlertResult?.alert.id == alert.id) {
+          _latestSosAlertResult = SosAlertResult(
+            alert: alert,
+            queuedForRetry: change.queuedForRetry,
+            queuedAlertCount: _queuedAlertCount,
+          );
+        }
+        _notifyListenersIfActive();
+      }
+      unawaited(loadQueuedAlertCount());
+    });
   }
 
   final AppSession _session;
   StreamSubscription<EmergencyContactsChange>? _contactsSubscription;
+  StreamSubscription<SosQueueChange>? _queueSubscription;
+  int _queueCountRevision = 0;
+  int _cloudLogsRevision = 0;
   final EmergencyContactsRepository emergencyContactsRepository;
   final SosAlertRepository _sosAlertRepository;
   final SosDashboard dashboard;
@@ -164,11 +187,23 @@ class SosViewModel extends ChangeNotifier {
     if (_isDisposed) {
       return;
     }
+    final revision = _cloudLogsRevision;
     final logs = await _sosAlertRepository.loadAlertLogs(session: _session);
     if (_isDisposed) {
       return;
     }
-    _cloudAlertLogs = logs;
+    _cloudAlertLogs =
+        revision == _cloudLogsRevision
+              ? [...logs]
+              : [
+                  ..._cloudAlertLogs,
+                  ...logs.where(
+                    (item) => !_cloudAlertLogs.any(
+                      (current) => current.id == item.id,
+                    ),
+                  ),
+                ]
+          ..sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
     _notifyListenersIfActive();
   }
 
@@ -176,11 +211,12 @@ class SosViewModel extends ChangeNotifier {
     if (_isDisposed) {
       return;
     }
+    final revision = ++_queueCountRevision;
     try {
       final count = await _sosAlertRepository.countQueuedAlerts(
         session: _session,
       );
-      if (_isDisposed) return;
+      if (_isDisposed || revision != _queueCountRevision) return;
       _queuedAlertCount = count;
       _notifyListenersIfActive();
     } catch (_) {
@@ -369,6 +405,7 @@ class SosViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _queueSubscription?.cancel();
     _isDisposed = true;
     unawaited(_contactsSubscription?.cancel());
     super.dispose();

@@ -161,11 +161,12 @@ class _HikerCircleAppState extends State<HikerCircleApp> {
       );
       lock = active == null;
     }
-    if (mounted)
+    if (mounted) {
       setState(() {
         _launchLocked = lock;
         _checkingLaunchLock = false;
       });
+    }
   }
 
   @override

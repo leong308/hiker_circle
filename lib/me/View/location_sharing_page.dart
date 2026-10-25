@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import '../../core/config/google_api_config.dart';
 import '../../core/widgets/map_controls.dart';
+import '../../core/widgets/map_view_controller.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/route_endpoint_marker.dart';
 
@@ -417,13 +418,22 @@ class _LiveLocationMap extends StatefulWidget {
 }
 
 class _LiveLocationMapState extends State<_LiveLocationMap> {
+  late final _mapView = MapViewController(
+    settings: const MapViewSettings(dimension: MapDimension.twoD),
+    onBeforeStyleReload: () async {
+      final manager = _pinManager;
+      _pinManager = null;
+      _pin = null;
+      await removeMapAnnotationManagers(_map, [manager]);
+    },
+  );
+
   mapbox.MapboxMap? _map;
   mapbox.PointAnnotationManager? _pinManager;
   mapbox.PointAnnotation? _pin;
   bool _failed = false;
   Timer? _loadTimeout;
-  int _styleIndex = 0;
-  int _generation = 0;
+  final int _generation = 0;
   double _zoom = 16;
   late double _scaleLatitude = widget.location.latitude;
   bool _followLocation = true;
@@ -475,7 +485,12 @@ class _LiveLocationMapState extends State<_LiveLocationMap> {
     _followLocation = true;
     try {
       await _map?.flyTo(
-        mapbox.CameraOptions(center: _center, zoom: 16, bearing: 0, pitch: 0),
+        mapbox.CameraOptions(
+          center: _center,
+          zoom: 16,
+          bearing: 0,
+          pitch: _mapView.settings.is3D ? 50 : 0,
+        ),
         mapbox.MapAnimationOptions(duration: 300),
       );
     } catch (_) {
@@ -497,6 +512,7 @@ class _LiveLocationMapState extends State<_LiveLocationMap> {
   Future<void> _onMapCreated(mapbox.MapboxMap map, int generation) async {
     if (!mounted || generation != _generation || _failed) return;
     _map = map;
+    _mapView.attach(map);
     try {
       await map.compass.updateSettings(mapbox.CompassSettings(enabled: false));
       await map.setBounds(
@@ -512,7 +528,10 @@ class _LiveLocationMapState extends State<_LiveLocationMap> {
     }
   }
 
-  Future<void> _onStyleLoaded(int generation) async {
+  Future<void> _onStyleLoaded(int generation) =>
+      _mapView.styleLoaded(() => _prepareNativeStyle(generation));
+
+  Future<void> _prepareNativeStyle(int generation) async {
     final map = _map;
     if (map == null || !_isCurrentMap(map, generation)) return;
     try {
@@ -571,18 +590,8 @@ class _LiveLocationMapState extends State<_LiveLocationMap> {
     }
   }
 
-  void _cycleStyle() {
-    setState(() {
-      _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
-      _generation += 1;
-      _map = null;
-      _pinManager = null;
-      _pin = null;
-    });
-    _startLoadTimeout();
-  }
-
   void _cameraChanged(mapbox.CameraChangedEventData event, int generation) {
+    _mapView.cameraChanged(event);
     final latitude = mapPointCoordinatesOrNull(
       event.cameraState.center,
     )?.latitude;
@@ -606,6 +615,7 @@ class _LiveLocationMapState extends State<_LiveLocationMap> {
   @override
   void dispose() {
     _loadTimeout?.cancel();
+    _mapView.dispose();
     super.dispose();
   }
 
@@ -626,16 +636,21 @@ class _LiveLocationMapState extends State<_LiveLocationMap> {
       children: [
         DeferredMap(
           child: mapbox.MapWidget(
-            key: ValueKey('live-location-$_styleIndex-$generation'),
-            styleUri: mapStyleUrls[_styleIndex],
+            key: const ValueKey('live-location-map'),
+            styleUri: mapStyleUrls[0],
             gestureRecognizers: mapGestureRecognizers,
             onMapCreated: (map) => _onMapCreated(map, generation),
             onStyleLoadedListener: (_) => unawaited(_onStyleLoaded(generation)),
             onMapLoadedListener: (_) {
               if (_generation == generation) _loadTimeout?.cancel();
             },
-            onMapLoadErrorListener: (_) {
-              if (_generation == generation) _fallback();
+            onMapLoadErrorListener: (event) {
+              if (event.type != mapbox.MapLoadErrorType.STYLE) return;
+              if (_mapView.isChanging) {
+                _mapView.styleLoadFailed();
+              } else if (_generation == generation) {
+                _fallback();
+              }
             },
             onCameraChangeListener: (event) =>
                 _cameraChanged(event, generation),
@@ -644,19 +659,22 @@ class _LiveLocationMapState extends State<_LiveLocationMap> {
           ),
         ),
         Positioned(
-          left: 10,
+          right: 10,
           top: 10,
-          child: MapZoomControls(
-            onZoomIn: () => unawaited(_zoomBy(1)),
-            onZoomOut: () => unawaited(_zoomBy(-1)),
-            onReset: () => unawaited(_recenter()),
-            onLayer: _cycleStyle,
+          child: MapViewControls(
+            controller: _mapView,
+            zoomControls: MapZoomControls(
+              onZoomIn: () => unawaited(_zoomBy(1)),
+              onZoomOut: () => unawaited(_zoomBy(-1)),
+              onReset: () => unawaited(_recenter()),
+            ),
           ),
         ),
         Positioned(
           left: 10,
+          right: 10,
           bottom: 10,
-          child: MapScaleBar(zoom: _zoom, latitude: _scaleLatitude),
+          child: MapViewScale(controller: _mapView),
         ),
       ],
     );

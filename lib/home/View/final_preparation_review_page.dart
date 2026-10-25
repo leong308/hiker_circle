@@ -6,7 +6,7 @@ import '../Model/hike_preparation_sharing.dart';
 import '../Model/hike_shirt_color.dart';
 import 'hiking_forecast_sheet.dart';
 import 'preparation_conditions.dart';
-import 'preparation_safety_details_page.dart';
+import 'preparation_gear_grid.dart';
 import 'hike_start_navigation.dart';
 import '../Model/route_gear_assessment.dart';
 import '../../trail/Model/trail_models.dart';
@@ -27,7 +27,7 @@ class FinalPreparationReviewPage extends StatefulWidget {
     this.onCancel,
     this.loadRouteAnalysis,
     this.loadWeather,
-    this.onReady,
+    required this.onStart,
     this.immediate = false,
     this.primaryActionLabel,
     this.initialContacts = const [],
@@ -40,7 +40,7 @@ class FinalPreparationReviewPage extends StatefulWidget {
   final UpcomingHike hike;
   final bool immediate;
   final String? primaryActionLabel;
-  final ValueChanged<PlannedHike>? onReady;
+  final Future<bool> Function(PlannedHike) onStart;
   final Future<TrailWeather> Function()? loadWeather;
   final bool isHost, canStart;
   final PlannedHike? plan;
@@ -63,17 +63,18 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   late PlannedHike? _plan = widget.plan;
   bool _busy = false;
   bool _startRequested = false;
+  bool _startInFlight = false;
   bool _completionDelivered = false;
   String? _error;
   bool _analyzing = false;
   bool _checkingWeather = false;
   String? _weatherNotice;
   bool _routeFailed = false;
-  bool _includeExtras = false;
-  bool _returnToReview = false;
-  bool _reviewPacked = false;
-  late String _stepId;
-  final List<String> _history = [];
+  int _pendingGearSaves = 0;
+  int _gearEditRevision = 0;
+  Future<void> _gearSaveQueue = Future.value();
+  late Set<String> _confirmedGearItems;
+  bool _savingSharing = false;
   final ScrollController _scroll = ScrollController();
   late List<EmergencyContact> _contacts = List.of(widget.initialContacts);
   bool _openingDetails = false,
@@ -82,22 +83,27 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       _loadingSharing = false;
   String? _contactsError, _sharingError;
   Timer? _batteryTimer;
-  bool get _interactionBusy => _busy || _openingDetails || _startRequested;
+  bool get _interactionBusy =>
+      _busy || _openingDetails || _startRequested || _savingSharing;
+  bool get _savingGear => _pendingGearSaves > 0;
   bool get _checkingConditions =>
-      _analyzing || _checkingWeather || _loadingSharing || _loadingContacts;
+      _analyzing ||
+      _checkingWeather ||
+      _loadingSharing ||
+      _loadingContacts ||
+      _savingSharing;
   @override
   void initState() {
     super.initState();
+    _confirmedGearItems = {...?_plan?.completedChecklistItems};
     WidgetsBinding.instance.addObserver(this);
-    final missing = _plan?.missingRequiredGear;
-    _stepId = missing?.isNotEmpty == true ? 'gear:${missing!.first}' : 'extras';
     _analyzeRoute();
     _refreshWeather();
     _refreshContacts();
     _refreshBattery();
     _restoreSharing();
     _batteryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_plan != null && _currentStep.id == 'battery') {
+      if (_plan != null) {
         unawaited(_refreshBattery());
       }
     });
@@ -247,25 +253,33 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     }
   }
 
-  Future<void> _editSharing() => _openDetails(() async {
-    final choice = await Navigator.of(context).push<HikePreparationSharing>(
-      MaterialPageRoute(
-        builder: (_) => PreparationSharingPage(
-          initial: HikePreparationSharing.fromPlan(_plan!),
-          onSave: widget.saveSharing,
-        ),
-      ),
-    );
-    if (mounted && choice != null) {
-      setState(() {
-        _sharingError = null;
-        _plan = _plan!.copyWith(
-          liveLocationConfigured: choice.enabled,
-          locationRecordingInterval: choice.interval,
-        );
-      });
+  Future<void> _saveSharingChoice(HikePreparationSharing choice) async {
+    if (_interactionBusy || _loadingSharing || _plan == null) return;
+    final previous = HikePreparationSharing.fromPlan(_plan!);
+    setState(() {
+      _savingSharing = true;
+      _sharingError = null;
+      _plan = _plan!.copyWith(
+        liveLocationConfigured: choice.enabled,
+        locationRecordingInterval: choice.interval,
+      );
+    });
+    try {
+      await widget.saveSharing?.call(choice);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _plan = _plan!.copyWith(
+            liveLocationConfigured: previous.enabled,
+            locationRecordingInterval: previous.interval,
+          );
+          _sharingError = 'Could not save sharing. Please try again.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _savingSharing = false);
     }
-  });
+  }
 
   Future<void> _openForecast() => _openDetails(
     () => showModalBottomSheet<void>(
@@ -361,54 +375,55 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     }
   }
 
-  Future<bool> _saveGear(Set<String> items) async {
+  Future<bool> _saveGear(Set<String> items) {
     final plan = _plan;
-    if (plan == null || widget.onPlanChanged == null || _busy) {
-      return false;
+    if (plan == null || widget.onPlanChanged == null || _interactionBusy) {
+      return Future.value(false);
     }
+    final revision = ++_gearEditRevision;
     final updated = plan
-        .copyWith(
-          completedChecklistItems: items,
-          checklistCompleted: items.length,
-          checklistTotal: GearChecklistCatalog.itemCount,
-        )
+        .copyWith(completedChecklistItems: Set<String>.unmodifiable(items))
         .withGearProgress();
     setState(() {
-      _busy = true;
+      _pendingGearSaves++;
       _error = null;
       _plan = updated;
     });
-    try {
-      await widget.onPlanChanged!(updated);
-      if (mounted) {
-        setState(
-          () => _plan = _plan!
-              .copyWith(
-                completedChecklistItems: updated.completedChecklistItems,
-              )
-              .withGearProgress(),
-        );
+    final result = Completer<bool>();
+    // Keep fast taps responsive while committing each local snapshot in order.
+    _gearSaveQueue = _gearSaveQueue.then((_) async {
+      try {
+        await widget.onPlanChanged!(updated);
+        _confirmedGearItems = {...updated.completedChecklistItems};
+        result.complete(true);
+      } catch (_) {
+        if (mounted && revision == _gearEditRevision) {
+          setState(() {
+            _plan = _plan!
+                .copyWith(completedChecklistItems: _confirmedGearItems)
+                .withGearProgress();
+            _error = 'Could not save your checklist. Please try again.';
+          });
+        }
+        result.complete(false);
+      } finally {
+        if (mounted) {
+          setState(() => _pendingGearSaves--);
+          _completeRequestedStart();
+        }
       }
-      return mounted;
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _plan = _plan!
-              .copyWith(completedChecklistItems: plan.completedChecklistItems)
-              .withGearProgress();
-          _error = 'Could not save your checklist. Please try again.';
-        });
-      }
-      return false;
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
+    });
+    return result.future;
+  }
+
+  void _togglePacked(String item) {
+    final items = {..._plan!.completedChecklistItems};
+    items.contains(item) ? items.remove(item) : items.add(item);
+    unawaited(_saveGear(items));
   }
 
   Future<void> _cancel() async {
-    if (_busy || widget.onCancel == null) {
+    if (_interactionBusy || _savingGear || widget.onCancel == null) {
       return;
     }
     final confirmed = await showDialog<bool>(
@@ -490,11 +505,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       plan.completedChecklistItems,
       color,
     );
-    final saved = await _saveGear(updated);
-    if (!saved || !mounted) {
-      return;
-    }
-    await _showShirtColorAdvice(color);
+    await _saveGear(updated);
   }
 
   Future<void> _showShirtColorAdvice(HikeShirtColor color) async {
@@ -509,206 +520,6 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       builder: (context) =>
           _ShirtColorAdviceSheet(color: color, advice: advice),
     );
-  }
-
-  List<_PreparationStep> get _steps {
-    final plan = _plan;
-    if (plan == null) {
-      return const [];
-    }
-    final gear = plan.gearPlan;
-    final plannedDuration = plan.expectedReturnTime.difference(
-      plan.plannedStartTime,
-    );
-    _PreparationStep itemStep(String item, bool required) => _PreparationStep(
-      id: 'gear:$item',
-      stage: required ? 0 : 1,
-      eyebrow: required ? 'REQUIRED FOR THIS HIKE' : 'OPTIONAL EXTRA',
-      title: item,
-      body: required
-          ? gear.requiredReasons[item]!
-          : gear.reasons[gear.sections.keys.firstWhere(
-              (section) => gear.sections[section]!.contains(item),
-            )]!,
-      icon: _itemIcon(item),
-      item: item,
-    );
-    return [
-      for (final item in gear.requiredItems) itemStep(item, true),
-      _PreparationStep(
-        id: 'extras',
-        stage: 1,
-        eyebrow: 'MAKE THE PACK YOURS',
-        title: 'A few useful extras?',
-        body: plan.requiredGearReady
-            ? 'Your required items are packed. We can walk through a few recommendations for this route, or continue to safety.'
-            : 'We have saved your answers. You can review optional gear now; we will come back to anything required that is still missing.',
-        icon: Icons.backpack_outlined,
-      ),
-      if (_includeExtras)
-        for (final item in gear.items.difference(gear.requiredItems))
-          itemStep(item, false),
-      _PreparationStep(
-        id: 'contacts',
-        stage: 2,
-        eyebrow: 'SAFETY CHECK · 1 OF 5',
-        title: 'Who can help if you need it?',
-        body: _contacts.isNotEmpty
-            ? 'Your emergency contacts are available. Make sure someone knows your route and expected return time.'
-            : 'No emergency contacts are available. Add or review them in SOS before departure, and let someone know your plans.',
-        icon: Icons.contact_phone_outlined,
-      ),
-      _PreparationStep(
-        id: 'battery',
-        stage: 2,
-        eyebrow: 'SAFETY CHECK · 2 OF 5',
-        title: 'Is your phone ready for the trail?',
-        body: plannedDuration > const Duration(hours: 3)
-            ? 'Check the current charge below. This hike exceeds 3 hours, so bring a charged power bank.'
-            : 'Check the current charge below before leaving.',
-        icon: Icons.battery_charging_full_rounded,
-      ),
-      _PreparationStep(
-        id: 'sharing',
-        stage: 2,
-        eyebrow: 'SAFETY CHECK · 3 OF 5',
-        title: 'How will you share your location?',
-        body: plan.liveLocationConfigured
-            ? 'Live location sharing is on for this hike.'
-            : 'Live location sharing is off for this hike.',
-        icon: Icons.my_location_rounded,
-      ),
-      _PreparationStep(
-        id: 'shirtColor',
-        stage: 2,
-        eyebrow: 'SAFETY CHECK · 4 OF 5',
-        title: 'What colour shirt will you wear?',
-        body: _selectedShirtColor == null
-            ? 'Choose the closest colour. We will check heat, visibility and biting-insect considerations for this hike.'
-            : '${_selectedShirtColor!.label} selected. Review the recommendation below before continuing.',
-        icon: Icons.checkroom_rounded,
-      ),
-      _PreparationStep(
-        id: 'conditions',
-        stage: 2,
-        eyebrow: 'SAFETY CHECK · 5 OF 5',
-        title: 'Have you checked the conditions?',
-        body:
-            'Your pack adapts to the route and forecast. Check conditions at the trail too, and adjust your plans if needed.',
-        icon: Icons.cloud_outlined,
-      ),
-      _PreparationStep(
-        id: 'ready',
-        stage: 3,
-        eyebrow: 'FINAL REVIEW',
-        title: plan.requiredGearReady
-            ? 'Your pack is ready'
-            : 'Let’s finish your pack',
-        body: plan.requiredGearReady
-            ? 'Your required gear is saved. Take a moment to check your hike details before you go.'
-            : 'These items are still required before you can start. We will guide you through them next.',
-        icon: plan.requiredGearReady
-            ? Icons.check_circle_outline_rounded
-            : Icons.backpack_outlined,
-      ),
-    ];
-  }
-
-  _PreparationStep get _currentStep {
-    final steps = _steps;
-    return steps.firstWhere(
-      (step) => step.id == _stepId,
-      // A refreshed forecast can remove the requirement being displayed.
-      orElse: () => steps.firstWhere(
-        (step) =>
-            step.item != null && _plan!.missingRequiredGear.contains(step.item),
-        orElse: () => steps.firstWhere((step) => step.id == 'extras'),
-      ),
-    );
-  }
-
-  void _showStep(String id, {bool remember = true}) {
-    if (_interactionBusy) {
-      return;
-    }
-    final previous = _currentStep.id;
-    setState(() {
-      if (remember && previous != id) {
-        _history.add(previous);
-      }
-      _stepId = id;
-      _error = null;
-    });
-    if (_scroll.hasClients) {
-      _scroll.jumpTo(0);
-    }
-    if (id == 'battery') {
-      unawaited(_refreshBattery());
-    }
-  }
-
-  void _previousStep() {
-    if (_busy) {
-      return;
-    }
-    final ids = _steps.map((step) => step.id).toSet();
-    while (_history.isNotEmpty) {
-      final previous = _history.removeLast();
-      if (ids.contains(previous)) {
-        _returnToReview = false;
-        _reviewPacked = false;
-        _showStep(previous, remember: false);
-        return;
-      }
-    }
-  }
-
-  void _advance() {
-    final steps = _steps;
-    final index = steps.indexWhere((step) => step.id == _currentStep.id);
-    for (final step in steps.skip(index + 1)) {
-      if (_returnToReview && step.stage != 0) {
-        break;
-      }
-      if (!_reviewPacked &&
-          step.item != null &&
-          _plan!.completedChecklistItems.contains(step.item)) {
-        continue;
-      }
-      _showStep(step.id);
-      return;
-    }
-    _showStep('ready');
-  }
-
-  Future<void> _answerGear(bool packed) async {
-    final step = _currentStep;
-    final plan = _plan;
-    if (_busy || plan == null || step.item == null) {
-      return;
-    }
-    final items = {...plan.completedChecklistItems};
-    final changed = packed ? items.add(step.item!) : items.remove(step.item);
-    if (changed && !await _saveGear(items)) {
-      return;
-    }
-    if (!mounted) {
-      return;
-    }
-    if (_returnToReview && !_reviewPacked) {
-      final missing = _plan!.missingRequiredGear;
-      _showStep(
-        packed && missing.isNotEmpty ? 'gear:${missing.first}' : 'ready',
-      );
-    } else {
-      _advance();
-    }
-  }
-
-  void _reviewMissing() {
-    _returnToReview = true;
-    _reviewPacked = false;
-    _showStep('gear:${_plan!.missingRequiredGear.first}');
   }
 
   void _finishPreparation() {
@@ -730,9 +541,11 @@ class _PreparationState extends State<FinalPreparationReviewPage>
   void _completeRequestedStart() {
     if (!mounted ||
         !_startRequested ||
+        _startInFlight ||
         _completionDelivered ||
         _busy ||
         _openingDetails ||
+        _savingGear ||
         _checkingConditions) {
       return;
     }
@@ -740,6 +553,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     if (plan == null ||
         !widget.canStart ||
         _sharingError != null ||
+        _selectedShirtColor == null ||
         !plan.requiredGearReady) {
       setState(() {
         _startRequested = false;
@@ -747,6 +561,8 @@ class _PreparationState extends State<FinalPreparationReviewPage>
             _sharingError ??
             (plan?.requiredGearReady == false
                 ? 'The latest checks require more gear. Review the missing items before starting.'
+                : _selectedShirtColor == null
+                ? 'Choose your shirt colour before starting.'
                 : 'This hike cannot start yet. Review your preparation.');
       });
       return;
@@ -755,21 +571,35 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     if (route == null || !route.isActive) {
       return;
     }
-    // Deliver one result to the preparation page's caller. Late refreshes and
-    // repeated taps must not submit again or close another route.
-    setState(() => _completionDelivered = true);
+    // Keep this page and its answers until the caller confirms a started hike.
+    // Condition refreshes and repeated taps must not create another attempt.
+    setState(() => _startInFlight = true);
+    unawaited(_startHike(plan, route));
+  }
+
+  Future<void> _startHike(PlannedHike plan, Route<String> route) async {
     try {
-      widget.onReady?.call(plan);
-    } catch (_) {
+      final started = await widget.onStart(plan);
+      if (!mounted) return;
+      if (started) {
+        setState(() => _completionDelivered = true);
+        HikeStartNavigation.closeOwnedRoute(route, 'start');
+        return;
+      }
       setState(() {
-        _completionDelivered = false;
+        _startInFlight = false;
+        _startRequested = false;
+        _error = 'Your hike has not started. You can retry from here.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _startInFlight = false;
         _startRequested = false;
         _error =
-            'Unable to continue. Your preparation is kept; please try again.';
+            'Could not start the hike. Your preparation is kept; please try again.';
       });
-      return;
     }
-    HikeStartNavigation.closeOwnedRoute(route, 'start');
   }
 
   String get _routeStatus {
@@ -839,11 +669,10 @@ class _PreparationState extends State<FinalPreparationReviewPage>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context), scheme = theme.colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     final plan = _plan;
-    final step = plan == null ? null : _currentStep;
     return PopScope(
-      canPop: _completionDelivered || !_interactionBusy,
+      canPop: _completionDelivered || (!_interactionBusy && !_savingGear),
       child: Scaffold(
         backgroundColor: scheme.surfaceContainerLow,
         body: SafeArea(
@@ -857,7 +686,7 @@ class _PreparationState extends State<FinalPreparationReviewPage>
                     PageHeaderAction(
                       icon: Icons.arrow_back_rounded,
                       tooltip: 'Leave preparation',
-                      onPressed: _interactionBusy
+                      onPressed: _interactionBusy || _savingGear
                           ? null
                           : () => Navigator.pop(context),
                       color: scheme.onSurface,
@@ -867,15 +696,13 @@ class _PreparationState extends State<FinalPreparationReviewPage>
                     Expanded(
                       child: Text(
                         'Get ready to hike',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                         style: PageHeaderStyle.title(context, scheme.onSurface),
                       ),
                     ),
                     if (widget.isHost && widget.onCancel != null)
                       PageHeaderControl(
                         child: PopupMenuButton<String>(
-                          enabled: !_interactionBusy,
+                          enabled: !_interactionBusy && !_savingGear,
                           tooltip: 'Hike options',
                           onSelected: (_) => _cancel(),
                           itemBuilder: (_) => const [
@@ -889,27 +716,45 @@ class _PreparationState extends State<FinalPreparationReviewPage>
                   ],
                 ),
               ),
-              if (step != null) _progress(step),
               Expanded(
                 child: ListView(
+                  key: const ValueKey('preparation-overview'),
                   controller: _scroll,
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
                   children: [
-                    if (step == null)
+                    if (plan == null)
                       const Text(
-                        'The trail preparation could not be loaded. Please return and try again.',
+                        'The trail preparation could not be loaded. Return and try again.',
                       )
-                    else
-                      AnimatedSwitcher(
-                        duration: MediaQuery.disableAnimationsOf(context)
-                            ? Duration.zero
-                            : const Duration(milliseconds: 200),
-                        child: _question(step),
+                    else ...[
+                      _hikeSummary(plan),
+                      const SizedBox(height: 18),
+                      _gearChoices(plan, required: true),
+                      const SizedBox(height: 18),
+                      _gearChoices(plan, required: false),
+                      const SizedBox(height: 18),
+                      _section('Safety check', _safetyOverview(plan)),
+                      const SizedBox(height: 12),
+                      _section('Location sharing', _sharingChoices(plan)),
+                      const SizedBox(height: 12),
+                      _section(
+                        'Shirt colour',
+                        _ShirtColorSelector(
+                          selected: _selectedShirtColor,
+                          overlapsDaylight: _shirtChoiceOverlapsDaylight,
+                          enabled:
+                              widget.onPlanChanged != null && !_interactionBusy,
+                          onSelected: _selectShirtColor,
+                          onShowAdvice: _showShirtColorAdvice,
+                        ),
                       ),
+                      const SizedBox(height: 12),
+                      _conditionsOverview(plan),
+                    ],
                   ],
                 ),
               ),
-              if (step != null) _actions(step),
+              if (plan != null) _actions(),
             ],
           ),
         ),
@@ -917,521 +762,515 @@ class _PreparationState extends State<FinalPreparationReviewPage>
     );
   }
 
-  Widget _progress(_PreparationStep step) {
-    final theme = Theme.of(context);
-    const phases = [
-      'Pack essentials',
-      'Optional extras',
-      'Safety check',
-      'Ready to go',
-    ];
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+  Widget _hikeSummary(PlannedHike plan) {
+    final theme = Theme.of(context), scheme = theme.colorScheme;
+    final required = plan.gearPlan.requiredItems.length;
+    final packed = required - plan.missingRequiredGear.length;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             widget.hike.trailName,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Step ${step.stage + 1} of 4 · ${phases[step.stage]}',
-                  style: theme.textTheme.labelLarge,
-                ),
-              ),
-              IconButton(
-                tooltip: 'Previous question',
-                onPressed: _interactionBusy || _history.isEmpty
-                    ? null
-                    : _previousStep,
-                icon: const Icon(Icons.undo_rounded),
-              ),
-            ],
-          ),
-          LinearProgressIndicator(
-            value: (step.stage + 1) / 4,
-            semanticsLabel: 'Preparation step ${step.stage + 1} of 4',
-            borderRadius: BorderRadius.circular(4),
-            minHeight: 5,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _question(_PreparationStep step) {
-    final theme = Theme.of(context), scheme = theme.colorScheme;
-    final compact =
-        MediaQuery.sizeOf(context).height < 740 ||
-        MediaQuery.textScalerOf(context).scale(14) > 18;
-    final plan = _plan!;
-    final packed =
-        step.item != null && plan.completedChecklistItems.contains(step.item);
-    final missing = plan.missingRequiredGear;
-    return Container(
-      key: ValueKey(step.id),
-      width: double.infinity,
-      padding: EdgeInsets.all(compact ? 16 : 24),
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (compact)
-            Row(
-              children: [
-                Icon(
-                  packed ? Icons.check_circle_outline_rounded : step.icon,
-                  size: 28,
-                  color: scheme.primary,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    step.eyebrow,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            )
-          else ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                packed ? Icons.check_rounded : step.icon,
-                size: 32,
-                color: scheme.onPrimaryContainer,
-              ),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
             ),
-            const SizedBox(height: 20),
-            Text(
-              step.eyebrow,
-              style: theme.textTheme.labelSmall?.copyWith(
-                letterSpacing: 1,
-                color: scheme.primary,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-          const SizedBox(height: 10),
-          if (step.item != null && (!compact || packed)) ...[
-            Text(
-              packed ? 'Already in your pack' : 'Have you packed this?',
-              style: theme.textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-          ],
-          Semantics(
-            header: true,
-            liveRegion: true,
-            child: Text(
-              step.title,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            '${_time(widget.hike.departureTime)} → ${_time(widget.hike.expectedReturnTime)}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 12),
-          Text(step.body, style: theme.textTheme.bodyLarge),
-          if (step.stage == 2) ...[
-            const SizedBox(height: 18),
-            _safetyDetails(step.id),
-          ],
-          if (step.item != null) ...[
-            const SizedBox(height: 20),
-            Text(
-              step.stage == 0
-                  ? '${plan.gearPlan.requiredItems.length - missing.length} of ${plan.gearPlan.requiredItems.length} required items packed'
-                  : 'Optional · skipping this will not prevent you from starting.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
+          Row(
+            children: [
+              Icon(
+                plan.requiredGearReady
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.backpack_outlined,
+                size: 18,
+                color: scheme.primary,
               ),
-            ),
-          ],
-          if (step.id == 'conditions' || step.id == 'ready') ...[
-            const SizedBox(height: 20),
-            _status(Icons.cloud_outlined, _weatherStatus),
-            _status(Icons.route_rounded, _routeStatus),
-            if (step.id == 'conditions' &&
-                (widget.loadWeather != null ||
-                    widget.loadRouteAnalysis != null))
-              TextButton.icon(
-                onPressed: _interactionBusy || _analyzing || _checkingWeather
-                    ? null
-                    : () {
-                        _analyzeRoute(force: true);
-                        _refreshWeather();
-                      },
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Refresh conditions'),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  '$packed/$required required items packed',
+                  style: theme.textTheme.labelMedium,
+                ),
               ),
-          ],
-          if (step.id == 'ready') ...[
-            if (missing.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              for (final item in missing)
-                _status(Icons.backpack_outlined, item),
+              if (_savingGear)
+                const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
             ],
-            const Divider(height: 28),
-            _schedule('Departure', _time(widget.hike.departureTime)),
-            const SizedBox(height: 12),
-            _schedule(
-              'Estimated finish',
-              _time(widget.hike.expectedReturnTime),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '${widget.hike.distanceKm.toStringAsFixed(1)} km · ${plan.trail.difficultyDisplayLabel}',
-            ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () {
-                      _returnToReview = true;
-                      _reviewPacked = true;
-                      _showStep('gear:${plan.gearPlan.requiredItems.first}');
-                    },
-              child: const Text('Recheck required gear'),
-            ),
-          ],
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: required == 0 ? 1 : packed / required,
+            minHeight: 4,
+            borderRadius: BorderRadius.circular(4),
+            semanticsLabel: '$packed of $required required items packed',
+          ),
         ],
       ),
     );
   }
 
-  Widget _safetyDetails(String id) {
-    final plan = _plan!, theme = Theme.of(context);
-    switch (id) {
-      case 'contacts':
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _gearChoices(PlannedHike plan, {required bool required}) {
+    final theme = Theme.of(context), gear = plan.gearPlan;
+    final items = required
+        ? gear.requiredItems
+        : gear.items.difference(gear.requiredItems);
+    final packed = items.where(plan.completedChecklistItems.contains).length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            if (_loadingContacts) const LinearProgressIndicator(),
-            if (_contactsError != null)
-              Text(
-                _contactsError!,
-                style: TextStyle(color: theme.colorScheme.error),
+            Expanded(
+              child: Text(
+                required ? 'Required gear' : 'Recommended extras',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            for (final contact in _contacts)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: Row(
+            ),
+            Text('$packed/${items.length}', style: theme.textTheme.labelMedium),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          required
+              ? 'Tap each item as you pack it.'
+              : 'Optional — pack what suits your hike.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 10),
+        PreparationGearGrid(
+          key: ValueKey(required ? 'required-gear-grid' : 'optional-gear-grid'),
+          items: items,
+          selectedItems: plan.completedChecklistItems,
+          reasons: gear.requiredReasons,
+          onToggle: _interactionBusy || widget.onPlanChanged == null
+              ? null
+              : _togglePacked,
+        ),
+      ],
+    );
+  }
+
+  Widget _section(String title, Widget child) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _safetyOverview(PlannedHike plan) {
+    final scheme = Theme.of(context).colorScheme;
+    final contacts = _readinessTile(
+      icon: Icons.contact_phone_outlined,
+      label: 'Emergency contacts',
+      value: _loadingContacts ? 'Checking…' : '${_contacts.length} saved',
+      detail: _contacts.isEmpty
+          ? 'Add someone you trust'
+          : _contacts.map((c) => c.name).join(', '),
+      warning: _contacts.isEmpty || _contactsError != null,
+      onTap: _interactionBusy || _loadingContacts
+          ? null
+          : widget.onEditContacts == null
+          ? null
+          : () =>
+                _openDetails(widget.onEditContacts!, refresh: _refreshContacts),
+    );
+    final battery = _readinessTile(
+      icon: plan.hasKnownBatteryLevel
+          ? Icons.battery_charging_full_rounded
+          : Icons.battery_unknown_rounded,
+      label: 'Phone battery',
+      value: _loadingBattery
+          ? 'Checking…'
+          : plan.hasKnownBatteryLevel
+          ? '${plan.phoneBatteryLevel}%'
+          : 'Check phone',
+      detail: !plan.hasKnownBatteryLevel
+          ? 'Check the charge manually'
+          : plan.phoneBatteryLevel < 60
+          ? '60% or more recommended'
+          : 'Ready for the trail',
+      warning: !plan.hasKnownBatteryLevel || plan.phoneBatteryLevel < 60,
+      onTap:
+          _interactionBusy || _loadingBattery || widget.loadBatteryLevel == null
+          ? null
+          : _refreshBattery,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) =>
+              MediaQuery.textScalerOf(context).scale(1) >= 2
+              ? Column(children: [contacts, const SizedBox(height: 8), battery])
+              : Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Expanded(child: contacts),
+                    const SizedBox(width: 8),
+                    Expanded(child: battery),
+                  ],
+                ),
+        ),
+        if (plan.expectedReturnTime.difference(plan.plannedStartTime) >
+            const Duration(hours: 3)) ...[
+          const SizedBox(height: 10),
+          Text(
+            'Over 3 hours planned — bring a charged power bank.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        if (_contactsError != null) ...[
+          const SizedBox(height: 8),
+          Text(_contactsError!, style: TextStyle(color: scheme.error)),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: _loadingContacts ? null : _refreshContacts,
+              child: const Text('Retry contacts'),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _readinessTile({
+    required IconData icon,
+    required String label,
+    required String value,
+    required String detail,
+    required bool warning,
+    VoidCallback? onTap,
+  }) {
+    final theme = Theme.of(context), scheme = theme.colorScheme;
+    final accent = warning ? scheme.error : scheme.primary;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 20, color: accent),
+                  const Spacer(),
+                  if (onTap != null)
                     Icon(
-                      Icons.person_outline,
-                      color: theme.colorScheme.primary,
+                      Icons.chevron_right_rounded,
+                      size: 16,
+                      color: scheme.onSurfaceVariant,
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(contact.name, style: theme.textTheme.titleSmall),
-                          if (contact.relationship.trim().isNotEmpty)
-                            Text(contact.relationship),
-                          Text(contact.phoneNumber),
-                        ],
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(label, style: theme.textTheme.bodySmall),
+              const SizedBox(height: 3),
+              Text(
+                value,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: accent,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                detail,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sharingChoices(PlannedHike plan) {
+    final choice = HikePreparationSharing.fromPlan(plan),
+        theme = Theme.of(context);
+    final enabled = !_interactionBusy && !_loadingSharing;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(
+              Icons.share_location_rounded,
+              size: 22,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Share live location')),
+            Switch.adaptive(
+              key: const ValueKey('preparation-sharing-switch'),
+              value: choice.enabled,
+              onChanged: enabled
+                  ? (value) => _saveSharingChoice(
+                      HikePreparationSharing(
+                        enabled: value,
+                        interval: choice.interval,
                       ),
+                    )
+                  : null,
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<Duration>(
+          key: ValueKey('preparation-upload-${choice.interval.inSeconds}'),
+          initialValue: choice.interval,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            labelText: 'Route upload interval',
+            isDense: true,
+            border: OutlineInputBorder(),
+          ),
+          items: [
+            for (final interval in HikePreparationSharing.intervals)
+              DropdownMenuItem(
+                value: interval,
+                child: Text(
+                  HikePreparationSharing(
+                    enabled: choice.enabled,
+                    interval: interval,
+                  ).intervalLabel,
+                ),
+              ),
+          ],
+          onChanged: !enabled
+              ? null
+              : (interval) {
+                  if (interval != null) {
+                    unawaited(
+                      _saveSharingChoice(
+                        HikePreparationSharing(
+                          enabled: choice.enabled,
+                          interval: interval,
+                        ),
+                      ),
+                    );
+                  }
+                },
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'GPS is saved on your phone every 5 seconds. Route uploads use this interval.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        if (_loadingSharing || _savingSharing) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(),
+        ],
+        if (_sharingError != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _sharingError!,
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: _loadingSharing ? null : _restoreSharing,
+              child: const Text('Retry sharing choices'),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _conditionsOverview(PlannedHike plan) {
+    final theme = Theme.of(context), scheme = theme.colorScheme;
+    final forecast = _shirtWeatherBriefing;
+    final summary =
+        forecast.minTemperature != null &&
+            forecast.maxTemperature != null &&
+            forecast.peakRainChance != null
+        ? '${forecast.minTemperature!.round()}–${forecast.maxTemperature!.round()}°C · ${forecast.peakRainChance!.round()}% rain chance'
+        : 'Check local weather before departure';
+    return Material(
+      color: scheme.surface,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Theme(
+          data: theme.copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            key: const ValueKey('preparation-conditions'),
+            tilePadding: EdgeInsets.zero,
+            leading: Icon(Icons.cloud_outlined, color: scheme.primary),
+            title: Text(
+              'Weather & route',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: Text(
+              _analyzing || _checkingWeather ? 'Checking conditions…' : summary,
+              style: theme.textTheme.bodySmall,
+            ),
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(_routeStatus, style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 6),
+                    Text(_weatherStatus, style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 14),
+                    PreparationConditions(
+                      weather: plan.trail.weather,
+                      departure: plan.plannedStartTime,
+                      returning: plan.expectedReturnTime,
+                      assessment: plan.gearAssessment,
+                    ),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        TextButton.icon(
+                          onPressed:
+                              _interactionBusy || _analyzing || _checkingWeather
+                              ? null
+                              : () {
+                                  unawaited(_analyzeRoute(force: true));
+                                  unawaited(_refreshWeather());
+                                },
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('Refresh'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _interactionBusy || _checkingWeather
+                              ? null
+                              : _openForecast,
+                          icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                          label: const Text('Full forecast'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-            if (_contacts.isEmpty && !_loadingContacts)
-              const Text('No emergency contacts saved.'),
-            if (widget.onEditContacts != null)
-              OutlinedButton.icon(
-                onPressed: _interactionBusy || _loadingContacts
-                    ? null
-                    : () => _openDetails(
-                        widget.onEditContacts!,
-                        refresh: _refreshContacts,
-                      ),
-                icon: const Icon(Icons.edit_outlined),
-                label: const Text('Modify contacts'),
-              ),
-            if (_contactsError != null)
-              TextButton(
-                onPressed: _loadingContacts ? null : _refreshContacts,
-                child: const Text('Retry contacts'),
-              ),
-          ],
-        );
-      case 'battery':
-        return _BatteryPreparationStatus(
-          hasKnownLevel: plan.hasKnownBatteryLevel,
-          level: plan.phoneBatteryLevel,
-          loading: _loadingBattery,
-          plannedDuration: plan.expectedReturnTime.difference(
-            plan.plannedStartTime,
-          ),
-        );
-      case 'sharing':
-        final choice = HikePreparationSharing.fromPlan(plan);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (_loadingSharing) const LinearProgressIndicator(),
-            Text(
-              'Cloud upload · ${choice.intervalLabel}',
-              style: theme.textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'GPS is recorded on this phone every 5 seconds. All new points are sent together at your chosen upload interval.',
-            ),
-            if (_sharingError != null) ...[
-              Text(
-                _sharingError!,
-                style: TextStyle(color: theme.colorScheme.error),
-              ),
-              TextButton(
-                onPressed: _loadingSharing ? null : _restoreSharing,
-                child: const Text('Retry sharing choices'),
-              ),
             ],
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _interactionBusy || _loadingSharing
-                  ? null
-                  : _editSharing,
-              icon: const Icon(Icons.tune),
-              label: const Text('Modify sharing'),
-            ),
-          ],
-        );
-      case 'shirtColor':
-        return _ShirtColorSelector(
-          selected: _selectedShirtColor,
-          overlapsDaylight: _shirtChoiceOverlapsDaylight,
-          enabled: widget.onPlanChanged != null && !_interactionBusy,
-          onSelected: _selectShirtColor,
-          onShowAdvice: _showShirtColorAdvice,
-        );
-      case 'conditions':
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            PreparationConditions(
-              weather: plan.trail.weather,
-              departure: plan.plannedStartTime,
-              returning: plan.expectedReturnTime,
-              assessment: plan.gearAssessment,
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _interactionBusy || _checkingWeather
-                  ? null
-                  : _openForecast,
-              icon: const Icon(Icons.open_in_new),
-              label: const Text('View full forecast'),
-            ),
-          ],
-        );
-      default:
-        return const SizedBox.shrink();
-    }
+          ),
+        ),
+      ),
+    );
   }
 
-  Widget _status(IconData icon, String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(text, style: Theme.of(context).textTheme.bodySmall),
-        ),
-      ],
-    ),
-  );
-
-  Widget _actions(_PreparationStep step) {
-    final theme = Theme.of(context), scheme = theme.colorScheme;
-    final plan = _plan!;
-    final checking = _checkingConditions;
-    String label = 'Continue';
-    String? secondary;
-    String hint = 'Take a moment to review, then continue.';
-    VoidCallback? action = _advance;
-    VoidCallback? secondaryAction;
-    if (step.item != null) {
-      final packed = plan.completedChecklistItems.contains(step.item);
-      label = packed ? 'Keep packed' : 'Yes, packed';
-      hint = step.stage == 0
-          ? 'Not ready yet? We will come back to it before you start.'
-          : 'Bring it if it suits your hike.';
-      action = widget.onPlanChanged == null && !packed
-          ? null
-          : () => _answerGear(true);
-      secondary = step.stage == 0 ? 'Not yet' : 'Skip this item';
-      secondaryAction = widget.onPlanChanged == null && packed
-          ? null
-          : () => _answerGear(false);
-      if (widget.onPlanChanged == null && !packed) {
-        hint =
-            'Packing changes are unavailable. Return to the hike and reopen preparation.';
-      }
-    } else if (step.id == 'extras') {
-      label = 'Review optional gear';
-      secondary = 'Skip extras';
-      hint = 'Optional gear will not prevent you from starting.';
-      action = () {
-        _includeExtras = true;
-        _advance();
-      };
-      secondaryAction = () => _showStep('contacts');
-    } else if (step.id == 'shirtColor') {
-      final selected = _selectedShirtColor;
-      final warning =
-          selected != null &&
-          selected.suitability == HikeShirtColorSuitability.avoidInDaylight &&
-          _shirtChoiceOverlapsDaylight;
-      label = selected == null
-          ? 'Choose a shirt colour'
-          : warning
-          ? 'Continue with warning'
-          : 'Continue';
-      hint = selected == null
-          ? 'Select the closest colour before continuing.'
-          : warning
-          ? 'A lighter, more visible shirt is recommended for this daytime hike.'
-          : 'Your shirt-colour guidance is saved for this hike.';
-      action = selected == null ? null : _advance;
-    } else if (step.id == 'ready') {
-      final missing = plan.missingRequiredGear;
-      if (_sharingError != null) {
-        label = 'Review sharing choices';
-        hint = _sharingError!;
-        action = () => _showStep('sharing');
-      } else if (missing.isNotEmpty) {
-        label =
-            'Pack ${missing.length} missing item${missing.length == 1 ? '' : 's'}';
-        hint = 'Next up: ${missing.first}';
-        action = _reviewMissing;
-      } else {
-        label = _loadingSharing || _loadingContacts
-            ? 'Loading safety details…'
-            : checking
-            ? 'Checking conditions…'
-            : _startLabel;
-        hint = checking
-            ? 'Waiting for route and forecast checks before starting.'
-            : _departureHint;
-        action = checking || !widget.canStart ? null : _finishPreparation;
-      }
-    }
+  Widget _actions() {
+    final theme = Theme.of(context), scheme = theme.colorScheme, plan = _plan!;
+    final missing = plan.missingRequiredGear.length;
+    final ready =
+        missing == 0 && _selectedShirtColor != null && _sharingError == null;
+    final waiting = _checkingConditions || _savingGear;
+    final label = missing > 0
+        ? '$missing required item${missing == 1 ? '' : 's'} left'
+        : _selectedShirtColor == null
+        ? 'Choose a shirt colour'
+        : _sharingError != null
+        ? 'Check sharing choices'
+        : _startLabel;
+    final hint = missing > 0
+        ? 'Pack the required items above.'
+        : _selectedShirtColor == null
+        ? 'Select your shirt colour on this page.'
+        : _sharingError != null
+        ? _sharingError!
+        : waiting
+        ? 'Finishing your saved checks…'
+        : _departureHint;
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
       decoration: BoxDecoration(
         color: scheme.surface,
         border: Border(top: BorderSide(color: scheme.outlineVariant)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_error != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 6),
               child: Semantics(
                 liveRegion: true,
                 child: Text(_error!, style: TextStyle(color: scheme.error)),
               ),
             ),
           Text(hint, style: theme.textTheme.bodySmall),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           FilledButton.icon(
             key: const ValueKey('preparation-continue'),
-            onPressed: _interactionBusy ? null : action,
-            icon:
-                _busy ||
-                    _startRequested ||
-                    (step.id == 'ready' && checking && plan.requiredGearReady)
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
+            onPressed: _interactionBusy || waiting || !ready || !widget.canStart
+                ? null
+                : _finishPreparation,
+            icon: _busy || _startRequested || (ready && waiting)
+                ? const SizedBox.square(
+                    dimension: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Icon(
-                    step.item != null
-                        ? Icons.check_rounded
-                        : Icons.arrow_forward_rounded,
-                  ),
+                : const Icon(Icons.hiking_rounded),
             label: Text(
-              _busy
+              _busy || _savingGear
                   ? 'Saving…'
                   : _startRequested
-                  ? (checking ? 'Checking conditions…' : 'Starting…')
+                  ? 'Starting…'
+                  : ready && waiting
+                  ? 'Checking conditions…'
                   : label,
             ),
           ),
-          if (secondary != null)
-            TextButton(
-              onPressed: _interactionBusy ? null : secondaryAction,
-              child: Text(secondary),
-            ),
         ],
       ),
     );
-  }
-
-  Widget _schedule(String label, String value) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(label, style: Theme.of(context).textTheme.labelMedium),
-      const SizedBox(height: 4),
-      Text(
-        value,
-        style: Theme.of(
-          context,
-        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-      ),
-    ],
-  );
-
-  IconData _itemIcon(String item) {
-    final name = item.toLowerCase();
-    if (name.contains('water')) {
-      return Icons.water_drop_outlined;
-    }
-    if (name.contains('snack') || name.contains('food')) {
-      return Icons.restaurant_outlined;
-    }
-    if (name.contains('aid')) {
-      return Icons.medical_services_outlined;
-    }
-    if (name.contains('sun')) {
-      return Icons.wb_sunny_outlined;
-    }
-    if (name.contains('rain')) {
-      return Icons.umbrella_outlined;
-    }
-    if (name.contains('blanket')) {
-      return Icons.layers_outlined;
-    }
-    if (name.contains('poles') || name.contains('socks')) {
-      return Icons.hiking_rounded;
-    }
-    return Icons.backpack_outlined;
   }
 }
 
@@ -1456,27 +1295,6 @@ class _ShirtColorSelector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Icon(
-              overlapsDaylight
-                  ? Icons.wb_sunny_outlined
-                  : Icons.nights_stay_outlined,
-              size: 20,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                overlapsDaylight
-                    ? 'This hike overlaps daylight after sunrise.'
-                    : 'This hike is currently planned outside daylight.',
-                style: theme.textTheme.labelLarge,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
         Wrap(
           alignment: WrapAlignment.center,
           spacing: 10,
@@ -1494,7 +1312,7 @@ class _ShirtColorSelector extends StatelessWidget {
         if (selected == null) ...[
           const SizedBox(height: 12),
           Text(
-            'Hover over or long-press a swatch to see its colour name.',
+            'Choose the closest colour. Long-press for its name.',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
@@ -1641,8 +1459,6 @@ class _SelectedShirtColorStatus extends StatelessWidget {
                     ),
                     Text(
                       advice.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(color: accent),
                     ),
                   ],
@@ -1728,168 +1544,6 @@ class _ShirtColorAdviceSheet extends StatelessWidget {
   }
 }
 
-class _BatteryPreparationStatus extends StatelessWidget {
-  const _BatteryPreparationStatus({
-    required this.hasKnownLevel,
-    required this.level,
-    required this.loading,
-    required this.plannedDuration,
-  });
-
-  final bool hasKnownLevel;
-  final int level;
-  final bool loading;
-  final Duration plannedDuration;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context), scheme = theme.colorScheme;
-    final normalizedLevel = level.clamp(0, 100);
-    final lowBattery = !hasKnownLevel || normalizedLevel < 60;
-    final longHike = plannedDuration > const Duration(hours: 3);
-    final accent = lowBattery ? scheme.error : scheme.primary;
-    final icon = !hasKnownLevel
-        ? Icons.battery_unknown_rounded
-        : normalizedLevel < 20
-        ? Icons.battery_alert_rounded
-        : normalizedLevel < 60
-        ? Icons.battery_3_bar_rounded
-        : Icons.battery_full_rounded;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: accent.withValues(alpha: .09),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: accent.withValues(alpha: .4)),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 32, color: accent),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Current battery', style: theme.textTheme.labelLarge),
-                    Text(
-                      hasKnownLevel ? '$normalizedLevel%' : 'Unavailable',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        color: accent,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (loading)
-                const SizedBox.square(
-                  dimension: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-            ],
-          ),
-        ),
-        if (hasKnownLevel) ...[
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(99),
-            child: LinearProgressIndicator(
-              minHeight: 7,
-              value: normalizedLevel / 100,
-              color: accent,
-              backgroundColor: scheme.surfaceContainerHighest,
-            ),
-          ),
-        ],
-        if (lowBattery) ...[
-          const SizedBox(height: 12),
-          _BatteryNotice(
-            icon: Icons.electrical_services_rounded,
-            color: scheme.error,
-            title: hasKnownLevel
-                ? 'Charge your phone before departure'
-                : 'Battery level could not be checked',
-            body: hasKnownLevel
-                ? 'At least 60% is recommended so GPS tracking, communication and SOS features have enough power.'
-                : 'Check the phone battery manually and charge it before starting the hike.',
-          ),
-        ],
-        if (longHike) ...[
-          const SizedBox(height: 12),
-          _BatteryNotice(
-            icon: Icons.power_rounded,
-            color: scheme.tertiary,
-            title: 'Bring a charged power bank',
-            body:
-                'This hike is planned for ${_durationLabel(plannedDuration)}, which is more than 3 hours. Keep the cable accessible and protect both from rain.',
-          ),
-        ],
-      ],
-    );
-  }
-
-  static String _durationLabel(Duration duration) {
-    final minutes = duration.inMinutes.clamp(0, 24 * 60 * 7);
-    final hours = minutes ~/ 60;
-    final remainder = minutes % 60;
-    if (remainder == 0) {
-      return '${hours}h';
-    }
-    return '${hours}h ${remainder}m';
-  }
-}
-
-class _BatteryNotice extends StatelessWidget {
-  const _BatteryNotice({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.body,
-  });
-
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .08),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color, size: 21),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(body, style: theme.textTheme.bodySmall),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ShirtColorAdviceCard extends StatelessWidget {
   const _ShirtColorAdviceCard({required this.advice});
 
@@ -1969,20 +1623,4 @@ class _ShirtColorAdviceCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _PreparationStep {
-  const _PreparationStep({
-    required this.id,
-    required this.stage,
-    required this.eyebrow,
-    required this.title,
-    required this.body,
-    required this.icon,
-    this.item,
-  });
-  final String id, eyebrow, title, body;
-  final int stage;
-  final IconData icon;
-  final String? item;
 }

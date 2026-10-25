@@ -78,6 +78,7 @@ class ActiveTrackingMapView extends StatefulWidget {
     this.currentPhoneNumber = '',
     this.onStyleChanged,
     this.onReportHazard,
+    this.mapBuilder,
   });
 
   final ActiveHikeSession activeHike;
@@ -88,6 +89,9 @@ class ActiveTrackingMapView extends StatefulWidget {
   final String currentPhoneNumber;
   final ValueChanged<int>? onStyleChanged;
   final VoidCallback? onReportHazard;
+
+  @visibleForTesting
+  final Widget Function(mapbox.MapWidget map)? mapBuilder;
 
   @override
   State<ActiveTrackingMapView> createState() => _ActiveTrackingMapViewState();
@@ -147,7 +151,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
   var _teamProjectionScheduled = false;
   var _weatherProjectionGeneration = 0;
   var _teamProjectionGeneration = 0;
-  var _styleIndex = 0;
+  var _mapSettings = const MapViewSettings();
+  var _nativeStyleUrl = mapStyleUrls.first;
+  Future<void> _mapSettingsWork = Future.value();
+  int _mapSettingsRevision = 0;
   var _styleLoaded = false;
   var _routeRendered = false;
   var _isRendering = false;
@@ -327,6 +334,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       padding: mapbox.MbxEdgeInsets(top: 150, left: 0, bottom: 30, right: 0),
       zoom: _navigationZoom,
       bearing: _navigationBearing(),
+      pitch: _mapSettings.is3D ? 50 : 0,
     );
   }
 
@@ -686,6 +694,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     final replacingNativeMap =
         _mapboxMap != null && !identical(_mapboxMap, mapboxMap);
     _mapboxMap = mapboxMap;
+    _nativeStyleUrl = mapStyleUrls.first;
     if (replacingNativeMap) {
       _styleLoaded = false;
       _routeRendered = false;
@@ -723,6 +732,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       debugPrint('Unable to configure active hike map: $error');
     }
     if (!_isCurrentMap(mapboxMap, generation)) return;
+    _queueMapSettingsUpdate();
     if (_styleLoaded) {
       await _ensureAnnotationManagers(mapboxMap, generation);
       await _renderRouteIfReady();
@@ -749,9 +759,15 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _annotationManagersFuture = null;
       _renderGeneration++;
     }
-    await enableTerrain3D(map);
+    // A style reload preserves the current viewpoint. In particular, a user
+    // inspecting a teammate or panning the route must not jump back to self.
+    var pitch = _mapSettings.is3D ? 50.0 : 0.0;
+    try {
+      pitch = (await map.getCameraState()).pitch;
+    } catch (_) {}
     if (!_isCurrentMap(map, generation)) return;
-    schedulePitch(map);
+    await applyMapDimension(map, _mapSettings.dimension, pitch: pitch);
+    if (!_isCurrentMap(map, generation)) return;
     if (!await _ensureAnnotationManagers(map, generation)) return;
     await _renderRouteIfReady();
     _scheduleWeatherProjection();
@@ -1051,9 +1067,8 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
       _routeRendered = true;
     }
 
-    if (_navigationRefocusTimer == null) {
-      await _refocusOnSelf();
-    }
+    // GPS updates and explicit recenter actions own camera following. Drawing
+    // annotations after a style load must not move the inspected viewpoint.
   }
 
   void _scheduleWeatherProjection() {
@@ -1270,29 +1285,76 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     await _syncScaleFromCamera();
   }
 
-  void _cycleStyle() {
-    setState(() {
-      _mapGeneration++;
-      _renderGeneration++;
-      _weatherProjectionGeneration++;
-      _teamProjectionGeneration++;
-      _styleIndex = (_styleIndex + 1) % mapStyleUrls.length;
-      _styleLoaded = false;
-      _routeRendered = false;
-      _mapboxMap = null;
-      _polylineManager = null;
-      _circleManager = null;
-      _pointManager = null;
-      _communityCautionLayer.reset();
-      _pointTapEvents?.cancel();
-      _pointTapEvents = null;
-      _hazardsByAnnotationId.clear();
-      _cautionMarkerSizer.clear();
-      _annotationManagersFuture = null;
-      _weatherScreenPositions = const [];
-      _teamScreenPositions = const {};
-    });
-    widget.onStyleChanged?.call(_styleIndex);
+  void _changeMapSettings(MapViewSettings next) {
+    final previous = _mapSettings;
+    if (previous.styleIndex == next.styleIndex &&
+        previous.dimension == next.dimension) {
+      return;
+    }
+    setState(() => _mapSettings = next);
+    _queueMapSettingsUpdate();
+  }
+
+  void _queueMapSettingsUpdate() {
+    final next = _mapSettings;
+    final revision = ++_mapSettingsRevision;
+    _mapSettingsWork = _mapSettingsWork
+        .catchError((Object _) {})
+        .then((_) async {
+          if (!mounted || revision != _mapSettingsRevision) return;
+          final map = _mapboxMap;
+          if (map == null) return;
+          if (_nativeStyleUrl != next.styleUrl) {
+            final oldManagers = <mapbox.BaseAnnotationManager>[
+              if (_polylineManager != null) _polylineManager!,
+              if (_circleManager != null) _circleManager!,
+              if (_pointManager != null) _pointManager!,
+            ];
+            _mapGeneration++;
+            _renderGeneration++;
+            _weatherProjectionGeneration++;
+            _teamProjectionGeneration++;
+            final generation = _mapGeneration;
+            _styleLoaded = false;
+            _routeRendered = false;
+            _polylineManager = null;
+            _circleManager = null;
+            _pointManager = null;
+            await _communityCautionLayer.resetAndWait();
+            _pointTapEvents?.cancel();
+            _pointTapEvents = null;
+            _hazardsByAnnotationId.clear();
+            _cautionMarkerSizer.clear();
+            _annotationManagersFuture = null;
+            if (mounted) {
+              setState(() {
+                _weatherScreenPositions = const [];
+                _teamScreenPositions = const {};
+              });
+            }
+            for (final manager in oldManagers) {
+              try {
+                await map.annotations.removeAnnotationManager(manager);
+              } catch (_) {}
+              if (!_isCurrentMap(map, generation)) return;
+            }
+            if (revision != _mapSettingsRevision) return;
+            await map.loadStyleURI(next.styleUrl);
+            if (!_isCurrentMap(map, generation)) return;
+            _nativeStyleUrl = next.styleUrl;
+            widget.onStyleChanged?.call(next.styleIndex);
+          } else if (_styleLoaded) {
+            final generation = _mapGeneration;
+            await applyMapDimension(map, next.dimension);
+            if (!_isCurrentMap(map, generation)) return;
+            await _syncScaleFromCamera();
+            _scheduleWeatherProjection();
+            _scheduleTeamProjection();
+          }
+        })
+        .catchError((Object error) {
+          debugPrint('Unable to update active hike map appearance: $error');
+        });
   }
 
   Future<void> _zoomBy(double amount) async {
@@ -1363,6 +1425,32 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     );
   }
 
+  Widget _buildMapWidget(int mapGeneration) {
+    final mapWidget = mapbox.MapWidget(
+      key: const ValueKey('active-hike-tracking-map'),
+      styleUri: mapStyleUrls.first,
+      // ignore: deprecated_member_use
+      cameraOptions: _initialCamera,
+      gestureRecognizers: mapGestureRecognizers,
+      onMapCreated: (map) => _onMapCreated(map, mapGeneration),
+      onStyleLoadedListener: (_) => _onStyleLoaded(_mapGeneration),
+      onMapLoadedListener: (_) => _onMapLoaded(_mapGeneration),
+      onScrollListener: (_) => _pauseNavigationFollow(),
+      onZoomListener: (_) => _pauseNavigationFollow(),
+      onCameraChangeListener: (data) {
+        if (mapGeneration == _mapGeneration) _onCameraChange(data);
+      },
+      onMapIdleListener: (_) {
+        if (mapGeneration == _mapGeneration) {
+          unawaited(_syncScaleFromCamera());
+          _scheduleWeatherProjection();
+          _scheduleTeamProjection();
+        }
+      },
+    );
+    return widget.mapBuilder?.call(mapWidget) ?? mapWidget;
+  }
+
   @override
   Widget build(BuildContext context) {
     final visiblePoints = _visiblePoints;
@@ -1385,30 +1473,7 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
     return Stack(
       fit: StackFit.expand,
       children: [
-        mapbox.MapWidget(
-          key: ValueKey(mapStyleUrls[_styleIndex]),
-          styleUri: mapStyleUrls[_styleIndex],
-          // ignore: deprecated_member_use
-          cameraOptions: _initialCamera,
-          gestureRecognizers: mapGestureRecognizers,
-          onMapCreated: (map) => _onMapCreated(map, mapGeneration),
-          onStyleLoadedListener: (_) => _onStyleLoaded(mapGeneration),
-          onMapLoadedListener: (_) => _onMapLoaded(mapGeneration),
-          onScrollListener: (_) => _pauseNavigationFollow(),
-          onZoomListener: (_) => _pauseNavigationFollow(),
-          onCameraChangeListener: (data) {
-            if (mapGeneration == _mapGeneration) {
-              _onCameraChange(data);
-            }
-          },
-          onMapIdleListener: (_) {
-            if (mapGeneration == _mapGeneration) {
-              unawaited(_syncScaleFromCamera());
-              _scheduleWeatherProjection();
-              _scheduleTeamProjection();
-            }
-          },
-        ),
+        _buildMapWidget(mapGeneration),
         for (var index = 0; index < locatedParticipants.length; index++)
           if (_teamScreenPositions[_participantProjectionKey(
                 locatedParticipants[index],
@@ -1458,30 +1523,53 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
                 ),
               ),
             ),
-        if (widget.interactive)
-          Align(
-            alignment: Alignment.topRight,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: MapZoomControls(
-                onZoomIn: () => _zoomBy(1),
-                onZoomOut: () => _zoomBy(-1),
-                onReset: _fitRoute,
-                onLayer: _cycleStyle,
+        Positioned(
+          top: 10,
+          left: 10,
+          right: 10,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              MapStyleControls(
+                settings: _mapSettings,
+                onChanged: _changeMapSettings,
               ),
-            ),
+              if (widget.interactive) ...[
+                const SizedBox(height: 8),
+                MapZoomControls(
+                  onZoomIn: () => _zoomBy(1),
+                  onZoomOut: () => _zoomBy(-1),
+                  onReset: _fitRoute,
+                ),
+              ],
+            ],
           ),
-        Align(
-          alignment: Alignment.bottomLeft,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
+        ),
+        Positioned(
+          left: 10,
+          right: 10,
+          bottom: 10,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              MapScaleWithStyle(
+                zoom: _currentZoom,
+                latitude: _scaleLatitude,
+                settings: _mapSettings,
+              ),
+              if (widget.showLegend) ...[
+                const SizedBox(height: 8),
+                _ActiveTrackingLegend(activeHike: widget.activeHike),
+              ],
+            ],
           ),
         ),
         if (widget.onReportHazard != null && widget.interactive)
           Positioned(
             right: 14,
-            bottom: widget.showLegend ? 84 : 18,
+            bottom: widget.showLegend ? 132 : 64,
             child: FloatingActionButton.small(
               heroTag: null,
               tooltip: 'Report a caution',
@@ -1491,17 +1579,10 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
               child: const Icon(Icons.warning_amber_rounded),
             ),
           ),
-        if (widget.showLegend)
-          Positioned(
-            left: 10,
-            right: 10,
-            bottom: 10,
-            child: _ActiveTrackingLegend(activeHike: widget.activeHike),
-          ),
         if (widget.interactive && _effectiveParticipants.isNotEmpty)
           Positioned(
             right: 10,
-            top: 56,
+            top: 124,
             child: _TeamParticipantPanel(
               participants: _effectiveParticipants,
               currentPhoneNumber: widget.currentPhoneNumber,

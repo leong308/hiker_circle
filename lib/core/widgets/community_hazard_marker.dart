@@ -380,7 +380,14 @@ class CommunityCautionMapLayer {
         (() async {
               final manager = await map.annotations
                   .createPointAnnotationManager();
-              if (_disposed || generation != _generation) return;
+              if (_disposed || generation != _generation) {
+                try {
+                  await map.annotations.removeAnnotationManager(manager);
+                } catch (_) {
+                  // A detached style may already have removed this manager.
+                }
+                return;
+              }
               _manager = manager;
               await manager.setIconAllowOverlap(true);
               if (_disposed || generation != _generation) return;
@@ -462,17 +469,28 @@ class CommunityCautionMapLayer {
   }
 
   void reset() {
+    unawaited(resetAndWait());
+  }
+
+  Future<void> resetAndWait() async {
     _generation++;
     _tap?.cancel();
     _tap = null;
     final old = _manager;
-    if (old != null) unawaited(old.deleteAll().catchError((Object _) {}));
+    final oldMap = _map;
     _manager = null;
     _map = null;
     _attaching = null;
     _rendering = null;
     _byId.clear();
     _sizer.clear();
+    if (old != null && oldMap != null) {
+      try {
+        await oldMap.annotations.removeAnnotationManager(old);
+      } catch (_) {
+        // The native map/style may already have disposed the old manager.
+      }
+    }
   }
 
   void dispose() {

@@ -11,6 +11,8 @@ analyzer:
   exclude:
     - tmp/**
     - build/**
+    # Generated previews can depend on local test fixtures that have been removed.
+    - output/**
     - android/**
     - ios/**
     - web/**

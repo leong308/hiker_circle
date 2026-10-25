@@ -8,17 +8,18 @@ import 'dart:typed_data';
 import 'package:animated_toggle_switch/animated_toggle_switch.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/firebase_bootstrap.dart';
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
-import '../../core/widgets/map_controls.dart';
-import '../../core/widgets/map_utils.dart';
+import '../../admin/View/community_integrity_panel.dart';
+import '../../admin/View/community_post_management_page.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../home/Model/hike_session_models.dart';
 import 'group_chat_detail_page.dart';
 import 'community_post_composer.dart';
+import 'community_recorded_route_map.dart';
+import 'community_moderation_controls.dart';
 
 class CirclePage extends StatefulWidget {
   const CirclePage({
@@ -54,6 +55,7 @@ class _CirclePageState extends State<CirclePage> {
   int _feedGeneration = 0;
   final Set<String> _likingPostIds = {};
   final Set<String> _deletingPostIds = {};
+  final Set<String> _moderatingPostIds = {};
   bool _composerOpen = false;
   String? _postsLoadError;
   bool _postsErrorFromPagination = false;
@@ -551,6 +553,85 @@ class _CirclePageState extends State<CirclePage> {
     }
   }
 
+  Future<void> _openCommunityModeration({bool flags = false}) async {
+    if (!_isAdmin) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => flags
+            ? _CommunityFlagReviewPage(session: widget.session)
+            : CommunityPostManagementPage(
+                session: widget.session,
+                repository: widget.hikerCircleRepository,
+              ),
+      ),
+    );
+    if (mounted) await _loadCommunityPosts();
+  }
+
+  Future<bool> _moderateCommunityPost(
+    _CommunityPost post,
+    String status,
+  ) async {
+    final id = post.postId;
+    if (!_isAdmin ||
+        id == null ||
+        id.isEmpty ||
+        _moderatingPostIds.contains(id) ||
+        _deletingPostIds.contains(id)) {
+      return false;
+    }
+    setState(() => _moderatingPostIds.add(id));
+    final removing = status == 'removed';
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(removing ? 'Remove this story?' : 'Hide this story?'),
+          content: Text(
+            removing
+                ? 'This story will be removed from the community. Its record stays in Manage posts for review or restoration.'
+                : 'This story will be hidden from the community. You can restore it from Manage posts.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(removing ? 'Remove story' : 'Hide story'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return false;
+      await widget.hikerCircleRepository.moderateCommunityPost(
+        session: widget.session,
+        postId: id,
+        moderationStatus: status,
+        expectedUpdatedAtMillis: post.updatedAtMillis,
+      );
+      if (!mounted) return true;
+      setState(() {
+        ++_feedGeneration;
+        _posts = _posts.where((item) => item.postId != id).toList();
+      });
+      _showCircleMessage(removing ? 'Story removed.' : 'Story hidden.');
+      await _loadCommunityPosts();
+      return true;
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      if (mounted) _showCircleMessage(error.message);
+      return false;
+    } catch (_) {
+      if (mounted) {
+        _showCircleMessage('The story couldn’t be updated. Please try again.');
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _moderatingPostIds.remove(id));
+    }
+  }
+
   Future<void> _addBuddy(_CommunityPerson person) async {
     if (person.phoneNumber == widget.session.phoneNumber) return;
     if (_buddyPhones.contains(person.phoneNumber) ||
@@ -913,6 +994,7 @@ class _CirclePageState extends State<CirclePage> {
             onShare: () => _sharePostToGroupChat(post),
             onToggleLike: _togglePostLike,
             onDeletePost: _deleteCommunityPost,
+            onModeratePost: _moderateCommunityPost,
             onCommentCountChanged: (count) {
               if (!mounted) return;
               setState(() {
@@ -924,6 +1006,7 @@ class _CirclePageState extends State<CirclePage> {
                     )
                     .toList();
               });
+              if (_isAdmin) unawaited(_loadCommunityPosts());
             },
           );
         },
@@ -1094,6 +1177,16 @@ class _CirclePageState extends State<CirclePage> {
                       ),
                     ),
                     const SizedBox(height: 18),
+                    if (_isAdmin && _selectedSection == 0) ...[
+                      CommunityModerationToolbar(
+                        isAdmin: _isAdmin,
+                        onManagePosts: () =>
+                            unawaited(_openCommunityModeration()),
+                        onReviewFlags: () =>
+                            unawaited(_openCommunityModeration(flags: true)),
+                      ),
+                      const SizedBox(height: 18),
+                    ],
                     AnimatedSwitcher(
                       duration: MediaQuery.disableAnimationsOf(context)
                           ? Duration.zero
@@ -1115,6 +1208,11 @@ class _CirclePageState extends State<CirclePage> {
                                 onLoadMore: _loadMoreCommunityPosts,
                                 likingPostIds: _likingPostIds,
                                 deletingPostIds: _deletingPostIds,
+                                moderatingPostIds: _moderatingPostIds,
+                                isAdmin: _isAdmin,
+                                onModeratePost: (post, status) => unawaited(
+                                  _moderateCommunityPost(post, status),
+                                ),
                                 onDeletePost: (post) =>
                                     unawaited(_deleteCommunityPost(post)),
                                 onLikePost: (post) =>
@@ -1173,6 +1271,28 @@ class _CirclePageState extends State<CirclePage> {
       ),
     );
   }
+}
+
+class _CommunityFlagReviewPage extends StatelessWidget {
+  const _CommunityFlagReviewPage({required this.session});
+  final AppSession session;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: _CircleColors.backgroundFor(context),
+    appBar: PageHeaderAppBar(title: const Text('Flagged content')),
+    body: session.isAdmin
+        ? SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: const CommunityIntegrityPanel(),
+              ),
+            ),
+          )
+        : const Center(child: Text('Admin privilege is required.')),
+  );
 }
 
 class _CommunityPerson {
@@ -1245,9 +1365,11 @@ class _CommunityPost {
     this.hikeState = '',
     this.distanceKm,
     this.durationMinutes,
+    this.updatedAtMillis,
   });
 
   final String? postId;
+  final int? updatedAtMillis;
   final String authorId;
   final String authorPhoneNumber;
   final String author;
@@ -1300,6 +1422,7 @@ class _CommunityPost {
         hikeState: hikeState,
         distanceKm: distanceKm,
         durationMinutes: durationMinutes,
+        updatedAtMillis: updatedAtMillis,
       );
 }
 
@@ -1400,6 +1523,9 @@ class _CommunitySection extends StatefulWidget {
     required this.onLoadMore,
     required this.likingPostIds,
     required this.deletingPostIds,
+    required this.moderatingPostIds,
+    required this.isAdmin,
+    required this.onModeratePost,
     required this.onDeletePost,
     required this.onLikePost,
     required this.buddyPhones,
@@ -1427,6 +1553,9 @@ class _CommunitySection extends StatefulWidget {
   final VoidCallback onLoadMore;
   final Set<String> likingPostIds;
   final Set<String> deletingPostIds;
+  final Set<String> moderatingPostIds;
+  final bool isAdmin;
+  final void Function(_CommunityPost, String) onModeratePost;
   final ValueChanged<_CommunityPost> onDeletePost;
   final ValueChanged<_CommunityPost> onLikePost;
   final Set<String> buddyPhones;
@@ -1703,8 +1832,15 @@ class _CommunitySectionState extends State<_CommunitySection> {
               onLike: () => widget.onLikePost(post),
               likeBusy:
                   widget.likingPostIds.contains(post.postId) ||
-                  widget.deletingPostIds.contains(post.postId),
-              deleteBusy: widget.deletingPostIds.contains(post.postId),
+                  widget.deletingPostIds.contains(post.postId) ||
+                  widget.moderatingPostIds.contains(post.postId),
+              deleteBusy:
+                  widget.deletingPostIds.contains(post.postId) ||
+                  widget.moderatingPostIds.contains(post.postId),
+              isAdmin: widget.isAdmin,
+              onModerate: widget.isAdmin
+                  ? (status) => widget.onModeratePost(post, status)
+                  : null,
               onDelete:
                   post.isOwnPost ||
                       post.authorPhoneNumber == widget.currentUserPhone
@@ -1861,6 +1997,8 @@ class _CommunityPostCard extends StatefulWidget {
     this.expanded = false,
     this.onDelete,
     this.deleteBusy = false,
+    this.isAdmin = false,
+    this.onModerate,
   });
   final _CommunityPost post;
   final bool isOwnPost;
@@ -1872,6 +2010,8 @@ class _CommunityPostCard extends StatefulWidget {
   final bool expanded;
   final VoidCallback? onDelete;
   final bool deleteBusy;
+  final bool isAdmin;
+  final ValueChanged<String>? onModerate;
   @override
   State<_CommunityPostCard> createState() => _CommunityPostCardState();
 }
@@ -1951,31 +2091,17 @@ class _CommunityPostCardState extends State<_CommunityPostCard> {
                     ),
                   ),
                 ),
-                if (widget.onDelete != null)
-                  PopupMenuButton<String>(
-                    tooltip: 'Story options',
-                    enabled: !widget.deleteBusy,
-                    icon: widget.deleteBusy
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.more_horiz_rounded),
-                    onSelected: (_) => widget.onDelete?.call(),
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(Icons.delete_outline_rounded, size: 20),
-                            SizedBox(width: 10),
-                            Text('Delete story'),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                CommunityPostOptions(
+                  isAdmin: widget.isAdmin,
+                  busy: widget.deleteBusy,
+                  onDelete: widget.onDelete,
+                  onHide: widget.onModerate == null
+                      ? null
+                      : () => widget.onModerate!('hidden'),
+                  onRemove: widget.onModerate == null
+                      ? null
+                      : () => widget.onModerate!('removed'),
+                ),
                 if (post.kind == 'hike')
                   Tooltip(
                     message: post.hikeState == 'active'
@@ -2043,9 +2169,14 @@ class _CommunityPostCardState extends State<_CommunityPostCard> {
                     children: [
                       if (post.hasRouteMap)
                         SizedBox(
-                          height: widget.expanded ? 220 : 130,
+                          height: widget.expanded ? 240 : 130,
                           child: widget.expanded
-                              ? _CommunityRouteThumbnail(post: post)
+                              ? CommunityRecordedRouteMap(
+                                  recordingId:
+                                      post.postId ?? post.routeCaptureId,
+                                  trailName: post.trail,
+                                  points: post.routePreviewPoints,
+                                )
                               : CustomPaint(
                                   painter: _FeedRoutePainter(
                                     post.routePreviewPoints,
@@ -2465,6 +2596,7 @@ class _CommunityPostDetailPage extends StatefulWidget {
     required this.onShare,
     required this.onToggleLike,
     required this.onDeletePost,
+    required this.onModeratePost,
     required this.onCommentCountChanged,
   });
   final AppSession session;
@@ -2477,6 +2609,8 @@ class _CommunityPostDetailPage extends StatefulWidget {
   final Future<_CommunityPost> Function(_CommunityPost post) onToggleLike;
   final ValueChanged<int> onCommentCountChanged;
   final Future<bool> Function(_CommunityPost post) onDeletePost;
+  final Future<bool> Function(_CommunityPost post, String status)
+  onModeratePost;
   @override
   State<_CommunityPostDetailPage> createState() =>
       _CommunityPostDetailPageState();
@@ -2494,6 +2628,8 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
   bool _isPostingComment = false;
   bool _likeBusy = false;
   bool _deleting = false;
+  bool _moderating = false;
+  final Set<String> _removingCommentIds = {};
   String? _commentsError;
   bool _commentsPaginationError = false;
   int _commentsGeneration = 0;
@@ -2627,7 +2763,7 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
   }
 
   Future<void> _deleteStory() async {
-    if (_deleting) return;
+    if (_deleting || _moderating) return;
     setState(() => _deleting = true);
     final deleted = await widget.onDeletePost(_post);
     if (!mounted) return;
@@ -2635,6 +2771,76 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
       Navigator.of(context).pop();
     } else {
       setState(() => _deleting = false);
+    }
+  }
+
+  Future<void> _moderateStory(String status) async {
+    if (!widget.session.isAdmin || _moderating || _deleting) return;
+    setState(() => _moderating = true);
+    final updated = await widget.onModeratePost(_post, status);
+    if (!mounted) return;
+    if (updated) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _moderating = false);
+    }
+  }
+
+  Future<void> _removeComment(_CommunityComment comment) async {
+    final postId = _post.postId;
+    final commentId = comment.commentId;
+    if (!widget.session.isAdmin ||
+        postId == null ||
+        postId.isEmpty ||
+        commentId.isEmpty ||
+        !_removingCommentIds.add(commentId)) {
+      return;
+    }
+    setState(() {});
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Remove this comment?'),
+          content: const Text(
+            'This comment will be removed from the conversation. This cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Remove comment'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      await widget.repository.removeAdminCommunityComment(
+        session: widget.session,
+        postId: postId,
+        commentId: commentId,
+      );
+      final remaining = math.max(0, _post.replies - 1);
+      widget.onCommentCountChanged(remaining);
+      if (!mounted) return;
+      setState(() {
+        ++_commentsGeneration;
+        _comments = _comments
+            .where((item) => item.commentId != commentId)
+            .toList();
+        _post = _post.copyWith(replies: remaining);
+      });
+      _showDetailSnack('Comment removed.');
+      await _loadComments();
+    } on HikerCircleFirebaseRepositoryException catch (error) {
+      _showDetailSnack(error.message);
+    } catch (_) {
+      _showDetailSnack('The comment couldn’t be removed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _removingCommentIds.remove(commentId));
     }
   }
 
@@ -2687,9 +2893,11 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                     onOpenProfile: widget.onOpenProfile,
                     onShare: widget.onShare,
                     onLike: _toggleLike,
-                    likeBusy: _likeBusy,
+                    likeBusy: _likeBusy || _moderating || _deleting,
                     expanded: true,
-                    deleteBusy: _deleting,
+                    deleteBusy: _deleting || _moderating,
+                    isAdmin: widget.session.isAdmin,
+                    onModerate: widget.session.isAdmin ? _moderateStory : null,
                     onDelete:
                         _post.isOwnPost ||
                             _post.authorPhoneNumber ==
@@ -2780,7 +2988,17 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
                           color: _CircleColors.surfaceFor(context),
                           borderRadius: BorderRadius.circular(18),
                         ),
-                        child: _CommentRow(comment: comment),
+                        child: _CommentRow(
+                          comment: comment,
+                          onRemove:
+                              widget.session.isAdmin &&
+                                  comment.commentId.isNotEmpty
+                              ? () => unawaited(_removeComment(comment))
+                              : null,
+                          removing: _removingCommentIds.contains(
+                            comment.commentId,
+                          ),
+                        ),
                       ),
                     ),
                   if (_hasMoreComments)
@@ -2892,9 +3110,15 @@ class _CommunityPostDetailPageState extends State<_CommunityPostDetailPage> {
 }
 
 class _CommentRow extends StatelessWidget {
-  const _CommentRow({required this.comment});
+  const _CommentRow({
+    required this.comment,
+    this.onRemove,
+    this.removing = false,
+  });
 
   final _CommunityComment comment;
+  final VoidCallback? onRemove;
+  final bool removing;
 
   @override
   Widget build(BuildContext context) {
@@ -2939,6 +3163,27 @@ class _CommentRow extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (onRemove != null)
+                      PopupMenuButton<String>(
+                        tooltip: 'Moderate comment',
+                        enabled: !removing,
+                        icon: removing
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.more_horiz_rounded, size: 20),
+                        onSelected: (_) => onRemove?.call(),
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'remove',
+                            child: Text('Remove comment'),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
                 const SizedBox(height: 3),
@@ -4842,395 +5087,6 @@ class _HorizontalSeparator extends StatelessWidget {
   }
 }
 
-class _CommunityRouteThumbnail extends StatefulWidget {
-  const _CommunityRouteThumbnail({required this.post});
-
-  final _CommunityPost post;
-
-  @override
-  State<_CommunityRouteThumbnail> createState() =>
-      _CommunityRouteThumbnailState();
-}
-
-class _CommunityRouteThumbnailState extends State<_CommunityRouteThumbnail> {
-  mapbox.MapboxMap? _mapboxMap;
-  mapbox.PolylineAnnotationManager? _polylineManager;
-  mapbox.CircleAnnotationManager? _circleManager;
-  var _styleLoaded = false;
-  var _routeRendered = false;
-  double _currentZoom = 13.5;
-  double _scaleLatitude = 0;
-
-  List<mapbox.Point> get _routePoints {
-    return widget.post.routePreviewPoints
-        .map(
-          (point) => mapbox.Point(
-            coordinates: mapbox.Position(point.longitude, point.latitude),
-          ),
-        )
-        .where((point) => mapPointCoordinatesOrNull(point) != null)
-        .toList();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _resetScaleLatitude();
-  }
-
-  @override
-  void didUpdateWidget(covariant _CommunityRouteThumbnail oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.post.postId != widget.post.postId ||
-        !_sameRouteGeometry(
-          oldWidget.post.routePreviewPoints,
-          widget.post.routePreviewPoints,
-        )) {
-      _routeRendered = false;
-      _resetScaleLatitude();
-      unawaited(_renderRoute());
-    }
-  }
-
-  @override
-  void dispose() {
-    _mapboxMap = null;
-    _polylineManager = null;
-    _circleManager = null;
-    super.dispose();
-  }
-
-  void _resetScaleLatitude() {
-    final points = _routePoints;
-    _scaleLatitude = points.isEmpty
-        ? 0
-        : mapPointCoordinatesOrNull(points.first)?.latitude ?? 0;
-  }
-
-  static bool _sameRouteGeometry(
-    List<HikeCoordinate> first,
-    List<HikeCoordinate> second,
-  ) {
-    if (first.length != second.length) return false;
-    for (var index = 0; index < first.length; index++) {
-      if (first[index].latitude != second[index].latitude ||
-          first[index].longitude != second[index].longitude) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
-    if (!mounted) return;
-    _mapboxMap = mapboxMap;
-    try {
-      await mapboxMap.compass.updateSettings(
-        mapbox.CompassSettings(enabled: false),
-      );
-      await mapboxMap.logo.updateSettings(mapbox.LogoSettings(enabled: false));
-      await mapboxMap.gestures.updateSettings(
-        mapbox.GesturesSettings(
-          scrollEnabled: true,
-          pinchToZoomEnabled: true,
-          rotateEnabled: true,
-          pitchEnabled: true,
-        ),
-      );
-      final polylineManager = await mapboxMap.annotations
-          .createPolylineAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      final circleManager = await mapboxMap.annotations
-          .createCircleAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      _polylineManager = polylineManager;
-      _circleManager = circleManager;
-      await _renderRoute();
-      await _syncScaleFromCamera();
-    } catch (_) {}
-  }
-
-  Future<void> _onStyleLoaded() async {
-    final map = _mapboxMap;
-    if (map == null || !mounted) return;
-    try {
-      await enableTerrain3D(map);
-      if (!mounted || !identical(map, _mapboxMap)) return;
-      schedulePitch(map);
-      _styleLoaded = true;
-      _routeRendered = false;
-      await _renderRoute();
-    } catch (_) {
-      // The native style can be replaced while its callback is in flight.
-    }
-  }
-
-  Future<void> _renderRoute() async {
-    final map = _mapboxMap;
-    final polylineManager = _polylineManager;
-    final circleManager = _circleManager;
-    final points = _routePoints;
-    if (map == null ||
-        polylineManager == null ||
-        circleManager == null ||
-        !_styleLoaded ||
-        _routeRendered ||
-        points.length < 2) {
-      return;
-    }
-
-    try {
-      await polylineManager.deleteAll();
-      await circleManager.deleteAll();
-      if (!mounted ||
-          !identical(map, _mapboxMap) ||
-          !identical(polylineManager, _polylineManager) ||
-          !identical(circleManager, _circleManager)) {
-        return;
-      }
-
-      await polylineManager.create(
-        mapbox.PolylineAnnotationOptions(
-          geometry: mapbox.LineString(
-            coordinates: [
-              for (final pt in points)
-                mapbox.Position(pt.coordinates[0]!, pt.coordinates[1]!),
-            ],
-          ),
-          lineColor: const Color(0xFF34A853).toARGB32(),
-          lineOpacity: 0.94,
-          lineWidth: 4.0,
-          lineJoin: mapbox.LineJoin.ROUND,
-        ),
-      );
-      await circleManager.createMulti([
-        mapbox.CircleAnnotationOptions(
-          geometry: points.first,
-          circleColor: const Color(0xFF7BC90E).toARGB32(),
-          circleRadius: 6,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
-        mapbox.CircleAnnotationOptions(
-          geometry: points.last,
-          circleColor: const Color(0xFF0A84FF).toARGB32(),
-          circleRadius: 7,
-          circleStrokeColor: const Color(0xFFFFFFFF).toARGB32(),
-          circleStrokeWidth: 2,
-        ),
-      ]);
-      if (!mounted || !identical(map, _mapboxMap)) return;
-      _routeRendered = true;
-      await _fitRoute();
-    } catch (_) {
-      if (mounted && identical(map, _mapboxMap)) {
-        _routeRendered = false;
-      }
-    }
-  }
-
-  Future<void> _fitRoute() async {
-    final map = _mapboxMap;
-    final points = _routePoints;
-    if (map == null || points.length < 2) {
-      return;
-    }
-    try {
-      await map.flyTo(
-        mapbox.CameraOptions(center: centerFor(points), zoom: _currentZoom),
-        mapbox.MapAnimationOptions(duration: 300),
-      );
-    } catch (_) {}
-    await _syncScaleFromCamera();
-  }
-
-  Future<void> _zoomBy(double amount) async {
-    final map = _mapboxMap;
-    if (map == null) return;
-    try {
-      await map.flyTo(
-        mapbox.CameraOptions(
-          zoom: (_currentZoom + amount)
-              .clamp(kMapMinZoom, kMapMaxZoom)
-              .toDouble(),
-        ),
-        mapbox.MapAnimationOptions(duration: 300),
-      );
-    } catch (_) {
-      return;
-    }
-    await _syncScaleFromCamera();
-  }
-
-  void _onCameraChange(mapbox.CameraChangedEventData data) {
-    _updateScale(data);
-  }
-
-  Future<void> _syncScaleFromCamera() async {
-    final map = _mapboxMap;
-    if (map == null) return;
-    if (!mounted) return;
-    try {
-      final state = await map.getCameraState();
-      if (!mounted || !identical(map, _mapboxMap)) return;
-      final coordinates = mapPointCoordinatesOrNull(state.center);
-      if (!state.zoom.isFinite || coordinates == null) return;
-      setState(() {
-        _currentZoom = state.zoom;
-        _scaleLatitude = coordinates.latitude;
-      });
-    } catch (_) {}
-  }
-
-  void _updateScale(mapbox.CameraChangedEventData data) {
-    final nextZoom = data.cameraState.zoom;
-    final coordinates = mapPointCoordinatesOrNull(data.cameraState.center);
-    if (!mounted || !nextZoom.isFinite || coordinates == null) return;
-    final nextLatitude = coordinates.latitude;
-    if (((nextZoom - _currentZoom).abs() < 0.005 &&
-        (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
-      return;
-    }
-    setState(() {
-      _currentZoom = nextZoom;
-      _scaleLatitude = nextLatitude;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final points = _routePoints;
-    if (points.length < 2) {
-      return CustomPaint(
-        painter: _CommunityImagePainter(color: widget.post.color),
-        child: const SizedBox.expand(),
-      );
-    }
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        DeferredMap(
-          child: mapbox.MapWidget(
-            key: ValueKey(
-              '${widget.post.postId}:${widget.post.routePointCount}',
-            ),
-            styleUri: mapStyleUrls[0],
-            gestureRecognizers: mapGestureRecognizers,
-            onMapCreated: _onMapCreated,
-            onStyleLoadedListener: (_) => _onStyleLoaded(),
-            onCameraChangeListener: _onCameraChange,
-            onMapIdleListener: (_) => unawaited(_syncScaleFromCamera()),
-          ),
-        ),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0x11000000), Color(0x00000000), Color(0x77000000)],
-            ),
-          ),
-        ),
-        Positioned(
-          left: 10,
-          bottom: 9,
-          child: _StatusPill(
-            label: '${widget.post.routePointCount} GPS points',
-            color: _CircleColors.green,
-          ),
-        ),
-        Align(
-          alignment: Alignment.topRight,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: MapZoomControls(
-              onZoomIn: () => _zoomBy(1),
-              onZoomOut: () => _zoomBy(-1),
-              onReset: _fitRoute,
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.bottomLeft,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: MapScaleBar(zoom: _currentZoom, latitude: _scaleLatitude),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _CommunityImagePainter extends CustomPainter {
-  const _CommunityImagePainter({required this.color});
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final sky = Paint()..color = color.withValues(alpha: 0.72);
-    final hillBack = Paint()
-      ..color = _CircleColors.green.withValues(alpha: 0.58);
-    final hillFront = Paint()..color = _CircleColors.green;
-    final pathPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.62)
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawRect(Offset.zero & size, sky);
-
-    final back = Path()
-      ..moveTo(0, size.height * 0.72)
-      ..lineTo(size.width * 0.24, size.height * 0.38)
-      ..lineTo(size.width * 0.48, size.height * 0.68)
-      ..lineTo(size.width * 0.70, size.height * 0.34)
-      ..lineTo(size.width, size.height * 0.70)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    canvas.drawPath(back, hillBack);
-
-    final front = Path()
-      ..moveTo(0, size.height * 0.86)
-      ..lineTo(size.width * 0.30, size.height * 0.54)
-      ..lineTo(size.width * 0.58, size.height * 0.78)
-      ..lineTo(size.width * 0.84, size.height * 0.50)
-      ..lineTo(size.width, size.height * 0.76)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    canvas.drawPath(front, hillFront);
-
-    final trail = Path()
-      ..moveTo(size.width * 0.16, size.height * 0.90)
-      ..cubicTo(
-        size.width * 0.28,
-        size.height * 0.74,
-        size.width * 0.46,
-        size.height * 0.82,
-        size.width * 0.56,
-        size.height * 0.64,
-      )
-      ..cubicTo(
-        size.width * 0.68,
-        size.height * 0.48,
-        size.width * 0.78,
-        size.height * 0.56,
-        size.width * 0.88,
-        size.height * 0.42,
-      );
-    canvas.drawPath(trail, pathPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _CommunityImagePainter oldDelegate) {
-    return oldDelegate.color != color;
-  }
-}
-
 _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
   final authorPhone = _stringFrom(data['authorPhoneNumber']);
   final authorName = _stringFrom(data['authorName']).isEmpty
@@ -5249,6 +5105,9 @@ _CommunityPost _communityPostFromFirestore(Map<String, dynamic> data) {
 
   return _CommunityPost(
     postId: _stringFrom(data['postId']),
+    updatedAtMillis: data['updatedAtMillis'] is num
+        ? (data['updatedAtMillis'] as num).toInt()
+        : null,
     authorId: _stringFrom(data['authorId']),
     authorPhoneNumber: authorPhone,
     author: authorName,

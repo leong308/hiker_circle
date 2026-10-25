@@ -20,6 +20,7 @@ import '../../core/services/geoapify_service.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/cached_trail_image.dart';
 import '../../core/widgets/map_controls.dart';
+import '../../core/widgets/map_view_controller.dart';
 import '../../core/widgets/state_boundary_overlay.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/loading_toast.dart';
@@ -1983,6 +1984,28 @@ class _MapBasedCheckpointPicker extends StatefulWidget {
 }
 
 class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
+  late final _mapView = MapViewController(
+    settings: MapViewSettings(
+      dimension: widget.showStateFocus
+          ? MapDimension.twoD
+          : MapDimension.threeD,
+    ),
+    onBeforeStyleReload: () async {
+      final managers = <mapbox.BaseAnnotationManager?>[
+        _circleManager,
+        _pointManager,
+        _polylineManager,
+      ];
+      _styleLoaded = false;
+      _styleSetup = null;
+      _pinRevision++;
+      _circleManager = null;
+      _pointManager = null;
+      _polylineManager = null;
+      await removeMapAnnotationManagers(_mapboxMap, managers);
+    },
+  );
+
   mapbox.MapboxMap? _mapboxMap;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PointAnnotationManager? _pointManager;
@@ -2022,6 +2045,7 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
 
   @override
   void dispose() {
+    _mapView.dispose();
     _focusRevision++;
     _pinRevision++;
     _stateBoundary.dispose();
@@ -2123,6 +2147,7 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
     if (!mounted) return;
     _mapboxMap = mapboxMap;
+    _mapView.attach(mapboxMap);
     try {
       await mapboxMap.compass.updateSettings(
         mapbox.CompassSettings(enabled: false),
@@ -2156,7 +2181,9 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
     }
   }
 
-  Future<void> _onStyleLoaded() {
+  Future<void> _onStyleLoaded() => _mapView.styleLoaded(_prepareMapStyle);
+
+  Future<void> _prepareMapStyle() {
     final existing = _styleSetup;
     if (existing != null) return existing;
     final future = _prepareStyle();
@@ -2180,13 +2207,6 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
       await _pointManager!.setTextAllowOverlap(true);
       _styleLoaded = true;
       await _syncPins();
-      // State selection is a flat overview: terrain draping can obscure the
-      // border beneath hills and reorder it below the basemap's symbols.
-      if (!widget.showStateFocus) {
-        await enableTerrain3D(map);
-        if (!mounted || !identical(map, _mapboxMap)) return;
-        schedulePitch(map);
-      }
       if (widget.showStateFocus) {
         unawaited(_updateStateBoundary(_stateBoundary.onStyleLoaded(map)));
       }
@@ -2489,7 +2509,13 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                     ),
                     styleUri: mapStyleUrls[0],
                     gestureRecognizers: eagerMapGestureRecognizers,
+                    onMapLoadErrorListener: (event) {
+                      if (event.type == mapbox.MapLoadErrorType.STYLE) {
+                        _mapView.styleLoadFailed();
+                      }
+                    },
                     onMapCreated: _onMapCreated,
+                    onCameraChangeListener: _mapView.cameraChanged,
                     onStyleLoadedListener: (_) => _onStyleLoaded(),
                     onMapLoadedListener: (_) => _onStyleLoaded(),
                     // ignore: deprecated_member_use
@@ -2500,26 +2526,22 @@ class _MapBasedCheckpointPickerState extends State<_MapBasedCheckpointPicker> {
                   alignment: Alignment.topRight,
                   child: Padding(
                     padding: const EdgeInsets.all(10),
-                    child: MapZoomControls(
-                      onZoomIn: () => _zoomBy(1),
-                      onZoomOut: () => _zoomBy(-1),
-                      onReset: _fitPins,
-                    ),
-                  ),
-                ),
-                if (_pins.isNotEmpty)
-                  Align(
-                    alignment: Alignment.bottomLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.all(10),
-                      child: MapScaleBar(
-                        zoom: 13,
-                        latitude:
-                            mapPointCoordinatesOrNull(_pins.first)?.latitude ??
-                            0,
+                    child: MapViewControls(
+                      controller: _mapView,
+                      zoomControls: MapZoomControls(
+                        onZoomIn: () => _zoomBy(1),
+                        onZoomOut: () => _zoomBy(-1),
+                        onReset: _fitPins,
                       ),
                     ),
                   ),
+                ),
+                Positioned(
+                  left: 10,
+                  right: 10,
+                  bottom: 10,
+                  child: MapViewScale(controller: _mapView),
+                ),
                 IgnorePointer(
                   child: Align(
                     alignment: Alignment.bottomCenter,
@@ -2596,6 +2618,20 @@ class _SinglePinPickerSheet extends StatefulWidget {
 }
 
 class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
+  late final _mapView = MapViewController(
+    settings: const MapViewSettings(),
+    onBeforeStyleReload: () async {
+      final managers = <mapbox.BaseAnnotationManager?>[
+        _circleManager,
+        _pointManager,
+      ];
+      _styleLoaded = false;
+      _circleManager = null;
+      _pointManager = null;
+      await removeMapAnnotationManagers(_mapboxMap, managers);
+    },
+  );
+
   late mapbox.Point _selected = mapbox.Point(
     coordinates: mapbox.Position(101.6869, 3.1390),
   );
@@ -2606,6 +2642,7 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
 
   @override
   void dispose() {
+    _mapView.dispose();
     _mapboxMap = null;
     _circleManager = null;
     _pointManager = null;
@@ -2634,13 +2671,15 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
 
   Future<void> _fitSelectedPin() => _centerOn(_selected, zoom: 15);
 
-  Future<void> _onStyleLoaded() async {
+  Future<void> _onStyleLoaded() => _mapView.styleLoaded(_prepareMapStyle);
+
+  Future<void> _prepareMapStyle() async {
     final map = _mapboxMap;
     if (map == null || !mounted) return;
     try {
-      await enableTerrain3D(map);
+      _circleManager ??= await map.annotations.createCircleAnnotationManager();
+      _pointManager ??= await map.annotations.createPointAnnotationManager();
       if (!mounted || !identical(map, _mapboxMap)) return;
-      schedulePitch(map);
       _styleLoaded = true;
       await _syncSelectedPin();
     } catch (_) {
@@ -2690,6 +2729,7 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
     if (!mounted) return;
     _mapboxMap = mapboxMap;
+    _mapView.attach(mapboxMap);
     try {
       await mapboxMap.compass.updateSettings(
         mapbox.CompassSettings(enabled: false),
@@ -2706,14 +2746,6 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
       await mapboxMap.setBounds(
         mapbox.CameraBoundsOptions(minZoom: 3, maxZoom: 21),
       );
-      final circleManager = await mapboxMap.annotations
-          .createCircleAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      final pointManager = await mapboxMap.annotations
-          .createPointAnnotationManager();
-      if (!mounted || !identical(mapboxMap, _mapboxMap)) return;
-      _circleManager = circleManager;
-      _pointManager = pointManager;
       await mapboxMap.flyTo(
         mapbox.CameraOptions(center: _selected, zoom: 15),
         mapbox.MapAnimationOptions(duration: 0),
@@ -2786,7 +2818,13 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
                         key: const ValueKey('single-pin-picker'),
                         styleUri: mapStyleUrls[0],
                         gestureRecognizers: mapGestureRecognizers,
+                        onMapLoadErrorListener: (event) {
+                          if (event.type == mapbox.MapLoadErrorType.STYLE) {
+                            _mapView.styleLoadFailed();
+                          }
+                        },
                         onMapCreated: _onMapCreated,
+                        onCameraChangeListener: _mapView.cameraChanged,
                         onStyleLoadedListener: (_) => _onStyleLoaded(),
                         // ignore: deprecated_member_use
                         onTapListener: (context) =>
@@ -2797,12 +2835,21 @@ class _SinglePinPickerSheetState extends State<_SinglePinPickerSheet> {
                       alignment: Alignment.topRight,
                       child: Padding(
                         padding: const EdgeInsets.all(10),
-                        child: MapZoomControls(
-                          onZoomIn: () => _zoomBy(1),
-                          onZoomOut: () => _zoomBy(-1),
-                          onReset: _fitSelectedPin,
+                        child: MapViewControls(
+                          controller: _mapView,
+                          zoomControls: MapZoomControls(
+                            onZoomIn: () => _zoomBy(1),
+                            onZoomOut: () => _zoomBy(-1),
+                            onReset: _fitSelectedPin,
+                          ),
                         ),
                       ),
+                    ),
+                    Positioned(
+                      left: 10,
+                      right: 10,
+                      bottom: 10,
+                      child: MapViewScale(controller: _mapView),
                     ),
                   ],
                 ),

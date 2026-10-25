@@ -103,8 +103,6 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
-
-
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon});
 

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../core/widgets/map_controls.dart';
+import '../../core/widgets/map_view_controller.dart';
 import '../../core/widgets/map_utils.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/state_boundary_overlay.dart';
@@ -33,6 +34,15 @@ class ResidentialCityPickerPage extends StatefulWidget {
 }
 
 class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
+  late final _mapView = MapViewController(
+    settings: const MapViewSettings(dimension: MapDimension.twoD),
+    onBeforeStyleReload: () async {
+      final managers = <mapbox.BaseAnnotationManager?>[];
+
+      await removeMapAnnotationManagers(_mapboxMap, managers);
+    },
+  );
+
   static final _defaultLatitude = MalaysiaMapRegion.peninsula.latitude;
   static final _defaultLongitude = MalaysiaMapRegion.peninsula.longitude;
   final _stateBoundary = StateBoundaryOverlay();
@@ -97,6 +107,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
 
   @override
   void dispose() {
+    _mapView.dispose();
     _focusRevision++;
     _stateBoundary.dispose();
     _mapboxMap = null;
@@ -198,6 +209,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
   }
 
   void _onCameraChange(mapbox.CameraChangedEventData data) {
+    _mapView.cameraChanged(data);
     if (!mounted ||
         _isResolving ||
         mapPointCoordinatesOrNull(data.cameraState.center) == null) {
@@ -308,6 +320,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
     if (!mounted) return;
     _mapboxMap = mapboxMap;
+    _mapView.attach(mapboxMap);
     mapboxMap.addInteraction(
       mapbox.TapInteraction.onMap((context) => _movePin(context.point)),
     );
@@ -404,18 +417,22 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                       // ignore: deprecated_member_use
                       cameraOptions: _initialCameraOptions,
                       gestureRecognizers: mapGestureRecognizers,
-                      onMapCreated: _onMapCreated,
-                      onCameraChangeListener: _onCameraChange,
-                      onStyleLoadedListener: (_) {
-                        final map = _mapboxMap;
-                        if (map != null) {
-                          unawaited(
-                            _updateStateBoundary(
-                              _stateBoundary.onStyleLoaded(map),
-                            ),
-                          );
+                      onMapLoadErrorListener: (event) {
+                        if (event.type == mapbox.MapLoadErrorType.STYLE) {
+                          _mapView.styleLoadFailed();
                         }
                       },
+                      onMapCreated: _onMapCreated,
+                      onCameraChangeListener: _onCameraChange,
+                      onStyleLoadedListener: (_) =>
+                          _mapView.styleLoaded(() async {
+                            final map = _mapboxMap;
+                            if (map != null) {
+                              await _updateStateBoundary(
+                                _stateBoundary.onStyleLoaded(map),
+                              );
+                            }
+                          }),
                       onMapIdleListener: (_) =>
                           unawaited(_syncScaleFromCamera()),
                     ),
@@ -443,10 +460,13 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                     alignment: Alignment.topRight,
                     child: Padding(
                       padding: const EdgeInsets.all(10),
-                      child: MapZoomControls(
-                        onZoomIn: () => _zoomBy(1),
-                        onZoomOut: () => _zoomBy(-1),
-                        onReset: _fitToPin,
+                      child: MapViewControls(
+                        controller: _mapView,
+                        zoomControls: MapZoomControls(
+                          onZoomIn: () => _zoomBy(1),
+                          onZoomOut: () => _zoomBy(-1),
+                          onReset: _fitToPin,
+                        ),
                       ),
                     ),
                   ),
@@ -454,10 +474,7 @@ class _ResidentialCityPickerPageState extends State<ResidentialCityPickerPage> {
                     alignment: Alignment.bottomLeft,
                     child: Padding(
                       padding: const EdgeInsets.all(10),
-                      child: MapScaleBar(
-                        zoom: _currentZoom,
-                        latitude: _scaleLatitude,
-                      ),
+                      child: MapViewScale(controller: _mapView),
                     ),
                   ),
                 ],

@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.ClipData
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
@@ -35,6 +36,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+import androidx.core.content.FileProvider
 
 class MainActivity : FlutterFragmentActivity() {
     companion object {
@@ -243,6 +245,7 @@ class MainActivity : FlutterFragmentActivity() {
                     "getOutputVolumeStatus" -> getOutputVolumeStatus(call, result)
                     "getCurrentTriggerLocation" -> getCurrentTriggerLocation(call, result)
                     "shareText" -> shareText(call, result)
+                    "shareHike" -> shareHike(call, result)
                     else -> result.notImplemented()
                 }
             }
@@ -380,6 +383,30 @@ class MainActivity : FlutterFragmentActivity() {
                         HikeSafetyMonitorService.acknowledgeEvent(this, eventId)
                     }
                     result.success(null)
+                }
+                "markSafetyEventDispatched" -> {
+                    HikeSafetyMonitorService.markEventDispatched(
+                        this,
+                        call.argument<String>("eventId").orEmpty(),
+                        call.argument<String>("message"),
+                    )
+                    result.success(null)
+                }
+                "stopTriggeredSafetyAlarm" -> {
+                    try {
+                        result.success(HikeSafetyMonitorService.stopTriggeredSafetyAlarm(
+                            this,
+                            call.argument<String>("eventId").orEmpty(),
+                        ))
+                    } catch (_: RuntimeException) {
+                        result.error("native_alarm_stop_failed", "The SOS alarm could not be stopped. Please try again.", null)
+                    }
+                }
+                "wasSafetyAlarmStopped" -> {
+                    result.success(HikeSafetyMonitorService.wasSafetyAlarmStopped(
+                        this,
+                        call.argument<String>("eventId").orEmpty(),
+                    ))
                 }
                 "cancelNativeSafetyAlert" -> {
                     startService(
@@ -1049,6 +1076,33 @@ class MainActivity : FlutterFragmentActivity() {
         }.onFailure { error ->
             result.error("share_text_failed", error.message, null)
         }
+    }
+
+    private fun shareHike(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+        val text = call.argument<String>("text")
+        val image = call.argument<ByteArray>("image")
+        if (text.isNullOrBlank() || image == null || image.isEmpty() || image.size > 5 * 1024 * 1024) {
+            result.error("share_hike_missing", "The hike card is unavailable.", null)
+            return
+        }
+        runCatching {
+            val directory = File(cacheDir, "hike_shares").apply { mkdirs() }
+            directory.listFiles()?.filter { it.lastModified() < System.currentTimeMillis() - 86_400_000L }?.forEach { it.deleteRecursively() }
+            val shareDirectory = File(directory, java.util.UUID.randomUUID().toString()).apply { mkdirs() }
+            val file = File(shareDirectory, "HikerCircle hike.png").apply { writeBytes(image) }
+            val uri = FileProvider.getUriForFile(this, "$packageName.hike_share_files", file)
+            val subject = call.argument<String>("subject") ?: "HikerCircle"
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+                clipData = ClipData.newUri(contentResolver, "Hike route", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, subject))
+        }.onSuccess { result.success(null) }
+         .onFailure { result.error("share_hike_failed", "Unable to share the hike card.", null) }
     }
 
     @Suppress("MissingPermission")

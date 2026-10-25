@@ -65,8 +65,9 @@ class SessionRepository {
           .watchSessionState(session.phoneNumber)
           .listen(
             (state) {
-              if (generation != _generation || state['activeSessionId'] == sid)
+              if (generation != _generation || state['activeSessionId'] == sid) {
                 return;
+              }
               final reason = state['reason'];
               final device = state['device'];
               final name = device is Map ? device['name'] as String? : null;

@@ -2,6 +2,39 @@
 // invoking navigation itself.
 abstract final class FcmNotificationRouter {
   static String? deepLinkFor(Map<String, dynamic> data) {
+    final type = data['type']?.toString().trim() ?? '';
+    if (type == 'trail_hazard_alert') {
+      // Canonical identity is required; neither message text nor a severity
+      // supplied in a push can authorize cancellation or bypass a start check.
+      Uri? supplied;
+      for (final key in const ['deepLink', 'deep_link', 'deeplink']) {
+        final candidate = Uri.tryParse(data[key]?.toString().trim() ?? '');
+        if (candidate?.scheme == 'hikercircle' &&
+            candidate?.host == 'upcoming-hike' &&
+            candidate?.path == '/view') {
+          supplied = candidate;
+          break;
+        }
+      }
+      final hazardId =
+          data['hazardId'] ?? supplied?.queryParameters['hazardId'];
+      final hikeId =
+          data['upcomingHikeId'] ??
+          data['hikeId'] ??
+          supplied?.queryParameters['upcomingHikeId'];
+      final hazard = hazardId?.toString().trim() ?? '';
+      final hike = hikeId?.toString().trim() ?? '';
+      if (!_validHazardIdentity(hazard) || !_validHazardIdentity(hike)) {
+        return null;
+      }
+      return _link(
+        host: 'upcoming-hike',
+        path: '/view',
+        key: 'upcomingHikeId',
+        value: hike,
+        queryParameters: {'hazardId': hazard},
+      );
+    }
     for (final key in const ['deepLink', 'deep_link', 'deeplink']) {
       final value = data[key]?.toString().trim();
       if (value != null && value.isNotEmpty) {
@@ -25,12 +58,25 @@ abstract final class FcmNotificationRouter {
               queryParameters: const {'source': 'notification'},
             ).toString();
           }
+          // Already-delivered local reminders can contain the previous link
+          // format. Upgrade those taps without changing unrelated destinations.
+          if (type == 'local_upcoming_hike_reminder' &&
+              uri.host == 'upcoming-hike' &&
+              uri.path == '/view') {
+            return uri
+                .replace(
+                  queryParameters: {
+                    ...uri.queryParametersAll,
+                    'chargePhone': ['1'],
+                  },
+                )
+                .toString();
+          }
           return uri.toString();
         }
       }
     }
 
-    final type = data['type']?.toString().trim() ?? '';
     switch (type) {
       case 'group_chat_message':
         return _link(
@@ -48,6 +94,14 @@ abstract final class FcmNotificationRouter {
           path: '/view',
           key: 'upcomingHikeId',
           value: data['upcomingHikeId'] ?? data['hikeId'],
+        );
+      case 'local_upcoming_hike_reminder':
+        return _link(
+          host: 'upcoming-hike',
+          path: '/view',
+          key: 'upcomingHikeId',
+          value: data['upcomingHikeId'] ?? data['hikeId'],
+          queryParameters: const {'chargePhone': '1'},
         );
       case 'upcoming_hike_join_request':
         return _link(
@@ -93,11 +147,19 @@ abstract final class FcmNotificationRouter {
     }
   }
 
+  static bool _validHazardIdentity(String value) =>
+      value.isNotEmpty &&
+      value.length <= 180 &&
+      !value.contains('/') &&
+      value != '.' &&
+      value != '..';
+
   static String? _link({
     required String host,
     required String path,
     required String key,
     required Object? value,
+    Map<String, String> queryParameters = const {},
   }) {
     final text = value?.toString().trim() ?? '';
     if (text.isEmpty || text.length > 240) return null;
@@ -105,7 +167,7 @@ abstract final class FcmNotificationRouter {
       scheme: 'hikercircle',
       host: host,
       path: path,
-      queryParameters: {key: text},
+      queryParameters: {key: text, ...queryParameters},
     ).toString();
   }
 }

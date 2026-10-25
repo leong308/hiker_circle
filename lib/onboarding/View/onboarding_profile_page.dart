@@ -119,17 +119,19 @@ class _OnboardingProfilePageState extends State<OnboardingProfilePage> {
       final response = await FirebaseFunctions.instance
           .httpsCallable('getPasswordSetupStatus')
           .call();
-      if (mounted)
+      if (mounted) {
         setState(
           () => _passwordConfigured =
               (response.data as Map)['configured'] == true,
         );
+      }
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _errorMessage =
               'Unable to check password setup. Reopen this page to retry.',
         );
+      }
     }
   }
 

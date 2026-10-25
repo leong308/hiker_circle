@@ -9,6 +9,31 @@ const LABELS = {spam_scam: 'Possible spam or scam', harassment: 'Possible harass
   sensitive_content: 'Sensitive information: manual review required',
   provider_safety: 'Content requires manual review',
   check_unavailable: 'Content requires manual review'};
+// Evidence records rule identities, never the personal information that matched a rule.
+const SENSITIVE_KEYWORDS = ['my name is', 'nama saya', 'password', 'kata laluan', 'otp',
+  'verification code', 'authenticator', 'diagnosed', 'diagnosis', 'medical record', 'my injury',
+  'my illness', 'alamat rumah', 'home address', 'ic number', 'passport'];
+const KEYWORD_RULES = SENSITIVE_KEYWORDS.map(phrase => ({phrase,
+  id: `keyword:${phrase.replaceAll(' ', '_')}`, expression: new RegExp(`\\b${phrase}\\b`, 'i')}));
+const PATTERN_RULES = [
+  {id: 'pattern:email_address', expression: /[\w.+-]+@[\w.-]+\.[a-z]{2,}/i},
+  {id: 'pattern:phone_number', expression: /(?:\+?\d[\d ().-]{6,}\d)/},
+  {id: 'pattern:coordinates', expression: /-?\d{1,3}\.\d{3,}\s*[,/]\s*-?\d{1,3}\.\d{3,}/},
+];
+const INTEGRITY_RULES = ['record:invalid_path', 'record:invalid_text', 'record:empty_comment',
+  'record:text_too_long', 'record:invalid_author'];
+const EVIDENCE_IDS = new Set([...KEYWORD_RULES, ...PATTERN_RULES].map(rule => rule.id).concat(INTEGRITY_RULES));
+function integrityResult(evidence) {
+  return {manual: 'integrity', detectionSource: 'integrity', detectionEvidence: evidence, matchedKeywords: []};
+}
+function verdictProvenance(verdict) {
+  if (!['keywords', 'pattern', 'integrity'].includes(verdict.detectionSource)) return {};
+  return {detectionSource: verdict.detectionSource,
+    detectionEvidence: [...new Set((Array.isArray(verdict.detectionEvidence) ? verdict.detectionEvidence : [])
+      .filter(id => EVIDENCE_IDS.has(id)))],
+    matchedKeywords: [...new Set((Array.isArray(verdict.matchedKeywords) ? verdict.matchedKeywords : [])
+      .filter(phrase => SENSITIVE_KEYWORDS.includes(phrase)))]};
+}
 const sha = text => createHash('sha256').update(text).digest('hex');
 function sourceInfo(path) {
   const match = /^communityPosts\/([^/]+)(?:\/comments\/([^/]+))?$/.exec(path || '');
@@ -21,17 +46,27 @@ function contentHash(path, data) {
 // prepareContent: Keep sensitive disclosures on the local review path and redact author/link context.
 function prepareContent(path, data) {
   const info = sourceInfo(path);
-  if (!info) return {manual: 'integrity'};
-  const text = info.type === 'post' ? data.caption : data.body;
-  if (typeof text !== 'string' || (info.type === 'comment' && !text.trim()) || text.length > (info.type === 'post' ? 5000 : 2000)
-    || typeof data.authorId !== 'string' || !data.authorId || data.authorId.length > 200) return {manual: 'integrity'};
+  if (!info) return integrityResult(['record:invalid_path']);
+  const text = info.type === 'post' ? data?.caption : data?.body;
+  const integrityEvidence = [];
+  if (typeof text !== 'string') integrityEvidence.push('record:invalid_text');
+  else {
+    if (info.type === 'comment' && !text.trim()) integrityEvidence.push('record:empty_comment');
+    if (text.length > (info.type === 'post' ? 5000 : 2000)) integrityEvidence.push('record:text_too_long');
+  }
+  if (typeof data?.authorId !== 'string' || !data.authorId || data.authorId.length > 200) {
+    integrityEvidence.push('record:invalid_author');
+  }
+  if (integrityEvidence.length) return integrityResult(integrityEvidence);
   // Caption-free hike/photo posts are valid. Images are outside this text-only checker.
   if (!text.trim()) return {skip: true};
   // Fail closed on identifiable/sensitive disclosures rather than send them outside the app backend.
-  if (/\b(?:my name is|nama saya|password|kata laluan|otp|verification code|authenticator|diagnosed|diagnosis|medical record|my injury|my illness|alamat rumah|home address|ic number|passport)\b/i.test(text)
-    || /[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(text)
-    || /(?:\+?\d[\d ().-]{6,}\d)/.test(text)
-    || /-?\d{1,3}\.\d{3,}\s*[,/]\s*-?\d{1,3}\.\d{3,}/.test(text)) return {manual: 'sensitive_content'};
+  const keywords = KEYWORD_RULES.filter(rule => rule.expression.test(text));
+  const patterns = PATTERN_RULES.filter(rule => rule.expression.test(text));
+  if (keywords.length || patterns.length) return {manual: 'sensitive_content',
+    detectionSource: keywords.length ? 'keywords' : 'pattern',
+    detectionEvidence: [...keywords, ...patterns].map(rule => rule.id),
+    matchedKeywords: keywords.map(rule => rule.phrase)};
   let redacted = text.replace(/https?:\/\/\S+|www\.\S+/gi, '[external link]');
   for (const value of [data.author?.name]) {
     if (typeof value === 'string' && value.length >= 2) redacted = redacted.split(value).join('[hiker]');
@@ -66,13 +101,15 @@ async function saveVerdict(db, candidate, verdict, now) {
     }
     tx.set(checkRef, {stage: verdict.retry ? 'pending' : 'checked',
       checkedAtMillis: now}, {merge: true});
-    if (verdict.retry && existingReview.data()?.fingerprint === candidate.fingerprint
+    // An in-flight retry must not rewrite a review or fabricate provenance for a legacy row.
+    if (existingReview.data()?.fingerprint === candidate.fingerprint
       && existingReview.data()?.status === 'pending') return true;
     if (verdict.flag) tx.set(reviewRef, {
       sourcePath: candidate.path, postId: info.postId, contentType: info.type,
       fingerprint: candidate.fingerprint, status: 'pending', severity: verdict.severity,
       categories: verdict.categories, reasons: verdict.categories.map(c => LABELS[c]),
       policyVersion: VERSION, flaggedAtMillis: now,
+      ...verdictProvenance(verdict),
     });
     else if (existingReview.data()?.status !== 'pending') {
       tx.set(reviewRef, {status: 'clear', fingerprint: candidate.fingerprint, checkedAtMillis: now}, {merge: true});
@@ -158,7 +195,9 @@ async function runIntegrityCheck({db, fieldPath, now = Date.now}) {
       if (prepared.skip) {
         if (await saveVerdict(db, candidate, {flag: false, severity: 'low', categories: []}, now())) result.checked++;
       } else if (prepared.manual) {
-        if (await saveVerdict(db, candidate, {flag: true, severity: 'medium', categories: [prepared.manual]}, now())) {
+        if (await saveVerdict(db, candidate, {flag: true, severity: 'medium', categories: [prepared.manual],
+          detectionSource: prepared.detectionSource, detectionEvidence: prepared.detectionEvidence,
+          matchedKeywords: prepared.matchedKeywords}, now())) {
           result.checked++; result.flagged++;
         }
       } else candidates.push({...candidate, ...prepared});

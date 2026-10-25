@@ -1,7 +1,8 @@
 // NativeLocationSampleBuffer stores encrypted GPS samples with separate local and cloud ACKs.
 import Foundation
 import CoreLocation
-import SQLCipher
+// SQLCipher's C API is imported by Runner-Bridging-Header.h. The static pod
+// does not expose a Swift module with this Podfile configuration.
 
 /// Two independent acknowledgements preserve both the local route and cloud retry queue.
 final class NativeLocationSampleBuffer {

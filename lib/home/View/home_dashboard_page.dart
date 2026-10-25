@@ -7,6 +7,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
+import '../../admin/View/admin_ui.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/cached_trail_image.dart';
 import '../../core/widgets/worldwide_region_picker.dart';
@@ -33,6 +34,7 @@ class HomeDashboardPage extends StatelessWidget {
     required this.onOpenTrailDetail,
     this.onTapUpcomingHike,
     this.onAddTrailByAdmin,
+    this.onReviewTrailRequestsByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
     required this.onActiveHikeChanged,
@@ -57,6 +59,7 @@ class HomeDashboardPage extends StatelessWidget {
   final ValueChanged<Trail> onOpenTrailDetail;
   final void Function(UpcomingHike)? onTapUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
+  final VoidCallback? onReviewTrailRequestsByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
   final ValueChanged<ActiveHikeSession> onActiveHikeChanged;
@@ -97,6 +100,8 @@ class HomeDashboardPage extends StatelessWidget {
                             onOpenTrailDetail: onOpenTrailDetail,
                             onTapUpcomingHike: onTapUpcomingHike,
                             onAddTrailByAdmin: onAddTrailByAdmin,
+                            onReviewTrailRequestsByAdmin:
+                                onReviewTrailRequestsByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
                             onDeleteTrailByAdmin: onDeleteTrailByAdmin,
                           )
@@ -116,6 +121,8 @@ class HomeDashboardPage extends StatelessWidget {
                             onOpenTrailDetail: onOpenTrailDetail,
                             onTapUpcomingHike: onTapUpcomingHike,
                             onAddTrailByAdmin: onAddTrailByAdmin,
+                            onReviewTrailRequestsByAdmin:
+                                onReviewTrailRequestsByAdmin,
                             onEditTrailByAdmin: onEditTrailByAdmin,
                             onDeleteTrailByAdmin: onDeleteTrailByAdmin,
                           )
@@ -271,6 +278,7 @@ class _PreparationDashboard extends StatelessWidget {
     required this.onOpenTrailDetail,
     this.onTapUpcomingHike,
     this.onAddTrailByAdmin,
+    this.onReviewTrailRequestsByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
   });
@@ -286,6 +294,7 @@ class _PreparationDashboard extends StatelessWidget {
   final ValueChanged<Trail> onOpenTrailDetail;
   final void Function(UpcomingHike)? onTapUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
+  final VoidCallback? onReviewTrailRequestsByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
 
@@ -319,6 +328,7 @@ class _PreparationDashboard extends StatelessWidget {
           isLoading: isLoadingTrails,
           onOpenTrail: onOpenTrailDetail,
           onAddTrailByAdmin: onAddTrailByAdmin,
+          onReviewTrailRequestsByAdmin: onReviewTrailRequestsByAdmin,
           onEditTrailByAdmin: onEditTrailByAdmin,
           onDeleteTrailByAdmin: onDeleteTrailByAdmin,
         ),
@@ -376,6 +386,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
     required this.onOpenTrailDetail,
     this.onTapUpcomingHike,
     this.onAddTrailByAdmin,
+    this.onReviewTrailRequestsByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
   });
@@ -390,6 +401,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
   final ValueChanged<Trail> onOpenTrailDetail;
   final void Function(UpcomingHike)? onTapUpcomingHike;
   final VoidCallback? onAddTrailByAdmin;
+  final VoidCallback? onReviewTrailRequestsByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
 
@@ -420,6 +432,7 @@ class _TrailDiscoveryDashboard extends StatelessWidget {
           isLoading: isLoadingTrails,
           onOpenTrail: onOpenTrailDetail,
           onAddTrailByAdmin: onAddTrailByAdmin,
+          onReviewTrailRequestsByAdmin: onReviewTrailRequestsByAdmin,
           onEditTrailByAdmin: onEditTrailByAdmin,
           onDeleteTrailByAdmin: onDeleteTrailByAdmin,
         ),
@@ -471,6 +484,7 @@ class _BestMatchesSection extends StatefulWidget {
     required this.isLoading,
     required this.onOpenTrail,
     this.onAddTrailByAdmin,
+    this.onReviewTrailRequestsByAdmin,
     this.onEditTrailByAdmin,
     this.onDeleteTrailByAdmin,
   });
@@ -479,6 +493,7 @@ class _BestMatchesSection extends StatefulWidget {
   final bool isLoading;
   final ValueChanged<Trail> onOpenTrail;
   final VoidCallback? onAddTrailByAdmin;
+  final VoidCallback? onReviewTrailRequestsByAdmin;
   final Future<void> Function(Trail trail)? onEditTrailByAdmin;
   final Future<void> Function(Trail trail)? onDeleteTrailByAdmin;
 
@@ -740,6 +755,26 @@ class _BestMatchesSectionState extends State<_BestMatchesSection>
         if (_isRouting) ...[
           const LinearProgressIndicator(),
           const SizedBox(height: 8),
+        ],
+        if (widget.onReviewTrailRequestsByAdmin != null) ...[
+          AdminPanel(
+            key: const ValueKey('home-undiscovered-trail-requests'),
+            onTap: widget.onReviewTrailRequestsByAdmin,
+            child: const Row(
+              children: [
+                Icon(Icons.add_road_rounded),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Review undiscovered trail requests',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
         ],
         if (widget.isLoading && visibleTrails.isEmpty)
           const _BestMatchesLoading()
@@ -2955,8 +2990,6 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
-
-
 class _Glyph extends StatelessWidget {
   const _Glyph({required this.icon, this.color = _HomeColors.green});
 
@@ -3102,7 +3135,7 @@ String _preparationAdvice(String item) {
 
 Color _severityColor(String severity) {
   return switch (severity.toLowerCase()) {
-    'high' => _HomeColors.red,
+    'high' || 'fatal' => _HomeColors.red,
     'moderate' => _HomeColors.orange,
     _ => _HomeColors.green,
   };

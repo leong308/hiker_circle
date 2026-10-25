@@ -70,7 +70,7 @@ class _HazardReportPageState extends State<HazardReportPage> {
         trail: widget.trail,
         hazardType: selected!,
         description: evidence.currentState!.note.text,
-        severity: 'moderate',
+        severity: trailHazardTypeIsFatal(selected!) ? 'fatal' : 'moderate',
         location: location,
         reportId: reportId,
         media: evidence.currentState!.files,
@@ -249,6 +249,36 @@ class _HazardReportPageState extends State<HazardReportPage> {
                     child: CautionEvidenceEditor(key: evidence, enabled: !busy),
                   ),
                   if (selected != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: trailHazardTypeIsFatal(selected!)
+                            ? colors.errorContainer.withValues(alpha: .5)
+                            : colors.primaryContainer.withValues(alpha: .4),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            trailHazardTypeIsFatal(selected!)
+                                ? Icons.warning_rounded
+                                : Icons.info_outline_rounded,
+                            color: trailHazardTypeIsFatal(selected!)
+                                ? colors.error
+                                : colors.primary,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              trailHazardTypeIsFatal(selected!)
+                                  ? 'Serious risk: hikers will be advised to cancel or choose another time.'
+                                  : 'Hikers will be reminded to prepare and stay alert.',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 18),
                     Row(
                       children: [

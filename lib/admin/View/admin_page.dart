@@ -2,7 +2,6 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/Data/app_settings_controller.dart';
@@ -14,16 +13,13 @@ import '../../core/widgets/page_header_style.dart';
 import '../../feedback/feedback_page.dart';
 import '../../me/Data/live_location_sharing_service.dart';
 import '../../sos/Data/location_snapshot_service.dart';
-import '../../trail/Model/trail_models.dart';
-import '../../trail/View/trail_page.dart';
 import 'button_debugging_page.dart';
 import 'admin_ui.dart';
 import 'admin_analytics_dashboard.dart';
-import 'recorded_trail_requests_page.dart';
 import 'community_integrity_panel.dart';
 import 'community_post_management_page.dart';
 
-enum _AdminSection { overview, trails, hazards, community, achievements, tools }
+enum _AdminSection { overview, hazards, community, achievements, tools }
 
 enum _DebugSection { firestore, local, runtime }
 
@@ -55,21 +51,25 @@ class _AdminPageState extends State<AdminPage> {
   List<Map<String, dynamic>> _hazardReports = const [];
   List<Map<String, dynamic>> _communityPosts = const [];
   List<Map<String, dynamic>> _achievements = const [];
-  List<Trail> _trails = const [];
-  bool _isLoading = true;
+  bool _isLoading = false;
+  int _adminDataRevision = 0;
+  final Set<_AdminSection> _loadingSections = {};
+  final Map<_AdminSection, String> _sectionErrors = {};
+  final Map<_AdminSection, DateTime> _sectionLoadedAt = {};
   bool _isSaving = false;
-  String? _errorMessage;
+  String? get _errorMessage =>
+      _sectionErrors.isEmpty ? null : _sectionErrors.values.join("\n");
   _AdminSection _selectedSection = _AdminSection.overview;
 
   final _pageScroll = ScrollController();
   String _search = '';
-  DateTime? _lastLoadedAt;
   Map<String, dynamic>? _analytics;
   String? _analyticsError;
   bool _analyticsLoading = false;
   int _analyticsRevision = 0;
 
   Future<void> _loadAnalytics({bool forceRefresh = false}) async {
+    if (!widget.session.isAdmin) return;
     final revision = ++_analyticsRevision;
     setState(() {
       _analyticsLoading = true;
@@ -127,182 +127,144 @@ class _AdminPageState extends State<AdminPage> {
     if (widget.session.isAdmin) unawaited(_loadAdminData());
   }
 
-  /// Load the selected management data while retaining the current admin section and error state.
+  /// Publish each response independently so one unavailable collection does not
+  /// hide the rest of the workspace. Older refreshes cannot overwrite new data.
   Future<void> _loadAdminData() async {
-    unawaited(_loadAnalytics(forceRefresh: _analytics != null));
+    if (!widget.session.isAdmin) return;
+    final revision = ++_adminDataRevision;
+    const sections = {
+      _AdminSection.hazards,
+      _AdminSection.community,
+      _AdminSection.achievements,
+    };
     setState(() {
       _isLoading = true;
-      _errorMessage = null;
+      _loadingSections.addAll(sections);
+      _sectionErrors.clear();
     });
+    await Future.wait<void>([
+      _loadAnalytics(forceRefresh: _analytics != null),
+      _loadSection(
+        _AdminSection.hazards,
+        revision,
+        () => _repository.loadAdminHazardReports(session: widget.session),
+        (data) => _hazardReports = data,
+      ),
+      _loadSection(
+        _AdminSection.community,
+        revision,
+        () => _repository.loadAdminCommunityPosts(session: widget.session),
+        (data) => _communityPosts = data,
+      ),
+      _loadSection(
+        _AdminSection.achievements,
+        revision,
+        () => _repository.loadAdminAchievements(session: widget.session),
+        (data) => _achievements = data,
+      ),
+    ]);
+    if (mounted && revision == _adminDataRevision) {
+      setState(() => _isLoading = false);
+    }
+  }
 
+  Future<void> _loadSection<T>(
+    _AdminSection section,
+    int revision,
+    Future<T> Function() load,
+    void Function(T) apply,
+  ) async {
     try {
-      final results = await Future.wait<Object>([
-        _repository.loadAdminTrails(session: widget.session),
-        _repository.loadAdminHazardReports(session: widget.session),
-        _repository.loadAdminCommunityPosts(session: widget.session),
-        _repository.loadAdminAchievements(session: widget.session),
-      ]);
-      if (!mounted) {
-        return;
-      }
+      final data = await load().timeout(const Duration(seconds: 30));
+      if (!mounted || revision != _adminDataRevision) return;
       setState(() {
-        _lastLoadedAt = DateTime.now();
-        _trails = results[0] as List<Trail>;
-        _hazardReports = results[1] as List<Map<String, dynamic>>;
-        _communityPosts = results[2] as List<Map<String, dynamic>>;
-        _achievements = results[3] as List<Map<String, dynamic>>;
+        apply(data);
+        _sectionLoadedAt[section] = DateTime.now();
       });
-    } on HikerCircleFirebaseRepositoryException catch (error) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = error.message;
-        });
-      }
     } catch (error) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Unable to load admin data: $error';
-        });
-      }
+      if (!mounted || revision != _adminDataRevision) return;
+      setState(() {
+        _sectionErrors[section] =
+            error is HikerCircleFirebaseRepositoryException
+            ? error.message
+            : 'This section could not load. Check your connection and retry.';
+      });
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+      if (mounted && revision == _adminDataRevision) {
+        setState(() => _loadingSections.remove(section));
       }
     }
   }
 
-  Future<void> _openTrailRequests() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => RecordedTrailRequestsPage(
-          session: widget.session,
-          repository: _repository,
-        ),
-      ),
-    );
-    if (mounted) unawaited(_loadAdminData());
-  }
-
-  Future<void> _addTrail() async {
-    if (!widget.session.isAdmin || _isSaving) {
-      return;
-    }
-
-    final trail = await showAddTrailSheet(
-      context,
-      session: widget.session,
-      repository: _repository,
-    );
-    if (trail == null || !mounted) {
-      return;
-    }
-
-    await _runAdminAction(
-      successMessage: '${trail.name} added to Firebase trails.',
-      action: () async {
-        await _repository.createTrailByAdmin(
-          session: widget.session,
-          trail: trail,
-        );
-      },
-    );
-  }
-
-  Future<void> _toggleTrailVerification(Trail trail) async {
-    await _runAdminAction(
-      successMessage: trail.isVerifiedTrail
-          ? '${trail.name} marked unverified.'
-          : '${trail.name} verified.',
-      action: () async {
-        await _repository.updateTrailByAdmin(
-          session: widget.session,
-          trail: trail.copyWith(isVerifiedTrail: !trail.isVerifiedTrail),
-        );
-      },
-    );
-  }
-
-  Future<void> _editTrail(Trail trail) async {
-    if (!widget.session.isAdmin || _isSaving) {
-      return;
-    }
-
-    final updatedTrail = await showEditTrailSheet(context, trail);
-    if (updatedTrail == null || !mounted) {
-      return;
-    }
-
-    await _runAdminAction(
-      successMessage: 'Trail updated.',
-      action: () async {
-        await _repository.updateTrailByAdmin(
-          session: widget.session,
-          trail: updatedTrail,
-        );
-      },
-    );
-  }
-
-  Future<void> _deleteTrail(Trail trail) async {
-    if (!widget.session.isAdmin || _isSaving) {
-      return;
-    }
-
-    final shouldDelete = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (context) {
-        return CupertinoAlertDialog(
-          title: const Text('Delete trail?'),
-          content: Text('${trail.name} will be removed from Firebase trails.'),
-          actions: [
-            CupertinoDialogAction(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+  Widget _managementContent(_AdminSection section, Widget child) {
+    final error = _sectionErrors[section];
+    final loading = _loadingSections.contains(section);
+    final hasData = _sectionLoadedAt.containsKey(section);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (loading) ...[
+          const LinearProgressIndicator(minHeight: 3),
+          const SizedBox(height: 12),
+        ],
+        if (error != null) ...[
+          AdminPanel(
+            key: ValueKey('admin-error-${section.name}'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  hasData
+                      ? 'Could not refresh this section'
+                      : 'This section is unavailable',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Text(error),
+                if (hasData) ...[
+                  const SizedBox(height: 6),
+                  const Text('Showing the last loaded records.'),
+                ],
+                TextButton.icon(
+                  onPressed: loading ? null : () => unawaited(_loadAdminData()),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                ),
+              ],
             ),
-            CupertinoDialogAction(
-              isDestructiveAction: true,
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
-            ),
-          ],
-        );
-      },
-    );
-    if (shouldDelete != true || !mounted) {
-      return;
-    }
-
-    await _runAdminAction(
-      successMessage: '${trail.name} deleted.',
-      action: () async {
-        await _repository.deleteTrailByAdmin(
-          session: widget.session,
-          trail: trail,
-        );
-      },
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (hasData) child,
+      ],
     );
   }
 
-  Future<void> _openTrail(Trail trail) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => TrailDetailPage(
-          session: widget.session,
-          hikerCircleRepository: _repository,
-          trail: trail,
-          onStartHike: (_) async {
-            _showSnack('Create hikes from the Home tab.');
-          },
-        ),
-      ),
-    );
-
-    if (mounted) {
-      unawaited(_loadAdminData());
+  String get _sectionLoadSummary {
+    if (_selectedSection == _AdminSection.overview) {
+      return _analyticsLoading
+          ? 'Refreshing statistics…'
+          : _analyticsError != null
+          ? 'Statistics need attention; management sections remain available.'
+          : _analytics == null
+          ? 'Statistics have not loaded yet.'
+          : 'Statistics loaded from the server.';
     }
+    if (_selectedSection == _AdminSection.tools) {
+      return 'Administrator workspace';
+    }
+    if (_loadingSections.contains(_selectedSection)) {
+      return 'Refreshing this section…';
+    }
+    if (_sectionErrors.containsKey(_selectedSection)) {
+      return _sectionLoadedAt.containsKey(_selectedSection)
+          ? 'Refresh failed · showing previously loaded records'
+          : 'Records have not loaded · retry below';
+    }
+    final loaded = _sectionLoadedAt[_selectedSection];
+    return loaded == null
+        ? 'Records have not loaded yet'
+        : 'Updated at ${loaded.hour.toString().padLeft(2, '0')}:${loaded.minute.toString().padLeft(2, '0')}';
   }
 
   Future<void> _reviewHazard(
@@ -628,7 +590,6 @@ class _AdminPageState extends State<AdminPage> {
           'isLoading': _isLoading,
           'isSaving': _isSaving,
           'isDebugLoading': _isDebugLoading,
-          'loadedTrails': _trails.map((trail) => trail.toFirestore()).toList(),
           'loadedHazardReports': _hazardReports,
           'loadedCommunityPosts': _communityPosts,
           'loadedAchievements': _achievements,
@@ -667,17 +628,13 @@ class _AdminPageState extends State<AdminPage> {
 
     final title = switch (_selectedSection) {
       _AdminSection.overview => 'Dashboard',
-      _AdminSection.trails => 'Trail Management',
       _AdminSection.hazards => 'Hazard Reports',
       _AdminSection.community => 'Community Moderation',
       _AdminSection.achievements => 'Achievements',
       _AdminSection.tools => 'Admin tools',
     };
     final subtitle = switch (_selectedSection) {
-      _AdminSection.overview =>
-        'System statistics and your management workspace.',
-      _AdminSection.trails =>
-        'Manage routes, checkpoints and trail verification.',
+      _AdminSection.overview => 'HikerCircle administration',
       _AdminSection.hazards => 'Verify or reject community safety reports.',
       _AdminSection.community =>
         'Review detected flags and manage community content.',
@@ -692,76 +649,43 @@ class _AdminPageState extends State<AdminPage> {
         error: _analyticsError,
         onRetry: () => unawaited(_loadAnalytics(forceRefresh: true)),
         onTools: () => _selectSection(_AdminSection.tools),
-        onTrails: () => _selectSection(_AdminSection.trails),
-        onTrailRequests: () => unawaited(_openTrailRequests()),
         onSafety: () => _selectSection(_AdminSection.hazards),
         onCommunity: () => _selectSection(_AdminSection.community),
         onRewards: () => _selectSection(_AdminSection.achievements),
       ),
-      _AdminSection.trails => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          AdminPanel(
-            onTap: () => unawaited(_openTrailRequests()),
-            child: const Row(
-              children: [
-                Icon(Icons.add_road_rounded),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Review recorded trail requests',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _TrailManagementSection(
-            trails: _trails
-                .where(
-                  (trail) => '${trail.name} ${trail.locationLabel}'
-                      .toLowerCase()
-                      .contains(_search),
-                )
-                .toList(),
-            isLoading: _isLoading,
-            isSaving: _isSaving,
-            onAddTrail: () => unawaited(_addTrail()),
-            onOpenTrail: (trail) => unawaited(_openTrail(trail)),
-            onEditTrail: _editTrail,
-            onDeleteTrail: _deleteTrail,
-            onToggleVerification: (trail) =>
-                unawaited(_toggleTrailVerification(trail)),
-          ),
-        ],
-      ),
-      _AdminSection.hazards => _HazardReportsSection(
-        hazardReports: _hazardReports
-            .where(
-              (row) => row.values.join(' ').toLowerCase().contains(_search),
-            )
-            .toList(),
-        isSaving: _isSaving,
-        onApprove: (report) => unawaited(_reviewHazard(report, approved: true)),
-        onReject: (report) => unawaited(_reviewHazard(report, approved: false)),
+      _AdminSection.hazards => _managementContent(
+        _AdminSection.hazards,
+        _HazardReportsSection(
+          hazardReports: _hazardReports
+              .where(
+                (row) => row.values.join(' ').toLowerCase().contains(_search),
+              )
+              .toList(),
+          isSaving: _isSaving,
+          onApprove: (report) =>
+              unawaited(_reviewHazard(report, approved: true)),
+          onReject: (report) =>
+              unawaited(_reviewHazard(report, approved: false)),
+        ),
       ),
       _AdminSection.community => _CommunityModerationSection(
         onReviewed: () => unawaited(_loadAdminData()),
         onManagePosts: () => unawaited(_openCommunityPosts()),
       ),
-      _AdminSection.achievements => _AchievementManagementSection(
-        achievements: _achievements
-            .where(
-              (row) => row.values.join(' ').toLowerCase().contains(_search),
-            )
-            .toList(),
-        isSaving: _isSaving,
-        onAdd: () => unawaited(_addAchievement()),
-        onEdit: (achievement) => unawaited(_editAchievement(achievement)),
-        onToggleActive: (achievement) =>
-            unawaited(_toggleAchievement(achievement)),
+      _AdminSection.achievements => _managementContent(
+        _AdminSection.achievements,
+        _AchievementManagementSection(
+          achievements: _achievements
+              .where(
+                (row) => row.values.join(' ').toLowerCase().contains(_search),
+              )
+              .toList(),
+          isSaving: _isSaving,
+          onAdd: () => unawaited(_addAchievement()),
+          onEdit: (achievement) => unawaited(_editAchievement(achievement)),
+          onToggleActive: (achievement) =>
+              unawaited(_toggleAchievement(achievement)),
+        ),
       ),
       _AdminSection.tools => _AdminTileGrid(
         children: [
@@ -882,20 +806,18 @@ class _AdminPageState extends State<AdminPage> {
                             selected: _selectedSection,
                             onSelect: _selectSection,
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            _isLoading
-                                ? 'Refreshing workspace…'
-                                : _errorMessage != null
-                                ? 'Unable to refresh workspace'
-                                : _lastLoadedAt == null
-                                ? 'No data loaded'
-                                : 'Updated at ${_lastLoadedAt!.hour.toString().padLeft(2, '0')}:${_lastLoadedAt!.minute.toString().padLeft(2, '0')}',
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: _AdminColors.secondaryTextFor(context),
-                                ),
-                          ),
+                          if (_selectedSection != _AdminSection.overview) ...[
+                            const SizedBox(height: 12),
+                            Text(
+                              _sectionLoadSummary,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: _AdminColors.secondaryTextFor(
+                                      context,
+                                    ),
+                                  ),
+                            ),
+                          ],
                           if (_selectedSection != _AdminSection.overview &&
                               _selectedSection != _AdminSection.tools &&
                               _selectedSection != _AdminSection.community) ...[
@@ -910,7 +832,6 @@ class _AdminPageState extends State<AdminPage> {
                               decoration: InputDecoration(
                                 hintText:
                                     'Search ${switch (_selectedSection) {
-                                      _AdminSection.trails => 'trails',
                                       _AdminSection.hazards => 'reports',
                                       _AdminSection.community => 'posts',
                                       _ => 'achievements',
@@ -949,9 +870,6 @@ class _AdminPageState extends State<AdminPage> {
                         if (_debugError != null) ...[
                           const SizedBox(height: 12),
                           _AdminNotice(message: _debugError!),
-                        ] else if (_errorMessage != null && !_debugMode) ...[
-                          const SizedBox(height: 12),
-                          _AdminNotice(message: _errorMessage!),
                         ],
                         const SizedBox(height: 16),
                         if (_debugMode)
@@ -989,19 +907,16 @@ class _AdminPageState extends State<AdminPage> {
               ),
             ),
           ),
-          if (_isLoading || _isDebugLoading)
+          if (_isDebugLoading)
             HikerCircleLoadingToastOverlay(
-              message: _isDebugLoading
-                  ? 'Loading diagnostics…'
-                  : 'Loading admin data…',
+              message: 'Loading diagnostics…',
               detail: 'Fetching the latest information securely.',
               timeout: const Duration(seconds: 30),
               onTimeout: () {
                 if (mounted) {
                   setState(() {
-                    _isLoading = false;
                     _isDebugLoading = false;
-                    _errorMessage = 'The request timed out. Please try again.';
+                    _debugError = 'The request timed out. Please try again.';
                   });
                 }
               },
@@ -1092,97 +1007,141 @@ class _AdminHeader extends StatelessWidget {
   );
 }
 
-class _AdminNavigation extends StatelessWidget {
+class _AdminNavigation extends StatefulWidget {
   const _AdminNavigation({required this.selected, required this.onSelect});
   final _AdminSection selected;
   final ValueChanged<_AdminSection> onSelect;
   @override
+  State<_AdminNavigation> createState() => _AdminNavigationState();
+}
+
+class _AdminNavigationState extends State<_AdminNavigation> {
+  final _scroll = ScrollController();
+  final _keys = {
+    for (final section in _AdminSection.values) section: GlobalKey(),
+  };
+
+  @override
+  void didUpdateWidget(covariant _AdminNavigation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selected != widget.selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scroll.hasClients) return;
+        final selectedContext = _keys[widget.selected]?.currentContext;
+        if (selectedContext != null) {
+          unawaited(
+            Scrollable.ensureVisible(
+              selectedContext,
+              alignment: .5,
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 200),
+            ),
+          );
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final largeText = MediaQuery.textScalerOf(context).scale(12) > 17;
-      final columns = constraints.maxWidth >= 760 && !largeText
-          ? 6
-          : largeText
-          ? 2
-          : 3;
+      final compact =
+          constraints.maxWidth >= 380 &&
+          MediaQuery.textScalerOf(context).scale(12) <= 17;
       return AdminPanel(
         padding: const EdgeInsets.all(5),
-        child: Wrap(
-          spacing: 4,
-          runSpacing: 4,
-          children: [
-            for (final section in _AdminSection.values)
-              SizedBox(
-                width:
-                    (constraints.maxWidth - 10 - (columns - 1) * 4) / columns,
-                child: Semantics(
-                  selected: selected == section,
-                  button: true,
-                  child: Material(
-                    color: selected == section
-                        ? AdminUi.green(context).withValues(alpha: .09)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
-                    child: InkWell(
-                      key: ValueKey('admin-nav-${section.name}'),
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () => onSelect(section),
+        child: compact
+            ? Row(
+                children: [
+                  for (final section in _AdminSection.values)
+                    Expanded(
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 12,
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(
-                              switch (section) {
-                                _AdminSection.overview =>
-                                  Icons.grid_view_rounded,
-                                _AdminSection.trails => Icons.route_rounded,
-                                _AdminSection.hazards => Icons.shield_outlined,
-                                _AdminSection.community => Icons.forum_outlined,
-                                _AdminSection.achievements =>
-                                  Icons.emoji_events_outlined,
-                                _AdminSection.tools => Icons.tune_rounded,
-                              },
-                              size: 19,
-                              color: selected == section
-                                  ? AdminUi.green(context)
-                                  : AdminUi.muted(context),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              switch (section) {
-                                _AdminSection.overview => 'Overview',
-                                _AdminSection.trails => 'Trails',
-                                _AdminSection.hazards => 'Safety',
-                                _AdminSection.community => 'Community',
-                                _AdminSection.achievements => 'Rewards',
-                                _AdminSection.tools => 'Tools',
-                              },
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: selected == section
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                color: selected == section
-                                    ? AdminUi.green(context)
-                                    : AdminUi.muted(context),
-                              ),
-                            ),
-                          ],
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: _tab(section, compact: true),
                       ),
                     ),
-                  ),
+                ],
+              )
+            : SingleChildScrollView(
+                controller: _scroll,
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final section in _AdminSection.values)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: _tab(section, compact: false),
+                      ),
+                  ],
                 ),
               ),
-          ],
-        ),
       );
     },
   );
+
+  Widget _tab(_AdminSection section, {required bool compact}) {
+    final selected = widget.selected == section;
+    final color = selected ? AdminUi.green(context) : AdminUi.muted(context);
+    final icon = Icon(
+      switch (section) {
+        _AdminSection.overview => Icons.grid_view_rounded,
+        _AdminSection.hazards => Icons.shield_outlined,
+        _AdminSection.community => Icons.forum_outlined,
+        _AdminSection.achievements => Icons.emoji_events_outlined,
+        _AdminSection.tools => Icons.tune_rounded,
+      },
+      size: 19,
+      color: color,
+    );
+    final label = Text(
+      switch (section) {
+        _AdminSection.overview => 'Overview',
+        _AdminSection.hazards => 'Safety',
+        _AdminSection.community => 'Community',
+        _AdminSection.achievements => 'Rewards',
+        _AdminSection.tools => 'Tools',
+      },
+      maxLines: 1,
+      softWrap: false,
+      style: TextStyle(
+        fontSize: compact ? 10.5 : 12,
+        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+        color: color,
+      ),
+    );
+    return Semantics(
+      key: _keys[section],
+      selected: selected,
+      button: true,
+      child: Material(
+        color: selected
+            ? AdminUi.green(context).withValues(alpha: .14)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          key: ValueKey('admin-nav-${section.name}'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => widget.onSelect(section),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 2 : 12,
+              vertical: compact ? 10 : 13,
+            ),
+            child: compact
+                ? Column(children: [icon, const SizedBox(height: 5), label])
+                : Row(children: [icon, const SizedBox(width: 7), label]),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Natural-height tiles avoid clipping when system text size is increased.
@@ -1282,253 +1241,6 @@ class _AdminDashboardCard extends StatelessWidget {
   );
 }
 
-class _TrailManagementSection extends StatelessWidget {
-  const _TrailManagementSection({
-    required this.trails,
-    required this.isLoading,
-    required this.isSaving,
-    required this.onAddTrail,
-    required this.onOpenTrail,
-    required this.onEditTrail,
-    required this.onDeleteTrail,
-    required this.onToggleVerification,
-  });
-
-  final List<Trail> trails;
-  final bool isLoading;
-  final bool isSaving;
-  final VoidCallback onAddTrail;
-  final ValueChanged<Trail> onOpenTrail;
-  final Future<void> Function(Trail trail) onEditTrail;
-  final Future<void> Function(Trail trail) onDeleteTrail;
-  final ValueChanged<Trail> onToggleVerification;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            const Expanded(child: _SectionTitle(label: 'Trail library')),
-            FilledButton.icon(
-              onPressed: isSaving ? null : onAddTrail,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Add Trail'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        if (isLoading && trails.isEmpty) ...[
-          const HikerCircleLoadingView(
-            message: 'Loading trail records…',
-            detail: 'Getting trails and verification status.',
-            compact: true,
-            padding: EdgeInsets.symmetric(vertical: 4),
-          ),
-          const SizedBox(height: 8),
-        ],
-        Column(
-          children: [
-            if (trails.isEmpty)
-              const _EmptyState(message: 'No trails to display.')
-            else
-              for (var index = 0; index < trails.length; index++) ...[
-                AdminPanel(
-                  padding: EdgeInsets.zero,
-                  child: _TrailAdminRow(
-                    trail: trails[index],
-                    isSaving: isSaving,
-                    onOpen: () => onOpenTrail(trails[index]),
-                    onEdit: () => onEditTrail(trails[index]),
-                    onDelete: () => onDeleteTrail(trails[index]),
-                    onToggleVerification: () =>
-                        onToggleVerification(trails[index]),
-                  ),
-                ),
-                if (index != trails.length - 1) const SizedBox(height: 12),
-              ],
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _TrailAdminRow extends StatelessWidget {
-  const _TrailAdminRow({
-    required this.trail,
-    required this.isSaving,
-    required this.onOpen,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onToggleVerification,
-  });
-
-  final Trail trail;
-  final bool isSaving;
-  final VoidCallback onOpen;
-  final Future<void> Function() onEdit;
-  final Future<void> Function() onDelete;
-  final VoidCallback onToggleVerification;
-
-  @override
-  Widget build(BuildContext context) {
-    final checkpointLabel = trail.checkpoints.length == 1
-        ? '1 checkpoint'
-        : '${trail.checkpoints.length} checkpoints';
-
-    final row = Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _CircleIcon(icon: Icons.terrain_rounded),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _AdminTextBlock(
-                  title: trail.name,
-                  subtitle: [
-                    trail.locationLabel,
-                    trail.distanceLabel,
-                    if (trail.hasCommunityDifficulty) trail.difficulty,
-                  ].join(' - '),
-                  body:
-                      '$checkpointLabel - ${trail.durationLabel} - Rating ${trail.ratingAverage.toStringAsFixed(1)}',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            children: [
-              _AdminStatusPill(
-                label: trail.isVerifiedTrail ? 'Verified' : 'Unverified',
-                color: trail.isVerifiedTrail
-                    ? _AdminColors.green
-                    : _AdminColors.orangeFor(context),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              PopupMenuButton<String>(
-                tooltip: 'Trail actions',
-                enabled: !isSaving,
-                onSelected: (action) {
-                  if (action == 'edit') {
-                    unawaited(onEdit());
-                  } else {
-                    unawaited(onDelete());
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('Edit trail')),
-                  PopupMenuItem(value: 'delete', child: Text('Delete trail')),
-                ],
-                icon: const Icon(Icons.more_horiz_rounded),
-              ),
-              FilledButton.icon(
-                onPressed: onOpen,
-                icon: const Icon(Icons.edit_location_alt_rounded),
-                label: const Text('Manage'),
-              ),
-              OutlinedButton.icon(
-                onPressed: isSaving ? null : onToggleVerification,
-                icon: Icon(
-                  trail.isVerifiedTrail
-                      ? Icons.visibility_off_rounded
-                      : Icons.verified_rounded,
-                ),
-                label: Text(trail.isVerifiedTrail ? 'Unverify' : 'Verify'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-
-    return Dismissible(
-      key: ValueKey('admin-trail-${trail.trailId}-${trail.name}'),
-      confirmDismiss: (direction) async {
-        if (isSaving) {
-          return false;
-        }
-
-        if (direction == DismissDirection.startToEnd) {
-          await onEdit();
-          return false;
-        }
-
-        await onDelete();
-        return false;
-      },
-      background: const _AdminSwipeActionBackground(
-        alignment: Alignment.centerLeft,
-        color: _AdminColors.green,
-        icon: Icons.edit_rounded,
-        label: 'Edit',
-      ),
-      secondaryBackground: _AdminSwipeActionBackground(
-        alignment: Alignment.centerRight,
-        color: _AdminColors.redFor(context),
-        icon: Icons.delete_rounded,
-        label: 'Delete',
-      ),
-      child: row,
-    );
-  }
-}
-
-class _AdminSwipeActionBackground extends StatelessWidget {
-  const _AdminSwipeActionBackground({
-    required this.alignment,
-    required this.color,
-    required this.icon,
-    required this.label,
-  });
-
-  final Alignment alignment;
-  final Color color;
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final isLeft = alignment == Alignment.centerLeft;
-
-    return Container(
-      color: color,
-      alignment: alignment,
-      padding: EdgeInsets.only(left: isLeft ? 18 : 0, right: isLeft ? 0 : 18),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: isLeft
-            ? CrossAxisAlignment.start
-            : CrossAxisAlignment.end,
-        children: [
-          Icon(icon, color: Colors.white, size: 20),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _HazardReportsSection extends StatelessWidget {
   const _HazardReportsSection({
     required this.hazardReports,
@@ -1587,18 +1299,20 @@ class _CommunityModerationSection extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      CommunityIntegrityPanel(onReviewed: onReviewed),
-      const SizedBox(height: 16),
       AdminPanel(
         onTap: onManagePosts,
         child: const ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.edit_note_rounded),
-          title: Text('Manage community posts'),
-          subtitle: Text('Browse, edit, restore, hide or remove posts.'),
+          leading: Icon(Icons.admin_panel_settings_outlined),
+          title: Text('Moderate community posts'),
+          subtitle: Text(
+            'Review any post, edit content, hide, remove or restore it.',
+          ),
           trailing: Icon(Icons.chevron_right_rounded),
         ),
       ),
+      const SizedBox(height: 16),
+      CommunityIntegrityPanel(onReviewed: onReviewed),
     ],
   );
 }

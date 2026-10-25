@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
+import '../../core/widgets/word_limit_formatter.dart';
 
 const communityPostCaptionLimit = 5000;
 const communityPostPhotoLimit = 6;
@@ -46,6 +47,7 @@ class CommunityPostEditor extends StatefulWidget {
     this.enabled = true,
     this.captionKey = const ValueKey('community-caption'),
     this.publishKey = const ValueKey('community-publish'),
+    this.captionWordLimit,
   });
 
   final String authorName;
@@ -67,6 +69,7 @@ class CommunityPostEditor extends StatefulWidget {
   final bool enabled;
   final Key captionKey;
   final Key publishKey;
+  final int? captionWordLimit;
 
   @override
   State<CommunityPostEditor> createState() => CommunityPostEditorState();
@@ -90,6 +93,10 @@ class CommunityPostEditorState extends State<CommunityPostEditor> {
       (widget.hikeAttachment != null &&
           _includeHike != widget.includeHikeInitially);
   String get caption => _caption.text.trim();
+  bool get isCaptionValid =>
+      caption.length <= communityPostCaptionLimit &&
+      (widget.captionWordLimit == null ||
+          countWords(caption) <= widget.captionWordLimit!);
   CommunityPostDraft get draft => CommunityPostDraft(
     caption: _caption.text,
     images: List.unmodifiable(_images),
@@ -188,7 +195,7 @@ class CommunityPostEditorState extends State<CommunityPostEditor> {
 
   /// Hold the draft during publishing and leave its text and photos intact when the operation fails.
   Future<void> _publish() async {
-    if (isBusy || !_hasContent || caption.length > communityPostCaptionLimit) {
+    if (isBusy || !_hasContent || !isCaptionValid) {
       return;
     }
     FocusScope.of(context).unfocus();
@@ -289,6 +296,24 @@ class CommunityPostEditorState extends State<CommunityPostEditor> {
           minLines: 4,
           maxLines: 10,
           maxLength: communityPostCaptionLimit,
+          textAlignVertical: TextAlignVertical.top,
+          inputFormatters: [
+            if (widget.captionWordLimit != null)
+              WordLimitTextInputFormatter(widget.captionWordLimit!),
+          ],
+          buildCounter: widget.captionWordLimit == null
+              ? null
+              : (
+                  context, {
+                  required currentLength,
+                  required isFocused,
+                  maxLength,
+                }) => Text(
+                  '${countWords(_caption.text)}/${widget.captionWordLimit} words',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: isCaptionValid ? quiet : colors.error,
+                  ),
+                ),
           textCapitalization: TextCapitalization.sentences,
           style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
           onChanged: (_) {
@@ -299,8 +324,18 @@ class CommunityPostEditorState extends State<CommunityPostEditor> {
             hintText:
                 'Share a moment, ask a question, or tell your trail story…',
             hintStyle: TextStyle(color: quiet),
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(vertical: 4),
+            filled: true,
+            fillColor: colors.surfaceContainerLow,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: colors.outlineVariant),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: colors.primary, width: 1.5),
+            ),
+            contentPadding: const EdgeInsets.all(16),
             counterStyle: TextStyle(color: quiet, fontSize: 11),
           ),
         ),
@@ -446,7 +481,9 @@ class CommunityPostEditorState extends State<CommunityPostEditor> {
               borderRadius: BorderRadius.circular(18),
             ),
           ),
-          onPressed: isBusy || !_hasContent ? null : _publish,
+          onPressed: isBusy || !_hasContent || !isCaptionValid
+              ? null
+              : _publish,
           icon: _isPosting
               ? const SizedBox(
                   width: 18,

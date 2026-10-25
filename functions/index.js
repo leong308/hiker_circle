@@ -1,4 +1,5 @@
 const {runOtpChecks, createOtpReadinessCheck, withOtpTiming} = require('./otp_delivery_performance');
+const {isAdminUser, createAdminAuthorization} = require('./admin_authorization');
 // Firebase entry points connect mobile session security, hiking, community, messaging, recovery, and scheduled maintenance.
 const {readUser, readUsers, readUserQuery, setUser, updateUser} = require('./user_modules');
 const { validateSoloHikeDistance } = require('./solo_hike_policy');
@@ -122,13 +123,17 @@ const mobileSessionSecurity = createMobileSessionSecurity({
   db: () => getFirestore(), auth: () => getAuth(), HttpsError,
   timestamp: () => FieldValue.serverTimestamp(), setUser,
 });
+const adminAuthorization = createAdminAuthorization({HttpsError});
 
 // All mobile business callables enforce the current server-owned session.
 // Purpose-limited login/recovery handlers validate their own OTP/MFA artifacts.
 function onCall(options, handler) {
   const {authenticationFlow = false, ...firebaseOptions} = options;
   return firebaseOnCall({enforceAppCheck: true, ...firebaseOptions}, async request => {
-    if (!authenticationFlow) await mobileSessionSecurity.requireActive(request);
+    if (!authenticationFlow) {
+      const active = await mobileSessionSecurity.requireActive(request);
+      adminAuthorization.bindActiveAccount(request, active.account);
+    }
     if (!authenticationFlow && request.data?.expectedOwner && request.data.expectedOwner !== request.auth.uid) {
       throw new HttpsError('unauthenticated', 'The signed-in account changed. Retry for the current account.');
     }
@@ -274,6 +279,20 @@ for (const [name, handler] of Object.entries({submitTrailCaution:'submit', updat
     }
   });
 }
+// Legacy direct reports and reopened cycles receive the same server policy and affected-hiker delivery.
+exports.notifyUpcomingHikersAboutTrailHazard = onDocumentWritten({
+  document: 'hazardReports/{hazardId}', region: 'asia-southeast1', retry: true,
+  timeoutSeconds: 540, memory: '256MiB', maxInstances: 4,
+}, async event => {
+  if (!event.data?.after?.exists) return;
+  const hazards = require('./trail_hazard_notifications');
+  const db = admin.firestore();
+  const report = await hazards.normalizeHazardReport({db, hazardId: event.params.hazardId});
+  if (report && hazards.shouldDispatchReportChange(event.data.before?.data(), report.data())) {
+    await hazards.sendTrailHazardAlerts({db, report, messaging: admin.messaging(),
+      userId: userDocumentIdForPhone, tokensFor: latestFcmTokensForUser});
+  }
+});
 exports.finalizeRecordedTrailRequest = onCall({timeoutSeconds: 120, memory: '512MiB'}, async request => {
   const {uid} = authenticatedPhoneFor(request, 'Sign in to submit your recorded trail.');
   try {
@@ -285,11 +304,9 @@ exports.finalizeRecordedTrailRequest = onCall({timeoutSeconds: 120, memory: '512
   }
 });
 
-// getAdminDashboardAnalytics: Require a trusted administrator claim before returning aggregate coverage and activity.
+// getAdminDashboardAnalytics: Require the current protected account role before returning private aggregates.
 exports.getAdminDashboardAnalytics = onCall({timeoutSeconds: 120, memory: '512MiB', maxInstances: 2}, async request => {
-  if (!request.auth?.uid || request.auth.token?.isAdmin !== true) {
-    throw new HttpsError('permission-denied', 'Administrator access is required.');
-  }
+  adminAuthorization.requireAdminAccess(request);
   try {
     return await require('./admin_analytics').loadAdminAnalytics({db: admin.firestore(),
       documentId: FieldPath.documentId(), forceRefresh: request.data?.forceRefresh === true});
@@ -300,9 +317,7 @@ exports.getAdminDashboardAnalytics = onCall({timeoutSeconds: 120, memory: '512Mi
 });
 
 exports.reviewCommunityContentFlag = onCall({timeoutSeconds: 30}, async request => {
-  if (!request.auth?.uid || request.auth.token?.isAdmin !== true) {
-    throw new HttpsError('permission-denied', 'Administrator access is required.');
-  }
+  adminAuthorization.requireAdminAccess(request);
   try {
     return await require('./community_moderation').reviewContent({db: admin.firestore(),
       reviewId: request.data?.reviewId, action: request.data?.action, adminId: request.auth.uid});
@@ -315,11 +330,11 @@ exports.reviewCommunityContentFlag = onCall({timeoutSeconds: 30}, async request 
 
 // Community mutations are server-owned so identity, hike summaries and
 // engagement counters have one validated source of truth.
-// communityContext: Use server-verified identity and trusted admin claims for canonical community mutations.
+// communityContext: Use server-verified identity and current protected roles for canonical community mutations.
 function communityContext(request, adminOnly = false) {
   const identity = authenticatedPhoneFor(request, 'Sign in to use the community.');
-  const isAdmin = request.auth?.token?.isAdmin === true;
-  if (adminOnly && !isAdmin) throw new HttpsError('permission-denied', 'Administrator access is required.');
+  const isAdmin = adminAuthorization.hasAdminAccess(request);
+  if (adminOnly) adminAuthorization.requireAdminAccess(request);
   return { db: admin.firestore(), bucket: getStorage().bucket(), ...identity, isAdmin,
     input: request.data || {}, ErrorType: HttpsError, timestamp: millis => Timestamp.fromMillis(millis) };
 }
@@ -905,19 +920,6 @@ function authenticatedPhoneClaim(request) {
 
 function phoneKeyFor(phoneNumber) {
   return String(phoneNumber || '').replace(/\D/g, '');
-}
-
-function isAdminUser(user) {
-  const role = String(user.role || '').toLowerCase();
-  const roles = Array.isArray(user.roles)
-    ? user.roles.map((value) => String(value || '').toLowerCase())
-    : [];
-  return (
-    user.isAdmin === true ||
-    role === 'admin' ||
-    role === 'super_admin' ||
-    roles.includes('admin')
-  );
 }
 
 // reserveOtpChallenge: Reserve the OTP send attempt transactionally so normal retries do not send a second challenge.
@@ -4400,29 +4402,30 @@ async function ensureTeamChatDocument(
   team,
   { newlyJoinedName = '' } = {}
 ) {
-  const participants = validTeamParticipants(team);
-  const participantPhones = participants.map(teamParticipantPhone);
-  if (participantPhones.length === 0) {
-    return;
-  }
-  const participantNames = {};
-  const participantPhotoURLs = {};
-  for (const participant of participants) {
-    const phone = teamParticipantPhone(participant);
-    const buddy = participant.buddy && typeof participant.buddy === 'object'
-      ? participant.buddy
-      : {};
-    participantNames[phoneKeyFor(phone)] = String(
-      buddy.name || `Hiker ${phoneKeyFor(phone).slice(-4)}`
-    ).trim().slice(0, 80);
-    const photoURL = String(buddy.photoURL || '').trim().slice(0, 2000);
-    if (photoURL) {
-      participantPhotoURLs[phoneKeyFor(phone)] = photoURL;
-    }
-  }
   const chatReference = db.collection('groupChats').doc(`team_${teamId}`);
   const now = new Date();
   await db.runTransaction(async (transaction) => {
+    // A hazard withdrawal may have changed membership since the caller's team
+    // transaction. Reading the team here prevents restoring a departed hiker.
+    const teamSnapshot = await transaction.get(db.collection('teamHikeSessions').doc(teamId));
+    if (!teamSnapshot.exists) return;
+    const currentTeam = teamSnapshot.data();
+    const participants = validTeamParticipants(currentTeam);
+    const participantPhones = participants.map(teamParticipantPhone);
+    if (participantPhones.length === 0) return;
+    const participantNames = {};
+    const participantPhotoURLs = {};
+    for (const participant of participants) {
+      const phone = teamParticipantPhone(participant);
+      const buddy = participant.buddy && typeof participant.buddy === 'object'
+        ? participant.buddy : {};
+      participantNames[phoneKeyFor(phone)] = String(
+        buddy.name || `Hiker ${phoneKeyFor(phone).slice(-4)}`
+      ).trim().slice(0, 80);
+      const photoURL = String(buddy.photoURL || '').trim().slice(0, 2000);
+      if (photoURL) participantPhotoURLs[phoneKeyFor(phone)] = photoURL;
+    }
+    team = currentTeam;
     const snapshot = await transaction.get(chatReference);
     const existing = snapshot.data() || {};
     const safeJoinedName = String(newlyJoinedName || '').trim().slice(0, 80);
@@ -4511,7 +4514,11 @@ exports.cancelUpcomingHike = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'Select a valid upcoming hike.');
   }
   return require('./cancel_upcoming_hike').cancelUpcomingHike(
-    admin.firestore(), { hikeId, uid, phoneNumber }, HttpsError,
+    admin.firestore(), {
+      hikeId, uid, phoneNumber,
+      withdrawSelf: request.data?.withdrawSelf === true,
+      hazardId: String(request.data?.hazardId || '').trim(),
+    }, HttpsError,
     () => admin.firestore.FieldValue.serverTimestamp()
   );
 });
@@ -10952,6 +10959,7 @@ async function deliverFcmOutboxDocument(reference, messageId) {
     ]);
     const authorized =
       teamSnapshot.exists
+      && require('./team_notification_policy').teamNoticeIsCurrent(payload, team)
       && recipientIsParticipant
       && (
         (hostOnlyTypes.has(type) && senderPhone === hostPhone)
@@ -11022,6 +11030,12 @@ async function deliverFcmOutboxDocument(reference, messageId) {
       teamHikeSessionId,
       deepLink: safeDeepLink,
     };
+    // A cancellation or roster reset can occur while device data is loading.
+    const outboundTeam = await db.collection('teamHikeSessions').doc(teamHikeSessionId).get();
+    if (!outboundTeam.exists || !require('./team_notification_policy').teamNoticeIsAuthorized(payload, outboundTeam.data())) {
+      await finish({status: 'failed', error: 'Team notice is no longer current'});
+      return;
+    }
     if (!await lifecycle.beginOutbound(db, reference, claim.attemptId)) return;
     let successCount = 0;
     let failureCount = 0;
@@ -11139,6 +11153,7 @@ exports.deliverTeamReadinessWhatsApp = onDocumentCreated(
       );
       if (
         !teamSnapshot.exists
+        || !require('./team_notification_policy').teamNoticeIsCurrent(payload, team)
         || String(team.hostPhoneNumber || '').trim() !== senderPhone
         || recipientPhone === senderPhone
         || !participantPhones.has(recipientPhone)
@@ -11644,8 +11659,24 @@ exports.reconcileUpcomingHikeOperationsOnWrite = onDocumentWritten({
   document: 'upcomingHikes/{hikeId}', region: 'asia-southeast1', retry: true,
   timeoutSeconds: 60,
 }, async (event) => {
-  if (upcomingMembershipChanged(event.data?.before?.data(), event.data?.after?.data())) {
-    await reconcileUpcomingHikeOperationsSchedule();
+  const before = event.data?.before?.data();
+  const after = event.data?.after?.data();
+  try {
+    // Notify newly scheduled hikers and newly confirmed participants without waiting for the next cron tick.
+    if (after && (before?.trailId !== after.trailId
+      || before?.departureTimeLocal !== after.departureTimeLocal
+      || before?.departureTime !== after.departureTime
+      || before?.isDeleted !== after.isDeleted
+      || before?.creatorPhone !== after.creatorPhone
+      || JSON.stringify(before?.participantPhones || []) !== JSON.stringify(after.participantPhones || []))) {
+      await require('./trail_hazard_notifications').sendTrailHazardAlerts({
+        db: admin.firestore(), hikes: {docs: [event.data.after]}, messaging: admin.messaging(),
+        userId: userDocumentIdForPhone, tokensFor: latestFcmTokensForUser,
+      });
+    }
+  } finally {
+    // A provider outage must not leave the shared lifecycle/reminder schedule paused.
+    if (upcomingMembershipChanged(before, after)) await reconcileUpcomingHikeOperationsSchedule();
   }
 });
 
@@ -11668,6 +11699,13 @@ exports.processUpcomingHikeOperations = onSchedule(
             {
               name: 'lifecycle',
               run: () => processUpcomingHikeLifecycleTask({db, snapshot, now}),
+            },
+            {
+              name: 'trail cautions',
+              run: () => require('./trail_hazard_notifications').sendTrailHazardAlerts({
+                db, messaging: admin.messaging(), userId: userDocumentIdForPhone,
+                tokensFor: latestFcmTokensForUser, now, hikes: snapshot,
+              }),
             },
             {
               name: 'precautions',

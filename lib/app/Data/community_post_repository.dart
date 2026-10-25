@@ -413,6 +413,11 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
       'Unable to load posts. Check your connection and try again.',
     );
   } on TimeoutException {
+    if (admin) {
+      throw const HikerCircleFirebaseRepositoryException(
+        'Moderation records could not load. Check your connection and retry.',
+      );
+    }
     final fallback = await cached();
     if (fallback.isNotEmpty || !sameAccount()) return fallback;
     throw const HikerCircleFirebaseRepositoryException(

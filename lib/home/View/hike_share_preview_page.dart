@@ -1,6 +1,7 @@
 // HikeSharePreviewPage previews a completed hike using the shared community composer and durable draft.
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,9 @@ import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../circle/View/community_post_composer.dart';
 import '../../core/widgets/route_preview_map.dart';
+import '../../core/widgets/page_header_style.dart';
+import '../../core/widgets/word_limit_formatter.dart';
+import '../Data/hike_share_card_renderer.dart';
 import '../Model/hike_session_models.dart';
 import '../Model/recorded_hike_map_points.dart';
 
@@ -22,7 +26,6 @@ class HikeSharePreviewPage extends StatefulWidget {
     required this.onShareExternally,
     required this.onPostToCommunity,
     this.repository,
-    this.initialMapStyleIndex = 0,
   });
 
   final AppSession session;
@@ -34,8 +37,8 @@ class HikeSharePreviewPage extends StatefulWidget {
     List<CommunityPostImageUpload> images,
   )
   onPostToCommunity;
-  final Future<void> Function(String text) onShareExternally;
-  final int initialMapStyleIndex;
+  final Future<void> Function(String text, {Uint8List? routeImage})
+  onShareExternally;
 
   @override
   State<HikeSharePreviewPage> createState() => _HikeSharePreviewPageState();
@@ -248,14 +251,33 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage>
   /// Share the currently edited caption and report while blocking a simultaneous community publish.
   Future<void> _shareExternally() async {
     if (_isBusy) return;
+    final caption =
+        _editorKey.currentState?.caption ?? _currentDraft.caption.trim();
+    if (countWords(caption) > 300 ||
+        caption.length > communityPostCaptionLimit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Shorten your caption to 300 words before sharing.'),
+        ),
+      );
+      return;
+    }
     FocusScope.of(context).unfocus();
     setState(() => _isSharingExternally = true);
     try {
-      await widget.onShareExternally(
-        buildExternalHikeShareText(
+      Uint8List? image;
+      try {
+        image = await HikeShareCardRenderer.render(
+          hike: widget.activeHike,
           report: widget.report,
-          caption: _editorKey.currentState?.caption ?? '',
-        ),
+        );
+      } catch (_) {
+        // Text remains shareable if the device cannot allocate a route image.
+      }
+      if (!mounted) return;
+      await widget.onShareExternally(
+        buildExternalHikeShareText(report: widget.report, caption: caption),
+        routeImage: image,
       );
     } catch (_) {
       if (mounted) {
@@ -283,15 +305,15 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage>
       },
       child: Scaffold(
         backgroundColor: colors.surface,
-        appBar: AppBar(
+        appBar: PageHeaderAppBar(
           backgroundColor: colors.surface,
           leading: IconButton(
-            tooltip: 'Close hike post',
+            key: const Key('hike-share-back'),
+            tooltip: 'Back',
             onPressed: _isBusy ? null : _close,
-            icon: const Icon(Icons.close_rounded),
+            icon: const Icon(CupertinoIcons.chevron_back),
           ),
           title: const Text('Share your hike'),
-          centerTitle: false,
         ),
         body: SafeArea(
           top: false,
@@ -349,12 +371,12 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage>
                             captionKey: const Key('hike-share-caption'),
                             publishKey: const Key('post-hike-to-community'),
                             publishLabel: 'Post hike',
+                            captionWordLimit: 300,
                             enabled: !_isSharingExternally && !_isClosing,
                             allowHikeToggle: false,
                             hikeAttachment: _HikeAttachment(
                               report: widget.report,
                               activeHike: widget.activeHike,
-                              initialMapStyleIndex: widget.initialMapStyleIndex,
                               enabled: !_isBusy,
                             ),
                             onDraftChanged: _draftChanged,
@@ -382,7 +404,7 @@ class _HikeSharePreviewPageState extends State<HikeSharePreviewPage>
                               label: Text(
                                 _isSharingExternally
                                     ? 'Opening share…'
-                                    : 'Share to other apps',
+                                    : 'Share outside HikerCircle',
                               ),
                             ),
                           ),
@@ -401,12 +423,10 @@ class _HikeAttachment extends StatelessWidget {
   const _HikeAttachment({
     required this.report,
     required this.activeHike,
-    required this.initialMapStyleIndex,
     required this.enabled,
   });
   final HikeSummaryReport report;
   final ActiveHikeSession activeHike;
-  final int initialMapStyleIndex;
   final bool enabled;
 
   Future<void> _exploreRoute(BuildContext context) =>
@@ -461,8 +481,8 @@ class _HikeAttachment extends StatelessWidget {
         pinnedPoints: _pinPoints(activeHike),
         checkInPoints: _checkInPoints(activeHike),
         captureAllGestures: interactive,
-        animateRoute: !MediaQuery.disableAnimationsOf(context),
-        initialStyleIndex: initialMapStyleIndex,
+        animateRoute: false,
+        showLayerToggle: true,
       );
 
   @override
@@ -480,57 +500,22 @@ class _HikeAttachment extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Semantics(
-              button: true,
-              label: 'Explore the recorded route for ${report.trailName}',
-              child: GestureDetector(
-                key: const Key('hike-share-explore-route'),
-                behavior: HitTestBehavior.opaque,
-                onTap: enabled ? () => _exploreRoute(context) : null,
-                child: Stack(
-                  children: [
-                    SizedBox(
-                      height: 164,
-                      child: ExcludeSemantics(
-                        child: IgnorePointer(
-                          child: _routeMap(context, interactive: false),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      right: 10,
-                      bottom: 10,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: colors.surface.withValues(alpha: .96),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 11,
-                            vertical: 7,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.open_in_full_rounded,
-                                size: 13,
-                                color: colors.primary,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'Explore route',
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+            SizedBox(
+              height: 240,
+              child: AbsorbPointer(
+                absorbing: !enabled,
+                child: _routeMap(context, interactive: false),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                child: TextButton.icon(
+                  key: const Key('hike-share-explore-route'),
+                  onPressed: enabled ? () => _exploreRoute(context) : null,
+                  icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                  label: const Text('Explore route'),
                 ),
               ),
             ),
@@ -639,14 +624,28 @@ String defaultHikeShareCaption(HikeSummaryReport report) =>
 String buildExternalHikeShareText({
   required HikeSummaryReport report,
   required String caption,
-}) => [
-  if (caption.isNotEmpty) ...[caption, ''],
-  report.shareText,
-].join('\n');
+}) {
+  final text = caption.trim();
+  return [
+    if (text.isNotEmpty && text != defaultHikeShareCaption(report)) ...[
+      text,
+      '',
+    ],
+    'Completed ${report.trailName}',
+    _formatShareDate(report.endedAt),
+    '',
+    'Distance: ${report.distanceKm.toStringAsFixed(2)} km',
+    'Duration: ${_formatDuration(report.duration)}',
+    'Average speed: ${report.averageSpeedKmh.toStringAsFixed(2)} km/h',
+    '',
+    'Recorded with HikerCircle',
+  ].join('\n');
+}
 
 String _formatDuration(Duration duration) {
   final hours = duration.inHours;
   final minutes = duration.inMinutes.remainder(60);
+  if (duration.inMinutes == 0) return '${duration.inSeconds}s';
   if (hours == 0) return '${minutes}m';
   return '${hours}h ${minutes}m';
 }

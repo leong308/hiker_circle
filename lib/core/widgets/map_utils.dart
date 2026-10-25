@@ -23,6 +23,52 @@ const mapStyleUrls = [
   'https://tiles.openfreemap.org/styles/bright',
 ];
 
+/// These labels and indices stay aligned with saved/offline style selections.
+const mapStyleNames = [
+  'Outdoors',
+  'Streets',
+  'Satellite',
+  'Liberty',
+  'Light',
+  'Bright',
+];
+
+enum MapDimension { twoD, threeD }
+
+@immutable
+class MapViewSettings {
+  const MapViewSettings({
+    this.styleIndex = 0,
+    this.dimension = MapDimension.threeD,
+  });
+
+  final int styleIndex;
+  final MapDimension dimension;
+  int get safeStyleIndex => styleIndex.clamp(0, mapStyleUrls.length - 1);
+  String get styleUrl => mapStyleUrls[safeStyleIndex];
+  String get styleName => mapStyleNames[safeStyleIndex];
+  bool get is3D => dimension == MapDimension.threeD;
+  String get dimensionLabel => is3D ? '3D' : '2D';
+
+  MapViewSettings copyWith({int? styleIndex, MapDimension? dimension}) =>
+      MapViewSettings(
+        styleIndex: (styleIndex ?? this.styleIndex).clamp(
+          0,
+          mapStyleUrls.length - 1,
+        ),
+        dimension: dimension ?? this.dimension,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is MapViewSettings &&
+      other.safeStyleIndex == safeStyleIndex &&
+      other.dimension == dimension;
+
+  @override
+  int get hashCode => Object.hash(safeStyleIndex, dimension);
+}
+
 /// The photographic Mapbox style reserved for the immersive route preview.
 const fpvMapStyleUrl = MapboxStyles.STANDARD_SATELLITE;
 
@@ -44,6 +90,43 @@ Future<void> enableTerrain3D(MapboxMap map) async {
   } catch (_) {}
 }
 
+Future<void> disableTerrain3D(MapboxMap map) async {
+  try {
+    await map.style.setStyleTerrain('null');
+  } catch (_) {
+    // Styles with built-in terrain can still flatten the existing elevation.
+    try {
+      await map.style.setStyleTerrainProperty('exaggeration', 0);
+    } catch (_) {
+      // Flat/OpenFreeMap styles may have no terrain property at all.
+    }
+  }
+}
+
+/// Only change the view dimension. Style-only changes should not call this
+/// helper unless restoring terrain after a native style reload.
+Future<void> applyMapDimension(
+  MapboxMap map,
+  MapDimension dimension, {
+  double pitch = 50,
+}) async {
+  if (dimension == MapDimension.threeD) {
+    await enableTerrain3D(map);
+  } else {
+    await disableTerrain3D(map);
+  }
+  await map.setCamera(
+    CameraOptions(
+      pitch: dimension == MapDimension.threeD
+          ? (pitch.isFinite ? pitch.clamp(0, 85).toDouble() : 50)
+          : 0,
+    ),
+  );
+  await map.gestures.updateSettings(
+    GesturesSettings(pitchEnabled: dimension == MapDimension.threeD),
+  );
+}
+
 void schedulePitch(MapboxMap map, {double pitch = 50}) {
   Future.delayed(const Duration(milliseconds: 300), () async {
     try {
@@ -59,6 +142,24 @@ void schedulePitch(MapboxMap map, {double pitch = 50}) {
 
 const kMapMinZoom = 4.2;
 const kMapMaxZoom = 21.0;
+
+/// Platform map geometry is a value: rebuilding a page can create new lists
+/// containing identical points and must not restart route rendering/playback.
+bool mapPointListsEqual(List<Point>? left, List<Point>? right) {
+  if (identical(left, right)) return true;
+  if (left == null || right == null || left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (!listEquals(
+      left[index].coordinates.toJson(),
+      right[index].coordinates.toJson(),
+    )) {
+      return false;
+    }
+  }
+  return true;
+}
 
 ({double longitude, double latitude})? mapPointCoordinatesOrNull(Point point) {
   final coordinates = point.coordinates;

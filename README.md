@@ -29,16 +29,17 @@ If this value is omitted, the app falls back to `GOOGLE_ROUTES_API_KEY`.
 
 ## Mobile API configuration
 
-The mobile app loads the ignored `.env` asset in debug, profile, and release
-builds. Create it from the template before building:
+The mobile app loads the ignored `.env.public` asset in debug, profile, and
+release builds. Set your public `MAPBOX_ACCESS_TOKEN` in the environment or an
+ignored `.env` file, then generate the asset before building:
 
-```powershell
-Copy-Item .env.example .env
-flutter run --release
+```sh
+python3 scripts/prepare_mobile_public_config.py
+flutter pub get
+flutter run
 ```
 
-Fill the ignored `.env` copy with restricted mobile keys before using that
-command. `--dart-define` values override `.env` for CI/store builds. GreenAPI
+The generator packages only allowlisted public configuration. GreenAPI
 credentials must be configured only as Firebase Functions secrets; they must
 never be passed to or embedded in the mobile app.
 
@@ -76,11 +77,6 @@ flutter build ios --release --dart-define=IOS_NATIVE_PASSKEYS_ENABLED=true
 
 Do not use that flag with Personal Team signing; the matching entitlement
 cannot be authorized by its provisioning profile.
-
-See [`docs/IOS_PERSONAL_TEAM_LIMITATIONS.md`](docs/IOS_PERSONAL_TEAM_LIMITATIONS.md)
-for the complete feature-impact audit, Personal Team release constraints, and
-the Android/iOS platform differences that a paid Apple membership would not
-change.
 
 ## BLE SOS monitor lifecycle
 

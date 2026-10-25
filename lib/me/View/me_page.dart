@@ -2252,7 +2252,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
   Future<void> _setPrivateUnlock(bool enabled) async {
     try {
       if (enabled && !await PrivateScreenUnlock.available()) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
@@ -2260,12 +2260,13 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
               ),
             ),
           );
+        }
         return;
       }
       if (!await PrivateScreenUnlock.authenticate() || !mounted) return;
       _settings.setPrivateScreenUnlockEnabled(enabled);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -2273,6 +2274,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
             ),
           ),
         );
+      }
     }
   }
 
@@ -2284,10 +2286,11 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
         ),
       ),
     );
-    if (verified == true && mounted)
+    if (verified == true && mounted) {
       await Navigator.of(context).push<void>(
         MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
       );
+    }
   }
 
   @override

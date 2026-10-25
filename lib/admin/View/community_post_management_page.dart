@@ -1,10 +1,13 @@
 // CommunityPostManagementPage loads, edits and moderates community posts.
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
+
 import 'package:flutter/material.dart';
 
 import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import 'admin_ui.dart';
+
+enum _PostFilter { all, public, hidden, removed }
 
 class CommunityPostManagementPage extends StatefulWidget {
   const CommunityPostManagementPage({
@@ -25,7 +28,9 @@ class _CommunityPostManagementPageState
   List<Map<String, dynamic>> _posts = [];
   bool _loading = false, _saving = false, _hasMore = false;
   String _search = '';
+  _PostFilter _filter = _PostFilter.all;
   String? _error;
+  String? _notice;
 
   @override
   void initState() {
@@ -35,7 +40,12 @@ class _CommunityPostManagementPageState
 
   /// Append another moderation page or replace the list when refreshing from the first page.
   Future<void> _load({bool more = false}) async {
-    if (_loading || _saving) return;
+    if (!widget.session.isAdmin ||
+        _loading ||
+        _saving ||
+        (more && _posts.isEmpty)) {
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -61,10 +71,12 @@ class _CommunityPostManagementPageState
         _posts = byId.values.toList();
         _hasMore = page.length == 50;
       });
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         setState(
-          () => _error = 'Posts could not load. Retry to refresh this list.',
+          () => _error = error is HikerCircleFirebaseRepositoryException
+              ? error.message
+              : 'Posts could not load. Check your connection and retry.',
         );
       }
     } finally {
@@ -74,15 +86,19 @@ class _CommunityPostManagementPageState
 
   /// Serialize moderation writes and reload the resulting server state after success.
   Future<void> _save(Future<void> Function() action) async {
-    if (_saving || _loading) return;
+    if (!widget.session.isAdmin || _saving || _loading) return;
     setState(() {
       _saving = true;
       _error = null;
+      _notice = null;
     });
     try {
       await action();
       if (!mounted) return;
-      setState(() => _saving = false);
+      setState(() {
+        _saving = false;
+        _notice = 'Moderation decision saved.';
+      });
       await _load();
     } catch (error) {
       if (mounted) {
@@ -102,33 +118,19 @@ class _CommunityPostManagementPageState
       'hidden' => 'Hide',
       _ => 'Remove',
     };
-    final confirmed = await showDialog<bool>(
+    if (!widget.session.isAdmin || _loading || _saving) return;
+    final reason = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('$label this post?'),
-        content: Text(
-          status == 'approved'
-              ? 'This post will appear in the public community feed.'
-              : 'This post will no longer appear in the public feed. Its record remains available here.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(label),
-          ),
-        ],
-      ),
+      builder: (_) => _ModerationDecisionDialog(label: label, status: status),
     );
-    if (confirmed == true && mounted) {
+    if (reason != null && mounted) {
       await _save(
         () => widget.repository.moderateCommunityPost(
           session: widget.session,
           postId: post['postId'] as String,
           moderationStatus: status,
+          reason: reason,
+          expectedUpdatedAtMillis: (post['updatedAtMillis'] as num?)?.toInt(),
         ),
       );
     }
@@ -155,6 +157,10 @@ class _CommunityPostManagementPageState
     }
     final visible = _posts
         .where(
+          (post) =>
+              _filter == _PostFilter.all || post['visibility'] == _filter.name,
+        )
+        .where(
           (post) => [
             post['caption'],
             post['authorHandle'],
@@ -169,7 +175,7 @@ class _CommunityPostManagementPageState
       child: Scaffold(
         backgroundColor: AdminUi.background(context),
         appBar: PageHeaderAppBar(
-          title: const Text('Community posts'),
+          title: const Text('Moderate posts'),
           actions: [
             IconButton(
               tooltip: 'Refresh posts',
@@ -178,134 +184,341 @@ class _CommunityPostManagementPageState
             ),
           ],
         ),
-        body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text(
-              'Manage posts directly. Detected flags are reviewed in Community Moderation.',
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              onChanged: (text) =>
-                  setState(() => _search = text.trim().toLowerCase()),
-              decoration: const InputDecoration(
-                labelText: 'Search loaded posts',
-                prefixIcon: Icon(Icons.search_rounded),
+        body: RefreshIndicator(
+          onRefresh: () => _load(),
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            children: [
+              const Text(
+                'Review any community post. Hidden and removed posts stay here for review and can be restored.',
               ),
-            ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _loading || _saving ? null : () => _load(),
-                      child: const Text('Retry'),
-                    ),
-                  ],
+              const SizedBox(height: 16),
+              TextField(
+                onChanged: (text) =>
+                    setState(() => _search = text.trim().toLowerCase()),
+                decoration: const InputDecoration(
+                  labelText: 'Search loaded posts',
+                  prefixIcon: Icon(Icons.search_rounded),
                 ),
               ),
-            if (_loading || _saving)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: LinearProgressIndicator(),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final filter in _PostFilter.values)
+                    ChoiceChip(
+                      key: ValueKey('post-filter-${filter.name}'),
+                      selected: _filter == filter,
+                      onSelected: (_) => setState(() => _filter = filter),
+                      label: Text(switch (filter) {
+                        _PostFilter.all => 'All',
+                        _PostFilter.public => 'Public',
+                        _PostFilter.hidden => 'Hidden',
+                        _PostFilter.removed => 'Removed',
+                      }),
+                    ),
+                ],
               ),
-            if (!_loading && _error == null && visible.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text(
-                  _search.isEmpty
-                      ? 'No posts available.'
-                      : 'No matching posts in the loaded list.',
+              const SizedBox(height: 8),
+              Text(
+                '${visible.length} shown · ${_posts.length} posts loaded${_hasMore ? ' · more available' : ''}',
+                style: TextStyle(color: AdminUi.muted(context), fontSize: 12),
+              ),
+              if (_notice != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _notice!,
+                      style: TextStyle(color: AdminUi.green(context)),
+                    ),
+                  ),
                 ),
-              ),
-            for (final post in visible)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: AdminPanel(
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        (post['authorHandle'] ?? post['authorName'] ?? 'Hiker')
-                            .toString(),
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(
-                        '${post['trailName'] ?? 'General'} · ${post['visibility'] ?? 'public'}',
-                        style: TextStyle(color: AdminUi.muted(context)),
-                      ),
-                      const SizedBox(height: 8),
-                      SelectableText((post['caption'] ?? '').toString()),
-                      if (post['imageUrls'] is List &&
-                          (post['imageUrls'] as List).isNotEmpty)
-                        Text(
-                          '${(post['imageUrls'] as List).length} attached photos',
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
                         ),
-                      const SizedBox(height: 12),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: _loading || _saving
-                                ? null
-                                : () => _edit(post),
-                            icon: const Icon(Icons.edit_outlined),
-                            label: const Text('Edit post'),
-                          ),
-                          if (post['visibility'] != 'public')
-                            OutlinedButton.icon(
-                              onPressed: _loading || _saving
-                                  ? null
-                                  : () => _visibility(post, 'approved'),
-                              icon: const Icon(Icons.visibility_outlined),
-                              label: const Text('Restore'),
-                            ),
-                          if (post['visibility'] == 'public')
-                            OutlinedButton.icon(
-                              onPressed: _loading || _saving
-                                  ? null
-                                  : () => _visibility(post, 'hidden'),
-                              icon: const Icon(Icons.visibility_off_outlined),
-                              label: const Text('Hide'),
-                            ),
-                          if (post['visibility'] != 'removed')
-                            OutlinedButton.icon(
-                              onPressed: _loading || _saving
-                                  ? null
-                                  : () => _visibility(post, 'removed'),
-                              icon: const Icon(Icons.delete_outline),
-                              label: const Text('Remove'),
-                            ),
-                        ],
+                      ),
+                      TextButton(
+                        onPressed: _loading || _saving ? null : () => _load(),
+                        child: const Text('Retry'),
                       ),
                     ],
                   ),
                 ),
-              ),
-            if (_hasMore)
-              Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: OutlinedButton(
-                  onPressed: _loading || _saving
-                      ? null
-                      : () => _load(more: true),
-                  child: const Text('Load more posts'),
+              if (_loading || _saving)
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: LinearProgressIndicator(),
                 ),
-              ),
-          ],
+              if (!_loading && _error == null && visible.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    _search.isEmpty
+                        ? 'No posts available.'
+                        : 'No matching posts in the loaded list.',
+                  ),
+                ),
+              for (final post in visible)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: AdminPanel(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          (post['authorHandle'] ??
+                                  post['authorName'] ??
+                                  'Hiker')
+                              .toString(),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          (post['trailName'] ?? '').toString().trim().isEmpty
+                              ? 'Community post'
+                              : post['trailName'].toString(),
+                          style: TextStyle(color: AdminUi.muted(context)),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          children: [
+                            AdminTag(
+                              label: switch (post['visibility']) {
+                                'hidden' => 'Hidden from feed',
+                                'removed' => 'Removed from feed',
+                                _ => 'Public',
+                              },
+                              icon: post['visibility'] == 'public'
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                              color: post['visibility'] == 'public'
+                                  ? AdminUi.green(context)
+                                  : Theme.of(context).colorScheme.error,
+                            ),
+                          ],
+                        ),
+                        if ((post['moderationReason'] ?? '')
+                            .toString()
+                            .trim()
+                            .isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Last decision: ${post['moderationReason']}',
+                            style: TextStyle(color: AdminUi.muted(context)),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        SelectableText(
+                          (post['caption'] ?? '').toString().isEmpty
+                              ? 'No caption'
+                              : post['caption'].toString(),
+                        ),
+                        if (post['imageUrls'] is List &&
+                            (post['imageUrls'] as List).isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          _PostPhotoStrip(
+                            urls: (post['imageUrls'] as List)
+                                .whereType<String>()
+                                .toList(),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: _loading || _saving
+                                  ? null
+                                  : () => _edit(post),
+                              icon: const Icon(Icons.edit_outlined),
+                              label: const Text('Edit post'),
+                            ),
+                            if (post['visibility'] != 'public')
+                              OutlinedButton.icon(
+                                onPressed: _loading || _saving
+                                    ? null
+                                    : () => _visibility(post, 'approved'),
+                                icon: const Icon(Icons.visibility_outlined),
+                                label: const Text('Restore'),
+                              ),
+                            if (post['visibility'] == 'public')
+                              OutlinedButton.icon(
+                                onPressed: _loading || _saving
+                                    ? null
+                                    : () => _visibility(post, 'hidden'),
+                                icon: const Icon(Icons.visibility_off_outlined),
+                                label: const Text('Hide'),
+                              ),
+                            if (post['visibility'] != 'removed')
+                              OutlinedButton.icon(
+                                onPressed: _loading || _saving
+                                    ? null
+                                    : () => _visibility(post, 'removed'),
+                                icon: const Icon(Icons.delete_outline),
+                                label: const Text('Remove'),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_hasMore)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: OutlinedButton(
+                    onPressed: _loading || _saving
+                        ? null
+                        : () => _load(more: true),
+                    child: const Text('Load more posts'),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+class _PostPhotoStrip extends StatelessWidget {
+  const _PostPhotoStrip({required this.urls});
+  final List<String> urls;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 156,
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      itemCount: urls.length,
+      separatorBuilder: (_, index) => const SizedBox(width: 8),
+      itemBuilder: (context, index) => ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Semantics(
+          label: 'Post photo ${index + 1} of ${urls.length}. Tap to enlarge.',
+          button: true,
+          child: InkWell(
+            onTap: () => showDialog<void>(
+              context: context,
+              builder: (context) => Dialog(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: IconButton(
+                        tooltip: 'Close photo',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ),
+                    Flexible(
+                      child: InteractiveViewer(
+                        child: Image.network(
+                          urls[index],
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, error, stack) => const Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Text('Photo preview unavailable'),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ),
+              ),
+            ),
+            child: Image.network(
+              urls[index],
+              width: 180,
+              height: 156,
+              fit: BoxFit.cover,
+              errorBuilder: (_, error, stack) => const SizedBox(
+                width: 180,
+                child: Center(child: Text('Photo preview unavailable')),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ModerationDecisionDialog extends StatefulWidget {
+  const _ModerationDecisionDialog({required this.label, required this.status});
+  final String label, status;
+
+  @override
+  State<_ModerationDecisionDialog> createState() =>
+      _ModerationDecisionDialogState();
+}
+
+class _ModerationDecisionDialogState extends State<_ModerationDecisionDialog> {
+  final _reason = TextEditingController();
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('${widget.label} this post?'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.status == 'approved'
+                ? 'The post will return to the public community feed.'
+                : 'The post will leave the public feed. Its record and this decision will be kept for review.',
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _reason,
+            maxLength: 300,
+            minLines: 2,
+            maxLines: 4,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: 'Reason (optional)',
+              hintText: 'Add a short note for the moderation record',
+              alignLabelWithHint: true,
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, _reason.text.trim()),
+        child: Text(widget.label),
+      ),
+    ],
+  );
 }
 
 class _PostEdit {

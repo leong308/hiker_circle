@@ -24,9 +24,6 @@
   },
   "hosting": {
     "public": "build/web",
-    "predeploy": [
-      "node scripts/prepare_firebase_hosting.js"
-    ],
     "ignore": [
       "firebase.json",
       "**/.git/**",

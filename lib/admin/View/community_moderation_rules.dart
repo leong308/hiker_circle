@@ -35,21 +35,31 @@ const communityReviewCategories = <String, String>{
 };
 
 class CommunityModerationRulesButton extends StatelessWidget {
-  const CommunityModerationRulesButton({super.key});
+  const CommunityModerationRulesButton({super.key, this.compact = false});
+  final bool compact;
 
   @override
-  Widget build(BuildContext context) => OutlinedButton.icon(
-    icon: const Icon(Icons.policy_outlined),
-    label: const Text('Moderation rules'),
-    onPressed: () => showModalBottomSheet<void>(
+  Widget build(BuildContext context) {
+    void openRules() => showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: AdminUi.surface(context),
       showDragHandle: true,
       builder: (_) => const _ModerationRulesSheet(),
-    ),
-  );
+    );
+    return compact
+        ? IconButton(
+            tooltip: 'Moderation rules',
+            onPressed: openRules,
+            icon: const Icon(Icons.policy_outlined),
+          )
+        : OutlinedButton.icon(
+            icon: const Icon(Icons.policy_outlined),
+            label: const Text('Moderation rules'),
+            onPressed: openRules,
+          );
+  }
 }
 
 class _ModerationRulesSheet extends StatelessWidget {
@@ -88,23 +98,25 @@ class _ModerationRulesSheet extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Read-only reference for this app version. A flag is a request for human review, not a confirmed violation.',
+                  'Use the source label and matched rule to understand a flag. Read the original content before taking action.',
                   style: TextStyle(color: AdminUi.muted(context), height: 1.5),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
+                const _DetectionSources(),
+                const SizedBox(height: 16),
                 const _RuleSection(
                   icon: Icons.privacy_tip_outlined,
-                  title: 'Sensitive phrases',
+                  title: 'Keyword matches',
                   description:
-                      'These exact phrases are checked without regard to letter case, at word boundaries. Matches go to manual review; their text stays within the app backend. They are not banned words.',
+                      'These phrases match without regard to letter case, at word boundaries. A flag shows the matched phrase; it does not mean the phrase is banned.',
                   child: _SensitivePhraseList(),
                 ),
                 const SizedBox(height: 16),
                 const _RuleSection(
                   icon: Icons.manage_search_rounded,
-                  title: 'Sensitive patterns',
+                  title: 'Pattern matches',
                   description:
-                      'Pattern matches also go directly to manual review. Long numbers can match even when they are not a phone number.',
+                      'Flags name the pattern without copying the personal value into their evidence. A long number can match even when it is not a phone number.',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -127,25 +139,138 @@ class _ModerationRulesSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 const _RuleSection(
-                  icon: Icons.auto_awesome_outlined,
-                  title: 'Manual review categories',
+                  icon: Icons.checklist_rounded,
+                  title: 'Review categories',
                   description:
-                      'Administrators review meaning and context. Local checks identify sensitive data and malformed records; these categories describe issues an administrator may review:',
+                      'Categories describe the concern, while the source label explains how it was detected. A category alone does not mean Gemini checked the content.',
                   child: _ReviewCategoryList(),
                 ),
                 const SizedBox(height: 16),
                 const _RuleSection(
                   icon: Icons.fact_check_outlined,
-                  title: 'Other checks & limits',
+                  title: 'Record checks & limits',
                   description:
                       'Missing authors, mismatched record IDs, invalid text, empty comments and oversized content require manual review. Empty post captions are allowed.',
                   child: Text(
-                    'Normal hiking experiences, safety discussions, injury reports and respectful disagreement are not automatically considered violations. Sensitive-pattern checks may still send them to manual review.\n\nChecks cover public text only, not images or private chats. Local checks do not understand context and may flag harmless content; always read the original before deciding. No rule automatically removes content.',
+                    'Normal hiking experiences, injury reports and respectful disagreement are allowed. A keyword or pattern may still flag them for review.\n\nCurrent checks cover public text, not images or private chats. Local rules cannot understand context. No check automatically removes content.',
                     style: TextStyle(height: 1.5),
                   ),
                 ),
               ],
             ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _DetectionSources extends StatelessWidget {
+  const _DetectionSources();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: AdminUi.green(context).withValues(alpha: .07),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: AdminUi.green(context).withValues(alpha: .16)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.rule_rounded, color: AdminUi.green(context)),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Current checks use local rules',
+                style: TextStyle(fontWeight: FontWeight.w800, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'The server checks public text every 30 minutes. Sensitive text stays in the app backend and is not sent to Gemini by this checker.',
+          style: TextStyle(color: AdminUi.muted(context), height: 1.5),
+        ),
+        const SizedBox(height: 14),
+        const _SourceLabel(
+          icon: Icons.text_fields_rounded,
+          label: 'Keyword match',
+          description: 'An exact policy phrase matched.',
+        ),
+        const _SourceLabel(
+          icon: Icons.manage_search_rounded,
+          label: 'Pattern match',
+          description: 'An email, phone number or coordinate pattern matched.',
+        ),
+        const _SourceLabel(
+          icon: Icons.fact_check_outlined,
+          label: 'Record check',
+          description: 'Required content data is missing or invalid.',
+        ),
+        Divider(color: AdminUi.border(context), height: 24),
+        const _SourceLabel(
+          icon: Icons.auto_awesome_outlined,
+          label: 'Gemini',
+          description:
+              'Shown only when a saved flag identifies Gemini. The current checker does not use Gemini.',
+        ),
+        const _SourceLabel(
+          icon: Icons.history_rounded,
+          label: 'Local rules / Source unavailable',
+          description:
+              'Older flags may not include the exact rule or a recognized source. Their original reason remains available.',
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'A flag is a request for review, not a confirmed violation.',
+          style: TextStyle(
+            color: AdminUi.green(context),
+            fontWeight: FontWeight.w700,
+            height: 1.5,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _SourceLabel extends StatelessWidget {
+  const _SourceLabel({
+    required this.icon,
+    required this.label,
+    required this.description,
+  });
+  final IconData icon;
+  final String label, description;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 18, color: AdminUi.green(context)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 3),
+              Text(
+                description,
+                style: TextStyle(color: AdminUi.muted(context), height: 1.4),
+              ),
+            ],
           ),
         ),
       ],

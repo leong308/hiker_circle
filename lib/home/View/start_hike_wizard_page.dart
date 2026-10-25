@@ -35,6 +35,7 @@ class StartHikeWizardPage extends StatefulWidget {
     this.session,
     this.emergencyContactNames = const [],
     this.initialShareLiveLocation = false,
+    this.startWithSchedule = false,
     this.onScheduled,
     this.onStartNow,
   });
@@ -45,6 +46,7 @@ class StartHikeWizardPage extends StatefulWidget {
   final AppSession? session;
   final List<String> emergencyContactNames;
   final bool initialShareLiveLocation;
+  final bool startWithSchedule;
   final Future<void> Function(HikeSessionDraft draft)? onScheduled;
   final Future<bool> Function(HikeSessionDraft draft)? onStartNow;
 
@@ -81,6 +83,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   @override
   void initState() {
     super.initState();
+    _startNow = !widget.startWithSchedule;
     final trailsById = <String, Trail>{};
     for (final trail in widget.availableTrails) {
       trailsById.putIfAbsent(trail.trailId, () => trail);
@@ -339,15 +342,11 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       final safeDraft = _withPlatformSafetyPolicy(
         _withSafeRecordingInterval(_draft),
       );
-      final hikeId = await repo.scheduleUpcomingHike(
+      await repo.scheduleUpcomingHike(
         session: session,
         draft: safeDraft,
         joinPolicy: _joinPolicy,
-      );
-      await repo.saveUpcomingHikeReminderPreference(
-        session: session,
-        hikeId: hikeId,
-        preference: _reminderPreference,
+        reminderPreference: _reminderPreference,
       );
       try {
         await widget.onScheduled?.call(safeDraft);
@@ -362,7 +361,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
         ..showSnackBar(
           SnackBar(
             content: Text(
-              'Hike scheduled for ${_formatDate(_draft.departureTime)} at ${_formatTime(_draft.departureTime)}.',
+              'Hike saved for ${_formatDate(_draft.departureTime)} at ${_formatTime(_draft.departureTime)}. It will sync when connected.',
             ),
             behavior: SnackBarBehavior.floating,
           ),

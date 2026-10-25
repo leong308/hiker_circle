@@ -374,8 +374,9 @@ bool requiresRecentMfaAuthentication(Object error) {
     return false;
   }
   if (error.details is Map &&
-      (error.details as Map)['reason'] == 'recent-verification-required')
+      (error.details as Map)['reason'] == 'recent-verification-required') {
     return true;
+  }
   final message = (error.message ?? '').toLowerCase();
   return message.contains('sign in again before') &&
       message.contains('security method');

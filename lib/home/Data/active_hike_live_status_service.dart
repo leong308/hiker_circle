@@ -138,16 +138,23 @@ class ActiveHikeLiveStatusService {
     }
   }
 
-  Future<NativeHikeSafetyEvent?> consumePendingSafetyEvent() async {
+  Future<NativeHikeSafetyEvent?> consumePendingSafetyEvent({
+    bool strict = false,
+  }) async {
     try {
-      final data = await _channel.invokeMapMethod<Object?, Object?>(
+      final operation = _channel.invokeMapMethod<Object?, Object?>(
         'consumePendingSafetyEvent',
+        strict ? const {'preferCurrent': true} : null,
       );
+      final data = strict
+          ? await operation.timeout(const Duration(seconds: 4))
+          : await operation;
       if (data == null) return null;
       return NativeHikeSafetyEvent.fromPlatform(data);
     } on MissingPluginException {
       return null;
     } on PlatformException {
+      if (strict) rethrow;
       return null;
     }
   }
@@ -172,6 +179,39 @@ class ActiveHikeLiveStatusService {
       // Native monitoring is Android-only.
     } on PlatformException {
       // The system notification keeps its own cancel action as a fallback.
+    }
+  }
+
+  /// Silence this triggered event without deleting its durable dispatch work.
+  /// False means the native event no longer matches; the caller can re-read it.
+  Future<bool> stopTriggeredSafetyAlarm(String eventId) async {
+    try {
+      return await _channel
+              .invokeMethod<bool>('stopTriggeredSafetyAlarm', {
+                'eventId': eventId,
+              })
+              .timeout(const Duration(seconds: 4)) ??
+          false;
+    } on MissingPluginException {
+      // Desktop/web do not provide the optional native safety service.
+      return true;
+    }
+  }
+
+  /// Require native proof before treating a public safety URL as a safe response.
+  Future<bool> wasSafetyAlarmStopped(String eventId) async {
+    if (eventId.trim().isEmpty) return false;
+    try {
+      return await _channel
+              .invokeMethod<bool>('wasSafetyAlarmStopped', {'eventId': eventId})
+              .timeout(const Duration(seconds: 4)) ??
+          false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    } on TimeoutException {
+      return false;
     }
   }
 
@@ -296,6 +336,8 @@ class NativeHikeSafetyEvent {
     required this.detectedAt,
     required this.deadlineAt,
     required this.triggeredAt,
+    this.localAlarmStopped = false,
+    this.ownerUid = '',
   });
 
   factory NativeHikeSafetyEvent.fromPlatform(Map<Object?, Object?> data) {
@@ -315,6 +357,8 @@ class NativeHikeSafetyEvent {
       detectedAt: dateFrom(data['detectedAtMillis']),
       deadlineAt: dateFrom(data['deadlineAtMillis']),
       triggeredAt: dateFrom(data['triggeredAtMillis']),
+      localAlarmStopped: data['localAlarmStopped'] == true,
+      ownerUid: data['ownerUid']?.toString() ?? '',
     );
   }
 
@@ -326,6 +370,8 @@ class NativeHikeSafetyEvent {
   final DateTime? detectedAt;
   final DateTime? deadlineAt;
   final DateTime? triggeredAt;
+  final bool localAlarmStopped;
+  final String ownerUid;
 
   bool get isTriggering => phase == 'triggering';
   bool get isDispatching => phase == 'dispatching';

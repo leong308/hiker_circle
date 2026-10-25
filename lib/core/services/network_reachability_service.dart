@@ -28,6 +28,8 @@ class NetworkReachabilityService {
   final Connectivity _connectivity = Connectivity();
   final StreamController<NetworkReachabilitySnapshot> _controller =
       StreamController<NetworkReachabilitySnapshot>.broadcast();
+  final StreamController<void> _connectionAvailable =
+      StreamController<void>.broadcast();
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   Timer? _refreshTimer;
@@ -38,6 +40,10 @@ class NetworkReachabilityService {
   Future<NetworkReachabilitySnapshot>? _refreshFuture;
 
   Stream<NetworkReachabilitySnapshot> get snapshots => _controller.stream;
+
+  /// An interface became available. Time-sensitive work can try its own server
+  /// request immediately while the shared DNS probe runs separately.
+  Stream<void> get connectionAvailable => _connectionAvailable.stream;
   NetworkReachabilitySnapshot get latest => _latest;
 
   // NetworkReachabilityService.start reference-counts listeners so shared screens reuse one
@@ -45,7 +51,10 @@ class NetworkReachabilityService {
   Future<void> start() async {
     _startCount += 1;
     _connectivitySubscription ??= _connectivity.onConnectivityChanged.listen(
-      (_) {
+      (connections) {
+        if (connections.any((result) => result != ConnectivityResult.none)) {
+          _connectionAvailable.add(null);
+        }
         unawaited(refresh());
       },
       onError: (Object error, StackTrace stackTrace) {
@@ -70,10 +79,11 @@ class NetworkReachabilityService {
     if (_startCount > 0) {
       return;
     }
-    await _connectivitySubscription?.cancel();
+    final subscription = _connectivitySubscription;
     _connectivitySubscription = null;
     _refreshTimer?.cancel();
     _refreshTimer = null;
+    await subscription?.cancel();
   }
 
   // refresh coalesces concurrent probes instead of starting a request for every listening widget.

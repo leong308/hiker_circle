@@ -13,7 +13,6 @@ import '../../app/Data/hiker_circle_firebase_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../../circle/View/group_chat_detail_page.dart';
 import '../../core/models/hike_route_analysis.dart';
-import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/cached_trail_image.dart';
 import '../../core/widgets/route_preview_map.dart';
@@ -1900,9 +1899,12 @@ class _RecordedRouteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final points = detail.routePoints;
+    final points =
+        detail.routePoints.where((point) => point.hasValidPosition).toList()
+          ..sort(
+            (first, second) => first.capturedAt.compareTo(second.capturedAt),
+          );
     final trail = _trailForHistory(detail);
-    final route = _routeForHistory(detail);
     final pins = detail.manualPins
         .map(
           (pin) => mapbox.Point(
@@ -1925,17 +1927,39 @@ class _RecordedRouteCard extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: Container(
-        height: 260,
         color: const Color(0xFF10271A),
-        child: Stack(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Positioned.fill(
+            Padding(
+              key: const ValueKey('history-route-header'),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+              child: Text(
+                points.length >= 2 ? 'RECORDED ROUTE' : 'ROUTE SUMMARY',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+            SizedBox(
+              key: const ValueKey('history-route-map-area'),
+              height: 260,
               child: points.length >= 2 && enableInteractiveRoute
                   ? RoutePreviewMap(
                       key: const Key('hike-history-actual-route-map'),
                       trail: trail,
-                      route: route,
-                      customCheckpoints: trail.checkpoints,
+                      recordedTrackPoints: [
+                        for (final point in points)
+                          mapbox.Point(
+                            coordinates: mapbox.Position(
+                              point.longitude,
+                              point.latitude,
+                            ),
+                          ),
+                      ],
                       pinnedPoints: pins,
                       checkInPoints: checkIns,
                       animateRoute: kReleaseMode,
@@ -1943,6 +1967,7 @@ class _RecordedRouteCard extends StatelessWidget {
                       captureAllGestures: true,
                     )
                   : CustomPaint(
+                      key: const ValueKey('history-route-paint-fallback'),
                       painter: _RouteTracePainter(
                         points: points,
                         pins: detail.manualPins,
@@ -1950,50 +1975,9 @@ class _RecordedRouteCard extends StatelessWidget {
                       ),
                     ),
             ),
-            Positioned.fill(
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.transparent,
-                        const Color(0xB510271A),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              top: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xE61A3022),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  points.length >= 2 ? 'RECORDED ROUTE' : 'ROUTE SUMMARY',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 15,
+            Padding(
+              key: const ValueKey('history-route-footer'),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 15),
               child: Row(
                 children: [
                   Expanded(
@@ -2022,7 +2006,15 @@ class _RecordedRouteCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const Icon(Icons.lock_rounded, color: Colors.white, size: 19),
+                  const SizedBox(width: 12),
+                  const Tooltip(
+                    message: 'Private hike',
+                    child: Icon(
+                      Icons.lock_rounded,
+                      color: Colors.white,
+                      size: 19,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -2093,24 +2085,6 @@ Trail _trailForHistory(HikeHistoryDetail detail) {
     'weather': const <String, dynamic>{},
     'hazards': const <Map<String, dynamic>>[],
   });
-}
-
-HikingRouteResult? _routeForHistory(HikeHistoryDetail detail) {
-  final points =
-      detail.routePoints.where((point) => point.hasValidPosition).toList()
-        ..sort((left, right) => left.capturedAt.compareTo(right.capturedAt));
-  if (points.length < 2) return null;
-  final encoded = PolylineCodec.encode(
-    points.map((point) => LatLng(point.latitude, point.longitude)).toList(),
-  );
-  if (encoded.isEmpty) return null;
-  return HikingRouteResult(
-    distanceMeters: (detail.summary.distanceKm * 1000).round(),
-    duration: detail.summary.duration,
-    encodedPolyline: encoded,
-    elevationGainMeters: detail.elevationGainMeters.toDouble(),
-    sourceLabel: 'Recorded GPS route',
-  );
 }
 
 class _RouteTracePainter extends CustomPainter {

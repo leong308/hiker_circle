@@ -86,9 +86,9 @@ class DemoAlerts extends SosAlertRepository {
   @override
   Future<int> countQueuedAlerts({required AppSession session}) async => 0;
   @override
-  Future<List<SosQueuedDispatch>> loadQueuedDispatches({required AppSession session, int limit = 20}) async => [];
+  Future<List<SosQueuedDispatch>> loadQueuedDispatches({required AppSession session, int? limit}) async => [];
   @override
-  Future<SosQueueFlushResult> flushQueuedAlerts({required AppSession session, required List<EmergencyContact> contacts, int limit = 10}) async => const SosQueueFlushResult(attempted: 0, sent: 0, remaining: 0);
+  Future<SosQueueFlushResult> flushQueuedAlerts({required AppSession session, required List<EmergencyContact> contacts, int? limit}) async => const SosQueueFlushResult(attempted: 0, sent: 0, remaining: 0);
   @override
   Future<SosAlertSubmission> submitAlert({required AppSession session, required SosAlertMode mode,
     required DateTime triggeredAt, required SosTriggerLocation? triggerLocation,

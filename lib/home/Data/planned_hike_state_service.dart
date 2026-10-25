@@ -5,8 +5,7 @@ import 'dart:convert';
 import '../../trail/Model/trail_models.dart';
 import '../Model/hike_session_models.dart';
 
-/// Resolves the transient preparation dashboard from cloud-owned upcoming
-/// hikes and the small amount of preparation state that belongs on-device.
+/// Resolves preparation from locally persisted drafts and cloud schedule metadata.
 class PlannedHikeStateResolver {
   const PlannedHikeStateResolver._();
 
@@ -54,9 +53,19 @@ class PlannedHikeStateResolver {
     }
 
     for (final hike in remoteHikes) {
-      add(hike);
+      // An in-memory temporary ID must yield to its locally confirmed identity.
+      final confirmed = hike.isLocalPendingSync
+          ? cachedHikes
+                .where(
+                  (candidate) =>
+                      !candidate.isLocalPendingSync &&
+                      representsSameSchedule(candidate, hike),
+                )
+                .firstOrNull
+          : null;
+      add(confirmed ?? hike);
     }
-    if (retainUnconfirmedCachedHikes) {
+    {
       cachedHikes.sort((a, b) {
         if (a.isLocalPendingSync != b.isLocalPendingSync) {
           return a.isLocalPendingSync ? 1 : -1;
@@ -64,7 +73,7 @@ class PlannedHikeStateResolver {
         return a.departureTime.compareTo(b.departureTime);
       });
       for (final hike in cachedHikes) {
-        add(hike);
+        if (retainUnconfirmedCachedHikes || hike.isLocalPendingSync) add(hike);
       }
     }
     merged.sort((a, b) => a.departureTime.compareTo(b.departureTime));
@@ -135,6 +144,7 @@ class PlannedHikeStateResolver {
     required String creatorPhone,
     required String creatorName,
     DateTime? createdAt,
+    String? localId,
   }) {
     final now = (createdAt ?? DateTime.now()).toUtc();
     final participantPhones = <String>{
@@ -142,6 +152,7 @@ class PlannedHikeStateResolver {
       ...draft.teamBuddies.map((buddy) => buddy.phoneNumber.trim()),
     }.where((phone) => phone.isNotEmpty).toList();
     final id =
+        localId ??
         'local_pending_${now.microsecondsSinceEpoch}_${draft.trail.trailId.hashCode.abs()}';
     return UpcomingHike(
       id: id,

@@ -41,8 +41,9 @@ class HikeBriefingWeatherService {
           entityId: key,
           includeExpired: true,
         );
-        if (local != null)
+        if (local != null) {
           _cache[key] = TrailWeather.fromPersistence(local.payload);
+        }
       } catch (_) {
         /* Offline briefing remains best-effort. */
       }

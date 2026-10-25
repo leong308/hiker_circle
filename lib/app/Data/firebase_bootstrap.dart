@@ -6,6 +6,7 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../firebase_options.dart';
+import 'app_check_build_support.dart';
 
 class FirebaseBootstrapResult {
   const FirebaseBootstrapResult.available()
@@ -40,9 +41,7 @@ abstract final class FirebaseBootstrap {
           providerAndroid: kDebugMode
               ? const AndroidDebugProvider()
               : const AndroidPlayIntegrityProvider(),
-          providerApple: kDebugMode
-              ? const AppleDebugProvider()
-              : const AppleAppAttestWithDeviceCheckFallbackProvider(),
+          providerApple: await appleAppCheckProviderForBuild(),
         );
       }
       return const FirebaseBootstrapResult.available();

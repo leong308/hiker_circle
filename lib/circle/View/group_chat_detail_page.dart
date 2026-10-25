@@ -1082,7 +1082,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
         ),
       );
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -1092,6 +1092,7 @@ class _GroupChatDetailPageState extends State<GroupChatDetailPage> {
             ),
           ),
         );
+      }
     } finally {
       _reminderSending.remove(phone);
     }

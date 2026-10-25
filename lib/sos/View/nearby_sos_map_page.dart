@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/services/hiking_route_service.dart';
 import '../../core/widgets/loading_toast.dart';
 import '../../core/widgets/map_utils.dart';
+import '../../core/widgets/map_view_controller.dart';
 import '../../core/widgets/route_preview_map.dart';
 import '../../home/View/first_aid_guide_page.dart';
 import '../../trail/Model/trail_models.dart';
@@ -464,6 +465,20 @@ class _NearbySosRadiusMap extends StatefulWidget {
 }
 
 class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
+  late final _mapView = MapViewController(
+    settings: const MapViewSettings(dimension: MapDimension.twoD),
+    onBeforeStyleReload: () async {
+      final managers = <mapbox.BaseAnnotationManager?>[
+        _circleManager,
+        _polygonManager,
+      ];
+      _styleLoaded = false;
+      _circleManager = null;
+      _polygonManager = null;
+      await removeMapAnnotationManagers(_map, managers);
+    },
+  );
+
   mapbox.MapboxMap? _map;
   mapbox.CircleAnnotationManager? _circleManager;
   mapbox.PolygonAnnotationManager? _polygonManager;
@@ -511,6 +526,7 @@ class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
 
   Future<void> _onMapCreated(mapbox.MapboxMap map) async {
     _map = map;
+    _mapView.attach(map);
     try {
       await map.logo.updateSettings(mapbox.LogoSettings(enabled: false));
       await map.compass.updateSettings(mapbox.CompassSettings(enabled: false));
@@ -519,7 +535,7 @@ class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
           scrollEnabled: true,
           pinchToZoomEnabled: true,
           rotateEnabled: true,
-          pitchEnabled: false,
+          pitchEnabled: true,
         ),
       );
       await map.setBounds(
@@ -529,7 +545,9 @@ class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
     await _fit();
   }
 
-  Future<void> _onStyleReady() async {
+  Future<void> _onStyleReady() => _mapView.styleLoaded(_prepareMapStyle);
+
+  Future<void> _prepareMapStyle() async {
     _styleLoaded = true;
     _circleManager = null;
     _polygonManager = null;
@@ -597,6 +615,12 @@ class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
   }
 
   @override
+  void dispose() {
+    _mapView.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final point = _centerPoint;
     if (point == null) {
@@ -650,28 +674,51 @@ class _NearbySosRadiusMapState extends State<_NearbySosRadiusMap> {
         mapbox.MapWidget(
           key: ValueKey('nearby-sos-radius-${widget.event.eventKey}'),
           styleUri: mapStyleUrls.first,
-          viewport: mapbox.CameraViewportState(center: point, zoom: 15),
+          // ignore: deprecated_member_use
+          cameraOptions: mapbox.CameraOptions(center: point, zoom: 15),
           gestureRecognizers: mapGestureRecognizers,
+          onMapLoadErrorListener: (event) {
+            if (event.type == mapbox.MapLoadErrorType.STYLE) {
+              _mapView.styleLoadFailed();
+            }
+          },
           onMapCreated: _onMapCreated,
+          onCameraChangeListener: _mapView.cameraChanged,
           onStyleLoadedListener: (_) => _onStyleReady(),
           onMapLoadedListener: (_) => _onStyleReady(),
+        ),
+        Positioned(
+          right: 10,
+          top: 10,
+          child: MapViewControls(controller: _mapView),
         ),
         Positioned(
           left: 12,
           right: 12,
           bottom: 12,
-          child: _NearbySurface(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              child: Text(
-                'Blue area • estimated ${_radiusMeters.round()} m radius',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: _NearbyMapColors.textFor(context),
-                  fontWeight: FontWeight.w800,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              MapViewScale(controller: _mapView),
+              const SizedBox(height: 8),
+              _NearbySurface(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  child: Text(
+                    'Blue area • estimated ${_radiusMeters.round()} m radius',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: _NearbyMapColors.textFor(context),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ],

@@ -4,6 +4,160 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'map_utils.dart';
+
+/// Consistent upper-right picker for every map, including recorded tracks.
+class MapStyleControls extends StatelessWidget {
+  const MapStyleControls({
+    super.key,
+    required this.settings,
+    required this.onChanged,
+  });
+
+  final MapViewSettings settings;
+  final ValueChanged<MapViewSettings> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      color: colors.surfaceContainer.withValues(alpha: 0.96),
+      elevation: 3,
+      shadowColor: const Color(0x33000000),
+      borderRadius: BorderRadius.circular(8),
+      child: PopupMenuButton<MapViewSettings>(
+        tooltip: 'Map style and view',
+        position: PopupMenuPosition.under,
+        constraints: const BoxConstraints(minWidth: 210, maxWidth: 280),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        icon: Icon(Icons.layers_rounded, color: colors.onSurface, size: 21),
+        onSelected: onChanged,
+        itemBuilder: (context) => [
+          const PopupMenuItem<MapViewSettings>(
+            enabled: false,
+            child: Text('Map style'),
+          ),
+          for (var index = 0; index < mapStyleNames.length; index++)
+            PopupMenuItem<MapViewSettings>(
+              key: ValueKey('map-style-option-$index'),
+              value: settings.copyWith(styleIndex: index),
+              child: _MapSettingChoice(
+                label: mapStyleNames[index],
+                icon: switch (index) {
+                  0 => Icons.terrain_rounded,
+                  1 => Icons.signpost_rounded,
+                  2 => Icons.satellite_alt_rounded,
+                  _ => Icons.map_outlined,
+                },
+                selected: settings.safeStyleIndex == index,
+              ),
+            ),
+          const PopupMenuDivider(),
+          for (final dimension in MapDimension.values)
+            PopupMenuItem<MapViewSettings>(
+              key: ValueKey('map-dimension-${dimension.name}'),
+              value: settings.copyWith(dimension: dimension),
+              child: _MapSettingChoice(
+                label: dimension == MapDimension.twoD
+                    ? '2D · Flat map'
+                    : '3D · Terrain',
+                icon: dimension == MapDimension.twoD
+                    ? Icons.crop_square_rounded
+                    : Icons.view_in_ar_rounded,
+                selected: settings.dimension == dimension,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MapSettingChoice extends StatelessWidget {
+  const _MapSettingChoice({
+    required this.label,
+    required this.icon,
+    required this.selected,
+  });
+  final String label;
+  final IconData icon;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(icon, size: 19),
+      const SizedBox(width: 12),
+      Expanded(child: Text(label)),
+      const SizedBox(width: 8),
+      if (selected) const Icon(Icons.check_rounded, size: 20),
+    ],
+  );
+}
+
+class MapScaleWithStyle extends StatelessWidget {
+  const MapScaleWithStyle({
+    super.key,
+    required this.zoom,
+    required this.latitude,
+    required this.settings,
+  });
+
+  final double zoom;
+  final double latitude;
+  final MapViewSettings settings;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) => Wrap(
+        spacing: 6,
+        runSpacing: 5,
+        crossAxisAlignment: WrapCrossAlignment.end,
+        children: [
+          MapScaleBar(zoom: zoom, latitude: latitude),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: constraints.maxWidth.isFinite
+                  ? math.min(210, constraints.maxWidth)
+                  : 210,
+            ),
+            child: Semantics(
+              label:
+                  'Map style: ${settings.styleName}, ${settings.dimensionLabel}',
+              child: ExcludeSemantics(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainer.withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: colors.outlineVariant),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    child: Text(
+                      '${settings.styleName} · ${settings.dimensionLabel}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: colors.onSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class MapZoomControls extends StatelessWidget {
   const MapZoomControls({
     super.key,
@@ -151,7 +305,7 @@ class MapScaleBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: surface.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: const Color(0x77000000), width: 1),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(7, 4, 7, 5),
@@ -171,12 +325,21 @@ class MapScaleBar extends StatelessWidget {
             SizedBox(
               width: width,
               height: 8,
-              child: const DecoratedBox(
+              child: DecoratedBox(
                 decoration: BoxDecoration(
                   border: Border(
-                    left: BorderSide(color: Color(0xBB111111), width: 1.4),
-                    bottom: BorderSide(color: Color(0xBB111111), width: 1.4),
-                    right: BorderSide(color: Color(0xBB111111), width: 1.4),
+                    left: BorderSide(
+                      color: onSurface.withValues(alpha: 0.8),
+                      width: 1.4,
+                    ),
+                    bottom: BorderSide(
+                      color: onSurface.withValues(alpha: 0.8),
+                      width: 1.4,
+                    ),
+                    right: BorderSide(
+                      color: onSurface.withValues(alpha: 0.8),
+                      width: 1.4,
+                    ),
                   ),
                 ),
               ),

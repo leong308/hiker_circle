@@ -14,6 +14,8 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>HikerCircleAppCheckProvider</key>
+	<string>$(HIKER_CIRCLE_APP_CHECK_PROVIDER)</string>
 	<key>CFBundleName</key>
 	<string>HikerCircle</string>
 	<key>CFBundlePackageType</key>

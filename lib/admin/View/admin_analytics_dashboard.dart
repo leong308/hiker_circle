@@ -61,8 +61,6 @@ class AdminAnalyticsDashboard extends StatefulWidget {
     required this.loading,
     this.error,
     required this.onRetry,
-    required this.onTrails,
-    this.onTrailRequests,
     required this.onSafety,
     required this.onCommunity,
     required this.onRewards,
@@ -71,13 +69,7 @@ class AdminAnalyticsDashboard extends StatefulWidget {
   final Map<String, dynamic>? data;
   final bool loading;
   final String? error;
-  final VoidCallback? onTrailRequests;
-  final VoidCallback onRetry,
-      onTrails,
-      onSafety,
-      onCommunity,
-      onRewards,
-      onTools;
+  final VoidCallback onRetry, onSafety, onCommunity, onRewards, onTools;
   @override
   State<AdminAnalyticsDashboard> createState() =>
       _AdminAnalyticsDashboardState();
@@ -86,6 +78,7 @@ class AdminAnalyticsDashboard extends StatefulWidget {
 class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
   int _period = 30;
   String _growth = 'users';
+
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
@@ -94,330 +87,370 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'System analytics',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            Icon(
+              Icons.insights_rounded,
+              color: AdminUi.green(context),
+              size: 28,
             ),
-            const SizedBox(height: 12),
-            if (widget.loading) const LinearProgressIndicator(minHeight: 3),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
+            Text(
+              widget.loading ? 'Loading overview' : 'Overview unavailable',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
             Text(
               widget.loading
-                  ? 'Building your Firestore statistics…'
+                  ? 'Fetching the latest figures…'
                   : widget.error ?? 'Statistics are not available yet.',
+              style: TextStyle(color: AdminUi.muted(context), height: 1.5),
             ),
-            if (!widget.loading)
-              TextButton.icon(
-                onPressed: widget.onRetry,
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Retry statistics'),
-              ),
-            TextButton.icon(
-              onPressed: widget.onTools,
-              icon: const Icon(Icons.tune_rounded),
-              label: const Text('Admin tools'),
+            if (widget.loading) ...[
+              const SizedBox(height: 18),
+              const LinearProgressIndicator(minHeight: 3),
+            ],
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                if (!widget.loading)
+                  OutlinedButton.icon(
+                    onPressed: widget.onRetry,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Retry statistics'),
+                  ),
+                TextButton.icon(
+                  onPressed: widget.onTools,
+                  icon: const Icon(Icons.tune_rounded, size: 18),
+                  label: const Text('Admin tools'),
+                ),
+              ],
             ),
           ],
         ),
       );
     }
-    final totals = _map(data['totals']),
-        users = _map(data['users']),
-        trails = _map(data['trails']);
-    final hikes = _map(data['hikes']),
-        community = _map(data['community']),
-        safety = _map(data['safety']);
+
+    final totals = _map(data['totals']), users = _map(data['users']);
+    final hikes = _map(data['hikes']), community = _map(data['community']);
+    final safety = _map(data['safety']);
+    final incomplete = _map(data['coverage']).entries
+        .where(
+          (entry) =>
+              !{'trails', 'trailRequests'}.contains(entry.key) &&
+              _map(entry.value)['complete'] == false,
+        )
+        .map((entry) => entry.key)
+        .toList();
+    return Material(
+      type: MaterialType.transparency,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SnapshotSummary(
+            active: _fmt(hikes['active']),
+            upcoming: _fmt(hikes['upcoming']),
+            updated: _snapshotTime(context, data['generatedAtMillis']),
+            loading: widget.loading,
+          ),
+          if (widget.loading) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(minHeight: 2),
+          ],
+          if (widget.error != null)
+            _SnapshotNotice(
+              message:
+                  'Refresh failed. Showing the previous snapshot. ${widget.error}',
+              onRetry: widget.loading ? null : widget.onRetry,
+            ),
+          if (incomplete.isNotEmpty)
+            _SnapshotNotice(
+              message:
+                  'Collection totals are exact; charts and breakdowns cover the first 10,000 records in ${incomplete.join(', ')}.',
+            ),
+          const SizedBox(height: 18),
+          AdminPanel(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const AdminSectionHeading(
+                  title: 'Review queue',
+                  subtitle: 'Pending reports and moderation work.',
+                ),
+                const SizedBox(height: 8),
+                _QueueRow(
+                  title: 'Safety reports',
+                  detail: 'Review reported hazards',
+                  count: _n(safety['pendingHazards']),
+                  icon: Icons.shield_outlined,
+                  tint: _orange,
+                  onTap: widget.onSafety,
+                ),
+                Divider(height: 1, color: AdminUi.border(context)),
+                _QueueRow(
+                  title: 'Community flags',
+                  detail: 'Review flagged content',
+                  count: _n(safety['pendingReviews']),
+                  icon: Icons.flag_outlined,
+                  tint: _purple,
+                  onTap: widget.onCommunity,
+                ),
+                Divider(height: 1, color: AdminUi.border(context)),
+                _QueueRow(
+                  title: 'Open feedback',
+                  detail: 'Follow up on unresolved reports',
+                  count: _n(safety['openFeedback']),
+                  icon: Icons.feedback_outlined,
+                  tint: _blue,
+                  onTap: widget.onTools,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          const AdminSectionHeading(title: 'Key figures'),
+          const SizedBox(height: 12),
+          _ResponsiveGrid(
+            compact: true,
+            children: [
+              _Metric(
+                title: 'Registered users',
+                value: _fmt(totals['users']),
+                detail:
+                    '${_fmt(users['recentSignIns'])} signed in · last 30 days',
+                icon: Icons.people_alt_outlined,
+                tint: _blue,
+              ),
+              _Metric(
+                title: 'Completed sessions',
+                value: _fmt(hikes['completed']),
+                detail: '${_fmt(hikes['distanceKm'])} km recorded',
+                icon: Icons.hiking_rounded,
+                tint: _green,
+              ),
+              _Metric(
+                title: 'Community posts',
+                value: _fmt(totals['posts']),
+                detail:
+                    '${_fmt(community['likes'])} likes · ${_fmt(community['comments'])} comments',
+                icon: Icons.forum_outlined,
+                tint: _purple,
+                onTap: widget.onCommunity,
+              ),
+              _Metric(
+                title: 'Active hikers',
+                value: _fmt(users['activeHikers30Days']),
+                detail: 'Started a hike · last 30 days',
+                icon: Icons.directions_walk_rounded,
+                tint: _orange,
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _activity(data),
+          const SizedBox(height: 18),
+          AdminPanel(
+            padding: EdgeInsets.zero,
+            child: ExpansionTile(
+              key: const ValueKey('admin-more-statistics'),
+              shape: const Border(),
+              collapsedShape: const Border(),
+              tilePadding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 6,
+              ),
+              leading: Icon(
+                Icons.bar_chart_rounded,
+                color: AdminUi.green(context),
+              ),
+              title: const Text(
+                'More system breakdowns',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+              ),
+              subtitle: Text(
+                'Hiking, community, safety and rewards',
+                style: TextStyle(fontSize: 12, color: AdminUi.muted(context)),
+              ),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                  child: _details(data),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AdminPanel(
+            onTap: widget.onTools,
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.tune_rounded,
+                  color: AdminUi.green(context),
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Admin tools',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Feedback and diagnostics',
+                        style: TextStyle(
+                          color: AdminUi.muted(context),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: AdminUi.muted(context),
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _activity(Map<String, dynamic> data) {
     final daily = _rows(data['daily']), monthly = _rows(data['monthly']);
     final series = _period == 365
         ? monthly
         : daily.skip(math.max(0, daily.length - _period)).toList();
-    final activityTotal = series.fold<num>(0, (n, r) => n + _n(r[_growth]));
-    final activityLabel = _growth == 'users'
-        ? (activityTotal == 1 ? 'new user' : 'new users')
-        : _growth == 'hikes'
-        ? (activityTotal == 1 ? 'completed session' : 'completed sessions')
-        : (activityTotal == 1 ? 'new post' : 'new posts');
-    final coverage = _map(data['coverage']);
-    final incomplete = coverage.entries
-        .where((e) => _map(e.value)['complete'] == false)
-        .map((e) => e.key)
-        .toList();
+    final total = series.fold<num>(0, (sum, row) => sum + _n(row[_growth]));
+    final label = switch (_growth) {
+      'users' => total == 1 ? 'new user' : 'new users',
+      'hikes' => total == 1 ? 'completed session' : 'completed sessions',
+      _ => total == 1 ? 'new post' : 'new posts',
+    };
     final missing = _map(
       data['unknownDates'],
-    ).values.fold<num>(0, (sum, n) => sum + _n(n));
-    final pending = _n(safety['pendingHazards']).toInt();
+    ).values.fold<num>(0, (sum, value) => sum + _n(value));
+    final color = switch (_growth) {
+      'users' => _blue,
+      'hikes' => _green,
+      _ => _purple,
+    };
+    return AdminPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const AdminSectionHeading(title: 'Growth & activity'),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final period in [30, 90, 365])
+                ChoiceChip(
+                  key: ValueKey('analytics-period-$period'),
+                  label: Text(period == 365 ? '12 months' : '$period days'),
+                  selected: _period == period,
+                  showCheckmark: false,
+                  onSelected: (_) => setState(() => _period = period),
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: _period == period
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide.none,
+                  selectedColor: AdminUi.green(context).withValues(alpha: .12),
+                  backgroundColor: AdminUi.background(context),
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '${_fmt(total)} $label in this period',
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 20),
+          _Timeline(rows: series, metric: _growth, color: color),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final entry in {
+                'users': 'Users',
+                'hikes': 'Hikes',
+                'posts': 'Posts',
+              }.entries)
+                TextButton.icon(
+                  onPressed: () => setState(() => _growth = entry.key),
+                  icon: Icon(
+                    _growth == entry.key
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    size: 14,
+                  ),
+                  label: Text(entry.value),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _growth == entry.key
+                        ? color
+                        : AdminUi.muted(context),
+                    textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontSize: 12,
+                      fontWeight: _growth == entry.key
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+            ],
+          ),
+          if (missing > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${_fmt(missing)} records have missing or future dates and are excluded from timelines.',
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.5,
+                color: AdminUi.muted(context),
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Text(
+            'Tap the chart to inspect a date. Team participants count as separate hiker sessions.',
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.5,
+              color: AdminUi.muted(context),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _details(Map<String, dynamic> data) {
+    final totals = _map(data['totals']), hikes = _map(data['hikes']);
+    final users = _map(data['users']), safety = _map(data['safety']);
+    final community = _map(data['community']), rewards = _map(data['rewards']);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: AdminUi.dark(context)
-                  ? [const Color(0xFF233B32), const Color(0xFF192E32)]
-                  : [const Color(0xFFE5F2EA), const Color(0xFFEAF1FA)],
-            ),
-            borderRadius: BorderRadius.circular(22),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'The bigger picture',
-                style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 7),
-              Text(
-                'People, places and progress across HikerCircle.',
-                style: TextStyle(color: AdminUi.muted(context), height: 1.4),
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  const AdminTag(
-                    label: 'Firestore statistics',
-                    icon: Icons.cloud_done_outlined,
-                  ),
-                  AdminTag(
-                    label: '${_fmt(hikes['active'])} hikers on a session',
-                    color: AdminUi.blue(context),
-                    icon: Icons.hiking_rounded,
-                  ),
-                  AdminTag(
-                    label: '${_fmt(hikes['upcoming'])} upcoming hikes',
-                    color: AdminUi.green(context),
-                    icon: Icons.event_outlined,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Snapshot ${_snapshotTime(context, data['generatedAtMillis'])} · Malaysia time',
-                style: TextStyle(fontSize: 11, color: AdminUi.muted(context)),
-              ),
-            ],
-          ),
+        const Padding(
+          padding: EdgeInsets.all(6),
+          child: AdminSectionHeading(title: 'Hiking activity'),
         ),
-        if (widget.loading)
-          const Padding(
-            padding: EdgeInsets.only(top: 10),
-            child: LinearProgressIndicator(minHeight: 2),
-          ),
-        if (widget.error != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(
-              'Refresh failed. Showing the previous snapshot. ${widget.error}',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        if (incomplete.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(
-              'Collection totals are exact; charts and breakdowns cover the first 10,000 records in ${incomplete.join(', ')}.',
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ),
-        const SizedBox(height: 16),
-        _ResponsiveGrid(
-          compact: true,
-          children: [
-            _Metric(
-              title: 'Registered users',
-              value: _fmt(totals['users']),
-              detail:
-                  '${_fmt(users['recentSignIns'])} signed in · last 30 days',
-              icon: Icons.people_alt_outlined,
-              tint: _blue,
-            ),
-            _Metric(
-              title: 'Trail library',
-              value: _fmt(totals['trails']),
-              detail:
-                  '${_fmt(trails['verified'])} verified · ${_fmt(trails['totalDistanceKm'])} km',
-              icon: Icons.route_rounded,
-              tint: _green,
-              onTap: widget.onTrails,
-            ),
-            _Metric(
-              title: 'Completed sessions',
-              value: _fmt(hikes['completed']),
-              detail: '${_fmt(hikes['distanceKm'])} km recorded',
-              icon: Icons.hiking_rounded,
-              tint: _orange,
-            ),
-            _Metric(
-              title: 'Community posts',
-              value: _fmt(totals['posts']),
-              detail:
-                  '${_fmt(community['likes'])} likes · ${_fmt(community['comments'])} comments',
-              icon: Icons.forum_outlined,
-              tint: _purple,
-              onTap: widget.onCommunity,
-            ),
-          ],
-        ),
-        const SizedBox(height: 22),
-        AdminPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const AdminSectionHeading(
-                title: 'Growth & activity',
-                subtitle:
-                    'New registrations, completed hiker sessions and posts.',
-              ),
-              const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final p in [30, 90, 365])
-                    ChoiceChip(
-                      key: ValueKey('analytics-period-$p'),
-                      label: Text(p == 365 ? '12 months' : '$p days'),
-                      selected: _period == p,
-                      onSelected: (_) => setState(() => _period = p),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final entry in {
-                    'users': 'Users',
-                    'hikes': 'Hikes',
-                    'posts': 'Posts',
-                  }.entries)
-                    ChoiceChip(
-                      label: Text(entry.value),
-                      selected: _growth == entry.key,
-                      onSelected: (_) => setState(() => _growth = entry.key),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Text(
-                '${_fmt(activityTotal)} $activityLabel in this period',
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 18),
-              _Timeline(
-                rows: series,
-                metric: _growth,
-                color: _growth == 'users'
-                    ? _blue
-                    : _growth == 'hikes'
-                    ? _green
-                    : _purple,
-              ),
-              if (missing > 0)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(
-                    '${_fmt(missing)} records have missing or future dates and are excluded from timelines.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: AdminUi.muted(context),
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              Text(
-                'Tap or drag the chart to inspect a date. Team participants count as separate hiker sessions.',
-                style: TextStyle(fontSize: 11, color: AdminUi.muted(context)),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 22),
-        const AdminSectionHeading(
-          title: 'Trail landscape',
-          subtitle:
-              'Where routes are available and how the library is maintained.',
-        ),
-        const SizedBox(height: 12),
-        _ResponsiveGrid(
-          children: [
-            _Bars(
-              title: 'Coverage by state',
-              rows: _rows(trails['byState']),
-              suffix: 'trails',
-              allRows: true,
-            ),
-            _Donut(
-              title: 'Route distances',
-              rows: _rows(trails['byLength']),
-              center: _fmt(totals['trails']),
-              unit: 'trails',
-            ),
-            _Bars(
-              title: 'Difficulty',
-              rows: _rows(trails['byDifficulty']),
-              suffix: 'trails',
-              subtitle: 'Unrated trails are shown as not recorded.',
-            ),
-            AdminPanel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const AdminSectionHeading(title: 'Library quality'),
-                  const SizedBox(height: 16),
-                  _Progress(
-                    label: 'Verified trails',
-                    value: _n(trails['verified']),
-                    total: _n(totals['trails']),
-                    color: _green,
-                  ),
-                  _Progress(
-                    label: 'Stored route geometry',
-                    value: _n(trails['routeStored']),
-                    total: _n(totals['trails']),
-                    color: _blue,
-                  ),
-                  _Progress(
-                    label: 'Offline maps available',
-                    value: _n(trails['offlineAvailable']),
-                    total: _n(totals['trails']),
-                    color: _purple,
-                  ),
-                  TextButton.icon(
-                    onPressed: widget.onTrails,
-                    icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-                    label: const Text('Manage trails'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 22),
-        const AdminSectionHeading(
-          title: 'Hiking activity',
-          subtitle: 'Recorded sessions and completed-route engagement.',
-        ),
-        const SizedBox(height: 12),
-        _ResponsiveGrid(
-          children: [
-            _Donut(
-              title: 'Session outcomes',
-              rows: _rows(hikes['byStatus']),
-              center: _fmt(totals['hikeSessions']),
-              unit: 'sessions',
-            ),
-            _Bars(
-              title: 'Most hiked trails',
-              rows: _rows(hikes['popularTrails']),
-              suffix: 'completions',
-              subtitle: 'Ranked by completed hiker sessions.',
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _ResponsiveGrid(
           compact: true,
           children: [
@@ -435,29 +468,31 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
               icon: Icons.straighten_rounded,
               tint: _blue,
             ),
-            _Metric(
-              title: 'Active hikers',
-              value: _fmt(users['activeHikers30Days']),
-              detail: 'Distinct users starting a hike in 30 days',
-              icon: Icons.directions_walk_rounded,
-              tint: _orange,
+          ],
+        ),
+        const SizedBox(height: 12),
+        _ResponsiveGrid(
+          children: [
+            _Donut(
+              title: 'Session outcomes',
+              rows: _rows(hikes['byStatus']),
+              center: _fmt(totals['hikeSessions']),
+              unit: 'sessions',
             ),
-            _Metric(
-              title: 'Achievement awards',
-              value: _fmt(totals['achievementAwards']),
-              detail: '${_fmt(totals['achievements'])} reward definitions',
-              icon: Icons.emoji_events_outlined,
-              tint: _purple,
-              onTap: widget.onRewards,
+            _Donut(
+              title: 'Hike types',
+              rows: _rows(hikes['byType']),
+              center: _fmt(totals['hikeSessions']),
+              unit: 'sessions',
             ),
           ],
         ),
-        const SizedBox(height: 22),
-        const AdminSectionHeading(
-          title: 'Community & operations',
-          subtitle: 'Visibility, safety reports and items needing attention.',
+        const SizedBox(height: 24),
+        const Padding(
+          padding: EdgeInsets.all(6),
+          child: AdminSectionHeading(title: 'Community & safety'),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _ResponsiveGrid(
           children: [
             _Donut(
@@ -472,165 +507,80 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
               suffix: 'reports',
             ),
             _Bars(
+              title: 'Hazard review status',
+              rows: _rows(safety['byHazardStatus']),
+              suffix: 'reports',
+            ),
+            _Bars(
+              title: 'Hazard types',
+              rows: _rows(safety['byHazardType']),
+              suffix: 'reports',
+            ),
+            _Bars(
               title: 'Feedback status',
               rows: _rows(safety['byFeedbackStatus']),
+              suffix: 'reports',
+            ),
+            _Bars(
+              title: 'Feedback categories',
+              rows: _rows(safety['byFeedbackCategory']),
               suffix: 'reports',
             ),
             _Bars(
               title: 'SOS alert status',
               rows: _rows(safety['bySosStatus']),
               suffix: 'alerts',
-              subtitle: 'Recorded alert states; not a live safety assessment.',
+              subtitle:
+                  'Recorded states, rather than a live safety assessment.',
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        AdminPanel(
-          padding: EdgeInsets.zero,
-          child: ExpansionTile(
-            key: const ValueKey('admin-more-statistics'),
-            shape: const Border(),
-            collapsedShape: const Border(),
-            title: const Text(
-              'More system breakdowns',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            subtitle: const Text(
-              'Accounts, hike types, hazards and reward rules',
-              style: TextStyle(fontSize: 12),
-            ),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                child: _ResponsiveGrid(
-                  children: [
-                    _Bars(
-                      title: 'Account signals',
-                      subtitle: 'These groups may overlap.',
-                      suffix: 'users',
-                      rows: [
-                        {
-                          'label': 'Administrators',
-                          'value': users['administrators'] ?? 0,
-                        },
-                        {
-                          'label': 'Disabled accounts',
-                          'value': users['disabled'] ?? 0,
-                        },
-                        {
-                          'label': 'Signed in within 30 days',
-                          'value': users['recentSignIns'] ?? 0,
-                        },
-                      ],
-                    ),
-                    _Donut(
-                      title: 'Hike types',
-                      rows: _rows(hikes['byType']),
-                      center: _fmt(totals['hikeSessions']),
-                      unit: 'sessions',
-                    ),
-                    _Bars(
-                      title: 'Hazard review status',
-                      rows: _rows(safety['byHazardStatus']),
-                      suffix: 'reports',
-                    ),
-                    _Bars(
-                      title: 'Hazard types',
-                      rows: _rows(safety['byHazardType']),
-                      suffix: 'reports',
-                    ),
-                    _Bars(
-                      title: 'Feedback categories',
-                      rows: _rows(safety['byFeedbackCategory']),
-                      suffix: 'reports',
-                    ),
-                    _Bars(
-                      title: 'Reward definitions',
-                      rows: [
-                        {
-                          'label': 'Active',
-                          'value': _map(data['rewards'])['active'] ?? 0,
-                        },
-                        {
-                          'label': 'Archived',
-                          'value': _map(data['rewards'])['inactive'] ?? 0,
-                        },
-                      ],
-                      suffix: 'definitions',
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        const SizedBox(height: 24),
+        const Padding(
+          padding: EdgeInsets.all(6),
+          child: AdminSectionHeading(title: 'Accounts & rewards'),
+        ),
+        const SizedBox(height: 8),
+        _Metric(
+          title: 'Achievement awards',
+          value: _fmt(totals['achievementAwards']),
+          detail: '${_fmt(totals['achievements'])} reward definitions',
+          icon: Icons.emoji_events_outlined,
+          tint: _purple,
+          onTap: widget.onRewards,
         ),
         const SizedBox(height: 12),
-        AdminPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const AdminSectionHeading(title: 'Review queue'),
-              const SizedBox(height: 12),
-              _QueueRow(
-                label:
-                    '${_fmt(safety['pendingTrailRequests'])} recorded trails awaiting approval',
-                icon: Icons.add_road_rounded,
-                onTap: widget.onTrailRequests ?? widget.onTrails,
-              ),
-              _QueueRow(
-                label:
-                    '$pending safety ${pending == 1 ? 'report needs' : 'reports need'} review',
-                icon: Icons.shield_outlined,
-                onTap: widget.onSafety,
-              ),
-              _QueueRow(
-                label:
-                    '${_fmt(safety['pendingReviews'])} community flags awaiting review',
-                icon: Icons.flag_outlined,
-                onTap: widget.onCommunity,
-              ),
-              _QueueRow(
-                label:
-                    '${_fmt(safety['openFeedback'])} feedback reports unresolved',
-                icon: Icons.feedback_outlined,
-                onTap: widget.onTools,
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        AdminPanel(
-          onTap: widget.onTools,
-          child: Row(
-            children: [
-              const Icon(Icons.tune_rounded),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Admin tools',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Feedback, button debugging and data diagnostics',
-                      style: TextStyle(
-                        color: AdminUi.muted(context),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded),
-            ],
-          ),
+        _ResponsiveGrid(
+          children: [
+            _Bars(
+              title: 'Account signals',
+              subtitle: 'These groups may overlap.',
+              suffix: 'users',
+              rows: [
+                {
+                  'label': 'Administrators',
+                  'value': users['administrators'] ?? 0,
+                },
+                {'label': 'Disabled accounts', 'value': users['disabled'] ?? 0},
+                {
+                  'label': 'Signed in within 30 days',
+                  'value': users['recentSignIns'] ?? 0,
+                },
+              ],
+            ),
+            _Bars(
+              title: 'Reward definitions',
+              suffix: 'definitions',
+              rows: [
+                {'label': 'Active', 'value': rewards['active'] ?? 0},
+                {'label': 'Archived', 'value': rewards['inactive'] ?? 0},
+              ],
+            ),
+          ],
         ),
         const SizedBox(height: 16),
         Text(
-          'All-time totals reflect current Firestore records. Deleted records are not reconstructed. Engagement uses stored like/comment counters; sign-ins represent the latest recorded sign-in, not every app visit.',
+          'All-time totals reflect current records. Deleted records are not reconstructed. Engagement uses stored like/comment counters; sign-ins represent the latest recorded sign-in, not every app visit.',
           style: TextStyle(
             color: AdminUi.muted(context),
             fontSize: 11,
@@ -640,6 +590,169 @@ class _AdminAnalyticsDashboardState extends State<AdminAnalyticsDashboard> {
       ],
     );
   }
+}
+
+class _SnapshotSummary extends StatelessWidget {
+  const _SnapshotSummary({
+    required this.active,
+    required this.upcoming,
+    required this.updated,
+    required this.loading,
+  });
+  final String active, upcoming, updated;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = AdminUi.dark(context);
+    final foreground = Theme.of(context).colorScheme.onSurface;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: dark
+              ? [const Color(0xFF203D30), const Color(0xFF192B25)]
+              : [const Color(0xFFE6F2E9), const Color(0xFFF2F7F3)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: AdminUi.green(context).withValues(alpha: .12),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Activity snapshot',
+            style: TextStyle(
+              color: foreground,
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            loading ? 'Refreshing…' : 'Updated $updated · MYT',
+            style: TextStyle(
+              color: AdminUi.muted(context),
+              fontSize: 11,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _SnapshotValue(
+                  value: active,
+                  label: 'Active sessions',
+                  icon: Icons.hiking_rounded,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _SnapshotValue(
+                  value: upcoming,
+                  label: 'Upcoming hikes',
+                  icon: Icons.event_outlined,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SnapshotValue extends StatelessWidget {
+  const _SnapshotValue({
+    required this.value,
+    required this.label,
+    required this.icon,
+  });
+  final String value, label;
+  final IconData icon;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Icon(icon, color: AdminUi.green(context), size: 19),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 27,
+                fontWeight: FontWeight.w800,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 3),
+      Text(
+        label,
+        style: TextStyle(
+          color: AdminUi.muted(context),
+          fontSize: 12,
+          height: 1.4,
+        ),
+      ),
+    ],
+  );
+}
+
+class _SnapshotNotice extends StatelessWidget {
+  const _SnapshotNotice({required this.message, this.onRetry});
+  final String message;
+  final VoidCallback? onRetry;
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(top: 12),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: _orange.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: _orange.withValues(alpha: .25)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.info_outline_rounded, color: _orange, size: 18),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                message,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (onRetry != null)
+          Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: TextButton(
+              onPressed: onRetry,
+              child: const Text('Retry statistics'),
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 String _snapshotTime(BuildContext context, Object? value) {
@@ -664,20 +777,32 @@ class _ResponsiveGrid extends StatelessWidget {
           : compact
           ? (c.maxWidth >= 1000
                 ? 4
-                : c.maxWidth >= 340
+                : c.maxWidth >= 280
                 ? 2
                 : 1)
           : c.maxWidth >= 760
           ? 2
           : 1;
-      return Wrap(
-        spacing: 12,
-        runSpacing: 12,
+      return Column(
         children: [
-          for (final child in children)
-            SizedBox(
-              width: (c.maxWidth - (cols - 1) * 12) / cols,
-              child: child,
+          for (var index = 0; index < children.length; index += cols)
+            Padding(
+              padding: EdgeInsets.only(top: index == 0 ? 0 : 12),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var offset = 0; offset < cols; offset++) ...[
+                      if (offset > 0) const SizedBox(width: 12),
+                      Expanded(
+                        child: index + offset < children.length
+                            ? children[index + offset]
+                            : const SizedBox(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
         ],
       );
@@ -701,22 +826,48 @@ class _Metric extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AdminPanel(
     onTap: onTap,
+    padding: const EdgeInsets.all(16),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: tint, size: 22),
-        const SizedBox(height: 14),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(7),
+              decoration: BoxDecoration(
+                color: tint.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: tint, size: 18),
+            ),
+            const Spacer(),
+            if (onTap != null)
+              Icon(
+                Icons.arrow_outward_rounded,
+                size: 16,
+                color: AdminUi.muted(context),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
         Text(
           value,
           style: const TextStyle(
-            fontSize: 28,
+            fontSize: 26,
             fontWeight: FontWeight.w800,
             fontFeatures: [FontFeature.tabularFigures()],
           ),
         ),
         const SizedBox(height: 4),
-        Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 7),
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 12,
+            height: 1.4,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 5),
         Text(
           detail,
           style: TextStyle(
@@ -860,42 +1011,31 @@ class _Timeline extends StatelessWidget {
   }
 }
 
-class _Bars extends StatefulWidget {
+class _Bars extends StatelessWidget {
   const _Bars({
     required this.title,
     required this.rows,
     required this.suffix,
     this.subtitle,
-    this.allRows = false,
   });
   final String title, suffix;
   final String? subtitle;
   final List<Map<String, dynamic>> rows;
-  final bool allRows;
-  @override
-  State<_Bars> createState() => _BarsState();
-}
-
-class _BarsState extends State<_Bars> {
-  bool _expanded = false;
   @override
   Widget build(BuildContext context) {
-    final max = widget.rows.fold<num>(0, (n, r) => math.max(n, _n(r['value'])));
-    final shown = widget.allRows && !_expanded
-        ? widget.rows.take(6)
-        : widget.rows;
+    final max = rows.fold<num>(0, (n, r) => math.max(n, _n(r['value'])));
     return AdminPanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AdminSectionHeading(title: widget.title, subtitle: widget.subtitle),
+          AdminSectionHeading(title: title, subtitle: subtitle),
           const SizedBox(height: 16),
-          if (widget.rows.isEmpty)
+          if (rows.isEmpty)
             Text(
               'No records yet.',
               style: TextStyle(color: AdminUi.muted(context)),
             ),
-          for (final (i, row) in shown.indexed)
+          for (final (i, row) in rows.indexed)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Column(
@@ -933,17 +1073,8 @@ class _BarsState extends State<_Bars> {
                 ],
               ),
             ),
-          if (widget.allRows && widget.rows.length > 6)
-            TextButton(
-              onPressed: () => setState(() => _expanded = !_expanded),
-              child: Text(
-                _expanded
-                    ? 'Show fewer states'
-                    : 'View all ${widget.rows.length} states',
-              ),
-            ),
           Text(
-            'Counts in ${widget.suffix}',
+            'Counts in $suffix',
             style: TextStyle(fontSize: 10, color: AdminUi.muted(context)),
           ),
         ],
@@ -1093,65 +1224,91 @@ class _DonutState extends State<_Donut> {
   }
 }
 
-class _Progress extends StatelessWidget {
-  const _Progress({
-    required this.label,
-    required this.value,
-    required this.total,
-    required this.color,
-  });
-  final String label;
-  final num value, total;
-  final Color color;
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 18),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
-            const SizedBox(width: 8),
-            Text(
-              '${_fmt(value)}/${_fmt(total)}',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: total > 0 ? (value / total).clamp(0, 1).toDouble() : 0,
-            color: color,
-            backgroundColor: AdminUi.border(context),
-            minHeight: 7,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
 class _QueueRow extends StatelessWidget {
   const _QueueRow({
-    required this.label,
+    required this.title,
+    required this.detail,
+    required this.count,
     required this.icon,
+    required this.tint,
     required this.onTap,
   });
-  final String label;
+  final String title, detail;
+  final num count;
   final IconData icon;
+  final Color tint;
   final VoidCallback onTap;
+
   @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: EdgeInsets.zero,
-    leading: Icon(icon, color: AdminUi.green(context)),
-    title: Text(
-      label,
-      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-    ),
-    trailing: const Icon(Icons.chevron_right_rounded),
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(12),
     onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: tint.withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: tint, size: 19),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.4,
+                    color: AdminUi.muted(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            constraints: const BoxConstraints(minWidth: 30),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: count > 0
+                  ? tint.withValues(alpha: .12)
+                  : AdminUi.background(context),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Text(
+              _fmt(count),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+          const SizedBox(width: 5),
+          Icon(
+            Icons.chevron_right_rounded,
+            size: 18,
+            color: AdminUi.muted(context),
+          ),
+        ],
+      ),
+    ),
   );
 }

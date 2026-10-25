@@ -1133,6 +1133,7 @@ class HikeSessionDraft {
 
   HikeSessionDraft copyWith({
     double? soloDistanceAcknowledgedKm,
+    bool clearSoloDistanceAcknowledgement = false,
     HikeType? hikeType,
     Trail? trail,
     String? startPointName,
@@ -1155,13 +1156,14 @@ class HikeSessionDraft {
     List<TrailCheckpoint>? customCheckpoints,
   }) {
     return HikeSessionDraft(
-      soloDistanceAcknowledgedKm:
-          soloDistanceAcknowledgedKm ??
-          ((trail == null ||
-                  (trail.trailId == this.trail.trailId &&
-                      trail.distanceKm == this.trail.distanceKm))
-              ? this.soloDistanceAcknowledgedKm
-              : null),
+      soloDistanceAcknowledgedKm: clearSoloDistanceAcknowledgement
+          ? null
+          : soloDistanceAcknowledgedKm ??
+                ((trail == null ||
+                        (trail.trailId == this.trail.trailId &&
+                            trail.distanceKm == this.trail.distanceKm))
+                    ? this.soloDistanceAcknowledgedKm
+                    : null),
       hikeType: hikeType ?? this.hikeType,
       trail: trail ?? this.trail,
       startPointName: startPointName ?? this.startPointName,
@@ -1688,7 +1690,7 @@ class HikeSummaryReport {
       batteryEndPercent: activeHike.batteryLevel,
       insights: [
         'Average pace: ${paceMinutesPerKm.round()} min/km across ${distanceKm.toStringAsFixed(2)} km.',
-        'Tracking density: ${routePoints.length} GPS points saved for replay and safety review.',
+        'Average speed: ${(duration.inSeconds > 0 ? distanceKm / (duration.inSeconds / 3600) : 0).toStringAsFixed(2)} km/h.',
         'Route notes: $actualManualPins pinned locations and automatic GPS tracking.',
         'Battery used: $batteryDrop% over ${_formatDuration(duration)} (${(batteryDrop / movingHours).toStringAsFixed(1)}% per hour).',
         if (activeHike.queuedUpdates == 0)
@@ -1738,6 +1740,11 @@ class HikeSummaryReport {
   final int batteryStartPercent;
   final int batteryEndPercent;
   final List<String> insights;
+
+  double get averageSpeedKmh =>
+      duration.inMilliseconds > 0 && distanceKm.isFinite
+      ? distanceKm / (duration.inMilliseconds / 3600000)
+      : 0;
 
   String get shareText {
     return [

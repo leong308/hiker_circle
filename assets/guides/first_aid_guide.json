@@ -1,6 +1,101 @@
 {
   "topics": [
     {
+      "id": "cpr",
+      "title": "Adult CPR and AED",
+      "category": "CPR",
+      "guidanceSource": "Resuscitation Council UK — Adult Basic Life Support Guidelines (2025)",
+      "guidanceSourceUrl": "https://www.resus.org.uk/professional-library/2025-resuscitation-guidelines/adult-basic-life-support-guidelines",
+      "steps": [
+        "If an adult is unresponsive, call emergency services on speaker and check breathing.",
+        "If breathing is absent or abnormal, start chest compressions at 100–120 per minute, 5–6 cm deep.",
+        "If trained, alternate 30 compressions with 2 breaths. Otherwise keep compressing.",
+        "Use an AED as soon as available and follow its prompts."
+      ],
+      "scenarios": [
+        {
+          "id": "cpr_adult_collapse",
+          "title": "Adult collapsed or only gasping",
+          "summary": "An adult is unresponsive and is not breathing normally. Occasional gasps do not count as normal breathing.",
+          "urgency": "Call emergency services and start CPR",
+          "steps": [
+            "Check for danger. Tap the shoulders and shout to check for a response.",
+            "If unresponsive, call local emergency services on speaker. Send a helper for an AED (automated external defibrillator).",
+            "Open the airway with a head tilt and chin lift. Check breathing for no more than 10 seconds while the call connects. Treat gasping as abnormal.",
+            "If breathing is absent or abnormal, begin compressions. Stack your hands on the lower half of the breastbone, with straight arms and shoulders above your hands.",
+            "Push 5–6 cm deep at 100–120 compressions/minute. Release pressure fully between pushes. Minimize pauses.",
+            "If untrained or unable to give breaths, keep compressing. Follow the dispatcher and use an AED when available.",
+            "Continue until rescuers take over, normal breathing and signs of life return, or you cannot continue. Swap with a helper when possible."
+          ],
+          "avoid": [
+            "Do not delay CPR to check for a pulse.",
+            "Do not mistake gasping for normal breathing."
+          ],
+          "referenceName": "Resuscitation Council UK — Adult Basic Life Support (2025)",
+          "referenceUrl": "https://www.resus.org.uk/professional-library/2025-resuscitation-guidelines/adult-basic-life-support-guidelines"
+        },
+        {
+          "id": "cpr_rescue_breaths",
+          "title": "CPR with rescue breaths",
+          "summary": "For a trained rescuer helping an adult who is unresponsive and not breathing normally.",
+          "urgency": "30 compressions, then 2 breaths",
+          "steps": [
+            "Make sure emergency help has been called. Give 30 chest compressions at 100–120 per minute, 5–6 cm deep.",
+            "Tilt the head back and lift the chin. Pinch the nose and seal your mouth over theirs.",
+            "Give 2 breaths, each lasting about 1 second, with just enough air to raise the chest. Let the chest fall between breaths.",
+            "If the first breath fails to raise the chest, adjust the head position and seal before the second attempt. Resume compressions after two attempts.",
+            "Repeat 30 compressions and 2 breaths. Keep breathing pauses under 10 seconds. If unable to give breaths, continue chest compressions.",
+            "Use an AED when available. Continue until rescuers take over, normal breathing and signs of life return, or you cannot continue."
+          ],
+          "avoid": [
+            "Do not blow forcefully or give repeated extra breaths.",
+            "Do not delay compressions if breaths cannot be given."
+          ],
+          "referenceName": "American Red Cross — Adult CPR Steps",
+          "referenceUrl": "https://www.redcross.org/take-a-class/cpr/performing-cpr/cpr-steps"
+        },
+        {
+          "id": "cpr_aed",
+          "title": "An AED is available",
+          "summary": "Use an AED alongside CPR for an unresponsive adult who is not breathing normally.",
+          "urgency": "Turn it on and follow the prompts",
+          "steps": [
+            "Ask a helper to prepare the AED while you continue CPR. Turn it on and follow its spoken or visual instructions.",
+            "Expose the chest and wipe it dry. Attach the pads to bare skin as pictured: upper right chest and lower left chest below the armpit.",
+            "Connect the pads if the device requires it. Keep CPR going while a helper attaches them.",
+            "When the AED asks to analyze the heart rhythm, make sure nobody touches the person.",
+            "If a shock is advised, check everyone is clear. Press the shock button if instructed; some AEDs deliver the shock automatically.",
+            "Immediately restart compressions after a shock or a no-shock message. Leave the pads attached and keep following the AED prompts."
+          ],
+          "avoid": [
+            "Do not touch the person during analysis or a shock.",
+            "Do not stop CPR just because the AED says no shock is advised."
+          ],
+          "referenceName": "American Red Cross — AED Steps",
+          "referenceUrl": "https://www.redcross.org/take-a-class/aed/using-an-aed/aed-steps"
+        },
+        {
+          "id": "cpr_breathing_normally",
+          "title": "Unresponsive but breathing normally",
+          "summary": "The person is unresponsive but has regular, normal breathing, including after CPR.",
+          "urgency": "Keep the airway open and monitor breathing",
+          "steps": [
+            "Call emergency services if this has not been done. If normal breathing has returned, stop compressions and keep checking breathing.",
+            "If no spinal injury is suspected, place the near arm out, bring the far hand to the near cheek, bend the far knee, and gently roll them towards you onto their side.",
+            "Tilt the head back and lift the chin to keep the airway open. Position the upper leg to support them on their side.",
+            "If a spinal injury is suspected, minimize movement and follow the dispatcher. If the airway cannot stay open, turn them onto their side, keeping head and spine aligned as far as possible.",
+            "Stay with them. If breathing stops or becomes abnormal, including only gasping, roll onto their back and restart CPR."
+          ],
+          "avoid": [
+            "Do not use the recovery position for someone who is only gasping.",
+            "Do not leave the person alone; keep watching their breathing."
+          ],
+          "referenceName": "St John Ambulance — Recovery Position (reviewed April 2025)",
+          "referenceUrl": "https://www.sja.org.uk/first-aid-advice/recovery-position/"
+        }
+      ]
+    },
+    {
       "id": "falls_injury",
       "title": "Falls and Injury",
       "category": "Falls and Injury",

@@ -79,7 +79,7 @@ class _RecordedTrailRequestsPageState extends State<RecordedTrailRequestsPage> {
           padding: const EdgeInsets.all(18),
           children: [
             AdminHeading(
-              title: 'Trail requests',
+              title: 'Undiscovered trail requests',
               subtitle:
                   'Review a hiker’s full recording before adding a route.',
               onBack: () => Navigator.pop(context),
@@ -342,7 +342,7 @@ class _RecordedTrailReviewPageState extends State<_RecordedTrailReviewPage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 AdminHeading(
-                  title: 'Review recorded trail',
+                  title: 'Review undiscovered trail',
                   subtitle:
                       'Full GPS pathway with the hiker’s chosen checkpoints.',
                   onBack: saving ? null : () => Navigator.pop(context),
