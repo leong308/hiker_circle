@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 
 import '../Model/sos_models.dart';
 
+/// Represents sos repository.
 class SosRepository {
+  /// Creates sos repository.
   const SosRepository();
 
+  /// Loads dashboard.
   SosDashboard loadDashboard() {
     return const SosDashboard(
       contactsReady: 0,
@@ -16,10 +19,12 @@ class SosRepository {
     );
   }
 
+  /// Loads emergency contacts.
   List<EmergencyContact> loadEmergencyContacts() {
     return const [];
   }
 
+  /// Loads metrics.
   List<SosMetric> loadMetrics() {
     return const [
       SosMetric(label: 'Contacts', value: '0/3'),
@@ -28,6 +33,7 @@ class SosRepository {
     ];
   }
 
+  /// Loads sections.
   List<SosFeatureSection> loadSections() {
     return const [
       SosFeatureSection(

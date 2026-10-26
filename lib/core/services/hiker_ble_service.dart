@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 
 import '../../sos/Model/sos_models.dart';
 
+/// Represents hiker ble service.
 class HikerBleService {
+  /// Creates hiker ble service.
   const HikerBleService();
 
   // Native pairing may spend up to 30 seconds connecting and then grant a
@@ -17,6 +19,7 @@ class HikerBleService {
 
   static const String defaultPairedButtonName = 'HikerCircle Button';
 
+  /// Checks whether terminal pairing compatibility error.
   static bool isTerminalPairingCompatibilityError(String? code) =>
       code == 'paired_button_firmware_incompatible' ||
       code == 'paired_button_bluetooth_cache_stale' ||
@@ -68,13 +71,16 @@ class HikerBleService {
       .where((event) => event is! Map || event['type'] != 'buttonDebug')
       .map(HikerBleEvent.fromPlatform);
 
+  /// Returns button debug events.
   Stream<Map<Object?, Object?>> get buttonDebugEvents => _platformEvents
       .where((event) => event is Map && event['type'] == 'buttonDebug')
       .map((event) => Map<Object?, Object?>.from(event as Map));
 
+  /// Sets button debug capture.
   Future<void> setButtonDebugCapture(bool enabled) => _methodChannel
       .invokeMethod<void>('setButtonDebugCapture', {'enabled': enabled});
 
+  /// Returns events.
   Stream<HikerBleEvent> get events => _events;
 
   /// Limits paired-button ownership to the signed-in app account. Native
@@ -94,6 +100,7 @@ class HikerBleService {
     }
   }
 
+  /// Checks whether supported.
   Future<bool> isSupported() async {
     try {
       return await _methodChannel.invokeMethod<bool>('isSupported') ?? false;
@@ -104,6 +111,7 @@ class HikerBleService {
     }
   }
 
+  /// Opens bluetooth settings.
   Future<void> openBluetoothSettings() async {
     try {
       await _methodChannel.invokeMethod<void>('openBluetoothSettings');
@@ -119,6 +127,7 @@ class HikerBleService {
     }
   }
 
+  /// Opens battery optimization settings.
   Future<void> openBatteryOptimizationSettings() async {
     try {
       await _methodChannel.invokeMethod<void>(
@@ -136,6 +145,7 @@ class HikerBleService {
     }
   }
 
+  /// Returns sos button readiness.
   Future<SosButtonReadiness> getSosButtonReadiness() async {
     try {
       final raw = await _methodChannel.invokeMethod<Map<Object?, Object?>>(
@@ -152,6 +162,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes restart sos button monitor.
   Future<void> restartSosButtonMonitor() async {
     try {
       await _methodChannel.invokeMethod<void>('restartSosButtonMonitor');
@@ -165,6 +176,7 @@ class HikerBleService {
     }
   }
 
+  /// Sets lost button warning.
   Future<void> setLostButtonWarning({
     required bool enabled,
     required Duration threshold,
@@ -186,6 +198,7 @@ class HikerBleService {
     }
   }
 
+  /// Starts sos button monitor.
   Future<void> startSosButtonMonitor() async {
     try {
       await _methodChannel.invokeMethod<void>('startSosButtonMonitor', {
@@ -199,6 +212,7 @@ class HikerBleService {
     }
   }
 
+  /// Stops sos button monitor.
   Future<void> stopSosButtonMonitor() async {
     try {
       await _methodChannel.invokeMethod<void>('stopSosButtonMonitor');
@@ -209,6 +223,7 @@ class HikerBleService {
     }
   }
 
+  /// Starts paired button setup scan.
   Future<void> startPairedButtonSetupScan() async {
     try {
       await _methodChannel.invokeMethod<void>('startPairedButtonSetupScan');
@@ -221,6 +236,7 @@ class HikerBleService {
     }
   }
 
+  /// Stops paired button setup scan.
   Future<void> stopPairedButtonSetupScan() async {
     try {
       await _methodChannel.invokeMethod<void>('stopPairedButtonSetupScan');
@@ -231,6 +247,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes pair sos button.
   Future<void> pairSosButton({
     required String address,
     required String displayName,
@@ -254,6 +271,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes list paired sos buttons.
   Future<List<PairedSosButton>> listPairedSosButtons() async {
     try {
       final raw = await _methodChannel.invokeMethod<List<Object?>>(
@@ -277,6 +295,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes arm paired sos button test.
   Future<void> armPairedSosButtonTest(
     String deviceId, {
     Duration duration = const Duration(seconds: 30),
@@ -306,6 +325,7 @@ class HikerBleService {
     }
   }
 
+  /// Cancels paired sos button test.
   Future<void> cancelPairedSosButtonTest() async {
     try {
       await _methodChannel.invokeMethod<void>('cancelPairedSosButtonTest');
@@ -336,6 +356,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes paired sos button log.
   Future<List<HikerBleButtonLogRecord>> readPairedSosButtonLog(
     String deviceId,
   ) async {
@@ -368,6 +389,7 @@ class HikerBleService {
     }
   }
 
+  /// Checks whether legacy unpaired sos button enabled.
   Future<bool> isLegacyUnpairedSosButtonEnabled() async {
     try {
       return await _methodChannel.invokeMethod<bool>(
@@ -383,6 +405,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes unpair sos button.
   Future<bool> unpairSosButton(String deviceId) async {
     try {
       return await _methodChannel.invokeMethod<bool>('unpairSosButton', {
@@ -431,6 +454,7 @@ class HikerBleService {
     }
   }
 
+  /// Sets legacy unpaired sos button enabled.
   Future<void> setLegacyUnpairedSosButtonEnabled(bool enabled) async {
     try {
       await _methodChannel.invokeMethod<void>(
@@ -446,6 +470,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes broadcast physical sos test.
   Future<void> broadcastPhysicalSosTest({
     required String phoneNumber,
     required SosTriggerLocation location,
@@ -472,6 +497,7 @@ class HikerBleService {
     }
   }
 
+  /// Starts team location exchange.
   Future<void> startTeamLocationExchange({
     required String teamHikeSessionId,
     required String phoneNumber,
@@ -497,6 +523,7 @@ class HikerBleService {
     }
   }
 
+  /// Updates team location.
   Future<void> updateTeamLocation({
     required String teamHikeSessionId,
     required String phoneNumber,
@@ -522,6 +549,7 @@ class HikerBleService {
     }
   }
 
+  /// Stops team location exchange.
   Future<void> stopTeamLocationExchange() async {
     try {
       await _methodChannel.invokeMethod<void>('stopTeamLocationExchange');
@@ -532,6 +560,7 @@ class HikerBleService {
     }
   }
 
+  /// Computes team location payload.
   Map<String, Object?> _teamLocationPayload({
     required String teamHikeSessionId,
     required String phoneNumber,
@@ -551,9 +580,12 @@ class HikerBleService {
   }
 }
 
+/// Represents hiker ble event.
 sealed class HikerBleEvent {
+  /// Creates hiker ble event.
   const HikerBleEvent();
 
+  /// Creates hiker ble event using from platform.
   factory HikerBleEvent.fromPlatform(Object? raw) {
     if (raw is! Map) {
       return HikerBleStatusEvent(
@@ -582,17 +614,22 @@ sealed class HikerBleEvent {
   }
 }
 
+/// Represents hiker ble exception.
 class HikerBleException implements Exception {
+  /// Creates hiker ble exception.
   const HikerBleException(this.message, {this.code});
 
   final String message;
   final String? code;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents hiker ble paired button setup event.
 class HikerBlePairedButtonSetupEvent extends HikerBleEvent {
+  /// Creates hiker ble paired button setup event.
   const HikerBlePairedButtonSetupEvent({
     required this.address,
     required this.displayName,
@@ -602,6 +639,7 @@ class HikerBlePairedButtonSetupEvent extends HikerBleEvent {
     this.setupModeRemainingSeconds,
   });
 
+  /// Creates hiker ble paired button setup event using from platform.
   factory HikerBlePairedButtonSetupEvent.fromPlatform(
     Map<Object?, Object?> data,
   ) {
@@ -638,7 +676,9 @@ class HikerBlePairedButtonSetupEvent extends HikerBleEvent {
   final int? setupModeRemainingSeconds;
 }
 
+/// Represents paired sos button.
 class PairedSosButton {
+  /// Creates paired sos button.
   const PairedSosButton({
     required this.deviceId,
     required this.displayName,
@@ -647,6 +687,7 @@ class PairedSosButton {
     this.lastAcceptedEventId,
   });
 
+  /// Creates paired sos button using from platform.
   factory PairedSosButton.fromPlatform(Map<Object?, Object?> data) {
     return PairedSosButton(
       deviceId: _stringFrom(data['deviceId'], fallback: '')!,
@@ -667,7 +708,9 @@ class PairedSosButton {
   final int? lastAcceptedEventId;
 }
 
+/// Represents sos button readiness.
 class SosButtonReadiness {
+  /// Creates sos button readiness.
   const SosButtonReadiness({
     required this.supported,
     required this.bluetoothEnabled,
@@ -690,6 +733,7 @@ class SosButtonReadiness {
     required this.pairedButtons,
   });
 
+  /// Creates sos button readiness using unsupported.
   factory SosButtonReadiness.unsupported() => SosButtonReadiness(
     supported: false,
     bluetoothEnabled: false,
@@ -712,6 +756,7 @@ class SosButtonReadiness {
     pairedButtons: const [],
   );
 
+  /// Creates sos button readiness using from platform.
   factory SosButtonReadiness.fromPlatform(Map<Object?, Object?> data) {
     final rawButtons = data['pairedButtons'];
     return SosButtonReadiness(
@@ -775,8 +820,10 @@ class SosButtonReadiness {
   final DateTime checkedAt;
   final List<PairedSosButton> pairedButtons;
 
+  /// Returns has paired button.
   bool get hasPairedButton => pairedButtons.isNotEmpty;
 
+  /// Returns freshest button.
   PairedSosButton? get freshestButton {
     PairedSosButton? freshest;
     for (final button in pairedButtons) {
@@ -790,11 +837,13 @@ class SosButtonReadiness {
     return freshest;
   }
 
+  /// Computes button seen recently.
   bool buttonSeenRecently({Duration maximumAge = const Duration(minutes: 2)}) {
     final lastSeen = freshestButton?.lastSeenAt;
     return lastSeen != null && checkedAt.difference(lastSeen) <= maximumAge;
   }
 
+  /// Returns blocking warnings.
   List<String> get blockingWarnings {
     final warnings = <String>[];
     if (!supported) warnings.add('Bluetooth Low Energy is unavailable.');
@@ -815,7 +864,9 @@ class SosButtonReadiness {
   }
 }
 
+/// Represents hiker ble button log record.
 class HikerBleButtonLogRecord {
+  /// Creates hiker ble button log record.
   const HikerBleButtonLogRecord({
     required this.sequence,
     required this.uptimeMillis,
@@ -826,6 +877,7 @@ class HikerBleButtonLogRecord {
     required this.detail,
   });
 
+  /// Creates hiker ble button log record using from platform.
   factory HikerBleButtonLogRecord.fromPlatform(Map<Object?, Object?> data) {
     return HikerBleButtonLogRecord(
       sequence: _intFrom(data['sequence']) ?? 0,
@@ -846,6 +898,7 @@ class HikerBleButtonLogRecord {
   final int resetReason;
   final int detail;
 
+  /// Returns epoch time.
   DateTime? get epochTime {
     if (epochSeconds <= 0) return null;
     try {
@@ -858,8 +911,10 @@ class HikerBleButtonLogRecord {
     }
   }
 
+  /// Returns uptime.
   Duration get uptime => Duration(milliseconds: uptimeMillis);
 
+  /// Returns type label.
   String get typeLabel => switch (type) {
     1 => 'Boot',
     2 => 'Button press',
@@ -885,7 +940,9 @@ class HikerBleButtonLogRecord {
   };
 }
 
+/// Represents hiker ble sos button event.
 class HikerBleSosButtonEvent extends HikerBleEvent {
+  /// Creates hiker ble sos button event.
   const HikerBleSosButtonEvent({
     required this.receivedAt,
     this.counter,
@@ -893,6 +950,7 @@ class HikerBleSosButtonEvent extends HikerBleEvent {
     this.source = 'ble_button',
   });
 
+  /// Creates hiker ble sos button event using from platform.
   factory HikerBleSosButtonEvent.fromPlatform(Map<Object?, Object?> data) {
     return HikerBleSosButtonEvent(
       receivedAt: _dateFromMillis(data['receivedAtMillis']),
@@ -912,6 +970,7 @@ class HikerBleSosButtonEvent extends HikerBleEvent {
 /// The native Android/iOS registry verifies its tag; no secret is exposed to
 /// Dart or included in this event.
 class HikerBlePairedSosButtonEvent extends HikerBleEvent {
+  /// Creates hiker ble paired sos button event.
   const HikerBlePairedSosButtonEvent({
     required this.deviceId,
     required this.receivedAt,
@@ -921,6 +980,7 @@ class HikerBlePairedSosButtonEvent extends HikerBleEvent {
     this.rssi,
   });
 
+  /// Creates hiker ble paired sos button event using from platform.
   factory HikerBlePairedSosButtonEvent.fromPlatform(
     Map<Object?, Object?> data,
   ) {
@@ -945,6 +1005,7 @@ class HikerBlePairedSosButtonEvent extends HikerBleEvent {
 /// An authenticated press consumed by an explicitly armed local test window.
 /// Native code emits this instead of persisting or dispatching an SOS.
 class HikerBlePairedSosButtonTestEvent extends HikerBleEvent {
+  /// Creates hiker ble paired sos button test event.
   const HikerBlePairedSosButtonTestEvent({
     required this.deviceId,
     required this.receivedAt,
@@ -953,6 +1014,7 @@ class HikerBlePairedSosButtonTestEvent extends HikerBleEvent {
     this.rssi,
   });
 
+  /// Creates hiker ble paired sos button test event using from platform.
   factory HikerBlePairedSosButtonTestEvent.fromPlatform(
     Map<Object?, Object?> data,
   ) {
@@ -975,6 +1037,7 @@ class HikerBlePairedSosButtonTestEvent extends HikerBleEvent {
 /// An unverified type-4 press from another person's paired button. This event
 /// must only lead to a non-destructive proximity popup.
 class HikerBleNearbySosButtonEvent extends HikerBleEvent {
+  /// Creates hiker ble nearby sos button event.
   const HikerBleNearbySosButtonEvent({
     required this.deviceId,
     required this.receivedAt,
@@ -982,6 +1045,7 @@ class HikerBleNearbySosButtonEvent extends HikerBleEvent {
     this.rssi,
   });
 
+  /// Creates hiker ble nearby sos button event using from platform.
   factory HikerBleNearbySosButtonEvent.fromPlatform(
     Map<Object?, Object?> data,
   ) {
@@ -999,7 +1063,9 @@ class HikerBleNearbySosButtonEvent extends HikerBleEvent {
   final DateTime receivedAt;
 }
 
+/// Represents hiker ble sos help event.
 class HikerBleSosHelpEvent extends HikerBleEvent {
+  /// Creates hiker ble sos help event.
   const HikerBleSosHelpEvent({
     required this.phoneNumberHash,
     required this.location,
@@ -1008,6 +1074,7 @@ class HikerBleSosHelpEvent extends HikerBleEvent {
     this.source = 'ble_sos_test',
   });
 
+  /// Creates hiker ble sos help event using from platform.
   factory HikerBleSosHelpEvent.fromPlatform(Map<Object?, Object?> data) {
     return HikerBleSosHelpEvent(
       phoneNumberHash: _intFrom(data['phoneNumberHash']) ?? 0,
@@ -1030,7 +1097,9 @@ class HikerBleSosHelpEvent extends HikerBleEvent {
   final String source;
 }
 
+/// Represents hiker ble team location event.
 class HikerBleTeamLocationEvent extends HikerBleEvent {
+  /// Creates hiker ble team location event.
   const HikerBleTeamLocationEvent({
     required this.teamSessionHash,
     required this.phoneNumberHash,
@@ -1039,6 +1108,7 @@ class HikerBleTeamLocationEvent extends HikerBleEvent {
     this.rssi,
   });
 
+  /// Creates hiker ble team location event using from platform.
   factory HikerBleTeamLocationEvent.fromPlatform(Map<Object?, Object?> data) {
     final capturedAt = _dateFromMillis(data['capturedAtMillis']);
     return HikerBleTeamLocationEvent(
@@ -1067,6 +1137,7 @@ class HikerBleTeamLocationEvent extends HikerBleEvent {
 /// possess the pairing secret and must treat the relay as an unverified
 /// proximity signal.
 class HikerBleNearbySosLocationEvent extends HikerBleEvent {
+  /// Creates hiker ble nearby sos location event.
   const HikerBleNearbySosLocationEvent({
     required this.deviceId,
     required this.location,
@@ -1075,6 +1146,7 @@ class HikerBleNearbySosLocationEvent extends HikerBleEvent {
     this.rssi,
   });
 
+  /// Creates hiker ble nearby sos location event using from platform.
   factory HikerBleNearbySosLocationEvent.fromPlatform(
     Map<Object?, Object?> data,
   ) {
@@ -1099,13 +1171,16 @@ class HikerBleNearbySosLocationEvent extends HikerBleEvent {
   final SosTriggerLocation location;
 }
 
+/// Represents hiker ble status event.
 class HikerBleStatusEvent extends HikerBleEvent {
+  /// Creates hiker ble status event.
   const HikerBleStatusEvent({
     required this.status,
     required this.receivedAt,
     this.message,
   });
 
+  /// Creates hiker ble status event using from platform.
   factory HikerBleStatusEvent.fromPlatform(Map<Object?, Object?> data) {
     return HikerBleStatusEvent(
       status: _stringFrom(data['status'], fallback: 'status')!,
@@ -1119,10 +1194,12 @@ class HikerBleStatusEvent extends HikerBleEvent {
   final DateTime receivedAt;
 }
 
+/// Computes hiker ble phone hash.
 int hikerBlePhoneHash(String phoneNumber) {
   return hikerBleHash(phoneNumber.replaceAll(RegExp(r'[^0-9]'), ''));
 }
 
+/// Computes hiker ble hash.
 int hikerBleHash(String value) {
   const int fnvPrime = 0x01000193;
   var hash = 0x811c9dc5;
@@ -1133,6 +1210,7 @@ int hikerBleHash(String value) {
   return hash;
 }
 
+/// Computes string from.
 String? _stringFrom(Object? value, {String? fallback}) {
   if (value is String && value.trim().isNotEmpty) {
     return value.trim();
@@ -1140,6 +1218,7 @@ String? _stringFrom(Object? value, {String? fallback}) {
   return fallback;
 }
 
+/// Computes int from.
 int? _intFrom(Object? value) {
   if (value is num && value.isFinite) {
     return value.toInt();
@@ -1147,6 +1226,7 @@ int? _intFrom(Object? value) {
   return null;
 }
 
+/// Computes double from.
 double _doubleFrom(Object? value) {
   if (value is num && value.isFinite) {
     return value.toDouble();
@@ -1154,6 +1234,7 @@ double _doubleFrom(Object? value) {
   return 0;
 }
 
+/// Computes nullable double from.
 double? _nullableDoubleFrom(Object? value) {
   if (value is num && value.isFinite) {
     return value.toDouble();
@@ -1161,6 +1242,7 @@ double? _nullableDoubleFrom(Object? value) {
   return null;
 }
 
+/// Computes date from millis.
 DateTime _dateFromMillis(Object? value) {
   if (value is num && value.isFinite && value > 0) {
     try {
@@ -1172,6 +1254,7 @@ DateTime _dateFromMillis(Object? value) {
   return DateTime.now().toUtc();
 }
 
+/// Computes nullable date from millis.
 DateTime? _nullableDateFromMillis(Object? value) {
   if (value is num && value.isFinite && value > 0) {
     try {

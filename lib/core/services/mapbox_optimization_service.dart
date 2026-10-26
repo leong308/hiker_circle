@@ -7,16 +7,21 @@ import 'package:http/http.dart' as http;
 import '../../trail/Model/trail_models.dart';
 import '../config/google_api_config.dart';
 
+/// Represents mapbox optimization exception.
 class MapboxOptimizationException implements Exception {
+  /// Creates mapbox optimization exception.
   const MapboxOptimizationException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents mapbox optimization result.
 class MapboxOptimizationResult {
+  /// Creates mapbox optimization result.
   const MapboxOptimizationResult({
     required this.distanceMeters,
     required this.durationSeconds,
@@ -28,7 +33,9 @@ class MapboxOptimizationResult {
   final String encodedPolyline;
 }
 
+/// Represents mapbox optimization service.
 class MapboxOptimizationService {
+  /// Creates mapbox optimization service.
   MapboxOptimizationService({http.Client? client, String? accessToken})
     : _client = client,
       _accessToken = accessToken ?? GoogleApiConfig.mapboxAccessToken;
@@ -124,6 +131,7 @@ class MapboxOptimizationService {
     }
   }
 
+  /// Computes optimize walking route.
   Future<MapboxOptimizationResult> optimizeWalkingRoute(
     List<TrailCheckpoint> checkpoints,
   ) async {
@@ -219,6 +227,7 @@ class MapboxOptimizationService {
     }
   }
 
+  /// Computes rounded positive metric.
   int _roundedPositiveMetric(Object? value) {
     if (value is! num || !value.isFinite || value <= 0) {
       return 0;

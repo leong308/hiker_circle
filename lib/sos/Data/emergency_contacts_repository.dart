@@ -12,16 +12,21 @@ import '../../app/Model/app_session.dart';
 import '../../authentication/Data/phone_number_formatter.dart';
 import '../Model/sos_models.dart';
 
+/// Represents emergency contacts repository exception.
 class EmergencyContactsRepositoryException implements Exception {
+  /// Creates emergency contacts repository exception.
   const EmergencyContactsRepositoryException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents emergency contacts change.
 class EmergencyContactsChange {
+  /// Creates emergency contacts change.
   EmergencyContactsChange(this.phoneNumber, List<EmergencyContact> contacts)
     : contacts = List.unmodifiable(contacts);
 
@@ -31,6 +36,7 @@ class EmergencyContactsChange {
 
 /// Keep device contact reads available while account-scoped cloud synchronization is pending.
 class EmergencyContactsRepository {
+  /// Creates emergency contacts repository.
   const EmergencyContactsRepository({
     FirebaseFirestore? firestore,
     LocalSessionDatabase? localDatabase,
@@ -48,16 +54,20 @@ class EmergencyContactsRepository {
   static const ownNumberMessage =
       'You cannot use your own phone number as an emergency contact.';
 
+  /// Checks whether own phone number.
   static bool isOwnPhoneNumber(String number, String owner) =>
       PhoneNumberFormatter.normalize(number) ==
       PhoneNumberFormatter.normalize(owner);
   static const pendingPreferenceKey = 'pending_emergency_contacts';
   static final _changes = StreamController<EmergencyContactsChange>.broadcast();
+
+  /// Returns changes.
   static Stream<EmergencyContactsChange> get changes => _changes.stream;
   static final Map<String, int> _revisions = {};
   static final Map<String, Future<void>> _localWrites = {};
   final Duration _cloudTimeout;
 
+  /// Applies local lock.
   Future<T> _withLocalLock<T>(String owner, Future<T> Function() action) async {
     final previous = _localWrites[owner] ?? Future<void>.value();
     final done = Completer<void>();
@@ -73,6 +83,7 @@ class EmergencyContactsRepository {
     }
   }
 
+  /// Computes emit.
   void _emit(String phone, List<EmergencyContact> contacts) {
     _changes.add(EmergencyContactsChange(phone, contacts));
   }
@@ -81,12 +92,15 @@ class EmergencyContactsRepository {
   final LocalSessionDatabase? _localDatabase;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
+  /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
 
+  /// Returns resolved local database.
   LocalSessionDatabase get _resolvedLocalDatabase =>
       _localDatabase ?? _defaultLocalDatabase;
 
+  /// Returns users.
   CollectionReference<Map<String, dynamic>> get _users {
     return _resolvedFirestore.collection('users');
   }
@@ -114,6 +128,7 @@ class EmergencyContactsRepository {
     return localContacts;
   }
 
+  /// Loads emergency contacts.
   Future<List<EmergencyContact>> loadEmergencyContacts({
     required AppSession session,
   }) async {
@@ -162,6 +177,7 @@ class EmergencyContactsRepository {
     }
   }
 
+  /// Parses contacts.
   List<EmergencyContact> _parseContacts(Object? rawContacts) {
     final contacts = <EmergencyContact>[];
     if (rawContacts is! Iterable) return contacts;
@@ -178,6 +194,7 @@ class EmergencyContactsRepository {
     return contacts;
   }
 
+  /// Fetches cloud contacts.
   @protected
   Future<List<EmergencyContact>?> fetchCloudContacts(AppSession session) async {
     final data = (await _userDocumentFor(session).get()).data();
@@ -185,6 +202,7 @@ class EmergencyContactsRepository {
     return raw is Iterable ? _parseContacts(raw) : null;
   }
 
+  /// Computes push cloud contacts.
   @protected
   Future<void> pushCloudContacts(
     AppSession session,
@@ -198,6 +216,7 @@ class EmergencyContactsRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Computes push pending.
   Future<void> _pushPending(
     AppSession session,
     Map pending,
@@ -224,6 +243,7 @@ class EmergencyContactsRepository {
     });
   }
 
+  /// Saves emergency contacts.
   Future<void> saveEmergencyContacts({
     required AppSession session,
     required List<EmergencyContact> contacts,
@@ -284,6 +304,7 @@ class EmergencyContactsRepository {
     }
   }
 
+  /// Computes user document for.
   DocumentReference<Map<String, dynamic>> _userDocumentFor(AppSession session) {
     return userModuleDocument(
       _users.doc(
@@ -293,6 +314,7 @@ class EmergencyContactsRepository {
     );
   }
 
+  /// Computes validated contact.
   static EmergencyContact? _validatedContact(EmergencyContact contact) {
     final name = contact.name.trim();
     final relationship = contact.relationship.trim();

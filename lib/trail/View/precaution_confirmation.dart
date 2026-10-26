@@ -7,7 +7,8 @@ import '../../core/widgets/loading_toast.dart';
 import '../Model/trail_precautions.dart';
 import '../Model/precaution_check_service.dart';
 import '../Model/trail_models.dart';
-import 'weather_presentation.dart';
+import '../../core/widgets/page_header_style.dart';
+import 'trail_precaution_card.dart';
 
 /// Return the hiker's explicit precaution acknowledgement to the caller's start/preparation flow.
 Future<bool> confirmHikePrecautions(BuildContext context, Trail trail) async {
@@ -20,10 +21,13 @@ Future<bool> confirmHikePrecautions(BuildContext context, Trail trail) async {
       false;
 }
 
+/// Displays the hike precaution dialog.
 class HikePrecautionDialog extends StatelessWidget {
+  /// Creates hike precaution dialog.
   const HikePrecautionDialog({super.key, required this.precautions});
   final Future<List<TrailPrecaution>> precautions;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Dialog(
     backgroundColor: Theme.of(context).colorScheme.surface,
@@ -78,17 +82,7 @@ class HikePrecautionDialog extends StatelessWidget {
   );
 }
 
-Color _precautionColor(BuildContext context, int priority) {
-  final theme = Theme.of(context);
-  if (priority >= 3) return theme.colorScheme.error;
-  if (priority == 2) {
-    return theme.brightness == Brightness.dark
-        ? const Color(0xFFF0BF6A)
-        : const Color(0xFF95620E);
-  }
-  return theme.colorScheme.primary;
-}
-
+/// Computes short title.
 String _shortTitle(TrailPrecaution caution) => switch (caution.id) {
   'storm' => 'Thunderstorms',
   'rain' => caution.priority >= 3 ? 'Heavy rain' : 'Wet trail',
@@ -104,14 +98,18 @@ String _shortTitle(TrailPrecaution caution) => switch (caution.id) {
   _ => caution.title,
 };
 
+/// Displays the precaution overview.
 class _PrecautionOverview extends StatefulWidget {
+  /// Creates precaution overview.
   const _PrecautionOverview({required this.cautions});
   final List<TrailPrecaution> cautions;
 
+  /// Creates the presentation state for this widget.
   @override
   State<_PrecautionOverview> createState() => _PrecautionOverviewState();
 }
 
+/// Manages the precaution overview presentation and lifecycle.
 class _PrecautionOverviewState extends State<_PrecautionOverview>
     with SingleTickerProviderStateMixin {
   late final _entrance = AnimationController(
@@ -120,6 +118,7 @@ class _PrecautionOverviewState extends State<_PrecautionOverview>
   );
   bool _started = false;
 
+  /// Refreshes presentation dependencies.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -132,18 +131,20 @@ class _PrecautionOverviewState extends State<_PrecautionOverview>
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _entrance.dispose();
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), scheme = theme.colorScheme;
     final cautions = widget.cautions;
     final priority = cautions.fold<int>(0, (p, c) => math.max(p, c.priority));
-    final accent = _precautionColor(context, priority);
+    final accent = precautionAccentColor(context, priority);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -188,11 +189,7 @@ class _PrecautionOverviewState extends State<_PrecautionOverview>
                   children: [
                     Text(
                       'Before you set off',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -.5,
-                        height: 1.15,
-                      ),
+                      style: PageHeaderStyle.title(context, scheme.onSurface),
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -224,9 +221,10 @@ class _PrecautionOverviewState extends State<_PrecautionOverview>
                       index: i,
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 10),
-                        child: _PrecautionCard(
+                        child: TrailPrecautionCard(
                           key: ValueKey('precaution-${cautions[i].id}'),
                           caution: cautions[i],
+                          title: _shortTitle(cautions[i]),
                         ),
                       ),
                     ),
@@ -299,10 +297,13 @@ class _PrecautionOverviewState extends State<_PrecautionOverview>
   }
 }
 
+/// Displays the empty precautions.
 class _EmptyPrecautions extends StatelessWidget {
+  /// Creates empty precautions.
   const _EmptyPrecautions({required this.accent});
   final Color accent;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
@@ -324,7 +325,9 @@ class _EmptyPrecautions extends StatelessWidget {
   );
 }
 
+/// Displays the precaution entrance.
 class _PrecautionEntrance extends StatelessWidget {
+  /// Creates precaution entrance.
   const _PrecautionEntrance({
     required this.animation,
     required this.index,
@@ -334,6 +337,7 @@ class _PrecautionEntrance extends StatelessWidget {
   final int index;
   final Widget child;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: animation,
@@ -355,170 +359,4 @@ class _PrecautionEntrance extends StatelessWidget {
       );
     },
   );
-}
-
-class _PrecautionCard extends StatefulWidget {
-  const _PrecautionCard({super.key, required this.caution});
-  final TrailPrecaution caution;
-
-  @override
-  State<_PrecautionCard> createState() => _PrecautionCardState();
-}
-
-class _PrecautionCardState extends State<_PrecautionCard> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final caution = widget.caution;
-    final theme = Theme.of(context), scheme = theme.colorScheme;
-    final accent = _precautionColor(context, caution.priority);
-    return Material(
-      color: scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: accent.withValues(alpha: .18)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => setState(() => _expanded = !_expanded),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: .1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      precautionIcon(caution),
-                      color: accent,
-                      size: 23,
-                    ),
-                  ),
-                  const SizedBox(width: 11),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _shortTitle(caution),
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          caution.priority >= 3
-                              ? 'Important'
-                              : caution.priority == 2
-                              ? 'Caution'
-                              : 'Prepare',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: accent,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Column(
-                    children: [
-                      AnimatedRotation(
-                        turns: _expanded ? .5 : 0,
-                        duration: MediaQuery.disableAnimationsOf(context)
-                            ? Duration.zero
-                            : const Duration(milliseconds: 200),
-                        child: Icon(
-                          Icons.expand_more_rounded,
-                          size: 19,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                      Text(
-                        _expanded ? 'Less' : 'Details',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              if (caution.quickFacts.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    for (final fact in caution.quickFacts)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: accent.withValues(alpha: .08),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          fact,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: accent,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-              const SizedBox(height: 9),
-              Text(
-                caution.quickAction ?? caution.message,
-                style: theme.textTheme.bodySmall?.copyWith(height: 1.4),
-              ),
-              AnimatedSize(
-                duration: MediaQuery.disableAnimationsOf(context)
-                    ? Duration.zero
-                    : const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.topCenter,
-                child: _expanded
-                    ? Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Divider(height: 1, color: scheme.outlineVariant),
-                            const SizedBox(height: 10),
-                            Text(
-                              caution.title,
-                              style: theme.textTheme.labelLarge,
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              caution.message,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                                height: 1.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : const SizedBox(width: double.infinity),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

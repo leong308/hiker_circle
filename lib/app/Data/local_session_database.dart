@@ -1,6 +1,9 @@
 // LocalSessionDatabase owns encrypted mobile SQLite, incremental schema upgrades and operational
 // offline hike, SOS, chat and cache records.
 import '../../core/services/content_hash.dart';
+import '../../achievements/Model/achievement_progress.dart';
+import '../../achievements/Model/achievement_notification.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -20,9 +23,12 @@ import 'secure_local_database.dart';
 
 part 'local_community_database.dart';
 part 'local_planning_database.dart';
+part 'local_achievement_database.dart';
 
+/// Represents local achievement progress cache.
 @immutable
 class LocalAchievementProgressCache {
+  /// Creates local achievement progress cache.
   const LocalAchievementProgressCache({
     required this.contentHash,
     required this.rows,
@@ -34,8 +40,10 @@ class LocalAchievementProgressCache {
   final DateTime cachedAt;
 }
 
+/// Represents local cached entity.
 @immutable
 class LocalCachedEntity {
+  /// Creates local cached entity.
   const LocalCachedEntity({
     required this.ownerPhoneNumber,
     required this.entityType,
@@ -47,6 +55,7 @@ class LocalCachedEntity {
     this.expiresAt,
   });
 
+  /// Creates local cached entity using from row.
   factory LocalCachedEntity.fromRow(Map<String, Object?> row) {
     final decoded = jsonDecode(row['payload_json'] as String? ?? '{}');
     if (decoded is! Map) {
@@ -78,8 +87,10 @@ class LocalCachedEntity {
   final DateTime? expiresAt;
 }
 
+/// Represents local sync operation.
 @immutable
 class LocalSyncOperation {
+  /// Creates local sync operation.
   const LocalSyncOperation({
     required this.operationId,
     required this.ownerPhoneNumber,
@@ -97,6 +108,7 @@ class LocalSyncOperation {
     this.lastError = '',
   });
 
+  /// Creates local sync operation using from row.
   factory LocalSyncOperation.fromRow(Map<String, Object?> row) {
     final decoded = jsonDecode(row['payload_json'] as String? ?? '{}');
     return LocalSyncOperation(
@@ -137,8 +149,10 @@ class LocalSyncOperation {
   final DateTime updatedAt;
 }
 
+/// Represents local static hazard.
 @immutable
 class LocalStaticHazard {
+  /// Creates local static hazard.
   const LocalStaticHazard({
     required this.hazardId,
     required this.hazardType,
@@ -157,6 +171,7 @@ class LocalStaticHazard {
     this.expiresAt,
   });
 
+  /// Creates local static hazard using from row.
   factory LocalStaticHazard.fromRow(Map<String, Object?> row) {
     return LocalStaticHazard(
       hazardId: row['hazard_id'] as String? ?? '',
@@ -198,8 +213,10 @@ class LocalStaticHazard {
   final DateTime? expiresAt;
 }
 
+/// Represents local trail hazard match.
 @immutable
 class LocalTrailHazardMatch {
+  /// Creates local trail hazard match.
   const LocalTrailHazardMatch({
     required this.trailId,
     required this.hazard,
@@ -217,8 +234,10 @@ class LocalTrailHazardMatch {
   final DateTime computedAt;
 }
 
+/// Represents local hazard dataset summary.
 @immutable
 class LocalHazardDatasetSummary {
+  /// Creates local hazard dataset summary.
   const LocalHazardDatasetSummary({
     required this.hazardCount,
     required this.trailCount,
@@ -229,10 +248,13 @@ class LocalHazardDatasetSummary {
   final int trailCount;
   final DateTime? downloadedAt;
 
+  /// Returns is downloaded.
   bool get isDownloaded => downloadedAt != null;
 }
 
+/// Represents local session database.
 class LocalSessionDatabase {
+  /// Creates local session database.
   LocalSessionDatabase({String? databasePath})
     : _databasePathOverride = databasePath;
 
@@ -246,7 +268,14 @@ class LocalSessionDatabase {
   static bool _isDesktopFactoryConfigured = false;
   static Future<Database>? _sharedDefaultDatabaseOpening;
   static final Set<String> _loggedDatabasePaths = <String>{};
+  static final _deviceNotificationChanges =
+      StreamController<String>.broadcast();
 
+  /// Returns device notification changes.
+  static Stream<String> get deviceNotificationChanges =>
+      _deviceNotificationChanges.stream;
+
+  /// Creates button debug session.
   Future<void> createButtonDebugSession(
     String id,
     String owner,
@@ -261,6 +290,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Computes append button debug entry.
   Future<void> appendButtonDebugEntry(
     String owner,
     Map<String, Object?> entry,
@@ -277,6 +307,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Loads button debug sessions.
   Future<List<Map<String, Object?>>> loadButtonDebugSessions(
     String owner,
   ) async {
@@ -298,6 +329,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Loads button debug log.
   Future<String?> loadButtonDebugLog(String owner, String id) async {
     final db = await _openDatabase();
     final rows = await db.query(
@@ -310,6 +342,7 @@ class LocalSessionDatabase {
     return rows.isEmpty ? null : rows.first['log_text'] as String?;
   }
 
+  /// Loads button debug entries.
   Future<List<Map<String, Object?>>> loadButtonDebugEntries(
     String owner,
     String id,
@@ -325,6 +358,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Computes conclude button debug session.
   Future<void> concludeButtonDebugSession({
     required String owner,
     required String id,
@@ -348,6 +382,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Creates button debug tables.
   Future<void> _createButtonDebugTables(DatabaseExecutor db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS button_debug_sessions (
@@ -374,6 +409,7 @@ class LocalSessionDatabase {
 
   // loadSession restores only the account/profile row; pending hikes and safety queues are
   // independent.
+  /// Loads session.
   Future<AppSession?> loadSession() async {
     final database = await _openDatabase();
     final rows = await database.query(
@@ -388,6 +424,7 @@ class LocalSessionDatabase {
   }
 
   // saveSession updates the signed-in profile without replacing unrelated operational tables.
+  /// Saves session.
   Future<void> saveSession(AppSession session) async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
@@ -401,11 +438,13 @@ class LocalSessionDatabase {
   }
 
   // clearUserSessionOnly removes visible account state while preserving owner-scoped offline work.
+  /// Clears user session only.
   Future<void> clearUserSessionOnly() async {
     final database = await _openDatabase();
     await database.delete('users');
   }
 
+  /// Loads achievement progress cache.
   Future<LocalAchievementProgressCache?> loadAchievementProgressCache({
     required String ownerPhoneNumber,
   }) async {
@@ -444,6 +483,7 @@ class LocalSessionDatabase {
     }
   }
 
+  /// Saves achievement progress cache.
   Future<void> saveAchievementProgressCache({
     required String ownerPhoneNumber,
     required String contentHash,
@@ -462,6 +502,7 @@ class LocalSessionDatabase {
 
   // saveActiveHikeSession persists the local hike snapshot before later cloud recovery or app
   // restart.
+  /// Saves active hike session.
   Future<void> saveActiveHikeSession({
     required String phoneNumber,
     required ActiveHikeSession activeHike,
@@ -554,6 +595,7 @@ class LocalSessionDatabase {
     return migratedHike;
   }
 
+  /// Computes migrate hike telemetry session id.
   Future<void> migrateHikeTelemetrySessionId({
     required String ownerPhoneNumber,
     required String oldSessionId,
@@ -576,6 +618,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Computes migrate hike telemetry session id.
   Future<void> _migrateHikeTelemetrySessionId(
     DatabaseExecutor database, {
     required String ownerPhoneNumber,
@@ -602,6 +645,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Loads active hike session.
   Future<ActiveHikeSession?> loadActiveHikeSession({
     required String phoneNumber,
   }) async {
@@ -667,6 +711,7 @@ class LocalSessionDatabase {
     }
   }
 
+  /// Clears active hike session.
   Future<void> clearActiveHikeSession({required String phoneNumber}) async {
     final database = await _openDatabase();
     final rows = await database.query(
@@ -707,6 +752,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Saves upcoming hikes for planning.
   Future<void> saveUpcomingHikesForPlanning({
     required String ownerPhoneNumber,
     required Iterable<UpcomingHike> upcomingHikes,
@@ -903,6 +949,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Loads planned hike states.
   Future<List<LocalPlannedHikeState>> loadPlannedHikeStates({
     required String ownerPhoneNumber,
   }) async {
@@ -926,6 +973,7 @@ class LocalSessionDatabase {
     return states;
   }
 
+  /// Saves planned hike checklist.
   Future<void> savePlannedHikeChecklist({
     required String ownerPhoneNumber,
     required String upcomingHikeId,
@@ -965,6 +1013,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Marks planned hike consumed.
   Future<void> markPlannedHikeConsumed({
     required String ownerPhoneNumber,
     required String upcomingHikeId,
@@ -986,6 +1035,7 @@ class LocalSessionDatabase {
 
   // queuePendingHikeEnd retains the original end time and route/summary snapshot for a safe cloud
   // retry.
+  /// Computes queue pending hike end.
   Future<void> queuePendingHikeEnd({
     required String ownerPhoneNumber,
     required ActiveHikeSession activeHike,
@@ -1020,6 +1070,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Loads pending hike ends.
   Future<List<LocalPendingHikeEnd>> loadPendingHikeEnds({
     required String ownerPhoneNumber,
     int limit = 20,
@@ -1037,6 +1088,7 @@ class LocalSessionDatabase {
     return rows.map(LocalPendingHikeEnd.fromRow).toList();
   }
 
+  /// Deletes pending hike end.
   Future<void> deletePendingHikeEnd({
     required String ownerPhoneNumber,
     required String sessionId,
@@ -1049,6 +1101,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Marks pending hike end retry.
   Future<void> markPendingHikeEndRetry({
     required String ownerPhoneNumber,
     required String sessionId,
@@ -1072,6 +1125,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Loads or create app instance id.
   Future<String> loadOrCreateAppInstanceId() async {
     final database = await _openDatabase();
     final rows = await database.query('app_device', limit: 1);
@@ -1091,6 +1145,7 @@ class LocalSessionDatabase {
     return appInstanceId;
   }
 
+  /// Loads emergency contacts.
   Future<List<EmergencyContact>> loadEmergencyContacts({
     required String phoneNumber,
   }) async {
@@ -1104,6 +1159,7 @@ class LocalSessionDatabase {
     return rows.map(_emergencyContactFromRow).toList();
   }
 
+  /// Saves emergency contacts.
   Future<void> saveEmergencyContacts({
     required String phoneNumber,
     required List<EmergencyContact> contacts,
@@ -1132,6 +1188,7 @@ class LocalSessionDatabase {
 
   // saveCachedEntity avoids rewriting identical JSON while retaining its scope, revision time and
   // expiry.
+  /// Saves cached entity.
   Future<void> saveCachedEntity(LocalCachedEntity entity) async {
     final database = await _openDatabase();
     final existing = await database.query(
@@ -1168,6 +1225,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Saves cached entities.
   Future<void> saveCachedEntities(List<LocalCachedEntity> entities) async {
     if (entities.isEmpty) return;
     final database = await _openDatabase();
@@ -1187,6 +1245,7 @@ class LocalSessionDatabase {
     await batch.commit(noResult: true);
   }
 
+  /// Loads cached entities.
   Future<List<LocalCachedEntity>> loadCachedEntities({
     required String ownerPhoneNumber,
     required String entityType,
@@ -1213,6 +1272,7 @@ class LocalSessionDatabase {
     return rows.map(LocalCachedEntity.fromRow).toList();
   }
 
+  /// Loads cached entity.
   Future<LocalCachedEntity?> loadCachedEntity({
     required String ownerPhoneNumber,
     required String entityType,
@@ -1237,6 +1297,7 @@ class LocalSessionDatabase {
 
   // replaceCachedEntitySet replaces one scoped cache result atomically without disturbing other
   // entity types.
+  /// Computes replace cached entity set.
   Future<void> replaceCachedEntitySet({
     required String ownerPhoneNumber,
     required String entityType,
@@ -1273,6 +1334,7 @@ class LocalSessionDatabase {
 
   // enqueueSyncOperation retains owner scope and a stable idempotency key for retryable offline
   // work.
+  /// Computes enqueue sync operation.
   Future<void> enqueueSyncOperation(LocalSyncOperation operation) async {
     final database = await _openDatabase();
     await database.insert('sync_outbox', {
@@ -1293,6 +1355,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Loads due sync operations.
   Future<List<LocalSyncOperation>> loadDueSyncOperations({
     required String ownerPhoneNumber,
     int limit = 50,
@@ -1310,6 +1373,7 @@ class LocalSessionDatabase {
     return rows.map(LocalSyncOperation.fromRow).toList();
   }
 
+  /// Marks sync operation retry.
   Future<void> markSyncOperationRetry(
     String operationId, {
     required String lastError,
@@ -1332,6 +1396,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Deletes sync operation.
   Future<void> deleteSyncOperation(String operationId) async {
     final database = await _openDatabase();
     await database.delete(
@@ -1341,6 +1406,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Saves local preference.
   Future<void> saveLocalPreference({
     required String ownerPhoneNumber,
     required String key,
@@ -1357,6 +1423,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Loads local preference.
   Future<Object?> loadLocalPreference({
     required String ownerPhoneNumber,
     required String key,
@@ -1373,6 +1440,7 @@ class LocalSessionDatabase {
     return jsonDecode(rows.first['value_json'] as String? ?? 'null');
   }
 
+  /// Clears local preference if value.
   Future<bool> clearLocalPreferenceIfValue({
     required String ownerPhoneNumber,
     required String key,
@@ -1393,6 +1461,7 @@ class LocalSessionDatabase {
 
   // saveLocalPreferenceIfClean accepts cloud values only when no unsynced local edit would be
   // overwritten.
+  /// Saves local preference if clean.
   Future<bool> saveLocalPreferenceIfClean({
     required String ownerPhoneNumber,
     required String key,
@@ -1418,6 +1487,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Loads dirty local preferences.
   Future<Map<String, Object?>> loadDirtyLocalPreferences({
     required String ownerPhoneNumber,
   }) async {
@@ -1443,6 +1513,7 @@ class LocalSessionDatabase {
 
   // markLocalPreferenceSynced acknowledges the uploaded value only if the local value still
   // matches.
+  /// Marks local preference synced.
   Future<void> markLocalPreferenceSynced({
     required String ownerPhoneNumber,
     required String key,
@@ -1461,6 +1532,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Computes replace static hazard dataset.
   Future<void> replaceStaticHazardDataset({
     required List<LocalStaticHazard> hazards,
     required List<LocalTrailHazardMatch> matches,
@@ -1561,6 +1633,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Loads static hazard scan time.
   Future<DateTime?> loadStaticHazardScanTime(String trailId) async {
     final normalizedTrailId = trailId.trim();
     if (normalizedTrailId.isEmpty) return null;
@@ -1696,6 +1769,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Loads static hazards for trail.
   Future<List<LocalTrailHazardMatch>> loadStaticHazardsForTrail(
     String trailId,
   ) async {
@@ -1729,6 +1803,7 @@ class LocalSessionDatabase {
         .toList(growable: false);
   }
 
+  /// Loads static hazard dataset summary.
   Future<LocalHazardDatasetSummary> loadStaticHazardDatasetSummary() async {
     final database = await _openDatabase();
     final rows = await database.rawQuery('''
@@ -1782,6 +1857,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Clears static hazard dataset.
   Future<void> clearStaticHazardDataset() async {
     final database = await _openDatabase();
     await database.transaction((transaction) async {
@@ -1801,6 +1877,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Saves device notification.
   Future<void> saveDeviceNotification({
     required String ownerPhoneNumber,
     String messageId = '',
@@ -1814,18 +1891,54 @@ class LocalSessionDatabase {
     String source = 'fcm',
   }) async {
     final database = await _openDatabase();
+    await database.transaction(
+      (transaction) => _saveDeviceNotification(
+        transaction,
+        ownerPhoneNumber: ownerPhoneNumber,
+        messageId: messageId,
+        title: title,
+        body: body,
+        type: type,
+        deepLink: deepLink,
+        data: data,
+        receivedAt: receivedAt,
+        openedAt: openedAt,
+        source: source,
+      ),
+    );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
+  }
+
+  /// Saves device notification.
+  Future<void> _saveDeviceNotification(
+    DatabaseExecutor database, {
+    required String ownerPhoneNumber,
+    required String messageId,
+    required String title,
+    required String body,
+    required String type,
+    required String deepLink,
+    required Map<String, dynamic> data,
+    DateTime? receivedAt,
+    DateTime? openedAt,
+    required String source,
+  }) async {
     final now = DateTime.now().toUtc();
     final effectiveMessageId = messageId.trim();
-    final received = (receivedAt ?? now).toUtc().toIso8601String();
     final existingRows = effectiveMessageId.isEmpty
         ? const <Map<String, Object?>>[]
         : await database.query(
             'device_notifications',
-            columns: ['id'],
+            columns: ['id', 'received_at'],
             where: 'owner_phone_number = ? AND message_id = ?',
             whereArgs: [ownerPhoneNumber, effectiveMessageId],
             limit: 1,
           );
+    final received =
+        receivedAt?.toUtc().toIso8601String() ??
+        (existingRows.isEmpty
+            ? now.toIso8601String()
+            : existingRows.first['received_at']);
     final row = {
       'owner_phone_number': ownerPhoneNumber,
       'message_id': effectiveMessageId,
@@ -1864,21 +1977,82 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Loads device notifications.
   Future<List<DeviceNotificationRecord>> loadDeviceNotifications({
     required String ownerPhoneNumber,
     int limit = 500,
+    DateTime? asOf,
   }) async {
     final database = await _openDatabase();
     final rows = await database.query(
       'device_notifications',
-      where: 'owner_phone_number = ?',
-      whereArgs: [ownerPhoneNumber],
+      where: 'owner_phone_number = ? AND received_at <= ?',
+      whereArgs: [
+        ownerPhoneNumber,
+        (asOf ?? DateTime.now()).toUtc().toIso8601String(),
+      ],
       orderBy: 'is_starred DESC, received_at DESC',
       limit: limit,
     );
     return rows.map(DeviceNotificationRecord.fromRow).toList();
   }
 
+  /// Computes next device notification at.
+  Future<DateTime?> nextDeviceNotificationAt(
+    String ownerPhoneNumber, {
+    DateTime? asOf,
+  }) async {
+    final database = await _openDatabase();
+    final rows = await database.query(
+      'device_notifications',
+      columns: ['received_at'],
+      where: 'owner_phone_number = ? AND received_at > ?',
+      whereArgs: [
+        ownerPhoneNumber,
+        (asOf ?? DateTime.now()).toUtc().toIso8601String(),
+      ],
+      orderBy: 'received_at ASC',
+      limit: 1,
+    );
+    return rows.isEmpty
+        ? null
+        : DateTime.tryParse(rows.first['received_at'] as String);
+  }
+
+  /// Deletes scheduled device notification.
+  Future<void> deleteScheduledDeviceNotification({
+    required String ownerPhoneNumber,
+    required String messageId,
+  }) async {
+    final database = await _openDatabase();
+    await database.delete(
+      'device_notifications',
+      where: 'owner_phone_number = ? AND message_id = ? AND received_at > ?',
+      whereArgs: [
+        ownerPhoneNumber,
+        messageId,
+        DateTime.now().toUtc().toIso8601String(),
+      ],
+    );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
+  }
+
+  /// Marks device notification message opened.
+  Future<void> markDeviceNotificationMessageOpened({
+    required String ownerPhoneNumber,
+    required String messageId,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'device_notifications',
+      {'opened_at': DateTime.now().toUtc().toIso8601String()},
+      where: 'owner_phone_number = ? AND message_id = ?',
+      whereArgs: [ownerPhoneNumber, messageId],
+    );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
+  }
+
+  /// Marks device notification opened.
   Future<void> markDeviceNotificationOpened({
     required String ownerPhoneNumber,
     required int id,
@@ -1890,8 +2064,10 @@ class LocalSessionDatabase {
       where: 'owner_phone_number = ? AND id = ?',
       whereArgs: [ownerPhoneNumber, id],
     );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
   }
 
+  /// Marks all device notifications opened.
   Future<void> markAllDeviceNotificationsOpened({
     required String ownerPhoneNumber,
   }) async {
@@ -1899,11 +2075,29 @@ class LocalSessionDatabase {
     await database.update(
       'device_notifications',
       {'opened_at': DateTime.now().toUtc().toIso8601String()},
-      where: 'owner_phone_number = ? AND opened_at IS NULL',
-      whereArgs: [ownerPhoneNumber],
+      where:
+          'owner_phone_number = ? AND opened_at IS NULL AND received_at <= ?',
+      whereArgs: [ownerPhoneNumber, DateTime.now().toUtc().toIso8601String()],
     );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
   }
 
+  /// Marks device notification unread.
+  Future<void> markDeviceNotificationUnread({
+    required String ownerPhoneNumber,
+    required int id,
+  }) async {
+    final database = await _openDatabase();
+    await database.update(
+      'device_notifications',
+      {'opened_at': null},
+      where: 'owner_phone_number = ? AND id = ?',
+      whereArgs: [ownerPhoneNumber, id],
+    );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
+  }
+
+  /// Sets device notification starred.
   Future<void> setDeviceNotificationStarred({
     required String ownerPhoneNumber,
     required int id,
@@ -1916,8 +2110,10 @@ class LocalSessionDatabase {
       where: 'owner_phone_number = ? AND id = ?',
       whereArgs: [ownerPhoneNumber, id],
     );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
   }
 
+  /// Deletes device notification.
   Future<void> deleteDeviceNotification({
     required String ownerPhoneNumber,
     required int id,
@@ -1928,8 +2124,10 @@ class LocalSessionDatabase {
       where: 'owner_phone_number = ? AND id = ?',
       whereArgs: [ownerPhoneNumber, id],
     );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
   }
 
+  /// Clears device notifications.
   Future<void> clearDeviceNotifications({
     required String ownerPhoneNumber,
     bool includeStarred = true,
@@ -1938,12 +2136,14 @@ class LocalSessionDatabase {
     await database.delete(
       'device_notifications',
       where: includeStarred
-          ? 'owner_phone_number = ?'
-          : 'owner_phone_number = ? AND is_starred = 0',
-      whereArgs: [ownerPhoneNumber],
+          ? 'owner_phone_number = ? AND received_at <= ?'
+          : 'owner_phone_number = ? AND is_starred = 0 AND received_at <= ?',
+      whereArgs: [ownerPhoneNumber, DateTime.now().toUtc().toIso8601String()],
     );
+    _deviceNotificationChanges.add(ownerPhoneNumber);
   }
 
+  /// Saves nearby sos event.
   Future<void> saveNearbySosEvent(NearbySosEvent event) async {
     final owner = event.ownerPhoneNumber.trim();
     final eventKey = event.eventKey.trim();
@@ -2021,6 +2221,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Loads nearby sos events.
   Future<List<NearbySosEvent>> loadNearbySosEvents({
     required String ownerPhoneNumber,
     int limit = 200,
@@ -2102,6 +2303,7 @@ class LocalSessionDatabase {
 
   // _openDatabase shares one protected connection and applies incremental schema upgrades without
   // resetting queues.
+  /// Opens database.
   Future<Database> _openDatabase() async {
     final existingDatabase = _database;
     if (existingDatabase != null) {
@@ -2136,7 +2338,7 @@ class LocalSessionDatabase {
 
     final opening = SecureLocalDatabase.open(
       databasePath,
-      version: 32,
+      version: 33,
       onCreate: (database, version) async {
         await database.execute('''
           CREATE TABLE users (
@@ -2168,6 +2370,7 @@ class LocalSessionDatabase {
         await _createPlannedHikeStateTable(database);
         await _createUpcomingHikeRemindersTable(database);
         await _createAchievementProgressCacheTable(database);
+        await _createAchievementEventTables(database);
         await _createOfflineFirstTables(database);
         await _createStaticHazardTables(database);
         await _createButtonDebugTables(database);
@@ -2476,6 +2679,10 @@ class LocalSessionDatabase {
           await database.execute('DROP TABLE IF EXISTS offline_map_regions');
           await database.execute('DROP TABLE IF EXISTS network_observations');
         }
+        if (oldVersion < 33) {
+          await _createAchievementProgressCacheTable(database);
+          await _createAchievementEventTables(database);
+        }
         if (oldVersion < 32) {
           for (final column in const {
             'preparation_hash': "TEXT NOT NULL DEFAULT ''",
@@ -2530,6 +2737,7 @@ class LocalSessionDatabase {
     }
   }
 
+  /// Closes.
   @visibleForTesting
   Future<void> close() async {
     final database = _database;
@@ -2543,6 +2751,7 @@ class LocalSessionDatabase {
 
   // insertFootprint saves a timestamp-identified sample locally before upload; replay preserves
   // the first stored sample.
+  /// Computes insert footprint.
   Future<int> insertFootprint({
     String ownerPhoneNumber = '',
     required String sessionId,
@@ -2587,6 +2796,7 @@ class LocalSessionDatabase {
   }
 
   // insertQueuedAlert makes an SOS dispatch retry durable before cloud or messaging work begins.
+  /// Computes insert queued alert.
   Future<int> insertQueuedAlert({
     required String ownerPhoneNumber,
     required String sessionId,
@@ -2620,6 +2830,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Loads queued alerts.
   Future<List<LocalQueuedAlert>> loadQueuedAlerts({
     required String ownerPhoneNumber,
     int? limit = 20,
@@ -2639,6 +2850,7 @@ class LocalSessionDatabase {
     return rows.map(LocalQueuedAlert.fromRow).toList();
   }
 
+  /// Computes count queued alerts.
   Future<int> countQueuedAlerts({required String ownerPhoneNumber}) async {
     final database = await _openDatabase();
     final owner = ownerPhoneNumber.trim();
@@ -2657,6 +2869,7 @@ class LocalSessionDatabase {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  /// Marks queued alert sent.
   Future<void> markQueuedAlertSent(int id) async {
     final database = await _openDatabase();
     await database.update(
@@ -2671,6 +2884,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Updates queued alert payload.
   Future<void> updateQueuedAlertPayload({
     required int id,
     required String payloadJson,
@@ -2690,6 +2904,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Updates queued alert retry.
   Future<void> updateQueuedAlertRetry({
     required int id,
     required String payloadJson,
@@ -2709,6 +2924,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Computes count unsent footprints.
   Future<int> countUnsentFootprints(
     String sessionId, {
     String? ownerPhoneNumber,
@@ -2729,6 +2945,7 @@ class LocalSessionDatabase {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  /// Loads unsent footprints.
   Future<List<LocalFootprint>> loadUnsentFootprints({
     required String sessionId,
     String? ownerPhoneNumber,
@@ -2762,6 +2979,7 @@ class LocalSessionDatabase {
         .toList();
   }
 
+  /// Loads footprints.
   Future<List<LocalFootprint>> loadFootprints({
     required String sessionId,
     required String ownerPhoneNumber,
@@ -2781,6 +2999,7 @@ class LocalSessionDatabase {
 
   // markFootprintsSynced accepts only the sample IDs that its caller has confirmed in the server
   // acknowledgement.
+  /// Marks footprints synced.
   Future<void> markFootprintsSynced(Iterable<int> pointIds) async {
     final ids = pointIds.where((id) => id > 0).toSet();
     if (ids.isEmpty) {
@@ -2799,6 +3018,7 @@ class LocalSessionDatabase {
     await batch.commit(noResult: true);
   }
 
+  /// Deletes synced footprints.
   Future<int> deleteSyncedFootprints({
     String? sessionId,
     DateTime? recordedBefore,
@@ -2837,6 +3057,7 @@ class LocalSessionDatabase {
     });
   }
 
+  /// Deletes completed hike telemetry.
   Future<void> _deleteCompletedHikeTelemetry(
     DatabaseExecutor database, {
     required String sessionId,
@@ -2858,6 +3079,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Creates safety tables.
   Future<void> _createSafetyTables(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS footprints (
@@ -2902,6 +3124,7 @@ class LocalSessionDatabase {
     await _createSafetyIndexes(database);
   }
 
+  /// Creates safety indexes.
   Future<void> _createSafetyIndexes(Database database) async {
     await database.execute('''
       CREATE INDEX IF NOT EXISTS idx_footprints_session_sync_time
@@ -2913,6 +3136,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates device binding tables.
   Future<void> _createDeviceBindingTables(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS app_device (
@@ -2923,6 +3147,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates emergency contacts table.
   Future<void> _createEmergencyContactsTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS emergency_contacts (
@@ -2938,6 +3163,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates pending messages table.
   Future<void> _createPendingMessagesTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS pending_messages (
@@ -2958,6 +3184,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates active hike session table.
   Future<void> _createActiveHikeSessionTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS active_hike_session (
@@ -2969,6 +3196,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates pending hike ends table.
   Future<void> _createPendingHikeEndsTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS pending_hike_ends (
@@ -2990,6 +3218,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates planned hike state table.
   Future<void> _createPlannedHikeStateTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS planned_hike_state (
@@ -3015,6 +3244,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates achievement progress cache table.
   Future<void> _createAchievementProgressCacheTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS achievement_progress_cache (
@@ -3026,6 +3256,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates offline first tables.
   Future<void> _createOfflineFirstTables(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS cached_entities (
@@ -3088,6 +3319,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates static hazard tables.
   Future<void> _createStaticHazardTables(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS hazard_features (
@@ -3155,6 +3387,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates chat read receipts table.
   Future<void> _createChatReadReceiptsTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS chat_read_receipts (
@@ -3171,6 +3404,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates device notifications table.
   Future<void> _createDeviceNotificationsTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS device_notifications (
@@ -3194,6 +3428,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Creates nearby sos events table.
   Future<void> _createNearbySosEventsTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS nearby_sos_events (
@@ -3221,6 +3456,7 @@ class LocalSessionDatabase {
     ''');
   }
 
+  /// Saves chat read receipt.
   Future<void> saveChatReadReceipt(
     String chatId,
     DateTime lastReadAt, {
@@ -3236,6 +3472,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Loads chat read receipt.
   Future<DateTime?> loadChatReadReceipt(
     String chatId, {
     String ownerPhoneNumber = '',
@@ -3251,6 +3488,7 @@ class LocalSessionDatabase {
     return DateTime.tryParse(rows.first['last_read_at'] as String? ?? '');
   }
 
+  /// Loads all chat read receipts.
   Future<Map<String, DateTime>> loadAllChatReadReceipts({
     String ownerPhoneNumber = '',
   }) async {
@@ -3270,6 +3508,7 @@ class LocalSessionDatabase {
     return result;
   }
 
+  /// Loads unsynced read receipt chat ids.
   Future<List<String>> loadUnsyncedReadReceiptChatIds({
     String ownerPhoneNumber = '',
   }) async {
@@ -3283,6 +3522,7 @@ class LocalSessionDatabase {
     return rows.map((r) => r['chat_id'] as String).toList();
   }
 
+  /// Marks chat read receipt synced.
   Future<void> markChatReadReceiptSynced(
     String chatId, {
     String ownerPhoneNumber = '',
@@ -3298,6 +3538,7 @@ class LocalSessionDatabase {
 
   // insertPendingMessage retains a local message identity so reconnect retries can reuse the same
   // cloud document.
+  /// Computes insert pending message.
   Future<void> insertPendingMessage({
     required String localId,
     required String chatId,
@@ -3325,6 +3566,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Computes upsert chat messages.
   Future<void> upsertChatMessages(List<Map<String, dynamic>> rows) async {
     final database = await _openDatabase();
     final batch = database.batch();
@@ -3338,6 +3580,7 @@ class LocalSessionDatabase {
     await batch.commit(noResult: true);
   }
 
+  /// Loads pending messages.
   Future<List<Map<String, dynamic>>> loadPendingMessages({
     String? ownerPhoneNumber,
   }) async {
@@ -3355,6 +3598,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Loads all local messages for chat.
   Future<List<Map<String, dynamic>>> loadAllLocalMessagesForChat(
     String chatId, {
     String? ownerPhoneNumber,
@@ -3371,6 +3615,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Updates local message status.
   Future<void> updateLocalMessageStatus(
     String localId,
     String status, {
@@ -3394,6 +3639,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Loads pending messages for chat.
   Future<List<Map<String, dynamic>>> loadPendingMessagesForChat(
     String chatId, {
     String? ownerPhoneNumber,
@@ -3412,6 +3658,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Computes increment pending message retry.
   Future<void> incrementPendingMessageRetry(String localId) async {
     final database = await _openDatabase();
     await database.rawUpdate(
@@ -3423,6 +3670,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Creates route cache table.
   Future<void> _createRouteCacheTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS route_cache (
@@ -3440,6 +3688,7 @@ class LocalSessionDatabase {
   }
 
   // saveRouteCache keeps the provider route under its trail/checkpoint identity for offline reuse.
+  /// Saves route cache.
   Future<void> saveRouteCache({
     required String trailId,
     required String checkpointsHash,
@@ -3462,6 +3711,7 @@ class LocalSessionDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Loads route cache.
   Future<Map<String, dynamic>?> loadRouteCache({
     required String trailId,
     required String checkpointsHash,
@@ -3481,6 +3731,7 @@ class LocalSessionDatabase {
 
   // dumpAllTables exposes application tables for diagnostics, excluding SQLite and Android engine
   // metadata.
+  /// Computes dump all tables.
   Future<Map<String, List<Map<String, dynamic>>>> dumpAllTables() async {
     final database = await _openDatabase();
     final tableRows = await database.rawQuery('''
@@ -3502,6 +3753,7 @@ class LocalSessionDatabase {
     return result;
   }
 
+  /// Adds column if missing.
   Future<void> _addColumnIfMissing(
     Database database, {
     required String tableName,
@@ -3518,6 +3770,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Computes configure database factory.
   void _configureDatabaseFactory() {
     if (kIsWeb || _isDesktopFactoryConfigured) {
       return;
@@ -3548,6 +3801,7 @@ class LocalSessionDatabase {
     }
   }
 
+  /// Computes session to row.
   Map<String, Object?> _sessionToRow(AppSession session) {
     return {
       'phone_number': session.phoneNumber,
@@ -3565,6 +3819,7 @@ class LocalSessionDatabase {
     };
   }
 
+  /// Computes session from row.
   AppSession _sessionFromRow(Map<String, Object?> row) {
     final signedInAt =
         DateTime.tryParse(row['signed_in_at'] as String? ?? '') ??
@@ -3588,6 +3843,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Computes emergency contact from row.
   EmergencyContact _emergencyContactFromRow(Map<String, Object?> row) {
     return EmergencyContact(
       name: row['name'] as String? ?? '',
@@ -3596,6 +3852,7 @@ class LocalSessionDatabase {
     );
   }
 
+  /// Computes new app instance id.
   String _newAppInstanceId() {
     final random = math.Random.secure();
     final parts = List.generate(
@@ -3606,7 +3863,9 @@ class LocalSessionDatabase {
   }
 }
 
+/// Represents local planned hike state.
 class LocalPlannedHikeState {
+  /// Creates local planned hike state.
   const LocalPlannedHikeState({
     required this.ownerPhoneNumber,
     required this.upcomingHike,
@@ -3621,6 +3880,7 @@ class LocalPlannedHikeState {
     this.reminderSyncPending = false,
   });
 
+  /// Creates local planned hike state using from row.
   factory LocalPlannedHikeState.fromRow(Map<String, Object?> row) {
     final hikeId = row['upcoming_hike_id'] as String? ?? '';
     final payload = _decodeJsonMap(row['upcoming_payload_json'] as String?);
@@ -3671,7 +3931,9 @@ class LocalPlannedHikeState {
   final DateTime updatedAt;
 }
 
+/// Represents local pending hike end.
 class LocalPendingHikeEnd {
+  /// Creates local pending hike end.
   const LocalPendingHikeEnd({
     required this.ownerPhoneNumber,
     required this.sessionId,
@@ -3684,6 +3946,7 @@ class LocalPendingHikeEnd {
     required this.lastError,
   });
 
+  /// Creates local pending hike end using from row.
   factory LocalPendingHikeEnd.fromRow(Map<String, Object?> row) {
     return LocalPendingHikeEnd(
       ownerPhoneNumber: row['owner_phone_number'] as String? ?? '',
@@ -3719,6 +3982,7 @@ class LocalPendingHikeEnd {
   final int retryCount;
   final String lastError;
 
+  /// Returns active hike.
   ActiveHikeSession? get activeHike {
     if (activeHikePayload.isEmpty) return null;
     try {
@@ -3729,7 +3993,9 @@ class LocalPendingHikeEnd {
   }
 }
 
+/// Represents local footprint.
 class LocalFootprint {
+  /// Creates local footprint.
   const LocalFootprint({
     required this.id,
     required this.ownerPhoneNumber,
@@ -3745,6 +4011,7 @@ class LocalFootprint {
     required this.isSynced,
   });
 
+  /// Creates local footprint using from row.
   factory LocalFootprint.fromRow(Map<String, Object?> row) {
     final latitude = row['latitude'];
     final longitude = row['longitude'];
@@ -3788,10 +4055,13 @@ class LocalFootprint {
   final DateTime? fixCapturedAt;
   final bool isSynced;
 
+  /// Returns has valid coordinate.
   bool get hasValidCoordinate => _isValidCoordinate(latitude, longitude);
 }
 
+/// Represents device notification record.
 class DeviceNotificationRecord {
+  /// Creates device notification record.
   const DeviceNotificationRecord({
     required this.id,
     required this.messageId,
@@ -3806,6 +4076,7 @@ class DeviceNotificationRecord {
     required this.isStarred,
   });
 
+  /// Creates device notification record using from row.
   factory DeviceNotificationRecord.fromRow(Map<String, Object?> row) {
     final rawData = row['data_json'] as String? ?? '{}';
     Map<String, dynamic> data;
@@ -3844,10 +4115,13 @@ class DeviceNotificationRecord {
   final String source;
   final bool isStarred;
 
+  /// Returns is opened.
   bool get isOpened => openedAt != null;
 }
 
+/// Represents local queued alert.
 class LocalQueuedAlert {
+  /// Creates local queued alert.
   const LocalQueuedAlert({
     required this.id,
     required this.ownerPhoneNumber,
@@ -3863,6 +4137,7 @@ class LocalQueuedAlert {
     required this.lastError,
   });
 
+  /// Creates local queued alert using from row.
   factory LocalQueuedAlert.fromRow(Map<String, Object?> row) {
     return LocalQueuedAlert(
       id: row['id'] is int ? row['id'] as int : 0,
@@ -3902,6 +4177,7 @@ class LocalQueuedAlert {
   final String lastError;
 }
 
+/// Checks whether valid coordinate.
 bool _isValidCoordinate(double latitude, double longitude) {
   return latitude.isFinite &&
       longitude.isFinite &&
@@ -3911,6 +4187,7 @@ bool _isValidCoordinate(double latitude, double longitude) {
       longitude <= 180;
 }
 
+/// Computes decode json map.
 Map<String, dynamic> _decodeJsonMap(String? value) {
   if (value == null || value.isEmpty) return const {};
   try {
@@ -3921,12 +4198,14 @@ Map<String, dynamic> _decodeJsonMap(String? value) {
   }
 }
 
+/// Computes decode nullable json map.
 Map<String, dynamic>? _decodeNullableJsonMap(String? value) {
   if (value == null || value.isEmpty) return null;
   final decoded = _decodeJsonMap(value);
   return decoded.isEmpty ? null : decoded;
 }
 
+/// Computes decode json string list.
 List<String> _decodeJsonStringList(String? value) {
   if (value == null || value.isEmpty) return const [];
   try {
@@ -3939,6 +4218,7 @@ List<String> _decodeJsonStringList(String? value) {
   }
 }
 
+/// Computes planned hike schedule key.
 String _plannedHikeScheduleKey(UpcomingHike hike) {
   final phone = hike.creatorPhone.replaceAll(RegExp(r'[^0-9]'), '');
   return jsonEncode([

@@ -20,7 +20,9 @@ const cautionMediaTypes = {
   'm4v': 'video/x-m4v',
 };
 
+/// Represents pending caution media.
 class PendingCautionMedia {
+  /// Creates pending caution media.
   PendingCautionMedia({
     required this.file,
     required this.sizeBytes,
@@ -33,9 +35,12 @@ class PendingCautionMedia {
   final String contentType;
   final String key;
   String? storagePath;
+
+  /// Returns is video.
   bool get isVideo => contentType.startsWith('video/');
 }
 
+/// Represents trail caution service.
 class TrailCautionService {
   /// Upload selected evidence and return the metadata consumed by the caution backend.
   Future<List<Map<String, dynamic>>> upload(
@@ -94,6 +99,7 @@ class TrailCautionService {
     return result;
   }
 
+  /// Updates.
   Future<bool> update(
     String hazardId,
     String action, {

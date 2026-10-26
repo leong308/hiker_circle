@@ -1,5 +1,7 @@
 // MfaContinuation, MfaStatus and TotpEnrollment carry pending multi-factor authentication state.
+/// Represents mfa continuation.
 class MfaContinuation {
+  /// Creates mfa continuation.
   const MfaContinuation({
     required this.token,
     required this.phoneNumber,
@@ -17,7 +19,9 @@ class MfaContinuation {
   final DateTime expiresAt;
 }
 
+/// Represents mfa factor.
 class MfaFactor {
+  /// Creates mfa factor.
   const MfaFactor({
     required this.id,
     required this.type,
@@ -31,7 +35,9 @@ class MfaFactor {
   final String? createdAtLocal;
 }
 
+/// Represents mfa status.
 class MfaStatus {
+  /// Creates mfa status.
   const MfaStatus({
     required this.required,
     required this.factorCount,
@@ -47,7 +53,9 @@ class MfaStatus {
   final bool canRemove;
 }
 
+/// Represents totp enrollment.
 class TotpEnrollment {
+  /// Creates totp enrollment.
   const TotpEnrollment({
     required this.challengeId,
     required this.secret,

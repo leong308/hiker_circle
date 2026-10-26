@@ -12,6 +12,7 @@ import '../Model/button_debug_entry.dart';
 
 /// Keep captured BLE events and saved debug sessions observable by the admin UI.
 class ButtonDebugController extends ChangeNotifier {
+  /// Creates button debug controller.
   ButtonDebugController({
     required this.owner,
     required this.database,
@@ -35,10 +36,12 @@ class ButtonDebugController extends ChangeNotifier {
   int entryCount = 0;
   String? error;
 
+  /// Notifies.
   void _notify() {
     if (!_disposed) notifyListeners();
   }
 
+  /// Computes initialize.
   Future<void> initialize() async {
     // An OS kill cannot run dispose. Preserve and conclude its committed rows.
     for (final session in await database.loadButtonDebugSessions(owner)) {
@@ -52,11 +55,13 @@ class ButtonDebugController extends ChangeNotifier {
     await refreshHistory();
   }
 
+  /// Refreshes history.
   Future<void> refreshHistory() async {
     sessions = await database.loadButtonDebugSessions(owner);
     _notify();
   }
 
+  /// Starts.
   Future<void> start() {
     if (busy || recording || _disposed) return Future.value();
     _stopRequested = false;
@@ -67,6 +72,7 @@ class ButtonDebugController extends ChangeNotifier {
     return _starting = _begin();
   }
 
+  /// Begins.
   Future<void> _begin() async {
     try {
       final now = DateTime.now().toUtc();
@@ -94,6 +100,7 @@ class ButtonDebugController extends ChangeNotifier {
     }
   }
 
+  /// Records.
   void _record(Map<Object?, Object?> raw) {
     if (!_accepting || _id == null) return;
     final entry = ButtonDebugEntry.fromEvent(raw);
@@ -110,6 +117,7 @@ class ButtonDebugController extends ChangeNotifier {
     _notify();
   }
 
+  /// Records action.
   void recordAction(String operation, String message, {String status = ''}) =>
       _record({
         'direction': 'LOCAL',
@@ -118,6 +126,7 @@ class ButtonDebugController extends ChangeNotifier {
         'status': status,
       });
 
+  /// Stops.
   Future<void> stop([String reason = 'manual_stop']) {
     // Close the gate synchronously, including while start is awaiting native ACK.
     _stopRequested = true;
@@ -126,6 +135,7 @@ class ButtonDebugController extends ChangeNotifier {
     return _stopping ??= _finish(reason);
   }
 
+  /// Finishes.
   Future<void> _finish(String reason) async {
     final stoppedAt = DateTime.now().toUtc();
     busy = true;
@@ -167,6 +177,7 @@ class ButtonDebugController extends ChangeNotifier {
     }
   }
 
+  /// Computes conclude.
   Future<void> _conclude(
     Map<String, Object?> session,
     String reason, [
@@ -214,6 +225,7 @@ class ButtonDebugController extends ChangeNotifier {
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _disposed = true;

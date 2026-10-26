@@ -6,7 +6,9 @@ import '../../authentication/Data/phone_number_formatter.dart';
 import '../Data/emergency_contacts_repository.dart';
 import '../Model/sos_models.dart';
 
+/// Coordinates emergency contacts view model state and actions.
 class EmergencyContactsViewModel extends ChangeNotifier {
+  /// Creates emergency contacts view model.
   EmergencyContactsViewModel({
     required AppSession session,
     List<EmergencyContact> initialContacts = const [],
@@ -25,12 +27,22 @@ class EmergencyContactsViewModel extends ChangeNotifier {
   String? _saveErrorMessage;
   bool _isDisposed = false;
 
+  /// Returns contacts.
   List<EmergencyContact> get contacts => List.unmodifiable(_contacts);
+
+  /// Returns remaining slots.
   int get remainingSlots => maxContacts - _contacts.length;
+
+  /// Returns can add contact.
   bool get canAddContact => _contacts.length < maxContacts;
+
+  /// Returns is saving.
   bool get isSaving => _isSaving;
+
+  /// Returns save error message.
   String? get saveErrorMessage => _saveErrorMessage;
 
+  /// Adds contact.
   Future<bool> addContact({
     required String name,
     required String phoneNumber,
@@ -69,6 +81,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     return true;
   }
 
+  /// Updates contact.
   Future<void> updateContact(
     int index, {
     required String name,
@@ -106,6 +119,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     await _saveContacts();
   }
 
+  /// Deletes contact.
   Future<void> deleteContact(int index) async {
     if (index < 0 || index >= _contacts.length || _isSaving) {
       return;
@@ -138,6 +152,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     }
   }
 
+  /// Computes normalized phone number.
   String? _normalizedPhoneNumber(String phoneNumber) {
     if (!PhoneNumberFormatter.isValid(phoneNumber)) {
       _saveErrorMessage =
@@ -158,6 +173,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     return normalized;
   }
 
+  /// Notifies listeners.
   @override
   void notifyListeners() {
     if (!_isDisposed) {
@@ -165,6 +181,7 @@ class EmergencyContactsViewModel extends ChangeNotifier {
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _isDisposed = true;

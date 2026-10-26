@@ -5,18 +5,24 @@ import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 
+/// Defines the network reachability state choices.
 enum NetworkReachabilityState { checking, online, offline }
 
+/// Represents network reachability snapshot.
 class NetworkReachabilitySnapshot {
+  /// Creates network reachability snapshot.
   const NetworkReachabilitySnapshot({required this.state, this.message});
 
   final NetworkReachabilityState state;
   final String? message;
 
+  /// Returns is online.
   bool get isOnline => state == NetworkReachabilityState.online;
 }
 
+/// Represents network reachability service.
 class NetworkReachabilityService {
+  /// Creates network reachability service using .
   NetworkReachabilityService._();
 
   static final NetworkReachabilityService instance =
@@ -39,15 +45,19 @@ class NetworkReachabilityService {
   );
   Future<NetworkReachabilitySnapshot>? _refreshFuture;
 
+  /// Returns snapshots.
   Stream<NetworkReachabilitySnapshot> get snapshots => _controller.stream;
 
   /// An interface became available. Time-sensitive work can try its own server
   /// request immediately while the shared DNS probe runs separately.
   Stream<void> get connectionAvailable => _connectionAvailable.stream;
+
+  /// Returns latest.
   NetworkReachabilitySnapshot get latest => _latest;
 
   // NetworkReachabilityService.start reference-counts listeners so shared screens reuse one
   // connectivity monitor.
+  /// Starts.
   Future<void> start() async {
     _startCount += 1;
     _connectivitySubscription ??= _connectivity.onConnectivityChanged.listen(
@@ -72,6 +82,7 @@ class NetworkReachabilityService {
     await refresh();
   }
 
+  /// Stops.
   Future<void> stop() async {
     if (_startCount > 0) {
       _startCount -= 1;
@@ -87,10 +98,12 @@ class NetworkReachabilityService {
   }
 
   // refresh coalesces concurrent probes instead of starting a request for every listening widget.
+  /// Refreshes.
   Future<NetworkReachabilitySnapshot> refresh() {
     return _refreshFuture ??= _refreshNow();
   }
 
+  /// Refreshes now.
   Future<NetworkReachabilitySnapshot> _refreshNow() async {
     try {
       final connectivity = await _connectivity.checkConnectivity();
@@ -141,6 +154,7 @@ class NetworkReachabilityService {
     }
   }
 
+  /// Computes emit.
   NetworkReachabilitySnapshot _emit(NetworkReachabilitySnapshot snapshot) {
     _latest = snapshot;
     if (!_controller.isClosed) {

@@ -16,7 +16,9 @@ import '../Model/live_location_models.dart';
 import '../Model/live_location_message.dart';
 import 'live_location_repository.dart';
 
+/// Represents live location sharing service.
 class LiveLocationSharingService extends ChangeNotifier {
+  /// Creates live location sharing service.
   LiveLocationSharingService({
     LiveLocationRepository Function(FirebaseBootstrapResult)? repositoryFactory,
     LocationUpdateIntervalController? intervalController,
@@ -65,21 +67,50 @@ class LiveLocationSharingService extends ChangeNotifier {
   LiveLocationContactNotificationResult? _contactNotificationResult;
   String? _contactNotificationError;
 
+  /// Returns share.
   LiveLocationShare? get share => _share;
+
+  /// Returns is active.
   bool get isActive => _isActive;
+
+  /// Returns is busy.
   bool get isBusy => _isBusy || _isPreferenceBusy;
+
+  /// Returns is preference busy.
   bool get isPreferenceBusy => _isPreferenceBusy;
+
+  /// Returns is sharing.
   bool get isSharing => _isSharing;
+
+  /// Returns auto share on hike start.
   bool get autoShareOnHikeStart => _autoShareOnHikeStart;
+
+  /// Returns error message.
   String? get errorMessage => _errorMessage;
+
+  /// Returns update interval.
   Duration get updateInterval => _intervalController.interval;
+
+  /// Returns has active hike.
   bool get hasActiveHike => _intervalController.hasActiveHike;
+
+  /// Returns latest hike location.
   SosTriggerLocation? get latestHikeLocation => _latestHikeLocation;
+
+  /// Returns manual start revision.
   int get manualStartRevision => _manualStartRevision;
+
+  /// Returns is notifying contacts.
   bool get isNotifyingContacts => _isNotifyingContacts;
+
+  /// Returns contact notification result.
   LiveLocationContactNotificationResult? get contactNotificationResult =>
       _contactNotificationResult;
+
+  /// Returns contact notification error.
   String? get contactNotificationError => _contactNotificationError;
+
+  /// Returns can retry contact notifications.
   bool get canRetryContactNotifications =>
       _isActive &&
       !hasActiveHike &&
@@ -88,6 +119,7 @@ class LiveLocationSharingService extends ChangeNotifier {
       (_contactNotificationError != null ||
           _contactNotificationResult?.shouldRetry == true);
 
+  /// Returns contact notification status.
   String? get contactNotificationStatus {
     if (_isNotifyingContacts) {
       return 'Sending live location to your saved SOS contacts…';
@@ -115,6 +147,7 @@ class LiveLocationSharingService extends ChangeNotifier {
   /// across account/configuration resets so listeners can persist hike opt-outs.
   int get manualStopRevision => _manualStopRevision;
 
+  /// Returns debug snapshot.
   Map<String, Object?> get debugSnapshot => {
     'storageType': 'In-memory live-location sharing session',
     'persistence': 'Process lifetime; cloud share is stored separately',
@@ -146,6 +179,7 @@ class LiveLocationSharingService extends ChangeNotifier {
           },
   };
 
+  /// Loads existing.
   Future<void> loadExisting({
     required String phoneNumber,
     required FirebaseBootstrapResult firebaseBootstrapResult,
@@ -173,6 +207,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     await operation;
   }
 
+  /// Loads existing for current configuration.
   Future<void> _loadExistingForCurrentConfiguration({
     required String phoneNumber,
   }) async {
@@ -232,6 +267,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Sets auto share on hike start.
   Future<void> setAutoShareOnHikeStart({
     required String phoneNumber,
     required FirebaseBootstrapResult firebaseBootstrapResult,
@@ -272,6 +308,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Computes activate.
   Future<void> activate({
     required String phoneNumber,
     required FirebaseBootstrapResult firebaseBootstrapResult,
@@ -394,12 +431,14 @@ class LiveLocationSharingService extends ChangeNotifier {
     return operation;
   }
 
+  /// Notifies standalone contacts.
   Future<void> _notifyStandaloneContacts(
     LiveLocationRepository repository,
     String phoneNumber,
     String shareId,
     int generation,
   ) async {
+    /// Checks whether current.
     bool isCurrent() =>
         _isCurrentConfiguration(generation, repository, phoneNumber) &&
         _isActive &&
@@ -424,6 +463,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Clears contact notifications.
   void _clearContactNotifications() {
     _contactNotificationFuture = null;
     _notificationEligibleShareId = null;
@@ -479,6 +519,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Retries pending stop.
   Future<void> retryPendingStop() async {
     final repository = _repository;
     final phoneNumber = _phoneNumber;
@@ -490,6 +531,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Computes publish latest.
   Future<void> publishLatest() {
     // Footprint uploads already update the public share from the same sample.
     // This must precede any GPS, database or network work while hiking.
@@ -573,6 +615,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Computes share live location.
   Future<void> shareLiveLocation({
     required String phoneNumber,
     required FirebaseBootstrapResult firebaseBootstrapResult,
@@ -624,6 +667,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Resets.
   void reset() {
     final repository = _repository;
     final phoneNumber = _phoneNumber;
@@ -660,6 +704,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
   }
 
+  /// Computes configure.
   void _configure({
     required String phoneNumber,
     required FirebaseBootstrapResult firebaseBootstrapResult,
@@ -713,6 +758,7 @@ class LiveLocationSharingService extends ChangeNotifier {
         phoneNumber == _phoneNumber;
   }
 
+  /// Computes deactivate best effort.
   void _deactivateBestEffort({
     required LiveLocationRepository repository,
     required String phoneNumber,
@@ -727,9 +773,11 @@ class LiveLocationSharingService extends ChangeNotifier {
     }());
   }
 
+  /// Loads update interval.
   Future<void> _loadUpdateInterval(String phoneNumber) =>
       _intervalController.loadForUser(phoneNumber);
 
+  /// Sets update interval.
   Future<bool> setUpdateInterval(Duration interval) async {
     final phoneNumber = _phoneNumber;
     final repository = _repository;
@@ -791,6 +839,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Updates interval changed.
   void _updateIntervalChanged() {
     if (hasActiveHike) _clearContactNotifications();
     if (!hasActiveHike) _latestHikeLocation = null;
@@ -811,6 +860,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Starts publish timer.
   void _startPublishTimer() {
     _publishTimer?.cancel();
     _publishTimer = null;
@@ -820,6 +870,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     });
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _configurationGeneration += 1;

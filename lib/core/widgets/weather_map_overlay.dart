@@ -12,6 +12,7 @@ import '../services/weather_area_service.dart';
 /// Controls a geographic raster layer. Flutter only draws the controls/legend;
 /// Mapbox projects a preloaded 50 km weather image as the camera moves.
 class WeatherMapOverlay extends StatefulWidget {
+  /// Creates weather map overlay.
   const WeatherMapOverlay({
     super.key,
     required this.map,
@@ -22,10 +23,12 @@ class WeatherMapOverlay extends StatefulWidget {
   final double longitude;
   final mapbox.MapboxMap? map;
 
+  /// Creates the presentation state for this widget.
   @override
   State<WeatherMapOverlay> createState() => WeatherMapOverlayState();
 }
 
+/// Manages the weather map overlay presentation and lifecycle.
 class WeatherMapOverlayState extends State<WeatherMapOverlay> {
   static const sourceId = 'trail-weather-source';
   static const layerId = 'trail-weather-layer';
@@ -37,6 +40,7 @@ class WeatherMapOverlayState extends State<WeatherMapOverlay> {
   Future<void> _pending = Future.value();
   int _revision = 0;
 
+  /// Updates bindings when the parent changes this widget.
   @override
   void didUpdateWidget(covariant WeatherMapOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -47,6 +51,7 @@ class WeatherMapOverlayState extends State<WeatherMapOverlay> {
     }
   }
 
+  /// Computes report map error.
   void reportMapError(String? source) {
     if (source != sourceId || _layer == WeatherMapLayer.off || !mounted) return;
     setState(() {
@@ -56,6 +61,7 @@ class WeatherMapOverlayState extends State<WeatherMapOverlay> {
     _apply();
   }
 
+  /// Selects.
   void _select(WeatherMapLayer value) {
     if (value != WeatherMapLayer.off && WeatherMapService.apiKey.isEmpty) {
       setState(() => _error = 'Weather maps are not available yet.');
@@ -68,6 +74,7 @@ class WeatherMapOverlayState extends State<WeatherMapOverlay> {
     _apply();
   }
 
+  /// Applies.
   void _apply({bool refresh = false}) {
     final revision = ++_revision;
     final map = widget.map;
@@ -143,6 +150,7 @@ class WeatherMapOverlayState extends State<WeatherMapOverlay> {
     });
   }
 
+  /// Sets opacity.
   void _setOpacity(double value) {
     setState(() => _opacity = value);
     final map = widget.map;
@@ -163,6 +171,7 @@ class WeatherMapOverlayState extends State<WeatherMapOverlay> {
     });
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final active = _layer != WeatherMapLayer.off;
@@ -309,10 +318,13 @@ class WeatherMapOverlayState extends State<WeatherMapOverlay> {
   }
 }
 
+/// Displays the weather legend.
 class _WeatherLegend extends StatelessWidget {
+  /// Creates weather legend.
   const _WeatherLegend({required this.layer});
   final WeatherMapLayer layer;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     // Provider's published default palette; see docs/WEATHER_MAPS.md.

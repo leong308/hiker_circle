@@ -9,7 +9,9 @@ import '../Data/phone_number_formatter.dart';
 import '../Model/auth_status.dart';
 import '../Model/mfa_models.dart';
 
+/// Coordinates auth view model state and actions.
 class AuthViewModel extends ChangeNotifier {
+  /// Creates auth view model.
   AuthViewModel({
     FirebaseFunctions? firebaseFunctions,
     MultiFactorAuthService? multiFactorAuthService,
@@ -30,19 +32,37 @@ class AuthViewModel extends ChangeNotifier {
   String? _error;
   bool _isDisposed = false;
 
+  /// Returns auth mode.
   AuthMode get authMode => _authMode;
+
+  /// Returns status.
   AuthStatus get status => _status;
+
+  /// Returns message.
   String? get message => _message;
+
+  /// Returns error.
   String? get error => _error;
+
+  /// Returns is sending code.
   bool get isSendingCode => _status == AuthStatus.sendingCode;
+
+  /// Returns is verifying code.
   bool get isVerifyingCode => _status == AuthStatus.verifyingCode;
+
+  /// Returns has code been sent.
   bool get hasCodeBeenSent => _greenApiChallengeId != null;
+
+  /// Returns is busy.
   bool get isBusy =>
       _status == AuthStatus.sendingCode ||
       _status == AuthStatus.verifyingCode ||
       _status == AuthStatus.loggingIn;
+
+  /// Returns is logging in.
   bool get isLoggingIn => _status == AuthStatus.loggingIn;
 
+  /// Sets auth mode.
   void setAuthMode(AuthMode mode) {
     _authMode = mode;
     _status = AuthStatus.enteringPhone;
@@ -52,6 +72,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Validates phone.
   String? validatePhone(String? value) {
     if (!PhoneNumberFormatter.isValid(value ?? '')) {
       return 'Use a valid phone number, for example 012 345 6789.';
@@ -119,6 +140,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Computes resend code.
   Future<bool> resendCode(
     String phoneNumber, {
     String? password,
@@ -212,13 +234,25 @@ class AuthViewModel extends ChangeNotifier {
   bool _resetSkipQuestion = false;
   List<String> _resetRecoveryMethods = const [];
 
+  /// Returns reset challenge id.
   String? get resetChallengeId => _resetChallengeId;
+
+  /// Returns reset token.
   String? get resetToken => _resetToken;
+
+  /// Returns reset question field.
   String? get resetQuestionField => _resetQuestionField;
+
+  /// Returns reset question text.
   String? get resetQuestionText => _resetQuestionText;
+
+  /// Returns reset skip question.
   bool get resetSkipQuestion => _resetSkipQuestion;
+
+  /// Returns reset recovery methods.
   List<String> get resetRecoveryMethods => _resetRecoveryMethods;
 
+  /// Sends password reset code.
   Future<void> sendPasswordResetCode(String phoneNumber) async {
     final stopwatch = Stopwatch()..start();
     AuthFlowDiagnostics.event('password-reset-code-request', 'start');
@@ -265,6 +299,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Computes resend password reset code.
   Future<bool> resendPasswordResetCode(String phoneNumber) async {
     final previousChallengeId = _resetChallengeId;
     await sendPasswordResetCode(phoneNumber);
@@ -331,6 +366,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  /// Checks safety answer.
   Future<bool> checkSafetyAnswer(String answer) async {
     final token = _resetToken;
     if (token == null || token.isEmpty) {
@@ -356,6 +392,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  /// Computes verify password reset totp.
   Future<bool> verifyPasswordResetTotp(String code) async {
     final token = _resetToken;
     if (token == null || token.isEmpty) {
@@ -381,6 +418,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  /// Computes verify password reset passkey.
   Future<bool> verifyPasswordResetPasskey() async {
     final token = _resetToken;
     if (token == null || token.isEmpty) {
@@ -435,6 +473,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  /// Clears reset state.
   void clearResetState() {
     _resetChallengeId = null;
     _resetToken = null;
@@ -447,6 +486,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clears messages.
   void clearMessages() {
     _message = null;
     _error = null;
@@ -468,6 +508,7 @@ class AuthViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Computes friendly functions error.
   String _friendlyFunctionsError(Object error) {
     if (error is FirebaseFunctionsException) {
       return error.message ?? _codeMessage(error.code);
@@ -478,6 +519,7 @@ class AuthViewModel extends ChangeNotifier {
     return _codeMessage('$error');
   }
 
+  /// Computes code message.
   String _codeMessage(String code) {
     final normalizedCode = code
         .toLowerCase()
@@ -509,6 +551,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  /// Notifies listeners.
   @override
   void notifyListeners() {
     if (!_isDisposed) {
@@ -516,6 +559,7 @@ class AuthViewModel extends ChangeNotifier {
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _isDisposed = true;

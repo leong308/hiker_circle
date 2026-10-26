@@ -19,6 +19,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.app.KeyguardManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -74,6 +75,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         private const val KEY_REST_MILLIS = "rest_millis"
         private const val KEY_RESPONSE_MILLIS = "response_millis"
         private const val KEY_SENSITIVITY = "sensitivity"
+        private const val KEY_BATTERY_ADJUSTED = "battery_safety_adjusted"
+        private const val KEY_BATTERY_REVISION = "battery_safety_revision"
+        private const val KEY_ORIGINAL_SENSITIVITY = "battery_original_sensitivity"
+        private const val KEY_ORIGINAL_INTERVAL = "battery_original_interval"
         private const val KEY_FALL_DETECTION_ENABLED = "fall_detection_enabled"
         private const val KEY_LAST_MOTION_WALL = "last_motion_wall"
         private const val KEY_EVENT_ID = "event_id"
@@ -114,6 +119,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 putExtra(KEY_REST_MILLIS, config.longestRestMillis)
                 putExtra(KEY_RESPONSE_MILLIS, config.responseMillis)
                 putExtra(KEY_SENSITIVITY, config.sensitivity)
+                putExtra(KEY_BATTERY_ADJUSTED, config.batterySafetyAdjusted)
+                putExtra(KEY_BATTERY_REVISION, config.batterySafetyRevision)
+                putExtra(KEY_ORIGINAL_SENSITIVITY, config.batteryOriginalSensitivity ?: -1.0)
+                putExtra(KEY_ORIGINAL_INTERVAL, config.batteryOriginalIntervalMillis ?: -1L)
                 putExtra(KEY_FALL_DETECTION_ENABLED, config.fallDetectionEnabled)
                 putExtra(KEY_OWNER_UID, config.ownerUid)
                 putExtra(KEY_UPLOAD_INTERVAL, config.locationUploadIntervalMillis)
@@ -164,6 +173,18 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                     context.startService(intent)
                 }
             }
+        }
+
+        fun powerSettings(context: Context, ownerUid: String): Map<String, Any?>? {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (!prefs.getBoolean(KEY_ENABLED, false) || ownerUid.isBlank() || prefs.getString(KEY_OWNER_UID, "") != ownerUid) return null
+            return mapOf("sessionId" to prefs.getString(KEY_SESSION_ID, ""),
+                "batterySafetyAdjusted" to prefs.getBoolean(KEY_BATTERY_ADJUSTED, false),
+                "batterySafetyRevision" to prefs.getInt(KEY_BATTERY_REVISION, 0),
+                "batteryOriginalSensorSensitivity" to if (prefs.contains(KEY_ORIGINAL_SENSITIVITY)) prefs.getFloat(KEY_ORIGINAL_SENSITIVITY, 5f).toDouble() else null,
+                "batteryOriginalFootprintIntervalSeconds" to if (prefs.contains(KEY_ORIGINAL_INTERVAL)) prefs.getLong(KEY_ORIGINAL_INTERVAL, 30_000L) / 1000 else null,
+                "sensorSensitivity" to prefs.getFloat(KEY_SENSITIVITY, 5f).toDouble(),
+                "intervalSeconds" to prefs.getLong(KEY_UPLOAD_INTERVAL, 30_000L) / 1000)
         }
 
         fun pendingEvent(context: Context): Map<String, Any?>? {
@@ -293,6 +314,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         val fallDetectionEnabled: Boolean,
         val ownerUid: String,
         val locationUploadIntervalMillis: Long,
+        val batterySafetyAdjusted: Boolean = false,
+        val batterySafetyRevision: Int = 0,
+        val batteryOriginalSensitivity: Double? = null,
+        val batteryOriginalIntervalMillis: Long? = null,
     )
 
     private enum class DetectionState {
@@ -368,6 +393,9 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 if (monitoring) return START_STICKY
             }
             ACTION_STOP -> {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putBoolean(KEY_BATTERY_ADJUSTED, false).putInt(KEY_BATTERY_REVISION, 0)
+                    .remove(KEY_ORIGINAL_SENSITIVITY).remove(KEY_ORIGINAL_INTERVAL).apply()
                 if (retainPendingDispatchWithoutTracking()) return START_NOT_STICKY
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(KEY_ENABLED, false)
@@ -455,6 +483,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             if (restored.fallDetectionEnabled) registerSensors()
             else cancelAlert("Fall detection disabled")
         }
+        if (monitoring && previous?.locationUploadIntervalMillis != restored.locationUploadIntervalMillis) {
+            locationManager.removeUpdates(this)
+            registerLocationUpdates()
+        }
         startMonitoring()
         return START_STICKY
     }
@@ -478,7 +510,27 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             ?.takeIf { it.isNotBlank() }
             ?: prefs.getString(KEY_SESSION_ID, null)
             ?: return null
+        val sameSession = prefs.getString(KEY_SESSION_ID, null) == sessionId &&
+            (intent?.getStringExtra(KEY_OWNER_UID) ?: prefs.getString(KEY_OWNER_UID, "")) == prefs.getString(KEY_OWNER_UID, "")
+        val adjusted = sameSession && prefs.getBoolean(KEY_BATTERY_ADJUSTED, false)
+        val hasIncoming = intent?.hasExtra(KEY_SESSION_ID) == true
+        val storedRevision = if (sameSession) prefs.getInt(KEY_BATTERY_REVISION, 0) else 0
+        val incomingRevision = if (hasIncoming) intent!!.getIntExtra(KEY_BATTERY_REVISION, 0).coerceAtLeast(0) else storedRevision
+        val incomingActive = if (hasIncoming) intent!!.getBooleanExtra(KEY_BATTERY_ADJUSTED, false) else adjusted
+        val legacyPending = adjusted && storedRevision == 0 && incomingRevision == 0 && !incomingActive
+        val stale = sameSession && (storedRevision > incomingRevision || legacyPending)
+        val activeOverride = if (stale || !hasIncoming) adjusted else incomingActive
+        val originalSensitivity = if (!activeOverride) null else if ((stale || !hasIncoming) && prefs.contains(KEY_ORIGINAL_SENSITIVITY)) {
+            prefs.getFloat(KEY_ORIGINAL_SENSITIVITY, 5f).toDouble()
+        } else intent?.getDoubleExtra(KEY_ORIGINAL_SENSITIVITY, -1.0)?.takeIf { it.isFinite() && it in 1.0..10.0 }
+        val originalInterval = if (!activeOverride) null else if ((stale || !hasIncoming) && prefs.contains(KEY_ORIGINAL_INTERVAL)) {
+            prefs.getLong(KEY_ORIGINAL_INTERVAL, 30_000L)
+        } else intent?.getLongExtra(KEY_ORIGINAL_INTERVAL, -1L)?.takeIf { it in 5_000L..60_000L }
         return SafetyConfig(
+            batterySafetyAdjusted = activeOverride,
+            batterySafetyRevision = if (stale) storedRevision else incomingRevision,
+            batteryOriginalSensitivity = originalSensitivity,
+            batteryOriginalIntervalMillis = originalInterval,
             sessionId = sessionId,
             trailName = intent?.getStringExtra(KEY_TRAIL_NAME)
                 ?: prefs.getString(KEY_TRAIL_NAME, "Active hike")
@@ -491,7 +543,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             // The warning acknowledgement window is intentionally fixed. Only
             // the safe-rest duration is user configurable.
             responseMillis = WARNING_RESPONSE_MILLIS,
-            sensitivity = (if (intent?.hasExtra(KEY_SENSITIVITY) == true) {
+            sensitivity = (if (!stale && intent?.hasExtra(KEY_SENSITIVITY) == true) {
                 intent.getDoubleExtra(KEY_SENSITIVITY, 5.0)
             } else {
                 prefs.getFloat(KEY_SENSITIVITY, 5f).toDouble()
@@ -504,7 +556,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
                 prefs.getBoolean(KEY_FALL_DETECTION_ENABLED, true)
             },
             ownerUid = intent?.getStringExtra(KEY_OWNER_UID) ?: prefs.getString(KEY_OWNER_UID, "").orEmpty(),
-            locationUploadIntervalMillis = (if (intent?.hasExtra(KEY_UPLOAD_INTERVAL) == true) {
+            locationUploadIntervalMillis = (if (!stale && intent?.hasExtra(KEY_UPLOAD_INTERVAL) == true) {
                 intent.getLongExtra(KEY_UPLOAD_INTERVAL, 60_000L)
             } else prefs.getLong(KEY_UPLOAD_INTERVAL, 60_000L)).coerceIn(5_000L, 86_400_000L),
         )
@@ -520,9 +572,15 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             .putLong(KEY_REST_MILLIS, value.longestRestMillis)
             .putLong(KEY_RESPONSE_MILLIS, value.responseMillis)
             .putFloat(KEY_SENSITIVITY, value.sensitivity.toFloat())
+            .putBoolean(KEY_BATTERY_ADJUSTED, value.batterySafetyAdjusted)
+            .putInt(KEY_BATTERY_REVISION, value.batterySafetyRevision)
             .putBoolean(KEY_FALL_DETECTION_ENABLED, value.fallDetectionEnabled)
             .putString(KEY_OWNER_UID, value.ownerUid)
             .putLong(KEY_UPLOAD_INTERVAL, value.locationUploadIntervalMillis)
+        if (value.batteryOriginalSensitivity != null) editor.putFloat(KEY_ORIGINAL_SENSITIVITY, value.batteryOriginalSensitivity.toFloat())
+        else editor.remove(KEY_ORIGINAL_SENSITIVITY)
+        if (value.batteryOriginalIntervalMillis != null) editor.putLong(KEY_ORIGINAL_INTERVAL, value.batteryOriginalIntervalMillis)
+        else editor.remove(KEY_ORIGINAL_INTERVAL)
         if (existingSession != value.sessionId) {
             editor.putLong(KEY_LAST_MOTION_WALL, System.currentTimeMillis())
             clearPendingEvent(editor)
@@ -616,7 +674,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
             runCatching {
                 locationManager.requestLocationUpdates(
                     provider,
-                    LOCATION_INTERVAL_MILLIS,
+                    config?.locationUploadIntervalMillis ?: LOCATION_INTERVAL_MILLIS,
                     0f,
                     this,
                     Looper.getMainLooper(),
@@ -762,7 +820,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         if (flutterUiForeground) return
         val settings = config ?: return
         val elapsed = SystemClock.elapsedRealtime()
-        if (elapsed - lastSampleAtElapsed < LOCATION_INTERVAL_MILLIS) return
+        if (elapsed - lastSampleAtElapsed < (config?.locationUploadIntervalMillis ?: LOCATION_INTERVAL_MILLIS)) return
         val location = latestLocation?.takeIf(::isFreshLocation) ?: return
         if (settings.ownerUid.isBlank()) return
         if (FirebaseAuth.getInstance().currentUser?.uid != settings.ownerUid) return
@@ -846,8 +904,31 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     }
 
     // evaluateTimers: Advance stillness and response timers from persisted motion state.
+    private fun applyBatterySafetyIfNeeded() {
+        if (!monitoring) return
+        val current = config ?: return
+        val battery = (getSystemService(BATTERY_SERVICE) as BatteryManager).getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        if (battery !in 0..100) return
+        val updated = if (!current.batterySafetyAdjusted && battery < 30) {
+            current.copy(batterySafetyAdjusted = true, batterySafetyRevision = current.batterySafetyRevision + 1,
+                batteryOriginalSensitivity = current.sensitivity, batteryOriginalIntervalMillis = current.locationUploadIntervalMillis,
+                sensitivity = 5.0, locationUploadIntervalMillis = 60_000L)
+        } else if (current.batterySafetyAdjusted && battery > 30) {
+            val originalSensitivity = current.batteryOriginalSensitivity ?: return
+            val originalInterval = current.batteryOriginalIntervalMillis ?: return
+            current.copy(batterySafetyAdjusted = false, batterySafetyRevision = current.batterySafetyRevision + 1,
+                sensitivity = originalSensitivity, locationUploadIntervalMillis = originalInterval,
+                batteryOriginalSensitivity = null, batteryOriginalIntervalMillis = null)
+        } else return
+        config = updated
+        persistConfig(updated)
+        locationManager.removeUpdates(this)
+        registerLocationUpdates()
+    }
+
     private fun evaluateTimers() {
         if (!monitoring) return
+        applyBatterySafetyIfNeeded()
         val settings = config ?: return
         if (!settings.fallDetectionEnabled) return
         val now = SystemClock.elapsedRealtime()

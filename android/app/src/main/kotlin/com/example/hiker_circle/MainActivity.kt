@@ -337,6 +337,9 @@ class MainActivity : FlutterFragmentActivity() {
                         result.error("native_location_buffer_ack_failed", it.message, null)
                     }
                 }
+                "getActiveHikePowerSettings" -> {
+                    result.success(HikeSafetyMonitorService.powerSettings(this, FirebaseAuth.getInstance().currentUser?.uid.orEmpty()))
+                }
                 "startOrUpdateActiveHikeLiveStatus" -> {
                     val status = ActiveHikeLiveStatus.from(call.arguments)
                     if (status == null) {
@@ -356,6 +359,10 @@ class MainActivity : FlutterFragmentActivity() {
                                     longestRestMillis = status.longestRestMillis,
                                     responseMillis = status.fallResponseMillis,
                                     sensitivity = status.sensorSensitivity,
+                                    batterySafetyAdjusted = call.argument<Boolean>("batterySafetyAdjusted") == true,
+                                    batterySafetyRevision = call.argument<Number>("batterySafetyRevision")?.toInt() ?: 0,
+                                    batteryOriginalSensitivity = call.argument<Number>("batteryOriginalSensorSensitivity")?.toDouble(),
+                                    batteryOriginalIntervalMillis = call.argument<Number>("batteryOriginalFootprintIntervalSeconds")?.toLong()?.times(1000L),
                                     fallDetectionEnabled =
                                         status.fallDetectionEnabled,
                                     ownerUid = call.argument<String>("ownerUid").orEmpty(),
@@ -1255,7 +1262,6 @@ class MainActivity : FlutterFragmentActivity() {
         val expectedReturnAtMillis: Long,
         val checkIns: Int,
         val routePointCount: Int,
-        val manualPins: Int,
         val queuedUpdates: Int,
         val batteryLevel: Int,
         val fallDetectionEnabled: Boolean,
@@ -1265,7 +1271,7 @@ class MainActivity : FlutterFragmentActivity() {
         val longestRestMillis: Long,
     ) {
         val summary: String
-            get() = "GPS $routePointCount | Pins $manualPins | $queuedUpdates queued"
+            get() = "GPS $routePointCount | $queuedUpdates queued"
 
         companion object {
             fun from(arguments: Any?): ActiveHikeLiveStatus? {
@@ -1279,7 +1285,6 @@ class MainActivity : FlutterFragmentActivity() {
                         ?.toLong() ?: 0L,
                     checkIns = (data["checkIns"] as? Number)?.toInt() ?: 0,
                     routePointCount = (data["routePointCount"] as? Number)?.toInt() ?: 0,
-                    manualPins = (data["manualPins"] as? Number)?.toInt() ?: 0,
                     queuedUpdates = (data["queuedUpdates"] as? Number)?.toInt() ?: 0,
                     batteryLevel = (data["batteryLevel"] as? Number)?.toInt() ?: 0,
                     fallDetectionEnabled = data["fallDetectionEnabled"] as? Boolean

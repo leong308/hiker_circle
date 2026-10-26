@@ -7,7 +7,9 @@ import '../../app/Data/local_session_database.dart';
 import '../Model/hike_session_models.dart';
 import 'active_hike_weather_service.dart';
 
+/// Represents active hike weather view state.
 class ActiveHikeWeatherViewState {
+  /// Creates active hike weather view state.
   const ActiveHikeWeatherViewState({
     this.snapshot,
     this.isLoading = false,
@@ -24,6 +26,7 @@ class ActiveHikeWeatherViewState {
 /// the sheet and cloud ID remaps do not bypass the fifteen-minute interval.
 class ActiveHikeWeatherController
     extends ValueNotifier<ActiveHikeWeatherViewState> {
+  /// Creates active hike weather controller.
   ActiveHikeWeatherController({
     required this.database,
     required this.ownerPhoneNumber,
@@ -48,6 +51,7 @@ class ActiveHikeWeatherController
   int _generation = 0;
   bool _disposed = false;
 
+  /// Computes cache key.
   static String cacheKey(ActiveHikeSession hike) =>
       '${hike.trail.trailId}:${hike.startedAt.toUtc().microsecondsSinceEpoch}';
 
@@ -69,8 +73,10 @@ class ActiveHikeWeatherController
     if (_current(generation)) await refresh();
   }
 
+  /// Computes current.
   bool _current(int generation) => !_disposed && generation == _generation;
 
+  /// Restores cache.
   Future<void> _restoreCache(String key, int generation) async {
     try {
       final cached = await database.loadCachedEntity(
@@ -103,6 +109,7 @@ class ActiveHikeWeatherController
     }
   }
 
+  /// Refreshes.
   Future<void> refresh() async {
     if (_disposed || _hike == null) return;
     final generation = _generation;
@@ -163,6 +170,7 @@ class ActiveHikeWeatherController
     _schedule();
   }
 
+  /// Persists.
   Future<void> _persist(
     String key,
     ActiveHikeWeatherSnapshot? snapshot,
@@ -189,6 +197,7 @@ class ActiveHikeWeatherController
     }
   }
 
+  /// Computes schedule.
   void _schedule() {
     if (_disposed || _lastAttempt == null) return;
     _timer?.cancel();
@@ -199,6 +208,7 @@ class ActiveHikeWeatherController
     );
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _disposed = true;

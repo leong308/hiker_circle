@@ -9,7 +9,9 @@ import 'package:http/http.dart' as http;
 
 import '../config/google_api_config.dart';
 
+/// Represents emergency number resolver.
 abstract interface class EmergencyNumberResolver {
+  /// Resolves.
   Future<EmergencyDialTarget> resolve({
     double? latitude,
     double? longitude,
@@ -17,7 +19,9 @@ abstract interface class EmergencyNumberResolver {
   });
 }
 
+/// Represents emergency dial target.
 class EmergencyDialTarget {
+  /// Creates emergency dial target.
   const EmergencyDialTarget({
     required this.number,
     required this.countryCode,
@@ -32,6 +36,7 @@ class EmergencyDialTarget {
   final bool isLocationBased;
   final bool isFallback;
 
+  /// Returns description.
   String get description {
     final region = countryName?.trim();
     if (isFallback) {
@@ -45,7 +50,9 @@ class EmergencyDialTarget {
   }
 }
 
+/// Represents emergency country numbers.
 class EmergencyCountryNumbers {
+  /// Creates emergency country numbers.
   const EmergencyCountryNumbers({
     required this.countryName,
     required this.ambulance,
@@ -58,7 +65,9 @@ class EmergencyCountryNumbers {
 typedef EmergencyCountryLookup =
     Future<EmergencyCountryNumbers?> Function(String countryCode);
 
+/// Represents emergency number service.
 class EmergencyNumberService implements EmergencyNumberResolver {
+  /// Creates emergency number service.
   EmergencyNumberService({
     http.Client? client,
     EmergencyCountryLookup? countryLookup,
@@ -78,6 +87,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
   final String _googleGeocodingApiKey;
   final String _geoapifyApiKey;
 
+  /// Resolves.
   @override
   Future<EmergencyDialTarget> resolve({
     double? latitude,
@@ -127,6 +137,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     );
   }
 
+  /// Computes country at.
   Future<_CountryMatch?> _countryAt(double latitude, double longitude) async {
     final client = _client ?? http.Client();
     final ownsClient = _client == null;
@@ -163,6 +174,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     }
   }
 
+  /// Computes country from google.
   Future<_CountryMatch?> _countryFromGoogle(
     http.Client client,
     double latitude,
@@ -205,6 +217,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     return null;
   }
 
+  /// Computes country from geoapify.
   Future<_CountryMatch?> _countryFromGeoapify(
     http.Client client,
     double latitude,
@@ -248,6 +261,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     }
   }
 
+  /// Computes country from address components.
   static _CountryMatch? _countryFromAddressComponents(Object? raw) {
     if (raw is! List) return null;
     for (final component in raw.whereType<Map<String, dynamic>>()) {
@@ -264,6 +278,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     return null;
   }
 
+  /// Computes lookup bundled country.
   static Future<EmergencyCountryNumbers?> _lookupBundledCountry(
     String countryCode,
   ) async {
@@ -275,6 +290,7 @@ class EmergencyNumberService implements EmergencyNumberResolver {
     );
   }
 
+  /// Checks whether coordinate valid.
   static bool _isCoordinateValid(double? latitude, double? longitude) {
     return latitude != null &&
         longitude != null &&
@@ -286,25 +302,30 @@ class EmergencyNumberService implements EmergencyNumberResolver {
         longitude <= 180;
   }
 
+  /// Normalizes country code.
   static String? _normalizeCountryCode(String? value) {
     final code = value?.trim().toUpperCase();
     if (code == null || !RegExp(r'^[A-Z]{2}$').hasMatch(code)) return null;
     return code;
   }
 
+  /// Computes dialable number.
   static String? _dialableNumber(String? value) {
     final number = value?.replaceAll(RegExp(r'[^0-9+]'), '');
     if (number == null || number.length < 2) return null;
     return number;
   }
 
+  /// Computes non empty.
   static String? _nonEmpty(String? value) {
     final normalized = value?.trim();
     return normalized == null || normalized.isEmpty ? null : normalized;
   }
 }
 
+/// Represents country match.
 class _CountryMatch {
+  /// Creates country match.
   const _CountryMatch({
     required this.code,
     required this.name,

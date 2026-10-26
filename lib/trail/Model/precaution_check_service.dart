@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'trail_models.dart';
 import 'trail_precautions.dart';
 
+/// Represents precaution check service.
 class PrecautionCheckService {
   /// Return an explicit unavailable-data precaution when forecast retrieval fails.
   static Future<List<TrailPrecaution>> check(

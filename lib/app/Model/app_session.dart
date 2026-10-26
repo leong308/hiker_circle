@@ -2,7 +2,9 @@
 // session claims remain separate.
 import 'dart:typed_data';
 
+/// Represents app session.
 class AppSession {
+  /// Creates app session.
   const AppSession({
     required this.phoneNumber,
     required this.signedInAt,
@@ -27,6 +29,7 @@ class AppSession {
   final String? photoURL;
   final Uint8List? photoBytes;
 
+  /// Returns a copy with the supplied fields changed.
   AppSession copyWith({
     String? phoneNumber,
     DateTime? signedInAt,

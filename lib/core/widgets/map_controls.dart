@@ -5,18 +5,75 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'map_utils.dart';
+import 'map_compass.dart';
+
+/// One corner layout for all ordinary maps. FPV retains its own playback layout.
+class MapControlOverlay extends StatelessWidget {
+  /// Creates map control overlay.
+  const MapControlOverlay({
+    super.key,
+    required this.zoomControls,
+    required this.styleControls,
+    required this.scale,
+    required this.bearing,
+  });
+  final Widget zoomControls;
+  final Widget styleControls;
+  final Widget scale;
+  final double bearing;
+
+  /// Builds this widget from its current presentation state.
+  @override
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      Positioned(
+        key: const ValueKey('map-controls-zoom'),
+        left: 10,
+        top: 10,
+        child: zoomControls,
+      ),
+      Positioned(
+        key: const ValueKey('map-controls-style'),
+        right: 10,
+        top: 10,
+        child: styleControls,
+      ),
+      Positioned(
+        key: const ValueKey('map-controls-scale'),
+        left: 10,
+        right: 82,
+        bottom: 10,
+        child: scale,
+      ),
+      Positioned(
+        key: const ValueKey('map-controls-compass'),
+        right: 10,
+        bottom: 10,
+        child: MediaQuery.withClampedTextScaling(
+          maxScaleFactor: 1.2,
+          child: MapCompass(bearing: bearing),
+        ),
+      ),
+    ],
+  );
+}
 
 /// Consistent upper-right picker for every map, including recorded tracks.
 class MapStyleControls extends StatelessWidget {
+  /// Creates map style controls.
   const MapStyleControls({
     super.key,
     required this.settings,
     required this.onChanged,
+    this.showDimensionChoices = true,
   });
 
   final MapViewSettings settings;
   final ValueChanged<MapViewSettings> onChanged;
+  final bool showDimensionChoices;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -52,8 +109,11 @@ class MapStyleControls extends StatelessWidget {
                 selected: settings.safeStyleIndex == index,
               ),
             ),
-          const PopupMenuDivider(),
-          for (final dimension in MapDimension.values)
+          if (showDimensionChoices) const PopupMenuDivider(),
+          for (final dimension
+              in showDimensionChoices
+                  ? MapDimension.values
+                  : const <MapDimension>[])
             PopupMenuItem<MapViewSettings>(
               key: ValueKey('map-dimension-${dimension.name}'),
               value: settings.copyWith(dimension: dimension),
@@ -73,7 +133,9 @@ class MapStyleControls extends StatelessWidget {
   }
 }
 
+/// Displays the map setting choice.
 class _MapSettingChoice extends StatelessWidget {
+  /// Creates map setting choice.
   const _MapSettingChoice({
     required this.label,
     required this.icon,
@@ -83,6 +145,7 @@ class _MapSettingChoice extends StatelessWidget {
   final IconData icon;
   final bool selected;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Row(
     children: [
@@ -95,18 +158,23 @@ class _MapSettingChoice extends StatelessWidget {
   );
 }
 
+/// Displays the map scale with style.
 class MapScaleWithStyle extends StatelessWidget {
+  /// Creates map scale with style.
   const MapScaleWithStyle({
     super.key,
     required this.zoom,
     required this.latitude,
     required this.settings,
+    this.styleName,
   });
 
   final double zoom;
   final double latitude;
   final MapViewSettings settings;
+  final String? styleName;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -125,7 +193,7 @@ class MapScaleWithStyle extends StatelessWidget {
             ),
             child: Semantics(
               label:
-                  'Map style: ${settings.styleName}, ${settings.dimensionLabel}',
+                  'Map style: ${styleName ?? settings.styleName}, ${settings.dimensionLabel}',
               child: ExcludeSemantics(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
@@ -139,7 +207,7 @@ class MapScaleWithStyle extends StatelessWidget {
                       vertical: 5,
                     ),
                     child: Text(
-                      '${settings.styleName} · ${settings.dimensionLabel}',
+                      '${styleName ?? settings.styleName} · ${settings.dimensionLabel}',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -158,7 +226,9 @@ class MapScaleWithStyle extends StatelessWidget {
   }
 }
 
+/// Displays the map zoom controls.
 class MapZoomControls extends StatelessWidget {
+  /// Creates map zoom controls.
   const MapZoomControls({
     super.key,
     required this.onZoomIn,
@@ -172,6 +242,7 @@ class MapZoomControls extends StatelessWidget {
   final VoidCallback onReset;
   final VoidCallback? onLayer;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final surface = Theme.of(context).colorScheme.surfaceContainer;
@@ -226,7 +297,9 @@ class MapZoomControls extends StatelessWidget {
   }
 }
 
+/// Displays the map zoom button.
 class MapZoomButton extends StatelessWidget {
+  /// Creates map zoom button.
   const MapZoomButton({
     super.key,
     required this.tooltip,
@@ -240,6 +313,7 @@ class MapZoomButton extends StatelessWidget {
   final VoidCallback onPressed;
   final Color? color;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return Tooltip(
@@ -255,9 +329,12 @@ class MapZoomButton extends StatelessWidget {
   }
 }
 
+/// Displays the mini divider.
 class _MiniDivider extends StatelessWidget {
+  /// Creates mini divider.
   const _MiniDivider();
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -271,12 +348,15 @@ class _MiniDivider extends StatelessWidget {
   }
 }
 
+/// Displays the map scale bar.
 class MapScaleBar extends StatelessWidget {
+  /// Creates map scale bar.
   const MapScaleBar({super.key, required this.zoom, required this.latitude});
 
   final double zoom;
   final double latitude;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     const targetWidth = 72.0;
@@ -350,6 +430,7 @@ class MapScaleBar extends StatelessWidget {
     );
   }
 
+  /// Computes nice distance.
   double _niceDistance(double rawMeters) {
     const distances = [
       1000000.0,
@@ -379,6 +460,7 @@ class MapScaleBar extends StatelessWidget {
     return 5;
   }
 
+  /// Computes distance label.
   String _distanceLabel(double meters) {
     if (meters >= 1000) {
       final kilometers = meters / 1000;
@@ -390,18 +472,23 @@ class MapScaleBar extends StatelessWidget {
   }
 }
 
+/// Displays the deferred map.
 class DeferredMap extends StatefulWidget {
+  /// Creates deferred map.
   const DeferredMap({super.key, required this.child});
 
   final Widget child;
 
+  /// Creates the presentation state for this widget.
   @override
   State<DeferredMap> createState() => _DeferredMapState();
 }
 
+/// Manages the deferred map presentation and lifecycle.
 class _DeferredMapState extends State<DeferredMap> {
   var _ready = false;
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
@@ -410,6 +497,7 @@ class _DeferredMapState extends State<DeferredMap> {
     });
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     if (!_ready) return const SizedBox.expand();

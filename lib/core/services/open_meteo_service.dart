@@ -5,22 +5,28 @@ import 'package:http/http.dart' as http;
 
 import '../../trail/Model/trail_models.dart';
 
+/// Represents open meteo exception.
 class OpenMeteoException implements Exception {
+  /// Creates open meteo exception.
   const OpenMeteoException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents open meteo service.
 class OpenMeteoService {
+  /// Creates open meteo service.
   const OpenMeteoService({http.Client? client}) : _client = client;
 
   static const Duration _requestTimeout = Duration(seconds: 6);
 
   final http.Client? _client;
 
+  /// Fetches weather.
   Future<TrailWeather> fetchWeather({
     required double latitude,
     required double longitude,
@@ -120,6 +126,7 @@ class OpenMeteoService {
     }
   }
 
+  /// Parses hourly forecast.
   List<HourlyForecast> _parseHourlyForecast(Object? hourly) {
     if (hourly is! Map<String, dynamic>) {
       return const [];
@@ -174,25 +181,30 @@ class OpenMeteoService {
     return forecasts;
   }
 
+  /// Computes finite double.
   double? _finiteDouble(Object? value) {
     return value is num && value.isFinite ? value.toDouble() : null;
   }
 
+  /// Computes finite int.
   int? _finiteInt(Object? value) {
     return value is num && value.isFinite ? value.toInt() : null;
   }
 
+  /// Computes finite list double.
   double? _finiteListDouble(Object? value) {
     return value is List && value.isNotEmpty
         ? _finiteDouble(value.first)
         : null;
   }
 
+  /// Computes finite list int.
   int? _finiteListInt(Object? value) {
     return value is List && value.isNotEmpty ? _finiteInt(value.first) : null;
   }
 }
 
+/// Computes wmo summary.
 String _wmoSummary(int code) {
   const mapping = {
     0: 'Clear sky',

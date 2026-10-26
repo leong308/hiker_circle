@@ -10,10 +10,12 @@ import 'auth_brand_panel.dart';
 
 /// Animated cartographic linework around the existing authentication card.
 class AuthTrailSignalShell extends StatelessWidget {
+  /// Creates auth trail signal shell.
   const AuthTrailSignalShell({super.key, required this.child});
 
   final Widget child;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -74,11 +76,14 @@ class AuthTrailSignalShell extends StatelessWidget {
   }
 }
 
+/// Displays the trail signal backdrop.
 class _TrailSignalBackdrop extends StatefulWidget {
+  /// Creates trail signal backdrop.
   const _TrailSignalBackdrop({required this.isDark});
 
   final bool isDark;
 
+  /// Creates the presentation state for this widget.
   @override
   State<_TrailSignalBackdrop> createState() => _TrailSignalBackdropState();
 }
@@ -92,6 +97,7 @@ class _TrailSignalBackdropState extends State<_TrailSignalBackdrop>
     value: 0.12,
   );
 
+  /// Refreshes presentation dependencies.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -105,12 +111,14 @@ class _TrailSignalBackdropState extends State<_TrailSignalBackdrop>
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _signal.dispose();
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return ExcludeSemantics(
@@ -137,11 +145,14 @@ class _TrailSignalBackdropState extends State<_TrailSignalBackdrop>
   }
 }
 
+/// Represents signal surface painter.
 class _SignalSurfacePainter extends CustomPainter {
+  /// Creates signal surface painter.
   const _SignalSurfacePainter({required this.isDark});
 
   final bool isDark;
 
+  /// Computes paint.
   @override
   void paint(Canvas canvas, Size size) {
     final bounds = Offset.zero & size;
@@ -205,6 +216,7 @@ class _SignalSurfacePainter extends CustomPainter {
     );
   }
 
+  /// Computes contours.
   void _contours(
     Canvas canvas,
     Offset center,
@@ -262,6 +274,7 @@ class _SignalSurfacePainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Computes light.
   void _light(
     Canvas canvas,
     Offset center,
@@ -282,12 +295,15 @@ class _SignalSurfacePainter extends CustomPainter {
     );
   }
 
+  /// Computes should repaint.
   @override
   bool shouldRepaint(_SignalSurfacePainter oldDelegate) =>
       oldDelegate.isDark != isDark;
 }
 
+/// Represents signal route painter.
 class _SignalRoutePainter extends CustomPainter {
+  /// Creates signal route painter.
   _SignalRoutePainter(this.signal, {required this.isDark})
     : super(repaint: signal);
 
@@ -299,6 +315,7 @@ class _SignalRoutePainter extends CustomPainter {
   final _branches = <Path>[];
   final _junctions = <Offset>[];
 
+  /// Computes layout.
   void _layout(Size size) {
     if (_cachedSize == size) return;
     _cachedSize = size;
@@ -355,6 +372,7 @@ class _SignalRoutePainter extends CustomPainter {
     }
   }
 
+  /// Computes paint.
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
@@ -433,6 +451,7 @@ class _SignalRoutePainter extends CustomPainter {
     }
   }
 
+  /// Computes checkpoint.
   void _checkpoint(
     Canvas canvas,
     Offset point,
@@ -452,6 +471,7 @@ class _SignalRoutePainter extends CustomPainter {
     canvas.drawCircle(point, 1, Paint()..color = color.withValues(alpha: 0.48));
   }
 
+  /// Computes moving signal.
   void _movingSignal(
     Canvas canvas,
     ui.PathMetric metric,
@@ -495,6 +515,7 @@ class _SignalRoutePainter extends CustomPainter {
     );
   }
 
+  /// Computes should repaint.
   @override
   bool shouldRepaint(_SignalRoutePainter oldDelegate) =>
       oldDelegate.signal != signal || oldDelegate.isDark != isDark;

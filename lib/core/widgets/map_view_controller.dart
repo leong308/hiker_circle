@@ -7,7 +7,9 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import 'map_controls.dart';
 import 'map_utils.dart';
 
+/// Represents map view controller.
 class MapViewController extends ChangeNotifier {
+  /// Creates map view controller.
   MapViewController({
     MapViewSettings settings = const MapViewSettings(),
     this.onBeforeStyleReload,
@@ -41,15 +43,27 @@ class MapViewController extends ChangeNotifier {
   bool _hasPreparedStyle = false;
   double zoom = 13;
   double latitude = 0;
+  double bearing = 0;
 
   /// The latest picker choice may be queued behind an earlier native load.
   MapViewSettings get settings => _settings;
+
+  /// Returns display settings.
   MapViewSettings get displaySettings => _appliedSettings;
+
+  /// Returns has map.
   bool get hasMap => !_disposed && _map != null;
+
+  /// Returns is changing.
   bool get isChanging => _changing;
+
+  /// Returns is style ready.
   bool get isStyleReady => !_disposed && _styleReady;
+
+  /// Returns style unavailable.
   bool get styleUnavailable => _needsReload && !_awaitingStyleLoad;
 
+  /// Computes attach.
   void attach(mapbox.MapboxMap map) {
     if (_disposed) return;
     if (identical(map, _map)) return;
@@ -76,28 +90,56 @@ class MapViewController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Computes camera changed.
   void cameraChanged(mapbox.CameraChangedEventData event) {
     _updateScale(event.cameraState);
   }
 
+  /// Updates scale.
   void _updateScale(mapbox.CameraState state) {
     final coordinate = mapPointCoordinatesOrNull(state.center);
     if (_disposed || coordinate == null || !state.zoom.isFinite) return;
+    final nextBearing = state.bearing.isFinite ? state.bearing : 0.0;
     if ((state.zoom - zoom).abs() < .005 &&
-        (coordinate.latitude - latitude).abs() < .0005) {
+        (coordinate.latitude - latitude).abs() < .0005 &&
+        (nextBearing - bearing).abs() < .1) {
       return;
     }
     zoom = state.zoom;
     latitude = coordinate.latitude;
+    bearing = nextBearing;
     notifyListeners();
   }
 
+  /// Computes zoom by.
+  Future<void> zoomBy(double amount) async {
+    final map = _map;
+    final epoch = _mapEpoch;
+    if (map == null || _disposed || !amount.isFinite) return;
+    try {
+      final camera = await map.getCameraState();
+      if (!_isCurrent(map, epoch) || !camera.zoom.isFinite) return;
+      await map.flyTo(
+        mapbox.CameraOptions(
+          zoom: (camera.zoom + amount)
+              .clamp(kMapMinZoom, kMapMaxZoom)
+              .toDouble(),
+        ),
+        mapbox.MapAnimationOptions(duration: 300),
+      );
+    } catch (_) {
+      // A native map may be replaced while a control is being tapped.
+    }
+  }
+
+  /// Checks whether current.
   bool _isCurrent(mapbox.MapboxMap map, int epoch, [int? revision]) =>
       !_disposed &&
       identical(map, _map) &&
       epoch == _mapEpoch &&
       (revision == null || revision == _revision);
 
+  /// Refreshes camera.
   Future<void> _refreshCamera() async {
     final map = _map;
     final epoch = _mapEpoch;
@@ -118,6 +160,7 @@ class MapViewController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Computes invalidate style.
   void _invalidateStyle() {
     _revision++;
     _preparedRevision = -1;
@@ -235,6 +278,7 @@ class MapViewController extends ChangeNotifier {
     return result.future;
   }
 
+  /// Applies choice.
   Future<bool> _applyChoice(MapViewSettings next, int request) async {
     final map = _map;
     final epoch = _mapEpoch;
@@ -309,6 +353,7 @@ class MapViewController extends ChangeNotifier {
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _disposed = true;
@@ -319,71 +364,88 @@ class MapViewController extends ChangeNotifier {
   }
 }
 
+/// Displays the map view controls.
 class MapViewControls extends StatelessWidget {
-  const MapViewControls({
-    super.key,
-    required this.controller,
-    this.zoomControls,
-  });
+  /// Creates map view controls.
+  const MapViewControls({super.key, required this.controller});
   final MapViewController controller;
-  final Widget? zoomControls;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: controller,
-    builder: (context, _) => Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (zoomControls != null) ...[zoomControls!, const SizedBox(width: 6)],
-        IgnorePointer(
-          ignoring: !controller.hasMap,
-          child: Opacity(
-            opacity: controller.hasMap ? 1 : .5,
-            child: MapStyleControls(
-              settings: controller.settings,
-              onChanged: (settings) async {
-                final success = await controller.changeView(settings);
-                if (!success && context.mounted) {
-                  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Could not change the map view. Try again.',
-                      ),
-                    ),
-                  );
-                }
-              },
-            ),
-          ),
+    builder: (context, _) => IgnorePointer(
+      ignoring: !controller.hasMap,
+      child: Opacity(
+        opacity: controller.hasMap ? 1 : .5,
+        child: MapStyleControls(
+          settings: controller.settings,
+          onChanged: (settings) async {
+            final success = await controller.changeView(settings);
+            if (!success && context.mounted) {
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                const SnackBar(
+                  content: Text('Could not change the map view. Try again.'),
+                ),
+              );
+            }
+          },
         ),
-      ],
+      ),
     ),
   );
 }
 
-class MapViewScale extends StatelessWidget {
-  const MapViewScale({super.key, required this.controller});
+/// Displays the map view overlay.
+class MapViewOverlay extends StatelessWidget {
+  /// Creates map view overlay.
+  const MapViewOverlay({
+    super.key,
+    required this.controller,
+    required this.onReset,
+    this.onZoomIn,
+    this.onZoomOut,
+  });
   final MapViewController controller;
+  final VoidCallback onReset;
+  final VoidCallback? onZoomIn;
+  final VoidCallback? onZoomOut;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: controller,
-    builder: (context, _) => controller.styleUnavailable
-        ? DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainer,
-              borderRadius: BorderRadius.circular(5),
-            ),
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              child: Text('Map view unavailable'),
-            ),
-          )
-        : MapScaleWithStyle(
-            zoom: controller.zoom,
-            latitude: controller.latitude,
-            settings: controller.displaySettings,
-          ),
+    builder: (context, _) => MapControlOverlay(
+      zoomControls: MapZoomControls(
+        onZoomIn: onZoomIn ?? () => unawaited(controller.zoomBy(1)),
+        onZoomOut: onZoomOut ?? () => unawaited(controller.zoomBy(-1)),
+        onReset: onReset,
+      ),
+      styleControls: MapViewControls(controller: controller),
+      scale: MapViewScale(controller: controller),
+      bearing: controller.bearing,
+    ),
+  );
+}
+
+/// Displays the map view scale.
+class MapViewScale extends StatelessWidget {
+  /// Creates map view scale.
+  const MapViewScale({super.key, required this.controller});
+  final MapViewController controller;
+
+  /// Builds this widget from its current presentation state.
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, _) => MapScaleWithStyle(
+      zoom: controller.zoom,
+      latitude: controller.latitude,
+      settings: controller.displaySettings,
+      styleName: controller.styleUnavailable
+          ? '${controller.displaySettings.styleName} unavailable'
+          : null,
+    ),
   );
 }
 

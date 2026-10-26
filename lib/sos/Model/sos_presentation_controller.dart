@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'sos_models.dart';
 
+/// Defines the sos presentation phase choices.
 enum SosPresentationPhase { sending, sent, partial, queued, noContacts, failed }
 
 // Native audio is process-wide. This scalar lease prevents an old account's
@@ -24,6 +25,7 @@ void startSosAlarmOutput({
   if (!controller.isAlarmRequested(eventId)) return;
   final outputGeneration = controller._alarmOutputGeneration;
 
+  /// Computes still owns output.
   bool stillOwnsOutput() {
     final current = controller.current;
     return outputGeneration == _latestAlarmOutputGeneration &&
@@ -32,6 +34,7 @@ void startSosAlarmOutput({
             !current.mode.usesLoudEmergencyPattern);
   }
 
+  /// Stops owned output.
   Future<void> stopOwnedOutput() async {
     if (!stillOwnsOutput()) return;
     try {
@@ -74,6 +77,7 @@ void startSosAlarmOutput({
 /// Queue retries and historic log updates never create a presentation.
 @immutable
 class SosPresentation {
+  /// Creates sos presentation.
   const SosPresentation({
     required this.eventId,
     required this.mode,
@@ -92,6 +96,7 @@ class SosPresentation {
   final bool alarmActive;
   final bool isStopping;
 
+  /// Returns a copy with the supplied fields changed.
   SosPresentation _copyWith({
     SosPresentationPhase? phase,
     String? message,
@@ -108,6 +113,7 @@ class SosPresentation {
   );
 }
 
+/// Represents sos presentation controller.
 class SosPresentationController extends ChangeNotifier {
   SosPresentation? _current;
   Future<void> Function()? _onStopAlarm;
@@ -117,6 +123,7 @@ class SosPresentationController extends ChangeNotifier {
   String? _alertId;
   int _confirmedSentCount = 0;
 
+  /// Returns current.
   SosPresentation? get current => _current;
 
   /// Publish before waiting for GPS, native hardware, local storage or delivery.
@@ -145,11 +152,13 @@ class SosPresentationController extends ChangeNotifier {
     return eventId;
   }
 
+  /// Checks whether alarm requested.
   bool isAlarmRequested(int eventId) =>
       !_disposed &&
       _current?.eventId == eventId &&
       _current?.alarmActive == true;
 
+  /// Updates status.
   void updateStatus(
     int eventId, {
     required SosPresentationPhase phase,
@@ -161,6 +170,7 @@ class SosPresentationController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Checks whether there is delivery status.
   bool hasDeliveryStatus(int eventId) =>
       !_disposed && _current?.eventId == eventId && _alertId != null;
 
@@ -181,6 +191,7 @@ class SosPresentationController extends ChangeNotifier {
     );
   }
 
+  /// Updates result.
   void updateResult(
     int eventId,
     SosAlertResult? result, {
@@ -206,6 +217,8 @@ class SosPresentationController extends ChangeNotifier {
     }
     _alertId = alert.id;
     _confirmedSentCount = alert.sentCount;
+
+    /// Computes contacts.
     String contacts(int count) => count == 1 ? 'contact' : 'contacts';
     final (phase, message) = switch (alert.status) {
       SosAlertStatus.sent => (
@@ -238,6 +251,7 @@ class SosPresentationController extends ChangeNotifier {
     updateStatus(eventId, phase: phase, message: message);
   }
 
+  /// Marks alarm unavailable.
   void markAlarmUnavailable(int eventId) {
     if (_disposed || _current?.eventId != eventId) return;
     _current = _current!._copyWith(alarmActive: false);
@@ -261,6 +275,7 @@ class SosPresentationController extends ChangeNotifier {
     }
   }
 
+  /// Computes dismiss.
   void dismiss(int eventId) {
     if (_disposed || _current?.eventId != eventId) return;
     _current = null;
@@ -270,6 +285,7 @@ class SosPresentationController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _disposed = true;

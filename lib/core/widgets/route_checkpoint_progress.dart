@@ -3,6 +3,7 @@
 /// A snapshot of the map animation's own playhead. Checkpoint fractions follow
 /// traversal order, so an out-and-back route can revisit the same coordinate.
 class RouteCheckpointProgress {
+  /// Creates route checkpoint progress.
   const RouteCheckpointProgress({
     this.progress = 0,
     this.checkpointFractions = const {},
@@ -13,6 +14,8 @@ class RouteCheckpointProgress {
   final Map<int, double> checkpointDistancesMeters;
   final double distanceMeters;
   final Duration estimatedDuration;
+
+  /// Computes leg distance meters.
   double? legDistanceMeters(int from, int to) {
     final start = checkpointDistancesMeters[from];
     final end = checkpointDistancesMeters[to];
@@ -26,6 +29,7 @@ class RouteCheckpointProgress {
     return end - start;
   }
 
+  /// Computes leg progress.
   double legProgress(int from, int to) {
     final length = legDistanceMeters(from, to);
     if (length == null) return 0;
@@ -36,9 +40,14 @@ class RouteCheckpointProgress {
 
   final double progress;
   final Map<int, double> checkpointFractions;
+
+  /// Returns is ready.
   bool get isReady => checkpointFractions.isNotEmpty;
+
+  /// Returns is complete.
   bool get isComplete => isReady && progress >= 1;
 
+  /// Returns next index.
   int? get nextIndex {
     for (final entry in checkpointFractions.entries) {
       if (entry.value > progress + 1e-6) return entry.key;

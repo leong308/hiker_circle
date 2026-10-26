@@ -15,6 +15,7 @@ enum UserModule {
   achievements,
 }
 
+/// Computes user module document.
 DocumentReference<Map<String, dynamic>> userModuleDocument(
   DocumentReference<Map<String, dynamic>> account,
   UserModule module,

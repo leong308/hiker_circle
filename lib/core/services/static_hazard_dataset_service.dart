@@ -14,11 +14,14 @@ import 'trail_hazard_enrichment_service.dart';
 
 typedef HazardDatasetProgress = void Function(int completed, int total);
 
+/// Represents static hazard dataset exception.
 class StaticHazardDatasetException implements Exception {
+  /// Creates static hazard dataset exception.
   const StaticHazardDatasetException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
@@ -29,6 +32,7 @@ class StaticHazardDatasetException implements Exception {
 /// the SQLite dataset small and gives the map a useful caution-marker location.
 /// The dataset deliberately does not infer wildlife presence from waterways.
 class StaticHazardDatasetService {
+  /// Creates static hazard dataset service.
   StaticHazardDatasetService({
     required LocalSessionDatabase database,
     http.Client? client,
@@ -97,11 +101,13 @@ class StaticHazardDatasetService {
     }
   }
 
+  /// Returns resolved access token.
   String get _resolvedAccessToken =>
       _accessToken?.trim() ?? GoogleApiConfig.mapboxAccessToken;
 
   // downloadForTrails reports progress while replacing the downloaded hazard dataset and route
   // matches atomically.
+  /// Downloads for trails.
   Future<LocalHazardDatasetSummary> downloadForTrails(
     List<Trail> trails, {
     HazardDatasetProgress? onProgress,
@@ -203,6 +209,7 @@ class StaticHazardDatasetService {
     return _database.loadStaticHazardDatasetSummary();
   }
 
+  /// Downloads for single trail.
   Future<List<LocalTrailHazardMatch>> _downloadForSingleTrail(
     Trail trail,
     String token, {
@@ -262,8 +269,10 @@ class StaticHazardDatasetService {
     return _database.loadStaticHazardsForTrail(trail.trailId);
   }
 
+  /// Clears.
   Future<void> clear() => _database.clearStaticHazardDataset();
 
+  /// Computes merge match.
   void _mergeMatch(
     Map<String, LocalStaticHazard> hazardsById,
     Map<String, LocalTrailHazardMatch> matchesById,
@@ -276,6 +285,7 @@ class StaticHazardDatasetService {
     }
   }
 
+  /// Computes suppress spatial duplicates.
   void _suppressSpatialDuplicates(
     Map<String, LocalStaticHazard> hazardsById,
     Map<String, LocalTrailHazardMatch> matchesById,
@@ -303,6 +313,7 @@ class StaticHazardDatasetService {
     }
   }
 
+  /// Computes hazard family.
   String _hazardFamily(String type) => switch (type) {
     'river' || 'stream' || 'stream_intermittent' => 'water',
     'bridge_crossing' => 'bridge',
@@ -310,6 +321,7 @@ class StaticHazardDatasetService {
     _ => type,
   };
 
+  /// Computes hazard distance.
   double _hazardDistance(LocalStaticHazard first, LocalStaticHazard second) {
     const radius = 6371000.0;
     final latitude1 = first.latitude * math.pi / 180;
@@ -330,6 +342,7 @@ class StaticHazardDatasetService {
         );
   }
 
+  /// Computes query.
   Future<List<Map<String, dynamic>>> _query(
     _RouteSample sample,
     String token,
@@ -366,6 +379,7 @@ class StaticHazardDatasetService {
         .toList(growable: false);
   }
 
+  /// Parses features.
   List<({LocalStaticHazard hazard, LocalTrailHazardMatch match})>
   _parseFeatures(
     List<Map<String, dynamic>> features, {
@@ -469,6 +483,7 @@ class StaticHazardDatasetService {
     return parsed;
   }
 
+  /// Checks whether hiking bridge.
   bool _isHikingBridge(_FeaturePoint point) {
     // A trail can geometrically cross beneath or beside a vehicle bridge.
     // Mapbox's tile query returns that bridge at zero distance too, so only
@@ -484,6 +499,7 @@ class StaticHazardDatasetService {
         }.contains(point.featureType);
   }
 
+  /// Parses feature.
   ({LocalStaticHazard hazard, LocalTrailHazardMatch match})? _parseFeature(
     Map<String, dynamic> feature, {
     required _FeaturePoint point,
@@ -566,6 +582,7 @@ class StaticHazardDatasetService {
     );
   }
 
+  /// Parses bridge feature.
   ({LocalStaticHazard hazard, LocalTrailHazardMatch match}) _parseBridgeFeature(
     Map<String, dynamic> feature,
     _FeaturePoint bridge,
@@ -614,6 +631,7 @@ class StaticHazardDatasetService {
     );
   }
 
+  /// Parses ford feature.
   ({LocalStaticHazard hazard, LocalTrailHazardMatch match}) _parseFordFeature(
     Map<String, dynamic> feature,
     _FeaturePoint ford, {
@@ -655,6 +673,7 @@ class StaticHazardDatasetService {
     );
   }
 
+  /// Computes feature point.
   _FeaturePoint? _featurePoint(Map<String, dynamic> feature) {
     final geometry = feature['geometry'];
     final properties = feature['properties'];
@@ -679,11 +698,13 @@ class StaticHazardDatasetService {
     );
   }
 
+  /// Checks whether waterway.
   bool _isWaterway(_FeaturePoint point) =>
       const {'river', 'stream', 'stream_intermittent'}.contains(
         point.featureClass.isEmpty ? point.featureType : point.featureClass,
       );
 
+  /// Computes distance between.
   double _distanceBetween(_FeaturePoint first, _FeaturePoint second) {
     const earthRadiusMeters = 6371000.0;
     final latitude1 = first.latitude * math.pi / 180;
@@ -702,6 +723,7 @@ class StaticHazardDatasetService {
         math.atan2(math.sqrt(clamped), math.sqrt(1 - clamped));
   }
 
+  /// Computes project feature point to route.
   _FeaturePoint _projectFeaturePointToRoute(
     _FeaturePoint point,
     List<LatLng> route,
@@ -752,6 +774,7 @@ class StaticHazardDatasetService {
     );
   }
 
+  /// Computes coordinate distance.
   double _coordinateDistance(
     double firstLatitude,
     double firstLongitude,
@@ -777,6 +800,7 @@ class StaticHazardDatasetService {
         );
   }
 
+  /// Computes points for trail.
   List<LatLng> _pointsForTrail(Trail trail, {HikingRouteResult? route}) {
     final encoded =
         route?.encodedPolyline.trim() ??
@@ -802,6 +826,7 @@ class StaticHazardDatasetService {
     return const [];
   }
 
+  /// Computes sample trail.
   List<_RouteSample> _sampleTrail(List<LatLng> points) {
     if (points.length <= _maxSamplesPerTrail) {
       return [
@@ -831,13 +856,16 @@ class StaticHazardDatasetService {
     ];
   }
 
+  /// Computes waterway label.
   String _waterwayLabel(String type) => switch (type) {
     'stream_intermittent' => 'seasonal stream',
     _ => type,
   };
 }
 
+/// Represents feature point.
 class _FeaturePoint {
+  /// Creates feature point.
   const _FeaturePoint({
     required this.latitude,
     required this.longitude,
@@ -849,6 +877,7 @@ class _FeaturePoint {
     this.routeProgress,
   });
 
+  /// Applies route position.
   _FeaturePoint withRoutePosition({
     required double distance,
     required double routeProgress,
@@ -875,7 +904,9 @@ class _FeaturePoint {
   final double? routeProgress;
 }
 
+/// Represents route sample.
 class _RouteSample {
+  /// Creates route sample.
   const _RouteSample({
     required this.latitude,
     required this.longitude,

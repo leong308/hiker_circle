@@ -2,6 +2,7 @@
 /// Offline help content. Condition identifiers also cover map caution types and
 /// the labels hikers can choose when reporting a hazard.
 class TrailConditionGuide {
+  /// Creates trail condition guide.
   const TrailConditionGuide(
     this.title,
     this.category,
@@ -17,6 +18,9 @@ class TrailConditionGuide {
 // General trail/wildlife and flood precautions:
 // https://home.nps.gov/articles/hikingetiquette.htm
 // https://www.blm.gov/programs/national-conservation-lands/utah/grand-staircase-escalante-national-monument/safety-conditions
+// Malaysian weather and mountain conditions:
+// https://www.met.gov.my/en/pendidikan/fenomena-cuaca/
+// https://www.sabahparks.org.my/services/mount-kinabalu-climbing
 const trailConditionGuides = <TrailConditionGuide>[
   TrailConditionGuide(
     'Slippery pathway',
@@ -315,6 +319,18 @@ const trailConditionGuides = <TrailConditionGuide>[
     'Check warnings before leaving. At thunder, seek a substantial building or enclosed vehicle; avoid ridges and isolated trees.',
   ),
   TrailConditionGuide(
+    'Heavy rain',
+    'Weather',
+    'Intense or prolonged rain can reduce grip and trigger rapidly rising rivers, flash floods or landslides.',
+    'Postpone the hike and check MET Malaysia warnings. Stay away from rivers, flooded paths and unstable slopes.',
+  ),
+  TrailConditionGuide(
+    'Thunderstorm or lightning',
+    'Weather',
+    'Thunder or lightning signals a dangerous storm, even when rain has not reached the trail.',
+    'Do not start the hike. Seek a substantial building or enclosed vehicle; avoid exposed ridges, water and isolated trees.',
+  ),
+  TrailConditionGuide(
     'Heat and humidity',
     'Weather',
     'Hot, humid conditions make exertion harder and cooling less effective.',
@@ -329,14 +345,20 @@ const trailConditionGuides = <TrailConditionGuide>[
   TrailConditionGuide(
     'Cold or wet conditions',
     'Weather',
-    'Wet clothes and wind can cool you quickly, even in mild weather.',
+    'Wet clothes and wind can cool you quickly, especially on Malaysian mountain trails such as Mount Kinabalu.',
     'Carry dry layers and rain protection. Seek shelter and change wet clothing before you become chilled.',
   ),
   TrailConditionGuide(
     'Poor visibility',
     'Weather',
-    'Fog, heavy rain or darkness makes markers and edges harder to see.',
+    'Fog, mist, low cloud or heavy rain makes markers and edges harder to see.',
     'Keep the group together, slow down and check your position. Stop or turn back if the route is unclear.',
+  ),
+  TrailConditionGuide(
+    'Haze',
+    'Weather',
+    'Airborne particles can reduce air quality and visibility along the trail.',
+    'Check official Air Pollutant Index readings and local advisories. Postpone outdoor exertion when advised and choose another time if conditions are poor.',
   ),
   TrailConditionGuide(
     'Sun exposure and UV',
@@ -377,7 +399,9 @@ const trailConditionGuides = <TrailConditionGuide>[
   ),
 ];
 
+/// Represents help article.
 class HelpArticle {
+  /// Creates help article.
   const HelpArticle(
     this.title,
     this.text, {

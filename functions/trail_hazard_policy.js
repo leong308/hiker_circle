@@ -1,7 +1,7 @@
 // Server-owned trail issue categories and risk framing. Community evidence remains unverified until reviewed.
 'use strict';
 
-const HAZARD_POLICY_VERSION = 1;
+const HAZARD_POLICY_VERSION = 2;
 const REPORT_LIFETIME_MS = 7 * 86400000;
 const HAZARD_CATEGORIES = Object.freeze({
   'Trail surface': Object.freeze(['Slippery pathway', 'Loose rock', 'Deep mud', 'Ice or snow',
@@ -10,19 +10,24 @@ const HAZARD_CATEGORIES = Object.freeze({
     'Dense overgrowth', 'Blocked trail entrance', 'Fallen branches']),
   Water: Object.freeze(['Flooded route', 'Fast river crossing', 'Damaged bridge',
     'High water level', 'Strong current', 'Washed-out crossing', 'Contaminated water']),
+  // Malaysian weather hazards; keep labels in sync with the mobile report catalog.
+  Weather: Object.freeze(['Heavy rain', 'Thunderstorm or lightning', 'Strong wind',
+    'Heat and humidity', 'Haze', 'Poor visibility', 'Cold or wet conditions']),
   Wildlife: Object.freeze(['Wild animal sighting', 'Snakes', 'Stinging insects',
     'Animal activity', 'Animal tracks or den', 'Leeches']),
   'Trail structures': Object.freeze(['Damaged steps', 'Unsafe ladder or rope', 'Missing sign',
     'Damaged handrail', 'Unstable boardwalk', 'Missing trail marker']),
-  'Other caution': Object.freeze(['Unsafe human activity', 'Poor visibility', 'Other',
-    'Limited mobile signal', 'Illegal dumping', 'Strong wind']),
+  'Other caution': Object.freeze(['Unsafe human activity', 'Other',
+    'Limited mobile signal', 'Illegal dumping']),
 });
 const TYPE_CATEGORIES = new Map(Object.entries(HAZARD_CATEGORIES)
   .flatMap(([category, types]) => types.map(type => [type, category])));
-const FATAL_TYPES = new Set(['Landslide', 'Wild animal sighting', 'Unsafe ladder or rope']);
+const FATAL_TYPES = new Set(['Landslide', 'Wild animal sighting', 'Unsafe ladder or rope',
+  'Heavy rain', 'Thunderstorm or lightning', 'Hail']);
 
 function classifyHazard(hazardType) {
-  const hazardCategory = TYPE_CATEGORIES.get(hazardType) || 'Other caution';
+  // Retired options cannot be submitted, but existing reports keep their risk.
+  const hazardCategory = TYPE_CATEGORIES.get(hazardType) || (hazardType === 'Hail' ? 'Weather' : 'Other caution');
   const fatal = hazardCategory === 'Trail surface' || hazardCategory === 'Water' || FATAL_TYPES.has(hazardType);
   return {hazardCategory, severity: fatal ? 'fatal' : 'moderate',
     riskLevel: fatal ? 'fatal' : 'normal', hazardPolicyVersion: HAZARD_POLICY_VERSION};

@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import '../../app/Model/app_session.dart';
 import '../Model/me_models.dart';
 
+/// Represents me repository.
 class MeRepository {
+  /// Creates me repository.
   const MeRepository();
 
+  /// Loads profile.
   MeProfile loadProfile({required AppSession session}) {
     final username = session.username.trim();
     return MeProfile(
@@ -19,6 +22,7 @@ class MeRepository {
     );
   }
 
+  /// Loads stats.
   List<MeStat> loadStats() {
     return const [
       MeStat(label: 'Circles', value: '0'),
@@ -27,6 +31,7 @@ class MeRepository {
     ];
   }
 
+  /// Loads sections.
   List<MeSection> loadSections() {
     return const [
       MeSection(
@@ -92,12 +97,18 @@ class MeRepository {
             title: 'Privacy Policy',
             subtitle: 'How HikerCircle collects, uses, and protects data',
           ),
+          MeActionItem(
+            icon: Icons.info_outline_rounded,
+            title: 'Disclaimer',
+            subtitle: 'Map data, hazards, SOS and location sharing limits',
+          ),
         ],
       ),
     ];
   }
 }
 
+/// Computes profile handle for phone.
 String _profileHandleForPhone(String phoneNumber) {
   final digits = phoneNumber.replaceAll(RegExp('[^0-9]'), '');
   if (digits.length <= 4) {

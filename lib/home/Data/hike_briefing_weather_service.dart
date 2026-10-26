@@ -6,11 +6,13 @@ import '../../trail/Model/trail_models.dart';
 
 /// One shared, bounded cache for the Home briefing. No requests on map movement.
 class HikeBriefingWeatherService {
+  /// Creates hike briefing weather service.
   HikeBriefingWeatherService({http.Client? client}) : _client = client;
   static final shared = HikeBriefingWeatherService();
   static const freshness = Duration(hours: 4);
   static const forecastDays = 16;
 
+  /// Checks whether beyond forecast.
   static bool isBeyondForecast(DateTime departure, {DateTime? now}) =>
       departure.toUtc().difference((now ?? DateTime.now()).toUtc()) >=
       const Duration(days: forecastDays);
@@ -19,6 +21,7 @@ class HikeBriefingWeatherService {
   final _pending = <String, Future<TrailWeather>>{};
   final _failed = <String, DateTime>{};
 
+  /// Fetches.
   Future<TrailWeather> fetch(
     double latitude,
     double longitude, {
@@ -93,6 +96,7 @@ class HikeBriefingWeatherService {
     }
   }
 
+  /// Fetches.
   Future<TrailWeather> _fetch(double latitude, double longitude) async {
     final client = _client ?? http.Client();
     try {

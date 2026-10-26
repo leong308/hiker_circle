@@ -11,6 +11,7 @@ const feedbackCategories = ['Problem', 'Suggestion', 'Other'];
 const feedbackStatuses = ['New', 'In review', 'Resolved'];
 const feedbackImageLimit = 5 * 1024 * 1024;
 
+/// Computes feedback submission error.
 String feedbackSubmissionError(Object error) {
   if (error is TimeoutException) {
     return 'We could not confirm delivery yet. Retry to check and send the same report without creating a duplicate.';
@@ -32,6 +33,7 @@ String feedbackSubmissionError(Object error) {
   return 'Feedback could not be sent. Please retry. Your report is still here.';
 }
 
+/// Validates feedback.
 String? validateFeedback(String? value) {
   final text = value?.trim() ?? '';
   if (text.length < 10) return 'Please add at least 10 characters of detail.';
@@ -43,6 +45,7 @@ String? validateFeedback(String? value) {
 
 /// One immutable draft ID is reused on retries, including ambiguous timeouts.
 class FeedbackDraft {
+  /// Creates feedback draft.
   FeedbackDraft({
     required this.id,
     required this.uid,
@@ -59,8 +62,10 @@ class FeedbackDraft {
 
 /// Keep submission validation and upload error mapping outside the feedback screens.
 class FeedbackRepository {
+  /// Returns db.
   FirebaseFirestore get _db => FirebaseFirestore.instance;
 
+  /// Computes draft.
   FeedbackDraft draft(String category, String message, Uint8List? screenshot) {
     if (!feedbackCategories.contains(category) ||
         validateFeedback(message) != null) {
@@ -78,6 +83,7 @@ class FeedbackRepository {
     );
   }
 
+  /// Computes submit.
   Future<void> submit(FeedbackDraft draft) async {
     if (FirebaseBootstrap.requireAuthenticatedUser().uid != draft.uid) {
       throw StateError('Please sign in again before sending feedback.');
@@ -116,6 +122,7 @@ class FeedbackRepository {
     });
   }
 
+  /// Computes reports.
   Stream<QuerySnapshot<Map<String, dynamic>>> reports({
     required bool admin,
   }) async* {
@@ -129,6 +136,7 @@ class FeedbackRepository {
     yield* query.orderBy('createdAt', descending: true).limit(100).snapshots();
   }
 
+  /// Sets status.
   Future<void> setStatus(String id, String status) {
     if (!feedbackStatuses.contains(status)) {
       throw ArgumentError('Invalid status');
@@ -136,6 +144,7 @@ class FeedbackRepository {
     return _db.collection('appFeedback').doc(id).update({'status': status});
   }
 
+  /// Computes screenshot.
   Future<Uint8List?> screenshot(String path) async =>
       FirebaseStorage.instance.ref(path).getData(feedbackImageLimit);
 }

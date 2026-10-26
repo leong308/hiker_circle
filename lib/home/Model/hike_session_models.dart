@@ -1,5 +1,7 @@
 // Hike session models describe planning, team participation, tracking samples and completed hike summaries.
 import '../../core/services/phone_privacy.dart';
+import '../../app/Data/app_settings_controller.dart';
+import '../Data/location_update_interval_controller.dart';
 import 'route_gear_assessment.dart';
 import 'hike_shirt_color.dart';
 import 'trail_gear_plan.dart';
@@ -10,10 +12,12 @@ import 'dart:math' as math;
 import '../../sos/Model/sos_models.dart';
 import '../../trail/Model/trail_models.dart';
 
+/// Defines the hike type choices.
 enum HikeType {
   solo,
   team;
 
+  /// Returns label.
   String get label {
     switch (this) {
       case HikeType.solo:
@@ -24,7 +28,9 @@ enum HikeType {
   }
 }
 
+/// Represents fall detection settings.
 class FallDetectionSettings {
+  /// Creates fall detection settings.
   const FallDetectionSettings({
     required this.sensorSensitivity,
     this.fallResponseDuration = const Duration(seconds: 30),
@@ -43,6 +49,7 @@ class FallDetectionSettings {
   final Duration fallResponseDuration;
   final Duration longestRestDuration;
 
+  /// Returns normalized sensitivity.
   double get normalizedSensitivity {
     final clamped = sensorSensitivity.clamp(
       minSensorSensitivity,
@@ -52,6 +59,7 @@ class FallDetectionSettings {
         (maxSensorSensitivity - minSensorSensitivity);
   }
 
+  /// Returns impact acceleration threshold.
   double get impactAccelerationThreshold {
     return _lerp(
       5.0 * gravityMetersPerSecondSquared,
@@ -60,6 +68,7 @@ class FallDetectionSettings {
     );
   }
 
+  /// Returns direct impact acceleration threshold.
   double get directImpactAccelerationThreshold {
     return _lerp(
       3.6 * gravityMetersPerSecondSquared,
@@ -68,6 +77,7 @@ class FallDetectionSettings {
     );
   }
 
+  /// Returns free fall acceleration threshold.
   double get freeFallAccelerationThreshold {
     return _lerp(
       0.25 * gravityMetersPerSecondSquared,
@@ -76,18 +86,22 @@ class FallDetectionSettings {
     );
   }
 
+  /// Returns stillness variance threshold.
   double get stillnessVarianceThreshold {
     return _lerp(0.012, 0.032, normalizedSensitivity);
   }
 
+  /// Returns significant linear movement threshold.
   double get significantLinearMovementThreshold {
     return _lerp(0.55, 1.25, normalizedSensitivity);
   }
 
+  /// Returns altitude drop threshold meters.
   double get altitudeDropThresholdMeters {
     return _lerp(1.6, 0.8, normalizedSensitivity);
   }
 
+  /// Returns sensitivity label.
   String get sensitivityLabel {
     if (sensorSensitivity < 3.5) {
       return 'Low';
@@ -98,6 +112,7 @@ class FallDetectionSettings {
     return 'Balanced';
   }
 
+  /// Returns response countdown duration label.
   String get responseCountdownDurationLabel {
     if (fallResponseDuration.inSeconds < 60) {
       return '${fallResponseDuration.inSeconds} sec';
@@ -105,6 +120,7 @@ class FallDetectionSettings {
     return '${fallResponseDuration.inMinutes} min';
   }
 
+  /// Returns longest rest duration label.
   String get longestRestDurationLabel {
     if (longestRestDuration.inMinutes < 60) {
       return '${longestRestDuration.inMinutes} min';
@@ -113,8 +129,10 @@ class FallDetectionSettings {
     return '$hours hr${hours == 1 ? '' : 's'}';
   }
 
+  /// Returns is high sensitivity.
   bool get isHighSensitivity => sensorSensitivity > 7;
 
+  /// Computes ==.
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
@@ -124,16 +142,20 @@ class FallDetectionSettings {
             other.longestRestDuration == longestRestDuration;
   }
 
+  /// Returns hash code.
   @override
   int get hashCode =>
       Object.hash(sensorSensitivity, fallResponseDuration, longestRestDuration);
 
+  /// Computes lerp.
   static double _lerp(double start, double end, double amount) {
     return start + (end - start) * amount;
   }
 }
 
+/// Represents gear checklist catalog.
 class GearChecklistCatalog {
+  /// Creates gear checklist catalog using .
   const GearChecklistCatalog._();
 
   static const Map<String, List<String>> sections = {
@@ -178,8 +200,10 @@ class GearChecklistCatalog {
     ...TrailGearPlan.allItems,
   });
 
+  /// Returns item count.
   static int get itemCount => allItems.length;
 
+  /// Computes sanitize.
   static Set<String> sanitize(Iterable<String> items) {
     return Set<String>.unmodifiable(
       items.where(
@@ -192,7 +216,9 @@ class GearChecklistCatalog {
   }
 }
 
+/// Represents planned hike.
 class PlannedHike {
+  /// Creates planned hike.
   const PlannedHike({
     required this.trail,
     required this.plannedStartTime,
@@ -228,6 +254,7 @@ class PlannedHike {
   final bool hasKnownBatteryLevel;
   final Set<String> completedChecklistItems;
 
+  /// Returns gear plan.
   TrailGearPlan get gearPlan => TrailGearPlan.forTrail(
     trail,
     plannedStartTime,
@@ -235,10 +262,15 @@ class PlannedHike {
     saved: completedChecklistItems,
     assessment: gearAssessment,
   );
+
+  /// Returns missing required gear.
   Set<String> get missingRequiredGear =>
       gearPlan.missingRequired(completedChecklistItems);
+
+  /// Returns required gear ready.
   bool get requiredGearReady => missingRequiredGear.isEmpty;
 
+  /// Applies to draft.
   HikeSessionDraft applyToDraft(HikeSessionDraft draft) => draft.copyWith(
     completedChecklistItems: completedChecklistItems,
     trail: draft.trail.copyWith(weather: trail.weather),
@@ -246,11 +278,13 @@ class PlannedHike {
     locationRecordingInterval: locationRecordingInterval,
   );
 
+  /// Applies gear progress.
   PlannedHike withGearProgress() => copyWith(
     checklistCompleted: gearPlan.completed(completedChecklistItems),
     checklistTotal: gearPlan.items.length,
   );
 
+  /// Returns preparation percent.
   int get preparationPercent {
     if (checklistTotal == 0) {
       return 0;
@@ -258,6 +292,7 @@ class PlannedHike {
     return ((checklistCompleted / checklistTotal) * 100).round();
   }
 
+  /// Returns missing preparation items.
   List<String> get missingPreparationItems {
     return [
       if (!weatherCached) 'Weather forecast not cached',
@@ -271,6 +306,7 @@ class PlannedHike {
     ];
   }
 
+  /// Returns a copy with the supplied fields changed.
   PlannedHike copyWith({
     RouteGearAssessment? gearAssessment,
     Trail? trail,
@@ -312,7 +348,9 @@ class PlannedHike {
   }
 }
 
+/// Represents team hike buddy.
 class TeamHikeBuddy {
+  /// Creates team hike buddy.
   const TeamHikeBuddy({
     required this.name,
     required this.handle,
@@ -322,6 +360,7 @@ class TeamHikeBuddy {
     this.avatarColorValue = 0xFF34A853,
   });
 
+  /// Creates team hike buddy from a cloud record.
   factory TeamHikeBuddy.fromFirestore(Map<String, dynamic> data) {
     return TeamHikeBuddy(
       name: _modelStringFrom(data['name']).isEmpty
@@ -347,9 +386,11 @@ class TeamHikeBuddy {
   final String photoURL;
   final int avatarColorValue;
 
+  /// Returns normalized phone number.
   String get normalizedPhoneNumber =>
       phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
 
+  /// Returns short name.
   String get shortName {
     final trimmed = name.trim();
     if (trimmed.isEmpty) {
@@ -359,6 +400,7 @@ class TeamHikeBuddy {
     return firstPart.isEmpty ? trimmed : firstPart;
   }
 
+  /// Returns a copy with the supplied fields changed.
   TeamHikeBuddy copyWith({
     String? name,
     String? handle,
@@ -377,6 +419,7 @@ class TeamHikeBuddy {
     );
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'name': name,
@@ -389,6 +432,7 @@ class TeamHikeBuddy {
   }
 }
 
+/// Defines the team hike phase choices.
 enum TeamHikePhase {
   inviting,
   readyCheck,
@@ -396,6 +440,7 @@ enum TeamHikePhase {
   active,
   completed;
 
+  /// Returns label.
   String get label {
     switch (this) {
       case TeamHikePhase.inviting:
@@ -412,6 +457,7 @@ enum TeamHikePhase {
   }
 }
 
+/// Defines the team hike participant status choices.
 enum TeamHikeParticipantStatus {
   invited,
   joined,
@@ -420,6 +466,7 @@ enum TeamHikeParticipantStatus {
   offline,
   ended;
 
+  /// Returns label.
   String get label {
     switch (this) {
       case TeamHikeParticipantStatus.invited:
@@ -437,15 +484,18 @@ enum TeamHikeParticipantStatus {
     }
   }
 
+  /// Returns is ready for start.
   bool get isReadyForStart {
     return this == TeamHikeParticipantStatus.ready ||
         this == TeamHikeParticipantStatus.active;
   }
 }
 
+/// Represents team hike participant.
 class TeamHikeParticipant {
   static const Duration locationFreshnessLimit = Duration(minutes: 2);
 
+  /// Creates team hike participant.
   const TeamHikeParticipant({
     required this.buddy,
     required this.status,
@@ -465,6 +515,7 @@ class TeamHikeParticipant {
     this.separationAlertActive = false,
   });
 
+  /// Creates team hike participant from a cloud record.
   factory TeamHikeParticipant.fromFirestore(Map<String, dynamic> data) {
     final buddyData = data['buddy'] is Map
         ? Map<String, dynamic>.from(data['buddy'] as Map)
@@ -513,16 +564,20 @@ class TeamHikeParticipant {
   final DateTime? isolatedSince;
   final bool separationAlertActive;
 
+  /// Returns phone number.
   String get phoneNumber => buddy.phoneNumber;
 
+  /// Returns can be pinged.
   bool get canBePinged =>
       status == TeamHikeParticipantStatus.joined ||
       status == TeamHikeParticipantStatus.ready ||
       status == TeamHikeParticipantStatus.active;
 
+  /// Returns effective location updated at.
   DateTime? get effectiveLocationUpdatedAt =>
       locationUpdatedAt ?? latestLocation?.capturedAt;
 
+  /// Checks whether there is fresh location at.
   bool hasFreshLocationAt(
     DateTime now, {
     Duration maxAge = locationFreshnessLimit,
@@ -536,6 +591,7 @@ class TeamHikeParticipant {
     return age >= const Duration(minutes: -1) && age <= maxAge;
   }
 
+  /// Returns response label.
   String get responseLabel {
     final okAt = lastOkAt;
     if (okAt != null) {
@@ -548,6 +604,7 @@ class TeamHikeParticipant {
     return status.label;
   }
 
+  /// Returns a copy with the supplied fields changed.
   TeamHikeParticipant copyWith({
     TeamHikeBuddy? buddy,
     TeamHikeParticipantStatus? status,
@@ -590,6 +647,7 @@ class TeamHikeParticipant {
     );
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'buddy': buddy.toFirestore(),
@@ -621,7 +679,9 @@ class TeamHikeParticipant {
   }
 }
 
+/// Represents team hike session.
 class TeamHikeSession {
+  /// Creates team hike session.
   const TeamHikeSession({
     required this.id,
     required this.hostPhoneNumber,
@@ -640,6 +700,7 @@ class TeamHikeSession {
     this.sharedDraft,
   });
 
+  /// Creates team hike session from a cloud record.
   factory TeamHikeSession.fromFirestore(
     Map<String, dynamic> data, {
     String id = '',
@@ -685,10 +746,12 @@ class TeamHikeSession {
   final List<TeamHikeParticipant> participants;
   final HikeSessionDraft? sharedDraft;
 
+  /// Returns ready count.
   int get readyCount => participants
       .where((participant) => participant.status.isReadyForStart)
       .length;
 
+  /// Returns invited count.
   int get invitedCount => participants
       .where(
         (participant) =>
@@ -696,10 +759,12 @@ class TeamHikeSession {
       )
       .length;
 
+  /// Returns everyone ready.
   bool get everyoneReady =>
       participants.isNotEmpty &&
       participants.every((participant) => participant.status.isReadyForStart);
 
+  /// Returns leader.
   TeamHikeParticipant? get leader {
     final leaders = participants.where((participant) => participant.isLeader);
     if (leaders.isNotEmpty) {
@@ -713,6 +778,7 @@ class TeamHikeSession {
     ].reduce((a, b) => a.progressMeters >= b.progressMeters ? a : b);
   }
 
+  /// Returns countdown remaining seconds.
   int get countdownRemainingSeconds {
     final start = countdownStartedAt;
     if (phase != TeamHikePhase.countdown || start == null) {
@@ -722,6 +788,7 @@ class TeamHikeSession {
     return math.max(0, countdownSeconds - elapsed);
   }
 
+  /// Returns a copy with the supplied fields changed.
   TeamHikeSession copyWith({
     String? id,
     String? sourceUpcomingHikeId,
@@ -758,6 +825,7 @@ class TeamHikeSession {
     );
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'teamHikeSessionId': id,
@@ -793,6 +861,7 @@ class TeamHikeSession {
 
 /// Collect the editable route, timing and safety choices used to schedule or start a hike.
 class HikeSessionDraft {
+  /// Creates hike session draft.
   const HikeSessionDraft({
     required this.hikeType,
     required this.trail,
@@ -823,6 +892,7 @@ class HikeSessionDraft {
   static const minLocationRecordingInterval = Duration(seconds: 5);
   static const maxLocationRecordingInterval = Duration(minutes: 1);
 
+  /// Creates hike session draft using from trail.
   factory HikeSessionDraft.fromTrail(Trail trail) {
     final now = DateTime.now();
     final departure = DateTime(
@@ -856,22 +926,26 @@ class HikeSessionDraft {
       expectedArrivalTime: expectedArrival,
       expectedReturnTime: expectedArrival.add(const Duration(hours: 2)),
       safetyCheckInInterval: const Duration(minutes: 30),
-      locationRecordingInterval: defaultLocationRecordingInterval,
+      locationRecordingInterval:
+          LocationUpdateIntervalController.instance.preferredInterval,
       emergencyContactNames: const [],
       shareLiveLocation: false,
       fallDetectionEnabled: true,
-      fallDetectionSettings: const FallDetectionSettings(
-        sensorSensitivity: 5,
+      fallDetectionSettings: FallDetectionSettings(
+        sensorSensitivity: AppSettingsController.instance.fallSensorSensitivity,
         fallResponseDuration: Duration(seconds: 30),
         longestRestDuration: Duration(minutes: 3),
       ),
       pathDeviationEnabled: !trail.isUnlisted,
+      pathDeviationDistanceMeters:
+          AppSettingsController.instance.pathDeviationDistanceMeters,
       offlinePhysicalAlertEnabled: true,
       duressEnabled: true,
       completedChecklistItems: const {},
     );
   }
 
+  /// Creates hike session draft using from persistence.
   factory HikeSessionDraft.fromPersistence(Map<String, dynamic> data) {
     final now = DateTime.now();
     final fallDetectionPreferenceVersion = _modelIntFrom(
@@ -1015,6 +1089,7 @@ class HikeSessionDraft {
   final List<TeamHikeBuddy> teamBuddies;
   final List<TrailCheckpoint>? customCheckpoints;
 
+  /// Converts to persistence.
   Map<String, dynamic> toPersistence() {
     return {
       'hikeType': hikeType.name,
@@ -1059,11 +1134,13 @@ class HikeSessionDraft {
     };
   }
 
+  /// Returns effective checkpoints.
   List<TrailCheckpoint> get effectiveCheckpoints =>
       (customCheckpoints ?? trail.checkpoints)
           .where((checkpoint) => checkpoint.hasValidCoordinate)
           .toList();
 
+  /// Computes sorted checkpoints.
   List<TrailCheckpoint> _sortedCheckpoints(List<TrailCheckpoint>? cps) {
     final list = [
       ...(cps ?? trail.checkpoints).where(
@@ -1073,9 +1150,11 @@ class HikeSessionDraft {
     return list;
   }
 
+  /// Returns sorted checkpoints.
   List<TrailCheckpoint> get sortedCheckpoints =>
       _sortedCheckpoints(customCheckpoints);
 
+  /// Adds checkpoint.
   HikeSessionDraft addCheckpoint(TrailCheckpoint cp) {
     if (!cp.hasValidCoordinate) {
       return this;
@@ -1091,6 +1170,7 @@ class HikeSessionDraft {
     );
   }
 
+  /// Removes checkpoint at.
   HikeSessionDraft removeCheckpointAt(int index) {
     final cps = [...(customCheckpoints ?? trail.checkpoints)]
       ..sort((a, b) => a.order.compareTo(b.order));
@@ -1109,6 +1189,7 @@ class HikeSessionDraft {
     );
   }
 
+  /// Computes reorder checkpoint.
   HikeSessionDraft reorderCheckpoint(int oldIndex, int newIndex) {
     final cps = [...(customCheckpoints ?? trail.checkpoints)]
       ..sort((a, b) => a.order.compareTo(b.order));
@@ -1129,8 +1210,10 @@ class HikeSessionDraft {
     );
   }
 
+  /// Returns has custom checkpoints.
   bool get hasCustomCheckpoints => customCheckpoints != null;
 
+  /// Returns a copy with the supplied fields changed.
   HikeSessionDraft copyWith({
     double? soloDistanceAcknowledgedKm,
     bool clearSoloDistanceAcknowledgement = false,
@@ -1196,8 +1279,9 @@ class HikeSessionDraft {
   }
 }
 
-/// Keep the active session identity with recorded movement, manual pins, check-ins and team state.
+/// Keeps active movement, check-ins and team state, including legacy saved fields.
 class ActiveHikeSession {
+  /// Creates active hike session.
   const ActiveHikeSession({
     required this.sessionId,
     required this.draft,
@@ -1214,8 +1298,13 @@ class ActiveHikeSession {
     String? teamHikeSessionId = '',
     this.teamHikeSession,
     this.sourceUpcomingHikeId = '',
+    this.batterySafetyAdjusted = false,
+    this.batterySafetyRevision = 0,
+    this.batteryOriginalFootprintIntervalSeconds,
+    this.batteryOriginalSensorSensitivity,
   }) : _teamHikeSessionId = teamHikeSessionId;
 
+  /// Creates active hike session using from draft.
   factory ActiveHikeSession.fromDraft(
     HikeSessionDraft draft, {
     String teamHikeSessionId = '',
@@ -1241,6 +1330,7 @@ class ActiveHikeSession {
     );
   }
 
+  /// Creates active hike session using from persistence.
   factory ActiveHikeSession.fromPersistence(Map<String, dynamic> data) {
     final teamSessionData = _modelMapFrom(data['teamHikeSession']);
     final routePoints = _modelCoordinatesFrom(data['routePoints']);
@@ -1255,6 +1345,19 @@ class ActiveHikeSession {
     ).map(HikeCheckInRecord.fromPersistence).toList();
     return ActiveHikeSession(
       sessionId: _modelStringFrom(data['sessionId']),
+      batterySafetyAdjusted: data['batterySafetyAdjusted'] == true,
+      batterySafetyRevision: math.max(
+        0,
+        _modelIntFrom(data['batterySafetyRevision']),
+      ),
+      batteryOriginalFootprintIntervalSeconds:
+          data['batteryOriginalFootprintIntervalSeconds'] is num
+          ? _modelIntFrom(data['batteryOriginalFootprintIntervalSeconds'])
+          : null,
+      batteryOriginalSensorSensitivity:
+          data['batteryOriginalSensorSensitivity'] is num
+          ? _modelDoubleFrom(data['batteryOriginalSensorSensitivity'])
+          : null,
       draft: HikeSessionDraft.fromPersistence(_modelMapFrom(data['draft'])),
       startedAt:
           _modelDateFromValue(data['startedAt']) ??
@@ -1287,6 +1390,10 @@ class ActiveHikeSession {
     );
   }
 
+  final bool batterySafetyAdjusted;
+  final int batterySafetyRevision;
+  final int? batteryOriginalFootprintIntervalSeconds;
+  final double? batteryOriginalSensorSensitivity;
   final String sessionId;
   final HikeSessionDraft draft;
   final DateTime startedAt;
@@ -1303,9 +1410,17 @@ class ActiveHikeSession {
   final TeamHikeSession? teamHikeSession;
   final String sourceUpcomingHikeId;
 
+  /// Converts to persistence.
   Map<String, dynamic> toPersistence() {
     return {
       'sessionId': sessionId,
+      'batterySafetyAdjusted': batterySafetyAdjusted,
+      'batterySafetyRevision': batterySafetyRevision,
+      if (batteryOriginalFootprintIntervalSeconds != null)
+        'batteryOriginalFootprintIntervalSeconds':
+            batteryOriginalFootprintIntervalSeconds,
+      if (batteryOriginalSensorSensitivity != null)
+        'batteryOriginalSensorSensitivity': batteryOriginalSensorSensitivity,
       'draft': draft.toPersistence(),
       'startedAt': startedAt.toUtc().toIso8601String(),
       'batteryLevel': batteryLevel,
@@ -1340,13 +1455,23 @@ class ActiveHikeSession {
     };
   }
 
+  /// Returns team hike session id.
   String get teamHikeSessionId => _teamHikeSessionId ?? '';
+
+  /// Returns trail.
   Trail get trail => draft.trail;
+
+  /// Returns elapsed duration.
   Duration get elapsedDuration => DateTime.now().difference(startedAt);
+
+  /// Returns route point count.
   int get routePointCount => routePoints.length;
+
+  /// Returns has known battery level.
   bool get hasKnownBatteryLevel =>
       batteryLevel > 0 || batteryStartedLevel != null;
 
+  /// Returns recorded distance km.
   double get recordedDistanceKm {
     final validRoutePoints = routePoints
         .where((point) => point.hasValidPosition)
@@ -1364,6 +1489,7 @@ class ActiveHikeSession {
     return totalMeters / 1000;
   }
 
+  /// Returns battery used percent.
   int? get batteryUsedPercent {
     final started = batteryStartedLevel;
     if (started == null) {
@@ -1372,14 +1498,14 @@ class ActiveHikeSession {
     return math.max(0, started - batteryLevel);
   }
 
-  bool hasPinnedNear(HikeCoordinate coordinate, {double thresholdMeters = 12}) {
-    return manualPinLocations.any(
-      (pin) => pin.coordinate.distanceTo(coordinate) <= thresholdMeters,
-    );
-  }
-
+  /// Returns a copy with the supplied fields changed.
   ActiveHikeSession copyWith({
     String? sessionId,
+    bool? batterySafetyAdjusted,
+    int? batterySafetyRevision,
+    int? batteryOriginalFootprintIntervalSeconds,
+    double? batteryOriginalSensorSensitivity,
+    bool clearBatterySafetyOriginals = false,
     HikeSessionDraft? draft,
     int? batteryLevel,
     int? batteryStartedLevel,
@@ -1396,6 +1522,18 @@ class ActiveHikeSession {
   }) {
     return ActiveHikeSession(
       sessionId: sessionId ?? this.sessionId,
+      batterySafetyAdjusted:
+          batterySafetyAdjusted ?? this.batterySafetyAdjusted,
+      batterySafetyRevision:
+          batterySafetyRevision ?? this.batterySafetyRevision,
+      batteryOriginalFootprintIntervalSeconds: clearBatterySafetyOriginals
+          ? null
+          : batteryOriginalFootprintIntervalSeconds ??
+                this.batteryOriginalFootprintIntervalSeconds,
+      batteryOriginalSensorSensitivity: clearBatterySafetyOriginals
+          ? null
+          : batteryOriginalSensorSensitivity ??
+                this.batteryOriginalSensorSensitivity,
       draft: draft ?? this.draft,
       startedAt: startedAt,
       batteryLevel: batteryLevel ?? this.batteryLevel,
@@ -1414,7 +1552,9 @@ class ActiveHikeSession {
   }
 }
 
+/// Represents hike coordinate.
 class HikeCoordinate {
+  /// Creates hike coordinate.
   const HikeCoordinate({
     required this.latitude,
     required this.longitude,
@@ -1423,6 +1563,7 @@ class HikeCoordinate {
     this.altitudeMeters,
   });
 
+  /// Creates hike coordinate using from trigger location.
   factory HikeCoordinate.fromTriggerLocation(SosTriggerLocation location) {
     return HikeCoordinate(
       latitude: location.latitude,
@@ -1432,6 +1573,7 @@ class HikeCoordinate {
     );
   }
 
+  /// Creates hike coordinate from a cloud record.
   factory HikeCoordinate.fromFirestore(Map<String, dynamic> data) {
     return tryFromFirestore(data) ??
         HikeCoordinate(
@@ -1469,6 +1611,7 @@ class HikeCoordinate {
   final double? altitudeMeters;
   final DateTime capturedAt;
 
+  /// Returns has valid position.
   bool get hasValidPosition =>
       latitude.isFinite &&
       longitude.isFinite &&
@@ -1477,6 +1620,7 @@ class HikeCoordinate {
       longitude >= -180 &&
       longitude <= 180;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'latitude': latitude,
@@ -1487,6 +1631,7 @@ class HikeCoordinate {
     };
   }
 
+  /// Computes distance to.
   double distanceTo(HikeCoordinate other) {
     if (!hasValidPosition || !other.hasValidPosition) {
       return double.infinity;
@@ -1512,10 +1657,12 @@ class HikeCoordinate {
     return earthRadiusMeters * centralAngle;
   }
 
+  /// Computes degrees to radians.
   static double _degreesToRadians(double degrees) {
     return degrees * math.pi / 180;
   }
 
+  /// Computes valid latitude from.
   static double? _validLatitudeFrom(Object? value) {
     if (value is num && value.isFinite && value >= -90 && value <= 90) {
       return value.toDouble();
@@ -1523,6 +1670,7 @@ class HikeCoordinate {
     return null;
   }
 
+  /// Computes valid longitude from.
   static double? _validLongitudeFrom(Object? value) {
     if (value is num && value.isFinite && value >= -180 && value <= 180) {
       return value.toDouble();
@@ -1530,6 +1678,7 @@ class HikeCoordinate {
     return null;
   }
 
+  /// Computes valid accuracy from.
   static double? _validAccuracyFrom(Object? value) {
     if (value is num && value.isFinite && value >= 0) {
       return value.toDouble();
@@ -1537,6 +1686,7 @@ class HikeCoordinate {
     return null;
   }
 
+  /// Computes valid altitude from.
   static double? _validAltitudeFrom(Object? value) {
     if (value is num && value.isFinite && value >= -500 && value <= 10000) {
       return value.toDouble();
@@ -1545,13 +1695,16 @@ class HikeCoordinate {
   }
 }
 
+/// Reads legacy manual pin records so older saved hikes remain compatible.
 class HikeManualPin {
+  /// Creates hike manual pin.
   const HikeManualPin({
     required this.id,
     required this.coordinate,
     required this.pinnedAt,
   });
 
+  /// Creates hike manual pin using from persistence.
   factory HikeManualPin.fromPersistence(Map<String, dynamic> data) {
     return tryFromPersistence(data) ??
         HikeManualPin(
@@ -1565,6 +1718,7 @@ class HikeManualPin {
         );
   }
 
+  /// Computes try from persistence.
   static HikeManualPin? tryFromPersistence(Map<String, dynamic> data) {
     final coordinate = HikeCoordinate.tryFromFirestore(
       _modelMapFrom(data['coordinate']),
@@ -1585,6 +1739,7 @@ class HikeManualPin {
   final HikeCoordinate coordinate;
   final DateTime pinnedAt;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'pinId': id,
@@ -1594,13 +1749,16 @@ class HikeManualPin {
   }
 }
 
+/// Represents hike check in record.
 class HikeCheckInRecord {
+  /// Creates hike check in record.
   const HikeCheckInRecord({
     required this.id,
     required this.checkedInAt,
     this.coordinate,
   });
 
+  /// Creates hike check in record using from persistence.
   factory HikeCheckInRecord.fromPersistence(Map<String, dynamic> data) {
     return HikeCheckInRecord(
       id: _modelStringFrom(data['checkInId']),
@@ -1617,6 +1775,7 @@ class HikeCheckInRecord {
   final DateTime checkedInAt;
   final HikeCoordinate? coordinate;
 
+  /// Converts to persistence.
   Map<String, dynamic> toPersistence() {
     return {
       'checkInId': id,
@@ -1627,16 +1786,9 @@ class HikeCheckInRecord {
   }
 }
 
-enum PinLocationStatus { pinned, duplicate, unavailable }
-
-class PinLocationResult {
-  const PinLocationResult({required this.hike, required this.status});
-
-  final ActiveHikeSession hike;
-  final PinLocationStatus status;
-}
-
+/// Represents hike summary report.
 class HikeSummaryReport {
+  /// Creates hike summary report.
   const HikeSummaryReport({
     required this.sessionId,
     required this.trailName,
@@ -1691,7 +1843,7 @@ class HikeSummaryReport {
       insights: [
         'Average pace: ${paceMinutesPerKm.round()} min/km across ${distanceKm.toStringAsFixed(2)} km.',
         'Average speed: ${(duration.inSeconds > 0 ? distanceKm / (duration.inSeconds / 3600) : 0).toStringAsFixed(2)} km/h.',
-        'Route notes: $actualManualPins pinned locations and automatic GPS tracking.',
+        'Route recorded with automatic GPS tracking.',
         'Battery used: $batteryDrop% over ${_formatDuration(duration)} (${(batteryDrop / movingHours).toStringAsFixed(1)}% per hour).',
         if (activeHike.queuedUpdates == 0)
           'Cloud sync: all hike telemetry is up to date.'
@@ -1701,6 +1853,7 @@ class HikeSummaryReport {
     );
   }
 
+  /// Computes recorded route points for.
   static List<HikeCoordinate> recordedRoutePointsFor(
     ActiveHikeSession activeHike,
   ) {
@@ -1717,6 +1870,7 @@ class HikeSummaryReport {
     return points;
   }
 
+  /// Computes recorded distance km for.
   static double _recordedDistanceKmFor(List<HikeCoordinate> routePoints) {
     if (routePoints.length < 2) {
       return 0;
@@ -1741,23 +1895,25 @@ class HikeSummaryReport {
   final int batteryEndPercent;
   final List<String> insights;
 
+  /// Returns average speed kmh.
   double get averageSpeedKmh =>
       duration.inMilliseconds > 0 && distanceKm.isFinite
       ? distanceKm / (duration.inMilliseconds / 3600000)
       : 0;
 
+  /// Returns share text.
   String get shareText {
     return [
       'Hike summary: $trailName',
       'Distance: ${distanceKm.toStringAsFixed(2)} km',
       'Duration: ${_formatDuration(duration)}',
       if (checkIns > 0) 'Past check-ins: $checkIns',
-      'Pinned locations: $manualPins',
       'Battery: $batteryStartPercent% to $batteryEndPercent%',
       ...insights.map((insight) => '- $insight'),
     ].join('\n');
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'sessionId': sessionId,
@@ -1777,6 +1933,7 @@ class HikeSummaryReport {
     };
   }
 
+  /// Formats duration.
   static String _formatDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
@@ -1791,6 +1948,7 @@ class HikeSummaryReport {
   }
 }
 
+/// Computes team hike phase from name.
 TeamHikePhase _teamHikePhaseFromName(String value) {
   return TeamHikePhase.values.firstWhere(
     (phase) => phase.name == value,
@@ -1798,6 +1956,7 @@ TeamHikePhase _teamHikePhaseFromName(String value) {
   );
 }
 
+/// Computes team hike participant status from name.
 TeamHikeParticipantStatus _teamHikeParticipantStatusFromName(String value) {
   return TeamHikeParticipantStatus.values.firstWhere(
     (status) => status.name == value,
@@ -1805,6 +1964,7 @@ TeamHikeParticipantStatus _teamHikeParticipantStatusFromName(String value) {
   );
 }
 
+/// Computes compact elapsed.
 String _compactElapsed(Duration elapsed) {
   if (elapsed.inSeconds < 60) {
     return '${math.max(1, elapsed.inSeconds)}s';
@@ -1815,23 +1975,28 @@ String _compactElapsed(Duration elapsed) {
   return '${elapsed.inHours}h';
 }
 
+/// Computes model string from.
 String _modelStringFrom(Object? value) {
   return value is String ? value : '';
 }
 
+/// Computes model double from.
 double _modelDoubleFrom(Object? value, {double fallback = 0}) {
   return value is num && value.isFinite ? value.toDouble() : fallback;
 }
 
+/// Computes model int from.
 int _modelIntFrom(Object? value, {int fallback = 0}) {
   return value is num && value.isFinite ? value.toInt() : fallback;
 }
 
+/// Computes positive model int from.
 int _positiveModelIntFrom(Object? value, {required int fallback}) {
   final result = _modelIntFrom(value, fallback: fallback);
   return result > 0 ? result : fallback;
 }
 
+/// Computes model date from value.
 DateTime? _modelDateFromValue(Object? value) {
   if (value is DateTime) {
     return value;
@@ -1842,10 +2007,12 @@ DateTime? _modelDateFromValue(Object? value) {
   return null;
 }
 
+/// Computes model local date from value.
 DateTime? _modelLocalDateFromValue(Object? value) {
   return _modelDateFromValue(value)?.toLocal();
 }
 
+/// Computes model list of maps.
 List<Map<String, dynamic>> _modelListOfMaps(Object? value) {
   if (value is! Iterable) {
     return const [];
@@ -1856,10 +2023,12 @@ List<Map<String, dynamic>> _modelListOfMaps(Object? value) {
       .toList();
 }
 
+/// Computes model map from.
 Map<String, dynamic> _modelMapFrom(Object? value) {
   return value is Map ? Map<String, dynamic>.from(value) : const {};
 }
 
+/// Computes model coordinates from.
 List<HikeCoordinate> _modelCoordinatesFrom(Object? value) {
   final coordinates = _modelListOfMaps(
     value,
@@ -1868,6 +2037,7 @@ List<HikeCoordinate> _modelCoordinatesFrom(Object? value) {
   return coordinates;
 }
 
+/// Computes model checkpoint map has valid coordinate.
 bool _modelCheckpointMapHasValidCoordinate(Map<String, dynamic> data) {
   final latitude = data['latitude'];
   final longitude = data['longitude'];
@@ -1881,11 +2051,13 @@ bool _modelCheckpointMapHasValidCoordinate(Map<String, dynamic> data) {
       longitude <= 180;
 }
 
+/// Computes checkpoint display name.
 String _checkpointDisplayName(TrailCheckpoint checkpoint, String fallback) {
   final name = checkpoint.name.trim();
   return name.isEmpty ? fallback : name;
 }
 
+/// Computes model string list.
 List<String> _modelStringList(Object? value) {
   if (value is! Iterable) {
     return const [];
@@ -1893,6 +2065,7 @@ List<String> _modelStringList(Object? value) {
   return value.whereType<String>().toList();
 }
 
+/// Computes model draft from value.
 HikeSessionDraft? _modelDraftFromValue(Object? value) {
   if (value is! Map) {
     return null;
@@ -1912,6 +2085,7 @@ class UpcomingHike {
   // Match the backend's window for starting a scheduled hike.
   static const visibleAfterDepartureGrace = Duration(minutes: 15);
 
+  /// Creates upcoming hike.
   const UpcomingHike({
     required this.id,
     required this.sessionId,
@@ -1937,6 +2111,7 @@ class UpcomingHike {
     this.participantPhones = const [],
     this.isDeleted = false,
     this.deletedAt,
+    this.deletedReason = '',
     this.draft,
     this.joinRequestStatus = '',
     this.joinPolicy = 'open',
@@ -1967,6 +2142,7 @@ class UpcomingHike {
   final DateTime createdAt;
   final List<String> participantPhones;
   final bool isDeleted;
+  final String deletedReason;
   final DateTime? deletedAt;
   final HikeSessionDraft? draft;
   final String joinRequestStatus;
@@ -1974,16 +2150,21 @@ class UpcomingHike {
   final int departureReminderCount;
   final bool departureReminderSentByMe;
 
+  /// Returns requires join approval.
   bool get requiresJoinApproval => joinPolicy != 'open';
 
+  /// Returns is local pending sync.
   bool get isLocalPendingSync => id.startsWith('local_pending_');
 
+  /// Returns visible until.
   DateTime get visibleUntil =>
       departureTime.toUtc().add(visibleAfterDepartureGrace);
 
+  /// Checks whether upcoming at.
   bool isUpcomingAt(DateTime now) =>
       !isDeleted && visibleUntil.isAfter(now.toUtc());
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() => {
     'sessionId': sessionId,
     'trailId': trailId,
@@ -2007,6 +2188,7 @@ class UpcomingHike {
     'createdAt': createdAt.toUtc().toIso8601String(),
     if (participantPhones.isNotEmpty) 'participantPhones': participantPhones,
     if (isDeleted) 'isDeleted': true,
+    if (deletedReason.isNotEmpty) 'deletedReason': deletedReason,
     if (deletedAt != null)
       'deletedAtLocal': deletedAt!.toUtc().toIso8601String(),
     if (joinRequestStatus.isNotEmpty) 'joinRequestStatus': joinRequestStatus,
@@ -2016,11 +2198,13 @@ class UpcomingHike {
     if (departureReminderSentByMe) 'departureReminderSentByMe': true,
   };
 
+  /// Converts to persistence.
   Map<String, dynamic> toPersistence() => {
     ...toFirestore(),
     if (draft != null) 'draft': draft!.toPersistence(),
   };
 
+  /// Applies draft.
   UpcomingHike withDraft(HikeSessionDraft value) {
     return UpcomingHike(
       id: id,
@@ -2047,6 +2231,7 @@ class UpcomingHike {
       participantPhones: participantPhones,
       isDeleted: isDeleted,
       deletedAt: deletedAt,
+      deletedReason: deletedReason,
       draft: value,
       joinRequestStatus: joinRequestStatus,
       joinPolicy: joinPolicy,
@@ -2055,6 +2240,7 @@ class UpcomingHike {
     );
   }
 
+  /// Creates upcoming hike from a cloud record.
   factory UpcomingHike.fromFirestore(String id, Map<String, dynamic> data) {
     final phones = data['participantPhones'];
     final participantPhones = phones is List
@@ -2092,6 +2278,11 @@ class UpcomingHike {
       createdAt: _modelDateFromValue(data['createdAt']) ?? DateTime.now(),
       participantPhones: participantPhones,
       isDeleted: data['isDeleted'] == true,
+      deletedReason: _modelStringFrom(data['deletedReason']).isNotEmpty
+          ? _modelStringFrom(data['deletedReason'])
+          : data['expired'] == true
+          ? 'departure_time_expired'
+          : '',
       deletedAt: _modelDateFromValue(data['deletedAtLocal']),
       draft: _modelDraftFromValue(data['draft']),
       joinRequestStatus: _modelStringFrom(data['joinRequestStatus']),
@@ -2103,6 +2294,7 @@ class UpcomingHike {
     );
   }
 
+  /// Computes distance from.
   double distanceFrom(double lat, double lng) {
     if (!latitude.isFinite ||
         !longitude.isFinite ||
@@ -2132,10 +2324,13 @@ class UpcomingHike {
     return R * 2 * math.asin(math.sqrt(a.clamp(0.0, 1.0)));
   }
 
+  /// Converts to radians.
   static double _toRadians(double deg) => deg * 3.141592653589793 / 180;
 }
 
+/// Represents upcoming hike join request review.
 class UpcomingHikeJoinRequestReview {
+  /// Creates upcoming hike join request review.
   const UpcomingHikeJoinRequestReview({
     required this.requestId,
     required this.hikeId,
@@ -2162,8 +2357,10 @@ class UpcomingHikeJoinRequestReview {
   final List<Map<String, dynamic>> achievements;
   final List<Map<String, dynamic>> hikeHistory;
 
+  /// Returns can resolve.
   bool get canResolve => status == 'pending';
 
+  /// Creates upcoming hike join request review from stored map data.
   factory UpcomingHikeJoinRequestReview.fromMap(Map<String, dynamic> data) {
     return UpcomingHikeJoinRequestReview(
       requestId: _modelStringFrom(data['requestId']),
@@ -2199,7 +2396,9 @@ class UpcomingHikeJoinRequestReview {
   }
 }
 
+/// Represents hike reminder preference.
 class HikeReminderPreference {
+  /// Creates hike reminder preference.
   const HikeReminderPreference({
     this.enabled = true,
     this.firstReminderMinutesBefore = 120,
@@ -2208,6 +2407,7 @@ class HikeReminderPreference {
     this.maximumReminders = 4,
   });
 
+  /// Creates hike reminder preference from a cloud record.
   factory HikeReminderPreference.fromFirestore(Map<String, dynamic> data) {
     return HikeReminderPreference(
       enabled: data['enabled'] != false,
@@ -2228,6 +2428,8 @@ class HikeReminderPreference {
   }
 
   static const firstReminderOptions = <int>[
+    5,
+    10,
     15,
     30,
     60,
@@ -2247,6 +2449,56 @@ class HikeReminderPreference {
   final int finalReminderMinutesBefore;
   final int maximumReminders;
 
+  /// Leave a minute to save the plan rather than offering a time already due.
+  static List<int> availableFirstReminders(DateTime departure, DateTime now) {
+    final earliest = now.add(const Duration(minutes: 1));
+    return firstReminderOptions
+        .where(
+          (minutes) => !departure
+              .subtract(Duration(minutes: minutes))
+              .isBefore(earliest),
+        )
+        .toList();
+  }
+
+  /// Used when editing/saving a plan, never while delivering its reminders.
+  HikeReminderPreference fitToDeparture(DateTime departure, DateTime now) {
+    final value = normalized();
+    final options = availableFirstReminders(departure, now);
+    if (options.isEmpty) return value.copyWith(enabled: false);
+    final first = options.contains(value.firstReminderMinutesBefore)
+        ? value.firstReminderMinutesBefore
+        : options.last;
+    final finalBefore = math.min(value.finalReminderMinutesBefore, first);
+    final repeat = first - value.repeatIntervalMinutes >= finalBefore
+        ? value.repeatIntervalMinutes
+        : 0;
+    final capacity = repeat == 0 ? 1 : (first - finalBefore) ~/ repeat + 1;
+    return value.copyWith(
+      firstReminderMinutesBefore: first,
+      repeatIntervalMinutes: repeat,
+      finalReminderMinutesBefore: finalBefore,
+      maximumReminders: math.min(value.maximumReminders, capacity),
+    );
+  }
+
+  /// Fixed departure-relative slots. Missed slots never move to the present.
+  List<DateTime> scheduledTimes(DateTime departure, {DateTime? after}) {
+    final value = normalized();
+    if (!value.enabled) return const [];
+    final result = <DateTime>[];
+    var minutes = value.firstReminderMinutesBefore;
+    for (var index = 0; index < value.maximumReminders; index++) {
+      final time = departure.subtract(Duration(minutes: minutes));
+      if (after == null || time.isAfter(after)) result.add(time);
+      if (value.repeatIntervalMinutes == 0) break;
+      minutes -= value.repeatIntervalMinutes;
+      if (minutes < value.finalReminderMinutesBefore) break;
+    }
+    return result;
+  }
+
+  /// Computes normalized.
   HikeReminderPreference normalized() {
     final first = firstReminderOptions.contains(firstReminderMinutesBefore)
         ? firstReminderMinutesBefore
@@ -2270,6 +2522,7 @@ class HikeReminderPreference {
     );
   }
 
+  /// Returns a copy with the supplied fields changed.
   HikeReminderPreference copyWith({
     bool? enabled,
     int? firstReminderMinutesBefore,
@@ -2289,6 +2542,7 @@ class HikeReminderPreference {
     ).normalized();
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     final value = normalized();
     return {
@@ -2303,6 +2557,7 @@ class HikeReminderPreference {
 
 /// Model chat membership, display identity and per-participant unread/read state.
 class GroupChat {
+  /// Creates group chat.
   const GroupChat({
     required this.id,
     required this.hikeSessionId,
@@ -2353,8 +2608,10 @@ class GroupChat {
   final bool namingPromptShown;
   final String latestJoinedName;
 
+  /// Returns is direct.
   bool get isDirect => chatType == 'direct';
 
+  /// Computes display name for.
   String displayNameFor(String phoneNumber) {
     if (!isDirect) {
       if (customName.trim().isNotEmpty) {
@@ -2375,18 +2632,22 @@ class GroupChat {
     return trailName.isEmpty ? 'Private chat' : trailName;
   }
 
+  /// Computes photo urlfor.
   String photoURLFor(String phoneNumber) {
     return participantPhotoURLs[_modelPhoneKey(phoneNumber)]?.trim() ?? '';
   }
 
+  /// Computes last read at for.
   DateTime? lastReadAtFor(String phoneNumber) {
     return lastReadAt[_modelPhoneKey(phoneNumber)];
   }
 
+  /// Computes unread count for.
   int unreadCountFor(String phoneNumber) {
     return unreadCount[_modelPhoneKey(phoneNumber)] ?? 0;
   }
 
+  /// Returns a copy with the supplied fields changed.
   GroupChat copyWith({Map<String, String>? participantPhotoURLs}) {
     return GroupChat(
       id: id,
@@ -2415,6 +2676,7 @@ class GroupChat {
     );
   }
 
+  /// Computes default group name.
   static String defaultGroupName(String trailName, DateTime departureTime) {
     final local = departureTime.toLocal();
     final day = local.day.toString().padLeft(2, '0');
@@ -2431,6 +2693,7 @@ class GroupChat {
     return '$prefix$location$suffix';
   }
 
+  /// Computes month name.
   static String _monthName(int month) {
     const months = [
       'Jan',
@@ -2449,6 +2712,7 @@ class GroupChat {
     return months[month - 1];
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'hikeSessionId': hikeSessionId,
@@ -2485,6 +2749,7 @@ class GroupChat {
     };
   }
 
+  /// Creates group chat from a cloud record.
   factory GroupChat.fromFirestore(String id, Map<String, dynamic> data) {
     final rawPhones = data['participantPhones'];
     final phones = rawPhones is Iterable
@@ -2567,9 +2832,12 @@ class GroupChat {
   }
 }
 
+/// Computes model phone key.
 String _modelPhoneKey(String value) => value.replaceAll(RegExp(r'[^0-9]'), '');
 
+/// Represents chat message.
 class ChatMessage {
+  /// Creates chat message.
   const ChatMessage({
     required this.id,
     required this.chatId,
@@ -2596,6 +2864,7 @@ class ChatMessage {
   final ChatAttachment? attachment;
   final String senderPhotoURL;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'chatId': chatId,
@@ -2611,6 +2880,7 @@ class ChatMessage {
     };
   }
 
+  /// Creates chat message from a cloud record.
   factory ChatMessage.fromFirestore(String id, Map<String, dynamic> data) {
     final rawSeenBy = data['seenBy'];
     final seenBy = rawSeenBy is List
@@ -2634,6 +2904,7 @@ class ChatMessage {
     );
   }
 
+  /// Creates chat message using from pending.
   factory ChatMessage.fromPending({
     required String localId,
     required String chatId,
@@ -2659,9 +2930,12 @@ class ChatMessage {
   }
 }
 
+/// Defines the chat attachment type choices.
 enum ChatAttachmentType { image, video, document }
 
+/// Represents chat attachment.
 class ChatAttachment {
+  /// Creates chat attachment.
   const ChatAttachment({
     required this.type,
     required this.url,
@@ -2670,6 +2944,7 @@ class ChatAttachment {
     required this.sizeBytes,
   });
 
+  /// Creates chat attachment from a cloud record.
   factory ChatAttachment.fromFirestore(Map<String, dynamic> data) {
     return ChatAttachment(
       type: ChatAttachmentType.values.firstWhere(
@@ -2689,6 +2964,7 @@ class ChatAttachment {
   final String contentType;
   final int sizeBytes;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'type': type.name,
@@ -2700,4 +2976,5 @@ class ChatAttachment {
   }
 }
 
+/// Defines the send status choices.
 enum SendStatus { sending, sent, failed }

@@ -9,7 +9,9 @@ import '../Data/session_repository.dart';
 import '../../home/Data/home_screen_widget_service.dart';
 import '../Model/app_session.dart';
 
+/// Coordinates app view model state and actions.
 class AppViewModel extends ChangeNotifier {
+  /// Creates app view model.
   AppViewModel({
     required SessionRepository sessionRepository,
     FirebaseAuth? firebaseAuth,
@@ -40,16 +42,24 @@ class AppViewModel extends ChangeNotifier {
   bool _hasObservedAuthenticatedFirebaseUser = false;
   bool _isDisposed = false;
 
+  /// Returns session.
   AppSession? get session => _sessionRepository.currentSession;
 
+  /// Returns is signed in.
   bool get isSignedIn => _sessionRepository.isSignedIn;
+
+  /// Returns security message.
   String? get securityMessage => _sessionRepository.securityMessage;
+
+  /// Computes acknowledge security message.
   void acknowledgeSecurityMessage() {
     _sessionRepository.securityMessage = null;
   }
 
+  /// Returns is initializing.
   bool get isInitializing => _isInitializing;
 
+  /// Computes initialize.
   Future<void> initialize() async {
     await _sessionRepository.loadSavedSession();
     if (!_sessionRepository.isSignedIn) {
@@ -63,6 +73,7 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Computes complete sign in.
   Future<void> completeSignIn(AppSession session) async {
     await HomeScreenWidgetService.shared.clear();
     await _sessionRepository.signIn(session);
@@ -71,12 +82,14 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Computes complete onboarding.
   Future<void> completeOnboarding() async {
     await _sessionRepository.refreshCurrentSession();
     if (_isDisposed) return;
     notifyListeners();
   }
 
+  /// Computes sign out.
   void signOut() {
     unawaited(HomeScreenWidgetService.shared.clear());
     unawaited(_sessionRepository.signOut());
@@ -84,6 +97,7 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Handles firebase auth changed.
   void _handleFirebaseAuthChanged(User? user) {
     if (_isDisposed) return;
     if (user != null) {
@@ -100,6 +114,7 @@ class AppViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _isDisposed = true;

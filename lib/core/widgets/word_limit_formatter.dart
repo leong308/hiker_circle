@@ -1,13 +1,16 @@
 import 'package:flutter/services.dart';
 
+/// Computes count words.
 int countWords(String text) =>
     RegExp(r'\S+', unicode: true).allMatches(text).length;
 
 /// Keep the first [maxWords] words on paste, without interrupting IME composition.
 class WordLimitTextInputFormatter extends TextInputFormatter {
+  /// Creates word limit text input formatter.
   WordLimitTextInputFormatter(this.maxWords) : assert(maxWords > 0);
   final int maxWords;
 
+  /// Formats edit update.
   @override
   TextEditingValue formatEditUpdate(
     TextEditingValue oldValue,

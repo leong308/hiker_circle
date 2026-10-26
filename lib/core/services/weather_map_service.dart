@@ -3,19 +3,23 @@
 import '../../trail/Model/trail_models.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+/// Defines the weather map layer choices.
 enum WeatherMapLayer {
   off('Off', ''),
   rain('Rain', 'precipitation_new'),
   wind('Wind speed', 'wind_new'),
   temperature('Temperature', 'temp_new');
 
+  /// Creates this model.
   const WeatherMapLayer(this.label, this.tileName);
   final String label;
   final String tileName;
 }
 
+/// Represents weather map service.
 abstract final class WeatherMapService {
   // Availability marker only. Actual tile credentials stay on the server.
+  /// Returns api key.
   static String get apiKey {
     try {
       return dotenv.env['OPENWEATHER_TILES_ENABLED'] == 'true'
@@ -26,6 +30,7 @@ abstract final class WeatherMapService {
     }
   }
 
+  /// Computes tile template.
   static String tileTemplate(WeatherMapLayer layer, String key) {
     if (layer == WeatherMapLayer.off || key.trim().isEmpty) {
       throw ArgumentError('A weather layer and API key are required.');
@@ -95,7 +100,9 @@ String trailForecastArrivalLabel(TrailWeather weather, DateTime arrival) {
   return '${local.day}/${local.month} $clock';
 }
 
+/// Represents trail rain estimate.
 class TrailRainEstimate {
+  /// Creates trail rain estimate.
   const TrailRainEstimate({required this.time, this.probability});
   final DateTime time;
   final int? probability;
@@ -119,12 +126,16 @@ TrailRainEstimate trailRainEstimateAt(
     sampleSeconds * 1000,
     isUtc: true,
   );
+
+  /// Computes result.
   TrailRainEstimate result([num? probability]) =>
       TrailRainEstimate(time: sampleTime, probability: probability?.round());
   final age = now.toUtc().difference(weather.cachedAt.toUtc());
   if (age.isNegative || age >= const Duration(hours: 4)) return result();
 
   final entries = <(num, num?)>[];
+
+  /// Computes valid.
   num? valid(Object? value) =>
       value is num && value.isFinite && value >= 0 && value <= 100
       ? value

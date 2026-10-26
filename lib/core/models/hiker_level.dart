@@ -1,6 +1,8 @@
 // HikerLevel maps achievement points to stable level names, badges and progress toward the next
 // threshold.
+/// Represents hiker level.
 class HikerLevel {
+  /// Creates hiker level.
   const HikerLevel({
     required this.number,
     required this.name,
@@ -13,8 +15,10 @@ class HikerLevel {
   final int minimumPoints;
   final int? nextLevelPoints;
 
+  /// Returns badge label.
   String get badgeLabel => 'Lv. $number $name';
 
+  /// Computes progress for.
   double progressFor(int points) {
     final next = nextLevelPoints;
     if (next == null) {
@@ -27,6 +31,7 @@ class HikerLevel {
     return ((points - minimumPoints) / span).clamp(0, 1).toDouble();
   }
 
+  /// Computes points to next level.
   int pointsToNextLevel(int points) {
     final next = nextLevelPoints;
     if (next == null) {
@@ -80,6 +85,7 @@ class HikerLevel {
     ),
   ];
 
+  /// Creates from points.
   static HikerLevel fromPoints(int points) {
     final normalized = points < 0 ? 0 : points;
     for (final tier in tiers.reversed) {

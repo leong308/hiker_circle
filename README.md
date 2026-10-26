@@ -123,3 +123,7 @@ within three seconds. The first press wakes a sleeping button. A completed
 sequence suppresses SOS and exposes the read-only log service for 30 seconds.
 Android and iOS authenticate with a fresh BLE challenge and the pairing secret
 held in encrypted native storage. The secret is never exposed to Flutter.
+
+## Application architecture
+
+See [the architecture guide](docs/architecture.md) for MVVM responsibilities, stable page imports and the locations of shared and feature widgets.

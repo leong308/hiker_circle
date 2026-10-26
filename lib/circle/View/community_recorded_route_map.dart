@@ -9,6 +9,7 @@ import '../../trail/Model/trail_models.dart';
 /// An independently controlled map of a post's recorded GPS samples. Public
 /// posts contain route geometry, never a viewer's style or camera position.
 class CommunityRecordedRouteMap extends StatelessWidget {
+  /// Creates community recorded route map.
   const CommunityRecordedRouteMap({
     super.key,
     required this.recordingId,
@@ -20,6 +21,7 @@ class CommunityRecordedRouteMap extends StatelessWidget {
   final String trailName;
   final List<HikeCoordinate> points;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final recordedPoints = [

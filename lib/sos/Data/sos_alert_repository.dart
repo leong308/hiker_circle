@@ -15,16 +15,21 @@ import '../../authentication/Data/green_api_client.dart';
 import '../../authentication/Data/phone_number_formatter.dart';
 import '../Model/sos_models.dart';
 
+/// Represents sos alert repository exception.
 class SosAlertRepositoryException implements Exception {
+  /// Creates sos alert repository exception.
   const SosAlertRepositoryException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents sos queue flush result.
 class SosQueueFlushResult {
+  /// Creates sos queue flush result.
   const SosQueueFlushResult({
     required this.attempted,
     required this.sent,
@@ -35,10 +40,13 @@ class SosQueueFlushResult {
   final int sent;
   final int remaining;
 
+  /// Returns did flush any.
   bool get didFlushAny => sent > 0;
 }
 
+/// Represents sos queue change.
 class SosQueueChange {
+  /// Creates sos queue change.
   const SosQueueChange({
     required this.phoneNumber,
     this.alert,
@@ -56,6 +64,7 @@ class SosQueueChange {
 /// [acknowledgement] replaces that pending state with the
 /// authoritative sent, failed, or queued result.
 class SosAlertSubmission {
+  /// Creates sos alert submission.
   const SosAlertSubmission({
     required this.submittedResult,
     required this.acknowledgement,
@@ -65,13 +74,16 @@ class SosAlertSubmission {
   final Future<SosAlertResult> acknowledgement;
 }
 
+/// Represents sos alert repository.
 class SosAlertRepository {
   static final _queueChanges = StreamController<SosQueueChange>.broadcast();
   static final _queueDrains = <String, Future<SosQueueFlushResult>>{};
   static final _activeAlertIds = <String, Set<String>>{};
 
+  /// Returns queue changes.
   static Stream<SosQueueChange> get queueChanges => _queueChanges.stream;
 
+  /// Notifies queue changed.
   void _notifyQueueChanged(
     AppSession session, {
     SosAlert? alert,
@@ -96,6 +108,7 @@ class SosAlertRepository {
 
   static const int _maxRecentSosAlertReferences = 30;
 
+  /// Creates sos alert repository.
   SosAlertRepository({
     FirebaseFirestore? firestore,
     GreenApiClient? greenApiClient,
@@ -118,17 +131,21 @@ class SosAlertRepository {
   final Duration _cloudWriteTimeout;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
+  /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
 
+  /// Returns users.
   CollectionReference<Map<String, dynamic>> get _users {
     return _resolvedFirestore.collection('users');
   }
 
+  /// Returns sos alerts.
   CollectionReference<Map<String, dynamic>> get _sosAlerts {
     return _resolvedFirestore.collection('sosAlerts');
   }
 
+  /// Loads custom whats app notes.
   Future<Map<SosAlertMode, String>> loadCustomWhatsAppNotes({
     required AppSession session,
   }) async {
@@ -188,6 +205,7 @@ class SosAlertRepository {
     return local;
   }
 
+  /// Flushes pending custom whats app notes.
   Future<void> flushPendingCustomWhatsAppNotes({
     required AppSession session,
   }) async {
@@ -207,6 +225,7 @@ class SosAlertRepository {
     }
   }
 
+  /// Fetches cloud custom notes.
   @protected
   Future<Map<String, dynamic>> fetchCloudCustomNotes(AppSession session) async {
     final data = (await _userDocumentFor(session).get()).data();
@@ -214,6 +233,7 @@ class SosAlertRepository {
     return notes is Map ? Map<String, dynamic>.from(notes) : {};
   }
 
+  /// Computes push cloud custom note.
   @protected
   Future<void> pushCloudCustomNote(
     AppSession session,
@@ -229,6 +249,7 @@ class SosAlertRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Computes push custom note.
   Future<void> _pushCustomNote(
     AppSession session,
     SosAlertMode mode,
@@ -261,6 +282,7 @@ class SosAlertRepository {
     }
   }
 
+  /// Saves custom whats app note.
   Future<void> saveCustomWhatsAppNote({
     required AppSession session,
     required SosAlertMode mode,
@@ -299,6 +321,7 @@ class SosAlertRepository {
     }
   }
 
+  /// Loads alert logs.
   Future<List<SosAlert>> loadAlertLogs({
     required AppSession session,
     int limit = 30,
@@ -334,6 +357,7 @@ class SosAlertRepository {
     }
   }
 
+  /// Loads referenced alert logs.
   Future<List<SosAlert>> _loadReferencedAlertLogs({
     required AppSession session,
     required int limit,
@@ -364,6 +388,7 @@ class SosAlertRepository {
     return alerts;
   }
 
+  /// Computes trigger alert.
   Future<SosAlertResult> triggerAlert({
     required AppSession session,
     required SosAlertMode mode,
@@ -490,6 +515,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Computes complete submitted alert.
   Future<SosAlertResult> _completeSubmittedAlert({
     required AppSession session,
     required SosAlertMode mode,
@@ -624,6 +650,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Computes count queued alerts.
   Future<int> countQueuedAlerts({required AppSession session}) async {
     final activeIds = _activeAlertIds[session.phoneNumber];
     if (activeIds != null && activeIds.isNotEmpty) {
@@ -644,6 +671,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Loads queued dispatches.
   Future<List<SosQueuedDispatch>> loadQueuedDispatches({
     required AppSession session,
     int? limit,
@@ -728,6 +756,7 @@ class SosAlertRepository {
     });
   }
 
+  /// Flushes queued alerts.
   Future<SosQueueFlushResult> _flushQueuedAlerts({
     required AppSession session,
     required List<EmergencyContact> contacts,
@@ -922,6 +951,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Sends whats app test message.
   Future<List<SosContactDispatch>> sendWhatsAppTestMessage({
     required AppSession session,
     required List<EmergencyContact> contacts,
@@ -947,6 +977,7 @@ class SosAlertRepository {
     return dispatches;
   }
 
+  /// Computes queue alert for retry.
   Future<int> _queueAlertForRetry({
     required AppSession session,
     required SosAlert alert,
@@ -1008,6 +1039,7 @@ class SosAlertRepository {
     }
   }
 
+  /// Computes queued alert payload.
   Map<String, dynamic> _queuedAlertPayload({
     AppSession? session,
     String? sessionPhoneNumber,
@@ -1038,6 +1070,7 @@ class SosAlertRepository {
     };
   }
 
+  /// Computes queued payload from.
   Map<String, dynamic> _queuedPayloadFrom(String payloadJson) {
     try {
       final decoded = jsonDecode(payloadJson);
@@ -1047,6 +1080,7 @@ class SosAlertRepository {
     }
   }
 
+  /// Computes contacts from payload.
   List<EmergencyContact> _contactsFromPayload(Object? value) {
     if (value is! Iterable) {
       return const [];
@@ -1061,6 +1095,7 @@ class SosAlertRepository {
         .toList();
   }
 
+  /// Computes dispatches from payload.
   List<SosContactDispatch> _dispatchesFromPayload(Object? value) {
     if (value is! Iterable) {
       return const [];
@@ -1074,6 +1109,7 @@ class SosAlertRepository {
         .toList();
   }
 
+  /// Computes latest dispatches by phone.
   List<SosContactDispatch> _latestDispatchesByPhone(
     List<SosContactDispatch> dispatches,
   ) {
@@ -1087,6 +1123,7 @@ class SosAlertRepository {
     return byPhone.values.toList();
   }
 
+  /// Computes contacts requiring retry.
   List<EmergencyContact> _contactsRequiringRetry(
     List<EmergencyContact> contacts,
     List<SosContactDispatch> dispatches,
@@ -1114,6 +1151,7 @@ class SosAlertRepository {
     }).toList();
   }
 
+  /// Computes trigger location from payload.
   SosTriggerLocation? _triggerLocationFromPayload(
     Object? value, {
     required double fallbackLatitude,
@@ -1131,6 +1169,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Computes alert with status.
   SosAlert _alertWithStatus(SosAlert alert, SosAlertStatus status) {
     return SosAlert(
       id: alert.id,
@@ -1148,12 +1187,14 @@ class SosAlertRepository {
     );
   }
 
+  /// Computes should queue dispatch retry.
   bool _shouldQueueDispatchRetry(SosAlertStatus status) {
     return status == SosAlertStatus.partial ||
         status == SosAlertStatus.failed ||
         status == SosAlertStatus.noContacts;
   }
 
+  /// Computes queue failure message.
   String _queueFailureMessage(Object error) {
     if (error is SosAlertRepositoryException) {
       return error.message;
@@ -1170,6 +1211,7 @@ class SosAlertRepository {
     return 'SOS alert could not be fully sent.';
   }
 
+  /// Sends to contact.
   Future<SosContactDispatch> _sendToContact({
     required EmergencyContact contact,
     required String alertId,
@@ -1256,6 +1298,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Computes failed dispatch.
   SosContactDispatch _failedDispatch(
     EmergencyContact contact,
     String message, {
@@ -1275,6 +1318,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Dispatches id for.
   String _dispatchIdFor(String alertId, String phoneNumber) {
     final safeAlert = alertId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
     final phoneDigits = phoneNumber.replaceAll(RegExp(r'\D'), '');
@@ -1282,6 +1326,7 @@ class SosAlertRepository {
     return raw.length <= 180 ? raw : raw.substring(0, 180);
   }
 
+  /// Saves alert.
   @protected
   Future<void> saveAlert({
     required AppSession session,
@@ -1353,6 +1398,7 @@ class SosAlertRepository {
     }
   }
 
+  /// Computes user document for.
   DocumentReference<Map<String, dynamic>> _userDocumentFor(AppSession session) {
     return userModuleDocument(
       _users.doc(
@@ -1362,6 +1408,7 @@ class SosAlertRepository {
     );
   }
 
+  /// Computes status for.
   SosAlertStatus _statusFor({
     required int contactCount,
     required int sentCount,
@@ -1379,6 +1426,7 @@ class SosAlertRepository {
     return SosAlertStatus.failed;
   }
 
+  /// Computes mode from firestore value.
   SosAlertMode _modeFromFirestoreValue(String value) {
     for (final mode in SosAlertMode.values) {
       if (mode.firestoreValue == value) {
@@ -1388,15 +1436,18 @@ class SosAlertRepository {
     return SosAlertMode.manual;
   }
 
+  /// Computes bounded custom whats app note.
   String _boundedCustomWhatsAppNote(String value) {
     final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
     return normalized.length <= 240 ? normalized : normalized.substring(0, 240);
   }
 
+  /// Computes alert id for.
   String _alertIdFor(DateTime triggeredAt, SosAlertMode mode) {
     return '${mode.firestoreValue}_${triggeredAt.microsecondsSinceEpoch}';
   }
 
+  /// Computes throw if firebase unavailable.
   void _throwIfFirebaseUnavailable() {
     if (_firebaseBootstrapResult.isAvailable) {
       return;

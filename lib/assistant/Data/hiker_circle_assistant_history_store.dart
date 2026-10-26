@@ -7,7 +7,9 @@ import 'package:crypto/crypto.dart';
 
 import '../../app/Data/local_session_database.dart';
 
+/// Represents assistant cloud history.
 class AssistantCloudHistory {
+  /// Creates assistant cloud history.
   const AssistantCloudHistory({
     required this.messages,
     required this.clearedAtMicros,
@@ -16,14 +18,21 @@ class AssistantCloudHistory {
   final int clearedAtMicros;
 }
 
+/// Represents assistant history cloud.
 abstract class AssistantHistoryCloud {
+  /// Loads.
   Future<AssistantCloudHistory> load();
+
+  /// Saves messages.
   Future<void> saveMessages(List<Map<String, dynamic>> messages);
+
+  /// Clears.
   Future<void> clear(int clearedAtMicros);
 }
 
 /// Firestore history is private to the authenticated UID.
 class FirebaseAssistantHistoryCloud implements AssistantHistoryCloud {
+  /// Creates firebase assistant history cloud.
   FirebaseAssistantHistoryCloud({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
@@ -33,6 +42,7 @@ class FirebaseAssistantHistoryCloud implements AssistantHistoryCloud {
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
 
+  /// Returns conversation.
   DocumentReference<Map<String, dynamic>> get _conversation {
     final uid = _auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
@@ -41,6 +51,7 @@ class FirebaseAssistantHistoryCloud implements AssistantHistoryCloud {
     return _firestore.collection('assistantConversations').doc(uid);
   }
 
+  /// Loads.
   @override
   Future<AssistantCloudHistory> load() async {
     final conversation = _conversation;
@@ -67,6 +78,7 @@ class FirebaseAssistantHistoryCloud implements AssistantHistoryCloud {
     );
   }
 
+  /// Saves messages.
   @override
   Future<void> saveMessages(List<Map<String, dynamic>> messages) async {
     if (messages.isEmpty) return;
@@ -86,6 +98,7 @@ class FirebaseAssistantHistoryCloud implements AssistantHistoryCloud {
     }
   }
 
+  /// Clears.
   @override
   Future<void> clear(int clearedAtMicros) async {
     final conversation = _conversation;
@@ -110,6 +123,7 @@ class FirebaseAssistantHistoryCloud implements AssistantHistoryCloud {
 
 /// Local-first chat history, optionally synchronized with Firestore.
 class HikerCircleAssistantHistoryStore {
+  /// Creates hiker circle assistant history store.
   HikerCircleAssistantHistoryStore({
     required this.ownerPhoneNumber,
     LocalSessionDatabase? database,
@@ -124,14 +138,17 @@ class HikerCircleAssistantHistoryStore {
   final Set<String> _uploadedIds = {};
   Future<void> _cloudQueue = Future<void>.value();
 
+  /// Computes queue cloud.
   void _queueCloud(Future<void> Function() operation) {
     _cloudQueue = _cloudQueue.then((_) => operation()).catchError((_) {
       // Local history remains authoritative until the next sync attempt.
     });
   }
 
+  /// Computes wait for cloud sync.
   Future<void> waitForCloudSync() => _cloudQueue;
 
+  /// Computes local cleared at.
   Future<int> _localClearedAt() async {
     final value = await _database.loadLocalPreference(
       ownerPhoneNumber: ownerPhoneNumber,
@@ -140,6 +157,7 @@ class HikerCircleAssistantHistoryStore {
     return value is num ? value.toInt() : 0;
   }
 
+  /// Loads.
   Future<List<Map<String, dynamic>>> load() async {
     final value = await _database.loadLocalPreference(
       ownerPhoneNumber: ownerPhoneNumber,
@@ -171,6 +189,7 @@ class HikerCircleAssistantHistoryStore {
         .toList(growable: false);
   }
 
+  /// Saves local.
   Future<void> _saveLocal(List<Map<String, dynamic>> messages) =>
       _database.saveLocalPreference(
         ownerPhoneNumber: ownerPhoneNumber,
@@ -243,6 +262,7 @@ class HikerCircleAssistantHistoryStore {
     }
   }
 
+  /// Clears.
   Future<void> clear() async {
     final clearedAt = DateTime.now().microsecondsSinceEpoch;
     await _database.saveLocalPreference(

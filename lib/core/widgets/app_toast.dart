@@ -4,8 +4,10 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+/// Defines the hiker circle toast tone choices.
 enum HikerCircleToastTone { info, success, warning, error }
 
+/// Represents hiker circle toast.
 abstract final class HikerCircleToast {
   static const Duration defaultDuration = Duration(seconds: 4);
   static const AnimationStyle _animationStyle = AnimationStyle(
@@ -13,6 +15,7 @@ abstract final class HikerCircleToast {
     reverseDuration: Duration(milliseconds: 280),
   );
 
+  /// Shows.
   static ScaffoldFeatureController<SnackBar, SnackBarClosedReason> show(
     BuildContext context,
     String message, {
@@ -46,7 +49,9 @@ abstract final class HikerCircleToast {
   }
 }
 
+/// Represents hiker circle toast snack bar.
 class _HikerCircleToastSnackBar extends SnackBar {
+  /// Creates hiker circle toast snack bar.
   _HikerCircleToastSnackBar({
     required String message,
     required HikerCircleToastTone tone,
@@ -66,6 +71,7 @@ class _HikerCircleToastSnackBar extends SnackBar {
          animation: null,
        );
 
+  /// Creates hiker circle toast snack bar using .
   _HikerCircleToastSnackBar._({
     super.key,
     required String message,
@@ -111,6 +117,7 @@ class _HikerCircleToastSnackBar extends SnackBar {
   final VoidCallback? _onTap;
   final Duration _duration;
 
+  /// Applies animation.
   @override
   SnackBar withAnimation(Animation<double> newAnimation, {Key? fallbackKey}) {
     return _HikerCircleToastSnackBar._(
@@ -130,6 +137,7 @@ class _HikerCircleToastSnackBar extends SnackBar {
 /// The shared notice surface, also used by warnings whose lifetime is owned by
 /// playback rather than ScaffoldMessenger's short snackbar timer.
 class HikerCircleToastCard extends StatelessWidget {
+  /// Creates hiker circle toast card.
   const HikerCircleToastCard({
     super.key,
     required this.message,
@@ -151,6 +159,7 @@ class HikerCircleToastCard extends StatelessWidget {
   final Animation<double>? animation;
   final VoidCallback? onDismiss;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -159,6 +168,7 @@ class HikerCircleToastCard extends StatelessWidget {
     final accent = _accentFor(tone, isDark);
     final messenger = ScaffoldMessenger.of(context);
 
+    /// Computes dismiss.
     void dismiss() {
       if (onDismiss != null) {
         onDismiss!();
@@ -167,6 +177,7 @@ class HikerCircleToastCard extends StatelessWidget {
       }
     }
 
+    /// Computes perform action.
     void performAction() {
       onAction?.call();
       dismiss();
@@ -347,6 +358,7 @@ class HikerCircleToastCard extends StatelessWidget {
   }
 }
 
+/// Computes accent for.
 Color _accentFor(HikerCircleToastTone tone, bool isDark) {
   return switch (tone) {
     HikerCircleToastTone.info =>
@@ -360,6 +372,7 @@ Color _accentFor(HikerCircleToastTone tone, bool isDark) {
   };
 }
 
+/// Computes icon for.
 IconData _iconFor(HikerCircleToastTone tone) {
   return switch (tone) {
     HikerCircleToastTone.info => Icons.info_outline_rounded,
@@ -369,6 +382,7 @@ IconData _iconFor(HikerCircleToastTone tone) {
   };
 }
 
+/// Computes default title.
 String _defaultTitle(HikerCircleToastTone tone) {
   return switch (tone) {
     HikerCircleToastTone.info => 'HikerCircle',

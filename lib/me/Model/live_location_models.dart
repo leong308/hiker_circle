@@ -1,7 +1,9 @@
 // LiveLocationShare describes the current share link, coordinates, expiry and sharing state.
 import '../../sos/Model/sos_models.dart';
 
+/// Represents live location share.
 class LiveLocationShare {
+  /// Creates live location share.
   const LiveLocationShare({
     required this.id,
     required this.shareUrl,
@@ -24,6 +26,7 @@ class LiveLocationShare {
       _startedAt?.toUtc() ??
       expiresAt.toUtc().subtract(const Duration(hours: 24));
 
+  /// Returns a copy with the supplied fields changed.
   LiveLocationShare copyWith({
     String? id,
     String? shareUrl,

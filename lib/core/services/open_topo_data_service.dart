@@ -4,32 +4,40 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+/// Represents open topo data exception.
 class OpenTopoDataException implements Exception {
+  /// Creates open topo data exception.
   const OpenTopoDataException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents open topo data result.
 class OpenTopoDataResult {
+  /// Creates open topo data result.
   const OpenTopoDataResult({required this.elevations});
 
   final List<double> elevations;
 
+  /// Returns minimum elevation meters.
   double? get minimumElevationMeters {
     final values = elevations.where((value) => value.isFinite).toList();
     if (values.isEmpty) return null;
     return values.reduce((first, second) => first < second ? first : second);
   }
 
+  /// Returns maximum elevation meters.
   double? get maximumElevationMeters {
     final values = elevations.where((value) => value.isFinite).toList();
     if (values.isEmpty) return null;
     return values.reduce((first, second) => first > second ? first : second);
   }
 
+  /// Returns elevation gain meters.
   double get elevationGainMeters {
     if (elevations.length < 2) return 0;
     var gain = 0.0;
@@ -41,11 +49,14 @@ class OpenTopoDataResult {
   }
 }
 
+/// Represents open topo data service.
 class OpenTopoDataService {
+  /// Creates open topo data service.
   OpenTopoDataService({http.Client? client}) : _client = client;
 
   final http.Client? _client;
 
+  /// Returns elevations.
   Future<OpenTopoDataResult> getElevations({
     required List<List<double>> coordinates,
   }) async {
@@ -76,6 +87,7 @@ class OpenTopoDataService {
     }
   }
 
+  /// Parses response.
   OpenTopoDataResult _parseResponse(String body) {
     final decoded = jsonDecode(body);
     if (decoded is! Map<String, dynamic>) {

@@ -37,6 +37,7 @@ Widget weatherMetric(
   );
 }
 
+/// Computes weather detail section.
 Widget weatherDetailSection(
   BuildContext context,
   IconData icon,
@@ -46,6 +47,8 @@ Widget weatherDetailSection(
   bool initiallyExpanded = false,
   bool emphasize = false,
   Key? sectionKey,
+  TextStyle? titleStyle,
+  ValueChanged<bool>? onExpansionChanged,
 }) {
   final theme = Theme.of(context);
   final card = Material(
@@ -55,12 +58,13 @@ Widget weatherDetailSection(
     child: ExpansionTile(
       key: sectionKey,
       initiallyExpanded: initiallyExpanded,
+      onExpansionChanged: onExpansionChanged,
       tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       childrenPadding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
       shape: const Border(),
       collapsedShape: const Border(),
       leading: Icon(icon, color: theme.colorScheme.primary, size: 22),
-      title: Text(title, style: theme.textTheme.titleSmall),
+      title: Text(title, style: titleStyle ?? theme.textTheme.titleSmall),
       subtitle: Padding(
         padding: const EdgeInsets.only(top: 5),
         child: Text(
@@ -76,6 +80,7 @@ Widget weatherDetailSection(
       : card;
 }
 
+/// Computes weather chart line.
 LineChartBarData weatherChartLine(BuildContext context, List<FlSpot> spots) {
   final color = Theme.of(context).colorScheme.primary;
   return LineChartBarData(
@@ -88,6 +93,7 @@ LineChartBarData weatherChartLine(BuildContext context, List<FlSpot> spots) {
   );
 }
 
+/// Computes forecast weather icon.
 IconData forecastWeatherIcon(num? code) {
   if (code == null) return Icons.cloud_queue_rounded;
   if (code >= 95) return Icons.thunderstorm_outlined;
@@ -104,7 +110,7 @@ IconData precautionIcon(TrailPrecaution caution) {
   if (id == 'buffer-data') return Icons.history_rounded;
   if (id == 'data') return Icons.cloud_off_rounded;
   if (id == 'storm' || id.endsWith('-storm')) {
-    return Icons.thunderstorm_outlined;
+    return Icons.bolt_rounded;
   }
   if (id == 'rain' || id.endsWith('-rain')) return Icons.water_drop_outlined;
   if (id == 'heat' || id.endsWith('-heat')) return Icons.thermostat_rounded;

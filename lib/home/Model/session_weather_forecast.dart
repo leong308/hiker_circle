@@ -5,6 +5,7 @@ import 'hike_weather_briefing.dart';
 
 /// Track whether hourly samples cover the requested hike window before presenting a forecast summary.
 class SessionWeatherForecast {
+  /// Creates session weather forecast.
   SessionWeatherForecast(
     this.weather,
     this.departure,
@@ -14,7 +15,11 @@ class SessionWeatherForecast {
   final TrailWeather weather;
   final DateTime departure, returning;
   final int elevationGain;
+
+  /// Returns from.
   DateTime get from => departure.subtract(const Duration(hours: 2));
+
+  /// Returns to.
   DateTime get to => returning.add(const Duration(hours: 2));
   late final session = HikeWeatherBriefing.fromWeather(
     weather,
@@ -25,15 +30,25 @@ class SessionWeatherForecast {
   late final before = HikeWeatherBriefing.fromWeather(weather, from, departure);
   late final after = HikeWeatherBriefing.fromWeather(weather, returning, to);
 
-  double? peak(String key, {HikeWeatherBriefing? window}) {
+  /// Computes range.
+  ({double min, double max})? range(String key, {HikeWeatherBriefing? window}) {
     final scope = window ?? session;
     final values = scope.hours.map((h) => h.value(key)).toList();
     if (!scope.covered || values.isEmpty || values.any((v) => v == null)) {
       return null;
     }
-    return values.cast<double>().reduce((a, b) => a > b ? a : b);
+    final readings = values.cast<double>();
+    return (
+      min: readings.reduce((a, b) => a < b ? a : b),
+      max: readings.reduce((a, b) => a > b ? a : b),
+    );
   }
 
+  /// Computes peak.
+  double? peak(String key, {HikeWeatherBriefing? window}) =>
+      range(key, window: window)?.max;
+
+  /// Computes cautions.
   List<TrailPrecaution> cautions(DateTime now) {
     final daily = weather.forecastData['daily'];
     final days = daily is Map && daily['time'] is List
@@ -50,6 +65,8 @@ class SessionWeatherForecast {
           d.month == local.month &&
           d.day == local.day;
     });
+
+    /// Computes rules.
     List<TrailPrecaution> rules(DateTime start, DateTime end) =>
         trailPrecautions(
           weather: weather,

@@ -4,20 +4,26 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../Model/hike_preparation_sharing.dart';
 
+/// Displays the preparation sharing page.
 class PreparationSharingPage extends StatefulWidget {
+  /// Creates preparation sharing page.
   const PreparationSharingPage({super.key, required this.initial, this.onSave});
   final HikePreparationSharing initial;
   final Future<void> Function(HikePreparationSharing)? onSave;
+
+  /// Creates the presentation state for this widget.
   @override
   State<PreparationSharingPage> createState() => _SharingState();
 }
 
+/// Manages the preparation sharing page presentation and lifecycle.
 class _SharingState extends State<PreparationSharingPage> {
   late bool _enabled = widget.initial.enabled;
   late Duration _interval = widget.initial.interval;
   bool _saving = false;
   String? _error;
 
+  /// Saves.
   Future<void> _save() async {
     if (_saving) return;
     setState(() {
@@ -43,6 +49,7 @@ class _SharingState extends State<PreparationSharingPage> {
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving,
@@ -64,13 +71,11 @@ class _SharingState extends State<PreparationSharingPage> {
           ),
           const SizedBox(height: 20),
           Text(
-            'Cloud upload interval',
+            'Footprint record interval',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Your phone records GPS locally every 5 seconds. Choose how often the saved route is uploaded; unsuccessful uploads are retried.',
-          ),
+          const Text('Choose how often GPS footprints are saved and uploaded.'),
           const SizedBox(height: 12),
           for (final interval in HikePreparationSharing.intervals)
             ListTile(
@@ -114,7 +119,9 @@ class _SharingState extends State<PreparationSharingPage> {
   );
 }
 
+/// Displays the preparation battery page.
 class PreparationBatteryPage extends StatefulWidget {
+  /// Creates preparation battery page.
   const PreparationBatteryPage({
     super.key,
     required this.loadBattery,
@@ -122,15 +129,20 @@ class PreparationBatteryPage extends StatefulWidget {
   });
   final Future<int?> Function() loadBattery;
   final int? initialLevel;
+
+  /// Creates the presentation state for this widget.
   @override
   State<PreparationBatteryPage> createState() => _BatteryState();
 }
 
+/// Manages the preparation battery page presentation and lifecycle.
 class _BatteryState extends State<PreparationBatteryPage>
     with WidgetsBindingObserver {
   late int? _level = widget.initialLevel;
   bool _loading = false;
   Timer? _timer;
+
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
@@ -139,6 +151,7 @@ class _BatteryState extends State<PreparationBatteryPage>
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -146,11 +159,13 @@ class _BatteryState extends State<PreparationBatteryPage>
     super.dispose();
   }
 
+  /// Responds to foreground and background transitions.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) unawaited(_refresh());
   }
 
+  /// Refreshes.
   Future<void> _refresh() async {
     if (_loading) return;
     setState(() => _loading = true);
@@ -168,6 +183,7 @@ class _BatteryState extends State<PreparationBatteryPage>
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: PageHeaderAppBar(title: const Text('Phone battery')),

@@ -5,7 +5,9 @@ import '../../app/Model/app_session.dart';
 import '../Data/me_repository.dart';
 import '../Model/me_models.dart';
 
+/// Coordinates me view model state and actions.
 class MeViewModel extends ChangeNotifier {
+  /// Creates me view model.
   MeViewModel({
     required AppSession session,
     MeRepository repository = const MeRepository(),

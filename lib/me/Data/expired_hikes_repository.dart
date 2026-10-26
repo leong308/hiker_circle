@@ -7,9 +7,11 @@ import 'package:flutter/foundation.dart';
 
 import '../../app/Data/local_session_database.dart';
 import '../../home/Model/hike_session_models.dart';
+import '../Model/expired_hike_eligibility.dart';
 
 /// Carry the paging cursor separately from the expired-hike result rows.
 class ExpiredHikesCursor {
+  /// Creates expired hikes cursor.
   const ExpiredHikesCursor({
     required this.departureTimeLocal,
     required this.hikeId,
@@ -17,11 +19,13 @@ class ExpiredHikesCursor {
   final String departureTimeLocal;
   final String hikeId;
 
+  /// Serializes this value as a map.
   Map<String, dynamic> toMap() => {
     'departureTimeLocal': departureTimeLocal,
     'hikeId': hikeId,
   };
 
+  /// Creates from value.
   static ExpiredHikesCursor? fromValue(Object? value) {
     if (value is! Map) return null;
     final time = value['departureTimeLocal'];
@@ -36,7 +40,9 @@ class ExpiredHikesCursor {
   }
 }
 
+/// Represents expired hikes page.
 class ExpiredHikesPage {
+  /// Creates expired hikes page.
   const ExpiredHikesPage({
     required this.hikes,
     this.nextCursor,
@@ -46,9 +52,11 @@ class ExpiredHikesPage {
   final ExpiredHikesCursor? nextCursor;
   final bool isFromCache;
 
+  /// Creates expired hikes page from stored map data.
   factory ExpiredHikesPage.fromMap(
     Map<String, dynamic> data, {
     bool isFromCache = false,
+    DateTime? now,
   }) {
     final rawHikes = data['hikes'];
     if (rawHikes is! List) {
@@ -60,6 +68,13 @@ class ExpiredHikesPage {
       if (id is! String || id.trim().isEmpty) continue;
       final departure = raw['departureTimeLocal'];
       if (departure is! String || DateTime.tryParse(departure) == null) {
+        continue;
+      }
+      if (!isExpiredScheduledHikeData(
+        Map<String, dynamic>.from(raw),
+        ownerPhoneNumber: '${data['ownerPhoneNumber'] ?? ''}',
+        now: now ?? DateTime.now(),
+      )) {
         continue;
       }
       try {
@@ -80,19 +95,25 @@ class ExpiredHikesPage {
   }
 }
 
+/// Represents expired hikes repository.
 class ExpiredHikesRepository {
+  /// Creates expired hikes repository.
   ExpiredHikesRepository({
     FirebaseFunctions? functions,
     LocalSessionDatabase? localDatabase,
     Duration cloudTimeout = const Duration(seconds: 8),
+    DateTime Function()? now,
   }) : _functions = functions,
        _localDatabase = localDatabase ?? LocalSessionDatabase(),
-       _cloudTimeout = cloudTimeout;
+       _cloudTimeout = cloudTimeout,
+       _now = now ?? DateTime.now;
 
   final FirebaseFunctions? _functions;
   final LocalSessionDatabase _localDatabase;
   final Duration _cloudTimeout;
+  final DateTime Function() _now;
 
+  /// Loads page.
   Future<ExpiredHikesPage> loadPage({
     required String ownerPhoneNumber,
     ExpiredHikesCursor? cursor,
@@ -100,6 +121,55 @@ class ExpiredHikesRepository {
   }) async {
     final owner = ownerPhoneNumber.trim();
     if (owner.isEmpty) return const ExpiredHikesPage(hikes: []);
+    final localExpired = <UpcomingHike>[];
+    final consumedIds = <String>{};
+    try {
+      final states = await _localDatabase.loadPlannedHikeStates(
+        ownerPhoneNumber: owner,
+      );
+      for (final state in states) {
+        if (state.ownerPhoneNumber != owner) continue;
+        final hike = state.upcomingHike;
+        if (state.isConsumed) {
+          consumedIds.add(hike.id);
+        } else if (!hike.visibleUntil.isAfter(_now().toUtc()) &&
+            (!hike.isDeleted ||
+                hike.deletedReason == 'departure_time_expired')) {
+          localExpired.add(hike);
+        }
+      }
+    } catch (_) {
+      // Cloud history remains usable when the local planning store is unavailable.
+    }
+
+    /// Computes merge local.
+    ExpiredHikesPage mergeLocal(ExpiredHikesPage page) {
+      final byId = {
+        for (final hike in page.hikes)
+          if (!consumedIds.contains(hike.id)) hike.id: hike,
+      };
+      if (cursor == null) {
+        for (final hike in localExpired) {
+          final remote = byId[hike.id];
+          byId[hike.id] = remote == null
+              ? hike
+              : remote.draft == null && hike.draft != null
+              ? remote.withDraft(hike.draft!)
+              : remote;
+        }
+      }
+      final rows = byId.values.toList()
+        ..sort((a, b) {
+          final time = b.departureTime.compareTo(a.departureTime);
+          return time != 0 ? time : b.id.compareTo(a.id);
+        });
+      return ExpiredHikesPage(
+        hikes: List.unmodifiable(rows),
+        nextCursor: page.nextCursor,
+        isFromCache: page.isFromCache,
+      );
+    }
+
     final pageKey = jsonEncode({
       'limit': limit.clamp(1, 200),
       'cursor': cursor?.toMap(),
@@ -123,7 +193,7 @@ class ExpiredHikesRepository {
       if (data['ownerPhoneNumber'] != owner) {
         throw const FormatException('The history belongs to another account.');
       }
-      final page = ExpiredHikesPage.fromMap(data);
+      final page = ExpiredHikesPage.fromMap(data, now: _now());
       try {
         await _localDatabase.saveCachedEntity(
           LocalCachedEntity(
@@ -138,17 +208,27 @@ class ExpiredHikesRepository {
       } catch (_) {
         // Successfully loaded history is still usable if caching fails.
       }
-      return page;
+      return mergeLocal(page);
     } catch (_) {
       if (cached != null) {
         try {
-          return ExpiredHikesPage.fromMap(cached.payload, isFromCache: true);
+          return mergeLocal(
+            ExpiredHikesPage.fromMap(
+              cached.payload,
+              isFromCache: true,
+              now: _now(),
+            ),
+          );
         } catch (_) {}
+      }
+      if (cursor == null && localExpired.isNotEmpty) {
+        return mergeLocal(const ExpiredHikesPage(hikes: [], isFromCache: true));
       }
       rethrow;
     }
   }
 
+  /// Fetches cloud page.
   @protected
   Future<Map<String, dynamic>> fetchCloudPage(
     Map<String, dynamic> request,

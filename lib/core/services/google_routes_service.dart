@@ -8,16 +8,21 @@ import 'package:http/http.dart' as http;
 import '../../trail/Model/trail_models.dart';
 import '../config/google_api_config.dart';
 
+/// Represents google routes service exception.
 class GoogleRoutesServiceException implements Exception {
+  /// Creates google routes service exception.
   const GoogleRoutesServiceException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents google route result.
 class GoogleRouteResult {
+  /// Creates google route result.
   const GoogleRouteResult({
     required this.distanceMeters,
     required this.duration,
@@ -32,6 +37,7 @@ class GoogleRouteResult {
   final double? elevationGainMeters;
   final String sourceLabel;
 
+  /// Returns a copy with the supplied fields changed.
   GoogleRouteResult copyWith({
     int? distanceMeters,
     Duration? duration,
@@ -46,6 +52,7 @@ class GoogleRouteResult {
     );
   }
 
+  /// Returns distance label.
   String get distanceLabel {
     if (distanceMeters >= 1000) {
       return '${(distanceMeters / 1000).toStringAsFixed(1)} km';
@@ -53,6 +60,7 @@ class GoogleRouteResult {
     return '$distanceMeters m';
   }
 
+  /// Returns duration label.
   String get durationLabel {
     final minutes = duration.inMinutes;
     if (minutes < 60) {
@@ -67,7 +75,9 @@ class GoogleRouteResult {
   }
 }
 
+/// Represents google routes service.
 class GoogleRoutesService {
+  /// Creates google routes service.
   GoogleRoutesService({http.Client? client, String? apiKey})
     : _client = client,
       _apiKey = apiKey ?? GoogleApiConfig.routesApiKey;
@@ -75,6 +85,7 @@ class GoogleRoutesService {
   final http.Client? _client;
   final String _apiKey;
 
+  /// Computes walking route for trail.
   Future<GoogleRouteResult> computeWalkingRouteForTrail(Trail trail) async {
     if (trail.checkpoints.length < 2) {
       throw const GoogleRoutesServiceException(
@@ -91,6 +102,7 @@ class GoogleRoutesService {
     )).copyWith(sourceLabel: 'Google Routes walking via checkpoints');
   }
 
+  /// Computes walking route.
   Future<GoogleRouteResult> computeWalkingRoute({
     required TrailCheckpoint origin,
     required TrailCheckpoint destination,
@@ -203,6 +215,7 @@ class GoogleRoutesService {
     }
   }
 
+  /// Computes duration from google.
   Duration _durationFromGoogle(Object? value) {
     if (value is! String || !value.endsWith('s')) {
       return Duration.zero;
@@ -218,6 +231,7 @@ class GoogleRoutesService {
     return Duration(milliseconds: (seconds * 1000).round());
   }
 
+  /// Computes non negative int.
   int _nonNegativeInt(Object? value) {
     if (value is! num || !value.isFinite || value < 0 || value > 100000000) {
       return 0;

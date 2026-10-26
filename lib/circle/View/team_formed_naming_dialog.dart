@@ -6,6 +6,7 @@ import '../../core/widgets/loading_toast.dart';
 
 /// Return the confirmed team name through the dialog result instead of mutating navigation elsewhere.
 class TeamFormedNamingDialog extends StatefulWidget {
+  /// Creates team formed naming dialog.
   const TeamFormedNamingDialog({
     super.key,
     required this.joinedHikerName,
@@ -19,28 +20,33 @@ class TeamFormedNamingDialog extends StatefulWidget {
   final String initialName;
   final Future<void> Function(String name) onSubmit;
 
+  /// Creates the presentation state for this widget.
   @override
   State<TeamFormedNamingDialog> createState() => _TeamFormedNamingDialogState();
 }
 
+/// Manages the team formed naming dialog presentation and lifecycle.
 class _TeamFormedNamingDialogState extends State<TeamFormedNamingDialog> {
   static const _green = Color(0xFF34A853);
   late final TextEditingController _nameController;
   bool _isSaving = false;
   String? _errorMessage;
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.initialName);
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _nameController.dispose();
     super.dispose();
   }
 
+  /// Saves.
   Future<void> _save() async {
     final name = _nameController.text.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (name.length < 2) {
@@ -53,7 +59,7 @@ class _TeamFormedNamingDialogState extends State<TeamFormedNamingDialog> {
     });
     try {
       await widget.onSubmit(name);
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted) _presentSaveEffect1();
     } on HikerCircleFirebaseRepositoryException catch (error) {
       if (mounted) setState(() => _errorMessage = error.message);
     } catch (_) {
@@ -67,6 +73,7 @@ class _TeamFormedNamingDialogState extends State<TeamFormedNamingDialog> {
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -276,4 +283,7 @@ class _TeamFormedNamingDialogState extends State<TeamFormedNamingDialog> {
       ),
     );
   }
+
+  /// Presents the save effect1 UI.
+  void _presentSaveEffect1() => Navigator.of(context).pop(true);
 }

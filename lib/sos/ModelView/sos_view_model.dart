@@ -10,7 +10,9 @@ import '../Data/sos_repository.dart';
 import '../Model/sos_models.dart';
 import 'emergency_contacts_view_model.dart';
 
+/// Coordinates sos view model state and actions.
 class SosViewModel extends ChangeNotifier {
+  /// Creates sos view model.
   SosViewModel({
     required AppSession session,
     SosRepository repository = const SosRepository(),
@@ -74,10 +76,12 @@ class SosViewModel extends ChangeNotifier {
   bool _isFlushingQueuedAlerts = false;
   bool _isDisposed = false;
 
+  /// Returns emergency contacts.
   List<EmergencyContact> get emergencyContacts {
     return List.unmodifiable(_emergencyContacts);
   }
 
+  /// Returns metrics.
   List<SosMetric> get metrics {
     return [
       SosMetric(
@@ -92,19 +96,39 @@ class SosViewModel extends ChangeNotifier {
     ];
   }
 
+  /// Returns is loading emergency contacts.
   bool get isLoadingEmergencyContacts => _isLoadingEmergencyContacts;
+
+  /// Returns is sending sos alert.
   bool get isSendingSosAlert => _isSendingSosAlert;
+
+  /// Returns emergency contacts error message.
   String? get emergencyContactsErrorMessage => _emergencyContactsErrorMessage;
+
+  /// Returns sos alert error message.
   String? get sosAlertErrorMessage => _sosAlertErrorMessage;
+
+  /// Returns latest sos alert result.
   SosAlertResult? get latestSosAlertResult => _latestSosAlertResult;
+
+  /// Returns latest sos acknowledgement.
   SosAlertResult? get latestSosAcknowledgement => _latestSosAcknowledgement;
+
+  /// Returns cloud alert logs.
   List<SosAlert> get cloudAlertLogs => List.unmodifiable(_cloudAlertLogs);
+
+  /// Returns queued alert count.
   int get queuedAlertCount => _queuedAlertCount;
+
+  /// Returns is flushing queued alerts.
   bool get isFlushingQueuedAlerts => _isFlushingQueuedAlerts;
+
+  /// Returns custom whats app notes.
   Map<SosAlertMode, String> get customWhatsAppNotes {
     return Map.unmodifiable(_customWhatsAppNotes);
   }
 
+  /// Loads emergency contacts.
   Future<void> loadEmergencyContacts() async {
     if (_isDisposed || _isLoadingEmergencyContacts) {
       return;
@@ -141,6 +165,7 @@ class SosViewModel extends ChangeNotifier {
     }
   }
 
+  /// Computes replace emergency contacts.
   void replaceEmergencyContacts(List<EmergencyContact> contacts) {
     if (_isDisposed) {
       return;
@@ -149,6 +174,7 @@ class SosViewModel extends ChangeNotifier {
     _notifyListenersIfActive();
   }
 
+  /// Loads custom whats app notes.
   Future<void> loadCustomWhatsAppNotes() async {
     if (_isDisposed) {
       return;
@@ -167,6 +193,7 @@ class SosViewModel extends ChangeNotifier {
     }
   }
 
+  /// Saves custom whats app note.
   Future<void> saveCustomWhatsAppNote({
     required SosAlertMode mode,
     required String note,
@@ -183,6 +210,7 @@ class SosViewModel extends ChangeNotifier {
     );
   }
 
+  /// Loads cloud alert logs.
   Future<void> loadCloudAlertLogs() async {
     if (_isDisposed) {
       return;
@@ -207,6 +235,7 @@ class SosViewModel extends ChangeNotifier {
     _notifyListenersIfActive();
   }
 
+  /// Loads queued alert count.
   Future<void> loadQueuedAlertCount() async {
     if (_isDisposed) {
       return;
@@ -225,10 +254,12 @@ class SosViewModel extends ChangeNotifier {
     }
   }
 
+  /// Loads queued dispatches.
   Future<List<SosQueuedDispatch>> loadQueuedDispatches() {
     return _sosAlertRepository.loadQueuedDispatches(session: _session);
   }
 
+  /// Flushes queued alerts.
   Future<SosQueueFlushResult?> flushQueuedAlerts() async {
     if (_isDisposed || _isFlushingQueuedAlerts) {
       return null;
@@ -346,6 +377,7 @@ class SosViewModel extends ChangeNotifier {
     }
   }
 
+  /// Records acknowledgement failure.
   Future<void> _recordAcknowledgementFailure(String alertId) async {
     await loadQueuedAlertCount();
     if (_isDisposed) return;
@@ -376,6 +408,7 @@ class SosViewModel extends ChangeNotifier {
     _applyAlertResult(result);
   }
 
+  /// Applies alert result.
   void _applyAlertResult(SosAlertResult result) {
     final current = _latestSosAlertResult;
     if (current == null ||
@@ -390,6 +423,7 @@ class SosViewModel extends ChangeNotifier {
     ]..sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
   }
 
+  /// Sends whats app test message.
   Future<List<SosContactDispatch>> sendWhatsAppTestMessage() async {
     return _sosAlertRepository.sendWhatsAppTestMessage(
       session: _session,
@@ -397,12 +431,14 @@ class SosViewModel extends ChangeNotifier {
     );
   }
 
+  /// Notifies listeners if active.
   void _notifyListenersIfActive() {
     if (!_isDisposed) {
       notifyListeners();
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _queueSubscription?.cancel();

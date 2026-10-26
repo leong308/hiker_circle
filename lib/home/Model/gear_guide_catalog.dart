@@ -11,6 +11,7 @@ enum GearGuideCategory {
   camping,
 }
 
+/// Represents gear guide catalog.
 abstract final class GearGuideCatalog {
   static const _details =
       <String, ({GearGuideCategory category, String reason})>{
@@ -139,6 +140,7 @@ abstract final class GearGuideCatalog {
         ),
       };
 
+  /// Returns sections.
   static Map<GearGuideCategory, List<String>> get sections => {
     for (final category in GearGuideCategory.values)
       category: [
@@ -149,6 +151,7 @@ abstract final class GearGuideCatalog {
       ],
   };
 
+  /// Computes reason for.
   static String reasonFor(String item) =>
       _details[item]?.reason ?? 'Supports the needs of your planned route.';
 }

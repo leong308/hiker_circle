@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 
 import '../services/trail_image_cache.dart';
 
+/// Displays the cached trail image.
 class CachedTrailImage extends StatelessWidget {
+  /// Creates cached trail image.
   const CachedTrailImage({
     super.key,
     required this.imageUrl,
@@ -25,6 +27,7 @@ class CachedTrailImage extends StatelessWidget {
   final double? height;
   final String? semanticLabel;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final normalizedUrl = imageUrl.trim();
@@ -74,6 +77,7 @@ class CachedTrailImage extends StatelessWidget {
     );
   }
 
+  /// Computes decode dimension.
   int? _decodeDimension(double? logicalSize, double pixelRatio) {
     if (logicalSize == null ||
         !logicalSize.isFinite ||

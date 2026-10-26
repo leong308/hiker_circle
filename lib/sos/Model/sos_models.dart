@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 
 import '../../app/Model/preferred_time_zone.dart';
 
+/// Represents sos dashboard.
 class SosDashboard {
+  /// Creates sos dashboard.
   const SosDashboard({
     required this.contactsReady,
     required this.contactsRequired,
@@ -19,13 +21,16 @@ class SosDashboard {
   final String liveSharingStatus;
 }
 
+/// Represents emergency contact.
 class EmergencyContact {
+  /// Creates emergency contact.
   const EmergencyContact({
     required this.name,
     required this.phoneNumber,
     required this.relationship,
   });
 
+  /// Creates emergency contact from a cloud record.
   factory EmergencyContact.fromFirestore(Map<String, dynamic> data) {
     return EmergencyContact(
       name: _stringFrom(data['name']),
@@ -38,6 +43,7 @@ class EmergencyContact {
   final String phoneNumber;
   final String relationship;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'name': name,
@@ -46,6 +52,7 @@ class EmergencyContact {
     };
   }
 
+  /// Computes string from.
   static String _stringFrom(Object? value) {
     if (value is String) {
       return value;
@@ -54,7 +61,9 @@ class EmergencyContact {
   }
 }
 
+/// Represents emergency contact candidate.
 class EmergencyContactCandidate {
+  /// Creates emergency contact candidate.
   const EmergencyContactCandidate({
     required this.fullName,
     required this.phoneNumbers,
@@ -62,6 +71,7 @@ class EmergencyContactCandidate {
     this.lastName,
   });
 
+  /// Creates emergency contact candidate using from platform.
   factory EmergencyContactCandidate.fromPlatform(Map<Object?, Object?> data) {
     final phones = data['phoneNumbers'];
     return EmergencyContactCandidate(
@@ -82,6 +92,7 @@ class EmergencyContactCandidate {
   final String fullName;
   final List<String> phoneNumbers;
 
+  /// Returns display name.
   String get displayName {
     final combined = [
       firstName?.trim(),
@@ -93,10 +104,12 @@ class EmergencyContactCandidate {
     return fullName.trim();
   }
 
+  /// Returns primary phone number.
   String get primaryPhoneNumber {
     return phoneNumbers.isEmpty ? '' : phoneNumbers.first;
   }
 
+  /// Computes string from.
   static String? _stringFrom(Object? value) {
     if (value is String && value.trim().isNotEmpty) {
       return value.trim();
@@ -105,6 +118,7 @@ class EmergencyContactCandidate {
   }
 }
 
+/// Defines the sos alert mode choices.
 enum SosAlertMode {
   manual,
   medical,
@@ -112,6 +126,7 @@ enum SosAlertMode {
   prolongedStillness,
   duress;
 
+  /// Returns firestore value.
   String get firestoreValue {
     switch (this) {
       case SosAlertMode.manual:
@@ -127,6 +142,7 @@ enum SosAlertMode {
     }
   }
 
+  /// Returns label.
   String get label {
     switch (this) {
       case SosAlertMode.manual:
@@ -142,6 +158,7 @@ enum SosAlertMode {
     }
   }
 
+  /// Returns uses loud emergency pattern.
   bool get usesLoudEmergencyPattern {
     switch (this) {
       case SosAlertMode.manual:
@@ -155,15 +172,18 @@ enum SosAlertMode {
   }
 }
 
+/// Defines the sos alert trigger source choices.
 enum SosAlertTriggerSource {
   mobilePhone('mobile_phone'),
   emergencyButton('emergency_button'),
   automaticDetection('automatic_detection');
 
+  /// Creates this model.
   const SosAlertTriggerSource(this.firestoreValue);
 
   final String firestoreValue;
 
+  /// Creates from firestore.
   static SosAlertTriggerSource fromFirestore(Object? value) {
     return SosAlertTriggerSource.values.firstWhere(
       (source) => source.firestoreValue == value,
@@ -172,6 +192,7 @@ enum SosAlertTriggerSource {
   }
 }
 
+/// Defines the sos alert status choices.
 enum SosAlertStatus {
   sent,
   partial,
@@ -179,6 +200,7 @@ enum SosAlertStatus {
   queued,
   noContacts;
 
+  /// Returns firestore value.
   String get firestoreValue {
     switch (this) {
       case SosAlertStatus.sent:
@@ -194,6 +216,7 @@ enum SosAlertStatus {
     }
   }
 
+  /// Returns label.
   String get label {
     switch (this) {
       case SosAlertStatus.sent:
@@ -210,7 +233,9 @@ enum SosAlertStatus {
   }
 }
 
+/// Represents sos contact dispatch.
 class SosContactDispatch {
+  /// Creates sos contact dispatch.
   const SosContactDispatch({
     required this.contactName,
     required this.phoneNumber,
@@ -220,6 +245,7 @@ class SosContactDispatch {
     this.providerMessageId,
   });
 
+  /// Creates sos contact dispatch from a cloud record.
   factory SosContactDispatch.fromFirestore(Map<String, dynamic> data) {
     return SosContactDispatch(
       contactName: _stringFrom(data['contactName']),
@@ -242,6 +268,7 @@ class SosContactDispatch {
   final String? errorMessage;
   final String? providerMessageId;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'contactName': contactName,
@@ -254,6 +281,7 @@ class SosContactDispatch {
     };
   }
 
+  /// Computes string from.
   static String _stringFrom(Object? value) {
     if (value is String) {
       return value;
@@ -262,7 +290,9 @@ class SosContactDispatch {
   }
 }
 
+/// Represents sos trigger location.
 class SosTriggerLocation {
+  /// Creates sos trigger location.
   const SosTriggerLocation({
     required this.latitude,
     required this.longitude,
@@ -270,6 +300,7 @@ class SosTriggerLocation {
     this.capturedAt,
   });
 
+  /// Creates sos trigger location using from platform.
   factory SosTriggerLocation.fromPlatform(Map<Object?, Object?> data) {
     return SosTriggerLocation(
       latitude: _coordinateFrom(data['latitude']) ?? double.nan,
@@ -282,6 +313,7 @@ class SosTriggerLocation {
     );
   }
 
+  /// Creates sos trigger location from a cloud record.
   factory SosTriggerLocation.fromFirestore(Map<String, dynamic> data) {
     return SosTriggerLocation(
       latitude: _coordinateFrom(data['latitude']) ?? double.nan,
@@ -296,6 +328,7 @@ class SosTriggerLocation {
   final double? accuracyMeters;
   final DateTime? capturedAt;
 
+  /// Returns has valid position.
   bool get hasValidPosition =>
       latitude.isFinite &&
       longitude.isFinite &&
@@ -304,10 +337,12 @@ class SosTriggerLocation {
       longitude >= -180 &&
       longitude <= 180;
 
+  /// Returns universal map link.
   String get universalMapLink {
     return 'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude';
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'latitude': latitude,
@@ -320,6 +355,7 @@ class SosTriggerLocation {
     };
   }
 
+  /// Computes coordinate from.
   static double? _coordinateFrom(Object? value) {
     if (value is! num || !value.isFinite) {
       return null;
@@ -327,6 +363,7 @@ class SosTriggerLocation {
     return value.toDouble();
   }
 
+  /// Computes accuracy from.
   static double? _accuracyFrom(Object? value) {
     if (value is! num || !value.isFinite || value < 0) {
       return null;
@@ -334,6 +371,7 @@ class SosTriggerLocation {
     return value.toDouble();
   }
 
+  /// Computes date from.
   static DateTime? _dateFrom({Object? localValue, Object? millisValue}) {
     if (millisValue is num && millisValue.isFinite) {
       try {
@@ -356,9 +394,11 @@ abstract final class SosAlertMessageComposer {
   static const String defaultDuressCustomNote =
       'I may be under pressure and cannot speak safely. Please monitor my location discreetly and contact local emergency services if I stop responding.';
 
+  /// Computes default custom note for.
   static String defaultCustomNoteFor(SosAlertMode mode) =>
       mode == SosAlertMode.duress ? defaultDuressCustomNote : defaultCustomNote;
 
+  /// Computes compose.
   static String compose({
     required SosAlertMode mode,
     required String phoneNumber,
@@ -401,6 +441,7 @@ abstract final class SosAlertMessageComposer {
     ].join('\n');
   }
 
+  /// Computes reason for.
   static String reasonFor(
     SosAlertMode mode, {
     SosAlertTriggerSource triggerSource = SosAlertTriggerSource.mobilePhone,
@@ -421,6 +462,7 @@ abstract final class SosAlertMessageComposer {
     }
   }
 
+  /// Computes normalized note.
   static String _normalizedNote(SosAlertMode mode, String? customNote) {
     final trimmed = customNote?.trim();
     if (trimmed == null || trimmed.isEmpty) {
@@ -430,7 +472,9 @@ abstract final class SosAlertMessageComposer {
   }
 }
 
+/// Represents sos local alert feedback.
 class SosLocalAlertFeedback {
+  /// Creates sos local alert feedback.
   const SosLocalAlertFeedback({
     required this.alarmRequested,
     required this.flashlightRequested,
@@ -440,6 +484,7 @@ class SosLocalAlertFeedback {
     this.errorMessage,
   });
 
+  /// Creates sos local alert feedback using started.
   factory SosLocalAlertFeedback.started({required DateTime updatedAt}) {
     return SosLocalAlertFeedback(
       alarmRequested: true,
@@ -450,6 +495,7 @@ class SosLocalAlertFeedback {
     );
   }
 
+  /// Creates sos local alert feedback using stopped.
   factory SosLocalAlertFeedback.stopped({required DateTime updatedAt}) {
     return SosLocalAlertFeedback(
       alarmRequested: false,
@@ -460,6 +506,7 @@ class SosLocalAlertFeedback {
     );
   }
 
+  /// Creates sos local alert feedback using failed.
   factory SosLocalAlertFeedback.failed({
     required DateTime updatedAt,
     required String errorMessage,
@@ -482,7 +529,9 @@ class SosLocalAlertFeedback {
   final String? errorMessage;
 }
 
+/// Represents sos output volume status.
 class SosOutputVolumeStatus {
+  /// Creates sos output volume status.
   const SosOutputVolumeStatus({
     required this.platform,
     required this.isIos,
@@ -491,6 +540,7 @@ class SosOutputVolumeStatus {
     required this.minimumRequiredVolume,
   });
 
+  /// Creates sos output volume status using from platform.
   factory SosOutputVolumeStatus.fromPlatform(
     Map<Object?, Object?>? data, {
     required double defaultMinimumRequiredVolume,
@@ -514,6 +564,7 @@ class SosOutputVolumeStatus {
     );
   }
 
+  /// Creates sos output volume status using unsupported.
   factory SosOutputVolumeStatus.unsupported({
     required double minimumRequiredVolume,
   }) {
@@ -532,10 +583,12 @@ class SosOutputVolumeStatus {
   final double? outputVolume;
   final double minimumRequiredVolume;
 
+  /// Returns should gate for ios.
   bool get shouldGateForIos {
     return isIos && canMeasureOutputVolume;
   }
 
+  /// Returns is audible.
   bool get isAudible {
     if (!shouldGateForIos) {
       return true;
@@ -544,6 +597,7 @@ class SosOutputVolumeStatus {
     return volume != null && volume >= minimumRequiredVolume;
   }
 
+  /// Returns display output volume.
   double get displayOutputVolume {
     final volume = outputVolume;
     if (volume == null) {
@@ -558,14 +612,17 @@ class SosOutputVolumeStatus {
     return ((volume * 16).round() / 16).clamp(0.0, 1.0).toDouble();
   }
 
+  /// Returns output volume percent.
   int get outputVolumePercent {
     return (displayOutputVolume * 100).round();
   }
 
+  /// Returns minimum required percent.
   int get minimumRequiredPercent {
     return ((minimumRequiredVolume * 100).clamp(0.0, 100.0)).round();
   }
 
+  /// Computes normalized double.
   static double? _normalizedDouble(Object? value) {
     if (value is! num || !value.isFinite) {
       return null;
@@ -574,7 +631,9 @@ class SosOutputVolumeStatus {
   }
 }
 
+/// Represents sos alert.
 class SosAlert {
+  /// Creates sos alert.
   const SosAlert({
     required this.id,
     required this.mode,
@@ -590,6 +649,7 @@ class SosAlert {
     this.triggerSource = SosAlertTriggerSource.mobilePhone,
   });
 
+  /// Creates sos alert from a cloud record.
   factory SosAlert.fromFirestore(Map<String, dynamic> data) {
     final dispatches = data['dispatches'];
     final triggerLocation = data['triggerLocation'];
@@ -640,6 +700,7 @@ class SosAlert {
   final SosTriggerLocation? triggerLocation;
   final SosAlertTriggerSource triggerSource;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'id': id,
@@ -660,6 +721,7 @@ class SosAlert {
     };
   }
 
+  /// Computes mode from.
   static SosAlertMode _modeFrom(Object? value) {
     if (value is String) {
       for (final mode in SosAlertMode.values) {
@@ -671,6 +733,7 @@ class SosAlert {
     return SosAlertMode.manual;
   }
 
+  /// Computes status from.
   static SosAlertStatus _statusFrom(Object? value) {
     if (value is String) {
       for (final status in SosAlertStatus.values) {
@@ -682,6 +745,7 @@ class SosAlert {
     return SosAlertStatus.failed;
   }
 
+  /// Computes string from.
   static String _stringFrom(Object? value) {
     if (value is String) {
       return value;
@@ -689,6 +753,7 @@ class SosAlert {
     return '';
   }
 
+  /// Computes int from.
   static int _intFrom(Object? value) {
     if (value is num && value.isFinite) {
       return value.toInt();
@@ -697,7 +762,9 @@ class SosAlert {
   }
 }
 
+/// Represents sos alert result.
 class SosAlertResult {
+  /// Creates sos alert result.
   const SosAlertResult({
     required this.alert,
     this.queuedForRetry = false,
@@ -708,11 +775,16 @@ class SosAlertResult {
   final bool queuedForRetry;
   final int queuedAlertCount;
 
+  /// Returns has successful dispatch.
   bool get hasSuccessfulDispatch => alert.sentCount > 0;
+
+  /// Returns has failed dispatch.
   bool get hasFailedDispatch => alert.failedCount > 0;
 }
 
+/// Represents sos queued dispatch.
 class SosQueuedDispatch {
+  /// Creates sos queued dispatch.
   const SosQueuedDispatch({
     required this.id,
     required this.mode,
@@ -742,14 +814,18 @@ class SosQueuedDispatch {
   final SosTriggerLocation? triggerLocation;
 }
 
+/// Represents sos metric.
 class SosMetric {
+  /// Creates sos metric.
   const SosMetric({required this.label, required this.value});
 
   final String label;
   final String value;
 }
 
+/// Represents sos feature item.
 class SosFeatureItem {
+  /// Creates sos feature item.
   const SosFeatureItem({
     required this.icon,
     required this.title,
@@ -763,7 +839,9 @@ class SosFeatureItem {
   final String? trailing;
 }
 
+/// Represents sos feature section.
 class SosFeatureSection {
+  /// Creates sos feature section.
   const SosFeatureSection({required this.title, required this.items});
 
   final String title;

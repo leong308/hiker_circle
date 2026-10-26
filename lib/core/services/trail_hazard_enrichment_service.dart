@@ -16,6 +16,7 @@ import 'hiking_route_service.dart';
 /// ascent/descent sections. Results are persisted by the caller in the same
 /// offline SQLite hazard dataset as the Mapbox cautions.
 class TrailHazardEnrichmentService {
+  /// Creates trail hazard enrichment service.
   TrailHazardEnrichmentService({
     required http.Client client,
     Uri? overpassEndpoint,
@@ -44,6 +45,7 @@ class TrailHazardEnrichmentService {
   static const _elevationSpacingMeters = 100.0;
   static const _maximumOverpassPointsPerQuery = 60;
 
+  /// Fetches for trail.
   Future<List<LocalTrailHazardMatch>> fetchForTrail({
     required Trail trail,
     required List<LatLng> routePoints,
@@ -62,6 +64,7 @@ class TrailHazardEnrichmentService {
     return _deduplicate(results);
   }
 
+  /// Fetches osm hazards.
   Future<List<LocalTrailHazardMatch>> _fetchOsmHazards(
     Trail trail,
     List<LatLng> routePoints,
@@ -139,6 +142,7 @@ out body geom;
     return matches;
   }
 
+  /// Parses osm element.
   List<LocalTrailHazardMatch> _parseOsmElement(
     Trail trail,
     List<LatLng> routePoints,
@@ -199,6 +203,7 @@ out body geom;
     ];
   }
 
+  /// Parses osm water and bridges.
   List<LocalTrailHazardMatch> _parseOsmWaterAndBridges(
     Trail trail,
     List<LatLng> routePoints,
@@ -325,6 +330,7 @@ out body geom;
     return matches;
   }
 
+  /// Checks whether hiking bridge.
   bool _isHikingBridge(Map<String, String> tags) {
     // Exclude motorway/street bridges that merely pass above or below the
     // trail. Distance-to-polyline alone cannot distinguish grade-separated
@@ -339,6 +345,7 @@ out body geom;
     }.contains(tags['highway']);
   }
 
+  /// Computes osm hazard types.
   List<String> _osmHazardTypes(Map<String, String> tags) {
     final types = <String>[];
     final ford = tags['ford'];
@@ -391,6 +398,7 @@ out body geom;
     return types.toSet().toList(growable: false);
   }
 
+  /// Checks whether positive tag.
   bool _isPositiveTag(String? value) {
     return value != null &&
         value.isNotEmpty &&
@@ -398,6 +406,7 @@ out body geom;
         value != 'none';
   }
 
+  /// Computes content for.
   ({String title, String description, String guidance}) _contentFor(
     String type,
     Map<String, String> tags,
@@ -462,6 +471,7 @@ out body geom;
     };
   }
 
+  /// Fetches steep sections.
   Future<List<LocalTrailHazardMatch>> _fetchSteepSections(
     Trail trail,
     List<LatLng> routePoints,
@@ -612,6 +622,7 @@ out body geom;
     ];
   }
 
+  /// Computes element geometry.
   List<LatLng> _elementGeometry(Map<String, dynamic> element) {
     final geometry = element['geometry'];
     if (geometry is List) {
@@ -636,6 +647,7 @@ out body geom;
     return [LatLng(latitude, longitude)];
   }
 
+  /// Computes nearest geometry to route.
   _NearestRouteMatch _nearestGeometryToRoute(
     List<LatLng> geometry,
     List<LatLng> route,
@@ -688,6 +700,7 @@ out body geom;
     );
   }
 
+  /// Computes minimum geometry distance.
   double _minimumGeometryDistance(List<LatLng> first, List<LatLng> second) {
     var minimum = double.infinity;
     for (final firstPoint in first) {
@@ -698,6 +711,7 @@ out body geom;
     return minimum;
   }
 
+  /// Computes sample route.
   List<_RoutePosition> _sampleRoute(
     List<LatLng> points, {
     required double spacingMeters,
@@ -754,6 +768,7 @@ out body geom;
     return samples;
   }
 
+  /// Computes deduplicate.
   List<LocalTrailHazardMatch> _deduplicate(
     List<LocalTrailHazardMatch> matches,
   ) {
@@ -768,6 +783,7 @@ out body geom;
       ..sort((a, b) => a.routeProgress.compareTo(b.routeProgress));
   }
 
+  /// Computes distance.
   double _distance(LatLng first, LatLng second) {
     const radius = 6371000.0;
     final latitude1 = first.latitude * math.pi / 180;
@@ -789,14 +805,18 @@ out body geom;
   }
 }
 
+/// Represents route position.
 class _RoutePosition {
+  /// Creates route position.
   const _RoutePosition({required this.point, required this.progress});
 
   final LatLng point;
   final double progress;
 }
 
+/// Represents nearest route match.
 class _NearestRouteMatch {
+  /// Creates nearest route match.
   const _NearestRouteMatch({
     required this.featurePoint,
     required this.distanceMeters,
@@ -808,7 +828,9 @@ class _NearestRouteMatch {
   final double routeProgress;
 }
 
+/// Represents steep candidate.
 class _SteepCandidate {
+  /// Creates steep candidate.
   const _SteepCandidate({
     required this.index,
     required this.type,

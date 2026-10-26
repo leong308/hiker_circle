@@ -1,5 +1,6 @@
 part of 'local_session_database.dart';
 
+/// Computes preparation hash.
 String _preparationHash(
   Map<String, dynamic> payload,
   Iterable<String> checklist,
@@ -8,6 +9,7 @@ String _preparationHash(
   return stableContentHash({'draft': payload['draft'], 'checklist': items});
 }
 
+/// Resolves planned hike id.
 Future<String> _resolvePlannedHikeId(
   DatabaseExecutor database,
   String owner,
@@ -30,7 +32,57 @@ Future<String> _resolvePlannedHikeId(
   return rows.isEmpty ? id : rows.first['upcoming_hike_id'] as String;
 }
 
+/// Provides helpers for `LocalSessionDatabase`.
 extension LocalPlanningDatabase on LocalSessionDatabase {
+  /// Loads preparation safety preference.
+  Future<Object?> loadPreparationSafetyPreference({
+    required String ownerPhoneNumber,
+    required String hikeId,
+  }) async {
+    final database = await _openDatabase();
+    return database.transaction((transaction) async {
+      final id = await _resolvePlannedHikeId(
+        transaction,
+        ownerPhoneNumber.trim(),
+        hikeId,
+      );
+      final rows = await transaction.query(
+        'local_preferences',
+        columns: ['value_json'],
+        where: 'owner_phone_number = ? AND preference_key = ?',
+        whereArgs: [ownerPhoneNumber.trim(), 'hike_safety_settings:$id'],
+        limit: 1,
+      );
+      return rows.isEmpty
+          ? null
+          : jsonDecode(rows.first['value_json'] as String);
+    });
+  }
+
+  /// Saves preparation safety preference.
+  Future<void> savePreparationSafetyPreference({
+    required String ownerPhoneNumber,
+    required String hikeId,
+    required Object value,
+  }) async {
+    final database = await _openDatabase();
+    await database.transaction((transaction) async {
+      final id = await _resolvePlannedHikeId(
+        transaction,
+        ownerPhoneNumber.trim(),
+        hikeId,
+      );
+      await transaction.insert('local_preferences', {
+        'owner_phone_number': ownerPhoneNumber.trim(),
+        'preference_key': 'hike_safety_settings:$id',
+        'value_json': jsonEncode(value),
+        'is_dirty': 0,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  /// Resolves planned hike id.
   Future<String> resolvePlannedHikeId({
     required String ownerPhoneNumber,
     required String hikeId,
@@ -40,6 +92,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     hikeId,
   );
 
+  /// Loads preparation sharing preference.
   Future<Object?> loadPreparationSharingPreference({
     required String ownerPhoneNumber,
     required String hikeId,
@@ -64,6 +117,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     });
   }
 
+  /// Saves preparation sharing preference.
   Future<void> savePreparationSharingPreference({
     required String ownerPhoneNumber,
     required String hikeId,
@@ -86,6 +140,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     });
   }
 
+  /// Computes queue scheduled hike.
   Future<String> queueScheduledHike({
     required String ownerPhoneNumber,
     required UpcomingHike hike,
@@ -135,6 +190,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     });
   }
 
+  /// Computes confirm scheduled hike.
   Future<void> confirmScheduledHike({
     required String ownerPhoneNumber,
     required String creationKey,
@@ -167,20 +223,23 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
           where: 'owner_phone_number = ? AND upcoming_hike_id = ?',
           whereArgs: [ownerPhoneNumber.trim(), oldId],
         );
-        await transaction.update(
-          'local_preferences',
-          {'preference_key': 'hike_preparation_sharing:$cloudHikeId'},
-          where: 'owner_phone_number = ? AND preference_key = ?',
-          whereArgs: [
-            ownerPhoneNumber.trim(),
-            'hike_preparation_sharing:$oldId',
-          ],
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        for (final prefix in [
+          'hike_preparation_sharing',
+          'hike_safety_settings',
+        ]) {
+          await transaction.update(
+            'local_preferences',
+            {'preference_key': '$prefix:$cloudHikeId'},
+            where: 'owner_phone_number = ? AND preference_key = ?',
+            whereArgs: [ownerPhoneNumber.trim(), '$prefix:$oldId'],
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
       }
     });
   }
 
+  /// Saves planned reminder preference.
   Future<void> savePlannedReminderPreference({
     required String ownerPhoneNumber,
     required String hikeId,
@@ -201,6 +260,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     );
   }
 
+  /// Computes acknowledge planned reminder preference.
   Future<void> acknowledgePlannedReminderPreference({
     required String ownerPhoneNumber,
     required String hikeId,
@@ -221,6 +281,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     );
   }
 
+  /// Creates upcoming hike reminders table.
   Future<void> _createUpcomingHikeRemindersTable(Database database) async {
     await database.execute('''
       CREATE TABLE IF NOT EXISTS upcoming_hike_reminders (
@@ -237,6 +298,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     ''');
   }
 
+  /// Loads hike reminders.
   Future<List<LocalHikeReminder>> loadHikeReminders() async {
     final database = await _openDatabase();
     return (await database.query(
@@ -244,6 +306,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     )).map(LocalHikeReminder.fromRow).toList();
   }
 
+  /// Saves hike reminder.
   Future<LocalHikeReminder> saveHikeReminder({
     required String ownerPhoneNumber,
     required String reminderKey,
@@ -300,6 +363,7 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
     });
   }
 
+  /// Sets hike reminder status.
   Future<void> setHikeReminderStatus(int notificationId, String status) async {
     final database = await _openDatabase();
     await database.update(
@@ -311,7 +375,9 @@ extension LocalPlanningDatabase on LocalSessionDatabase {
   }
 }
 
+/// Represents local hike reminder.
 class LocalHikeReminder {
+  /// Creates local hike reminder using from row.
   LocalHikeReminder.fromRow(Map<String, Object?> row)
     : ownerPhoneNumber = row['owner_phone_number'] as String,
       reminderKey = row['reminder_key'] as String,

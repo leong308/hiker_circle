@@ -14,16 +14,21 @@ import 'naismith_rule.dart';
 import 'open_route_service.dart';
 import 'open_topo_data_service.dart';
 
+/// Represents hiking route service exception.
 class HikingRouteServiceException implements Exception {
+  /// Creates hiking route service exception.
   const HikingRouteServiceException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents hiking route result.
 class HikingRouteResult {
+  /// Creates hiking route result.
   const HikingRouteResult({
     required this.distanceMeters,
     required this.duration,
@@ -42,15 +47,18 @@ class HikingRouteResult {
   final double? maxElevationMeters;
   final String sourceLabel;
 
+  /// Returns has elevation range.
   bool get hasElevationRange =>
       minElevationMeters != null &&
       maxElevationMeters != null &&
       maxElevationMeters! >= minElevationMeters!;
 
+  /// Returns elevation range label.
   String get elevationRangeLabel => hasElevationRange
       ? '${minElevationMeters!.round()} m – ${maxElevationMeters!.round()} m'
       : 'Not available';
 
+  /// Returns distance label.
   String get distanceLabel {
     if (distanceMeters >= 1000) {
       return '${(distanceMeters / 1000).toStringAsFixed(1)} km';
@@ -58,6 +66,7 @@ class HikingRouteResult {
     return '$distanceMeters m';
   }
 
+  /// Returns duration label.
   String get durationLabel {
     final minutes = duration.inMinutes;
     if (minutes < 60) {
@@ -72,7 +81,9 @@ class HikingRouteResult {
   }
 }
 
+/// Represents hiking route service.
 class HikingRouteService {
+  /// Creates hiking route service.
   HikingRouteService({
     OpenRouteService? openRouteService,
     GeoapifyService? geoapifyService,
@@ -97,6 +108,7 @@ class HikingRouteService {
 
   // findHikingRouteForTrail tries supported route providers and validates geometry against the
   // requested checkpoints.
+  /// Finds hiking route for trail.
   Future<HikingRouteResult> findHikingRouteForTrail(Trail trail) async {
     if (trail.checkpoints.length < 2 ||
         trail.checkpoints.length > 12 ||
@@ -293,6 +305,7 @@ class HikingRouteService {
     }
   }
 
+  /// Validates provider route.
   void _validateProviderRoute(
     int distanceMeters,
     List<List<double>> coordinates,
@@ -315,6 +328,7 @@ class HikingRouteService {
     }
   }
 
+  /// Computes checkpoints hash.
   static String checkpointsHash(List<TrailCheckpoint> checkpoints) {
     final sorted = [...checkpoints]..sort((a, b) => a.order.compareTo(b.order));
     final canonical = sorted
@@ -326,6 +340,7 @@ class HikingRouteService {
     return 'sha256:${sha256.convert(utf8.encode(canonical))}';
   }
 
+  /// Computes saved route matches checkpoints.
   static bool savedRouteMatchesCheckpoints(Trail trail) {
     final saved = trail.routeCheckpointsHash?.trim() ?? '';
     return saved.isEmpty ||
@@ -333,6 +348,7 @@ class HikingRouteService {
         saved == _legacyCheckpointsHash(trail.checkpoints);
   }
 
+  /// Computes legacy checkpoints hash.
   static String _legacyCheckpointsHash(List<TrailCheckpoint> checkpoints) {
     final sorted = [...checkpoints]..sort((a, b) => a.order.compareTo(b.order));
     final buffer = StringBuffer();
@@ -344,6 +360,7 @@ class HikingRouteService {
 
   // findHikingRouteForTrailWithCache keys cached geometry by checkpoint content so edited routes
   // cannot reuse stale results.
+  /// Finds hiking route for trail with cache.
   Future<HikingRouteResult> findHikingRouteForTrailWithCache(
     Trail trail,
   ) async {
@@ -418,6 +435,7 @@ class HikingRouteService {
     return result;
   }
 
+  /// Computes elevation profile.
   Future<OpenTopoDataResult?> _elevationProfile(
     List<List<double>> coordinates,
   ) async {
@@ -441,6 +459,7 @@ class HikingRouteService {
     }
   }
 
+  /// Checks whether usable polyline.
   bool _isUsablePolyline(String encodedPolyline) {
     if (encodedPolyline.isEmpty) {
       return false;
@@ -452,6 +471,7 @@ class HikingRouteService {
     }
   }
 
+  /// Computes route distance looks usable.
   bool _routeDistanceLooksUsable(Trail trail, int distanceMeters) {
     final expectedDistanceMeters = trail.distanceKm * 1000;
     if (expectedDistanceMeters <= 0) {
@@ -462,14 +482,18 @@ class HikingRouteService {
   }
 }
 
+/// Represents lat lng.
 class LatLng {
+  /// Creates lat lng.
   const LatLng(this.latitude, this.longitude);
 
   final double latitude;
   final double longitude;
 }
 
+/// Represents polyline codec.
 abstract final class PolylineCodec {
+  /// Computes encode.
   static String encode(List<LatLng> points) {
     var previousLatitude = 0;
     var previousLongitude = 0;
@@ -496,6 +520,7 @@ abstract final class PolylineCodec {
     return buffer.toString();
   }
 
+  /// Computes decode.
   static List<LatLng> decode(String encoded) {
     if (encoded.length > 2000000) {
       throw const FormatException('Polyline is too large.');
@@ -504,6 +529,8 @@ abstract final class PolylineCodec {
     var index = 0;
     var latitude = 0;
     var longitude = 0;
+
+    /// Computes delta.
     int readDelta() {
       var shift = 0;
       var result = 0;
@@ -542,6 +569,7 @@ abstract final class PolylineCodec {
     return points;
   }
 
+  /// Computes encode value.
   static String _encodeValue(int value) {
     var encoded = value < 0 ? ~(value << 1) : value << 1;
     final buffer = StringBuffer();

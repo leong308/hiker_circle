@@ -17,6 +17,7 @@ import 'community_hazard_marker.dart';
 import 'loading_toast.dart';
 import '../services/weather_map_service.dart';
 import 'map_controls.dart';
+import 'map_compass.dart';
 import 'map_utils.dart';
 import 'route_preview_camera.dart';
 import 'route_checkpoint_progress.dart';
@@ -24,13 +25,17 @@ import 'route_endpoint_marker.dart';
 import 'route_animation_geometry.dart';
 import 'static_hazard_marker.dart';
 
+/// Checks whether valid map point.
 bool _isValidMapPoint(mapbox.Point point) {
   return mapPointCoordinatesOrNull(point) != null;
 }
 
+/// Defines the route preview mode choices.
 enum RoutePreviewMode { normal, firstPerson }
 
+/// Represents fpv telemetry.
 class _FpvTelemetry {
+  /// Creates fpv telemetry.
   const _FpvTelemetry({
     required this.distanceMeters,
     required this.elapsed,
@@ -46,7 +51,9 @@ class _FpvTelemetry {
   final double? gradePercent;
 }
 
+/// Displays the route preview map.
 class RoutePreviewMap extends StatefulWidget {
+  /// Creates route preview map.
   const RoutePreviewMap({
     super.key,
     required this.trail,
@@ -93,14 +100,17 @@ class RoutePreviewMap extends StatefulWidget {
   final LocalSessionDatabase? localDatabase;
   final Widget Function(mapbox.MapWidget configuration)? mapBuilder;
 
+  /// Returns effective checkpoints.
   List<TrailCheckpoint> get effectiveCheckpoints => recordedTrackPoints != null
       ? const []
       : customCheckpoints ?? trail.checkpoints;
 
+  /// Creates the presentation state for this widget.
   @override
   State<RoutePreviewMap> createState() => _RoutePreviewMapState();
 }
 
+/// Manages the route preview map presentation and lifecycle.
 class _RoutePreviewMapState extends State<RoutePreviewMap>
     with SingleTickerProviderStateMixin {
   DateTime _previewStartedAt = DateTime.now();
@@ -119,6 +129,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   RouteCheckpointProgress? _pendingCheckpointProgress;
   bool _checkpointNotificationScheduled = false;
 
+  /// Computes publish checkpoint progress.
   void _publishCheckpointProgress(double progress) {
     if (widget.onAnimationProgress == null) return;
     final position =
@@ -151,6 +162,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   late mapbox.Point _endPoint;
   late double _currentZoom;
   late double _scaleLatitude;
+  double _cameraBearing = 0;
   mapbox.MapboxMap? _mapboxMap;
   mapbox.PolylineAnnotationManager? _polylineManager;
   mapbox.CircleAnnotationManager? _circleManager;
@@ -172,6 +184,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     },
   );
   Timer? _cautionExpiryTimer;
+
+  /// Computes expire community cautions.
   void _expireCommunityCautions() {
     if (!mounted) return;
     final remaining = _communityHazards
@@ -197,6 +211,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   mapbox.CameraOptions? _styleCameraToRestore;
   double? _stylePlaybackProgress;
   bool _stylePlaybackWasAnimating = false;
+
+  /// Returns map settings.
   MapViewSettings get _mapSettings =>
       MapViewSettings(styleIndex: _styleIndex, dimension: _dimension);
   var _styleLoaded = false;
@@ -207,6 +223,8 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   mapbox.PolylineAnnotation? _animatedPolyline;
   final List<mapbox.PolylineAnnotation> _cometLayers = [];
   List<double> _routeDistances = [];
+
+  /// Returns comet length.
   double get _cometLength => _routeDistances.isEmpty
       ? 125
       : (_routeDistances.last * .15).clamp(2.5, 625.0);
@@ -242,6 +260,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
   int _lastTerrainQueryMs = 0;
   int _terrainQueryGeneration = 0;
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
@@ -285,6 +304,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Returns estimated hike duration.
   Duration get _estimatedHikeDuration {
     final routeDuration = widget.route?.duration;
     if (routeDuration != null && routeDuration > Duration.zero) {
@@ -293,15 +313,18 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     return Duration(minutes: widget.trail.estimatedDurationMinutes);
   }
 
+  /// Returns total route distance meters.
   double get _totalRouteDistanceMeters =>
       _routeDistances.isEmpty ? 0 : _routeDistances.last;
 
+  /// Returns active style url.
   String get _activeStyleUrl =>
       widget.previewMode == RoutePreviewMode.firstPerson &&
           _usesFpvSatelliteStyle
       ? fpvMapStyleUrl
       : mapStyleUrls[_styleIndex];
 
+  /// Computes telemetry at.
   _FpvTelemetry _telemetryAt({
     required double distanceMeters,
     double? elevationMeters,
@@ -324,6 +347,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     );
   }
 
+  /// Synchronizes route animation duration.
   void _syncRouteAnimationDuration() {
     _routeAnimController.duration =
         widget.previewMode == RoutePreviewMode.firstPerson
@@ -334,6 +358,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         : widget.animationDuration;
   }
 
+  /// Sets fpv playback speed.
   void _setFpvPlaybackSpeed(double speed) {
     if (_fpvPlaybackSpeed == speed) return;
     final shouldResume = _routeAnimController.isAnimating;
@@ -347,9 +372,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Returns local database.
   LocalSessionDatabase get _localDatabase =>
       widget.localDatabase ?? _fallbackLocalDatabase;
 
+  /// Watches community hazards.
   void _watchCommunityHazards() {
     if (!mounted) return;
     final generation = ++_communityHazardGeneration;
@@ -385,12 +412,14 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         );
   }
 
+  /// Applies community hazards.
   void _applyCommunityHazards(List<CommunityHazardCluster> hazards) {
     if (!mounted) return;
     _communityHazards = hazards;
     _communityCautionLayer.setReports(hazards);
   }
 
+  /// Loads static hazards.
   Future<void> _loadStaticHazards() async {
     final generation = ++_hazardLoadGeneration;
     if (widget.recordedTrackPoints != null) {
@@ -425,6 +454,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Applies static hazards.
   void _applyStaticHazards(List<LocalTrailHazardMatch> hazards) {
     if (!mounted) return;
     setState(() {
@@ -434,12 +464,14 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     unawaited(_renderRouteIfReady());
   }
 
+  /// Computes on animation status change.
   void _onAnimationStatusChange(AnimationStatus status) {
     if (status == AnimationStatus.completed) {
       _pauseBeforeRouteLoop();
     }
   }
 
+  /// Computes pause before route loop.
   void _pauseBeforeRouteLoop() {
     if (_isPaused || !mounted) return;
     _isPaused = true;
@@ -451,6 +483,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
+  /// Computes restart route loop.
   Future<void> _restartRouteLoop() async {
     final annotation = _animatedPolyline;
     final manager = _polylineManager;
@@ -487,6 +520,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _routeAnimController.forward(from: 0);
   }
 
+  /// Computes on route animation tick.
   void _onRouteAnimationTick() {
     if (!mounted ||
         _polylineManager == null ||
@@ -565,6 +599,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes pause at checkpoint.
   void _pauseAtCheckpoint(int index) {
     if (_isPaused) return;
     _isPaused = true;
@@ -587,6 +622,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
+  /// Computes glow checkpoint.
   void _glowCheckpoint(int checkpointIdx) {
     final manager = _circleManager;
     if (manager == null) return;
@@ -627,6 +663,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }());
   }
 
+  /// Cancels checkpoint glows.
   void _cancelCheckpointGlows() {
     for (final timer in _checkpointGlowTimers.values) {
       timer.cancel();
@@ -634,6 +671,17 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _checkpointGlowTimers.clear();
   }
 
+  /// Refreshes presentation dependencies.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _communityCautionLayer.setAnimationsEnabled(
+      !MediaQuery.disableAnimationsOf(context) &&
+          TickerMode.valuesOf(context).enabled,
+    );
+  }
+
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _hazardLoadGeneration++;
@@ -663,6 +711,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     super.dispose();
   }
 
+  /// Builds points.
   void _buildPoints() {
     _fpvHeadingFilter.reset();
     _checkpointOriginalIndices =
@@ -718,6 +767,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
   static final _zeroPoint = mapbox.Point(coordinates: mapbox.Position(0, 0));
 
+  /// Computes checkpoint indices.
   void _computeCheckpointIndices() {
     _routeDistances = [0];
     for (var i = 1; i < _routePoints.length; i++) {
@@ -754,6 +804,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     _checkpointIndices = _checkpointIndicesByRouteIndex.keys.toList()..sort();
   }
 
+  /// Updates bindings when the parent changes this widget.
   @override
   void didUpdateWidget(covariant RoutePreviewMap oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -861,6 +912,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes focus on checkpoint.
   Future<void> _focusOnCheckpoint(mapbox.Point point) async {
     final map = _mapboxMap;
     if (map == null) return;
@@ -872,6 +924,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     } catch (_) {}
   }
 
+  /// Computes on point annotation tapped.
   void _onPointAnnotationTapped(mapbox.PointAnnotation annotation) {
     if (!mounted) return;
     final match = _hazardsByAnnotationId[annotation.id];
@@ -879,12 +932,14 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     unawaited(showStaticHazardDetails(context, match));
   }
 
+  /// Checks whether current map.
   bool _isCurrentMap(mapbox.MapboxMap map, int generation) {
     return mounted &&
         generation == _mapGeneration &&
         identical(map, _mapboxMap);
   }
 
+  /// Computes on map created.
   Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap, int generation) async {
     if (!mounted || generation != _mapGeneration) return;
     final replacingNativeMap =
@@ -923,6 +978,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     unawaited(_syncScaleFromCamera());
   }
 
+  /// Computes on style loaded.
   Future<void> _onStyleLoaded(int generation) async {
     final map = _mapboxMap;
     if (map == null || !_isCurrentMap(map, generation)) return;
@@ -963,6 +1019,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     await _renderRouteIfReady();
   }
 
+  /// Computes on map loaded.
   Future<void> _onMapLoaded(int generation) async {
     final map = _mapboxMap;
     if (map == null || !_isCurrentMap(map, generation)) return;
@@ -975,6 +1032,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     await _renderRouteIfReady();
   }
 
+  /// Ensures annotation managers.
   Future<bool> _ensureAnnotationManagers(int generation) {
     final map = _mapboxMap;
     if (map == null || !_styleLoaded || !_isCurrentMap(map, generation)) {
@@ -991,6 +1049,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
+  /// Creates annotation managers.
   Future<bool> _createAnnotationManagers(
     mapbox.MapboxMap map,
     int generation,
@@ -1052,6 +1111,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes render route if ready.
   Future<void> _renderRouteIfReady() async {
     if (_isRendering) {
       _renderPending = true;
@@ -1331,6 +1391,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes schedule render retry.
   void _scheduleRenderRetry() {
     _renderRetryTimer?.cancel();
     _renderRetryTimer = Timer(const Duration(milliseconds: 700), () {
@@ -1340,6 +1401,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
+  /// Computes schedule style watchdog.
   void _scheduleStyleWatchdog(int generation) {
     _styleWatchdogTimer?.cancel();
     _styleWatchdogTimer = Timer(const Duration(seconds: 15), () {
@@ -1356,6 +1418,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     });
   }
 
+  /// Computes animate route.
   void _animateRoute(mapbox.PolylineAnnotation annotation) {
     if (!mounted) return;
     final preservedProgress = _stylePlaybackProgress;
@@ -1377,6 +1440,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Returns gesture settings for preview mode.
   mapbox.GesturesSettings get _gestureSettingsForPreviewMode {
     final cameraIsFollowing =
         widget.previewMode == RoutePreviewMode.firstPerson;
@@ -1388,6 +1452,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     );
   }
 
+  /// Computes position camera for preview mode.
   Future<void> _positionCameraForPreviewMode() {
     if (widget.previewMode == RoutePreviewMode.firstPerson) {
       return _setFpvCamera(_routeAnimProgress.value, force: true);
@@ -1395,6 +1460,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     return _fitRoute();
   }
 
+  /// Computes queue fpv camera update.
   void _queueFpvCameraUpdate(double progress, {bool force = false}) {
     if (widget.previewMode != RoutePreviewMode.firstPerson) return;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -1406,6 +1472,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes drain fpv camera updates.
   Future<void> _drainFpvCameraUpdates() async {
     _fpvCameraUpdateInFlight = true;
     try {
@@ -1419,6 +1486,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Sets fpv camera.
   Future<void> _setFpvCamera(double progress, {bool force = false}) async {
     if (widget.previewMode != RoutePreviewMode.firstPerson) return;
     final map = _mapboxMap;
@@ -1515,6 +1583,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes queue terrain telemetry update.
   void _queueTerrainTelemetryUpdate({
     required mapbox.MapboxMap map,
     required int generation,
@@ -1598,6 +1667,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }());
   }
 
+  /// Computes fit route.
   Future<void> _fitRoute() async {
     if (_isFitting) {
       _fitPending = true;
@@ -1726,6 +1796,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     unawaited(_syncScaleFromCamera());
   }
 
+  /// Computes zoom by.
   Future<void> _zoomBy(double amount) async {
     if (_mapboxMap == null) return;
     if (widget.previewMode == RoutePreviewMode.firstPerson) {
@@ -1742,6 +1813,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     await _syncScaleFromCamera();
   }
 
+  /// Computes change map settings.
   Future<void> _changeMapSettings(MapViewSettings next) async {
     final previous = _mapSettings;
     if (next == previous) return;
@@ -1877,6 +1949,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Applies current map dimension.
   Future<void> _applyCurrentMapDimension(
     mapbox.MapboxMap map,
     int generation,
@@ -1893,10 +1966,12 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes on camera change.
   void _onCameraChange(mapbox.CameraChangedEventData data) {
     _updateScale(data);
   }
 
+  /// Computes on map idle.
   void _onMapIdle() {
     unawaited(_syncScaleFromCamera());
     if (_routeRendered && !_initialFitComplete) {
@@ -1904,6 +1979,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Resets camera for preview mode.
   Future<void> _resetCameraForPreviewMode() async {
     if (widget.previewMode == RoutePreviewMode.firstPerson) {
       _fpvZoom = 17.2;
@@ -1913,6 +1989,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     await _fitRoute();
   }
 
+  /// Synchronizes scale from camera.
   Future<void> _syncScaleFromCamera() async {
     final map = _mapboxMap;
     final generation = _mapGeneration;
@@ -1927,26 +2004,43 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Updates scale.
   void _updateScale(mapbox.CameraChangedEventData data) {
-    _updateScaleValues(data.cameraState.zoom, data.cameraState.center);
+    _updateScaleValues(
+      data.cameraState.zoom,
+      data.cameraState.center,
+      data.cameraState.bearing,
+    );
   }
 
+  /// Updates scale from state.
   void _updateScaleFromState(mapbox.CameraState state) {
-    _updateScaleValues(state.zoom, state.center);
+    _updateScaleValues(state.zoom, state.center, state.bearing);
   }
 
-  void _updateScaleValues(double nextZoom, mapbox.Point center) {
+  /// Updates scale values.
+  void _updateScaleValues(
+    double nextZoom,
+    mapbox.Point center,
+    double bearing,
+  ) {
     final coordinates = mapPointCoordinatesOrNull(center);
     if (!mounted || !nextZoom.isFinite || coordinates == null) return;
     final nextLatitude = coordinates.latitude;
-    if (((nextZoom - _currentZoom).abs() < 0.005 &&
-        (nextLatitude - _scaleLatitude).abs() < 0.0005)) {
-      return;
-    }
+    final scaleChanged =
+        (nextZoom - _currentZoom).abs() >= .005 ||
+        (nextLatitude - _scaleLatitude).abs() >= .0005;
+    final nextBearing = bearing.isFinite ? bearing : 0.0;
+    final bearingChanged =
+        widget.previewMode == RoutePreviewMode.normal &&
+        (nextBearing - _cameraBearing).abs() >= .1;
+    if (!scaleChanged && !bearingChanged) return;
     setState(() {
       _currentZoom = nextZoom;
       _scaleLatitude = nextLatitude;
+      if (bearingChanged) _cameraBearing = nextBearing;
     });
+    if (!scaleChanged) return;
     _communityCautionLayer.setScale(_currentZoom, _scaleLatitude);
     unawaited(
       _cautionMarkerSizer.resize(
@@ -1956,6 +2050,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     );
   }
 
+  /// Returns visible map points.
   List<mapbox.Point> get _visibleMapPoints {
     if (!_hasUsableGeometry) return const [];
     if (_routePoints.length >= 2) {
@@ -1966,6 +2061,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
         : [_startPoint, _endPoint];
   }
 
+  /// Computes decode polyline.
   List<mapbox.Point> _decodePolyline(String encoded) {
     try {
       final points = <mapbox.Point>[];
@@ -1973,6 +2069,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       var latitude = 0;
       var longitude = 0;
 
+      /// Computes delta.
       int? readDelta() {
         var shift = 0;
         var result = 0;
@@ -2006,6 +2103,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     }
   }
 
+  /// Computes orient route points.
   List<mapbox.Point> _orientRoutePoints(List<mapbox.Point> points) {
     if (points.length < 2 || !_hasUsableGeometry) {
       return points;
@@ -2024,6 +2122,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
     return points;
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     if (!_hasUsableGeometry) {
@@ -2072,18 +2171,6 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
       fit: StackFit.expand,
       children: [
         DeferredMap(child: widget.mapBuilder?.call(nativeMap) ?? nativeMap),
-        if (widget.previewMode == RoutePreviewMode.normal)
-          Align(
-            alignment: Alignment.topLeft,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: MapZoomControls(
-                onZoomIn: () => _zoomBy(1),
-                onZoomOut: () => _zoomBy(-1),
-                onReset: _resetCameraForPreviewMode,
-              ),
-            ),
-          ),
         if (widget.previewMode == RoutePreviewMode.firstPerson &&
             !isPreparingMap)
           Positioned(
@@ -2129,7 +2216,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
             bottom: 10,
             child: ValueListenableBuilder<double>(
               valueListenable: _fpvBearing,
-              builder: (context, bearing, _) => _FpvCompass(bearing: bearing),
+              builder: (context, bearing, _) => MapCompass(bearing: bearing),
             ),
           ),
         if (isPreparingMap)
@@ -2151,7 +2238,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
           Positioned(
             left: 10,
             right: 10,
-            top: 10,
+            top: widget.previewMode == RoutePreviewMode.normal ? 66 : 10,
             child: IgnorePointer(
               child: Container(
                 padding: const EdgeInsets.symmetric(
@@ -2193,17 +2280,19 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               ),
             ),
           ),
-        Positioned(
-          left: 10,
-          right: widget.previewMode == RoutePreviewMode.firstPerson ? 70 : 10,
-          bottom: 10,
-          child: MapScaleWithStyle(
-            zoom: _currentZoom,
-            latitude: _scaleLatitude,
-            settings: _mapSettings,
+        if (widget.previewMode == RoutePreviewMode.firstPerson)
+          Positioned(
+            left: 10,
+            right: widget.previewMode == RoutePreviewMode.firstPerson ? 70 : 10,
+            bottom: 10,
+            child: MapScaleWithStyle(
+              zoom: _currentZoom,
+              latitude: _scaleLatitude,
+              settings: _mapSettings,
+            ),
           ),
-        ),
-        if (widget.showLayerToggle)
+        if (widget.previewMode == RoutePreviewMode.firstPerson &&
+            widget.showLayerToggle)
           Positioned(
             top: 10,
             right: 10,
@@ -2212,6 +2301,29 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
               onChanged: (next) => unawaited(_changeMapSettings(next)),
             ),
           ),
+        if (widget.previewMode == RoutePreviewMode.normal)
+          MapControlOverlay(
+            zoomControls: IgnorePointer(
+              ignoring: isPreparingMap,
+              child: MapZoomControls(
+                onZoomIn: () => unawaited(_zoomBy(1)),
+                onZoomOut: () => unawaited(_zoomBy(-1)),
+                onReset: () => unawaited(_resetCameraForPreviewMode()),
+              ),
+            ),
+            styleControls: widget.showLayerToggle
+                ? MapStyleControls(
+                    settings: _mapSettings,
+                    onChanged: (next) => unawaited(_changeMapSettings(next)),
+                  )
+                : const SizedBox.shrink(),
+            scale: MapScaleWithStyle(
+              zoom: _currentZoom,
+              latitude: _scaleLatitude,
+              settings: _mapSettings,
+            ),
+            bearing: _cameraBearing,
+          ),
       ],
     );
   }
@@ -2219,9 +2331,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap>
 
 /// Small route cards cannot fit the full branded loading illustration.
 class RoutePreviewLoadingView extends StatelessWidget {
+  /// Creates route preview loading view.
   const RoutePreviewLoadingView({super.key, required this.message});
   final String message;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
@@ -2262,7 +2376,9 @@ class RoutePreviewLoadingView extends StatelessWidget {
   );
 }
 
+/// Displays the fpv telemetry panel.
 class _FpvTelemetryPanel extends StatelessWidget {
+  /// Creates fpv telemetry panel.
   const _FpvTelemetryPanel({
     required this.telemetry,
     required this.rainTimeLabel,
@@ -2275,6 +2391,7 @@ class _FpvTelemetryPanel extends StatelessWidget {
 
   final _FpvTelemetry telemetry;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     const muted = Color(0xFFB9C8BE);
@@ -2373,11 +2490,13 @@ class _FpvTelemetryPanel extends StatelessWidget {
     );
   }
 
+  /// Computes grade icon.
   IconData _gradeIcon(double? grade) {
     if (grade == null || grade.abs() < 2) return Icons.trending_flat_rounded;
     return grade > 0 ? Icons.trending_up_rounded : Icons.trending_down_rounded;
   }
 
+  /// Computes grade label.
   String _gradeLabel(double? grade) {
     if (grade == null) return 'Loading…';
     final degrees = routePreviewSlopeDegrees(grade);
@@ -2385,6 +2504,7 @@ class _FpvTelemetryPanel extends StatelessWidget {
     return '${degrees.abs().round()}° ${degrees > 0 ? 'up' : 'down'}';
   }
 
+  /// Computes duration label.
   String _durationLabel(Duration value) {
     final minutes = value.inMinutes;
     if (minutes == 0 && value > Duration.zero) return '<1 min';
@@ -2394,13 +2514,16 @@ class _FpvTelemetryPanel extends StatelessWidget {
     return remaining == 0 ? '${hours}h' : '${hours}h ${remaining}m';
   }
 
+  /// Computes distance label.
   String _distanceLabel(double meters) {
     if (meters < 1000) return '${math.max(0, meters).round()} m';
     return '${(meters / 1000).toStringAsFixed(1)} km';
   }
 }
 
+/// Displays the fpv telemetry row.
 class _FpvTelemetryRow extends StatelessWidget {
+  /// Creates fpv telemetry row.
   const _FpvTelemetryRow({
     required this.icon,
     required this.label,
@@ -2415,6 +2538,7 @@ class _FpvTelemetryRow extends StatelessWidget {
   final double bottomPadding;
   final int labelMaxLines;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -2457,7 +2581,9 @@ class _FpvTelemetryRow extends StatelessWidget {
   }
 }
 
+/// Displays the fpv speed control.
 class _FpvSpeedControl extends StatelessWidget {
+  /// Creates fpv speed control.
   const _FpvSpeedControl({required this.speed, required this.onChanged});
 
   static const _speeds = <double>[0.5, 1, 2, 4];
@@ -2465,6 +2591,7 @@ class _FpvSpeedControl extends StatelessWidget {
   final double speed;
   final ValueChanged<double> onChanged;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
@@ -2521,80 +2648,6 @@ class _FpvSpeedControl extends StatelessWidget {
                 ),
               ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FpvCompass extends StatelessWidget {
-  const _FpvCompass({required this.bearing});
-
-  final double bearing;
-
-  @override
-  Widget build(BuildContext context) {
-    final normalized = bearing.isFinite ? (bearing % 360 + 360) % 360 : 0.0;
-    final cardinal = routePreviewCardinalDirection(normalized);
-    return Semantics(
-      label: 'Compass. Heading ${normalized.round()} degrees $cardinal',
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xEA101A14),
-          shape: BoxShape.circle,
-          border: Border.all(color: const Color(0x7734A853), width: 1.2),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x55000000),
-              blurRadius: 9,
-              offset: Offset(0, 3),
-            ),
-          ],
-        ),
-        child: SizedBox.square(
-          dimension: 62,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Positioned(
-                top: 7,
-                child: Transform.rotate(
-                  angle: -normalized * math.pi / 180,
-                  child: const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'N',
-                        style: TextStyle(
-                          color: Color(0xFFFF6B61),
-                          fontSize: 8,
-                          fontWeight: FontWeight.w900,
-                          height: 1,
-                        ),
-                      ),
-                      Icon(
-                        Icons.navigation_rounded,
-                        size: 24,
-                        color: Color(0xFFFF6B61),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 6,
-                child: Text(
-                  '${normalized.round()}° $cardinal',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.1,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );

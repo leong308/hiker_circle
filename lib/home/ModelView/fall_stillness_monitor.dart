@@ -10,7 +10,9 @@ import '../Model/hike_session_models.dart';
 typedef FallStillnessEmergencyCallback =
     Future<void> Function(FallStillnessMonitorSnapshot snapshot);
 
+/// Represents fall stillness monitor.
 class FallStillnessMonitor extends ChangeNotifier {
+  /// Creates fall stillness monitor.
   FallStillnessMonitor({
     FallStillnessEmergencyCallback? onEmergencyReady,
     DateTime Function()? clock,
@@ -47,8 +49,10 @@ class FallStillnessMonitor extends ChangeNotifier {
   bool _isDisposed = false;
   final List<_TimedValue> _altitudeHistory = <_TimedValue>[];
 
+  /// Returns snapshot.
   FallStillnessMonitorSnapshot get snapshot => _snapshot;
 
+  /// Returns is awaiting response.
   bool get isAwaitingResponse {
     return _snapshot.status == FallStillnessMonitorStatus.awaitingResponse;
   }
@@ -105,6 +109,7 @@ class FallStillnessMonitor extends ChangeNotifier {
         );
   }
 
+  /// Stops.
   Future<void> stop({bool notify = true}) async {
     _isStarted = false;
     _settings = null;
@@ -125,6 +130,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     }
   }
 
+  /// Cancels pending emergency.
   void cancelPendingEmergency(String reason) {
     final settings = _settings;
     if (settings == null || !isAwaitingResponse) {
@@ -143,6 +149,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     );
   }
 
+  /// Begins stationary location watch.
   void beginStationaryLocationWatch(FallDetectionSettings settings) {
     if (!_isStarted || _isHandlingEmergency) {
       return;
@@ -174,6 +181,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     _startCountdownTimer();
   }
 
+  /// Cancels stationary location watch.
   void cancelStationaryLocationWatch(String reason) {
     final settings = _settings;
     if (settings == null ||
@@ -188,6 +196,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     );
   }
 
+  /// Marks emergency handled.
   void markEmergencyHandled({String? message}) {
     final settings = _settings;
     if (settings == null) {
@@ -204,6 +213,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     );
   }
 
+  /// Handles accelerometer.
   void _handleAccelerometer(AccelerometerEvent event) {
     final settings = _settings;
     if (!_isStarted || settings == null || _isHandlingEmergency) {
@@ -237,6 +247,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     }
   }
 
+  /// Handles gyroscope.
   void _handleGyroscope(GyroscopeEvent event) {
     final settings = _settings;
     if (!_isStarted ||
@@ -345,6 +356,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     );
   }
 
+  /// Handles impact window.
   void _handleImpactWindow({
     required FallDetectionSettings settings,
     required DateTime now,
@@ -410,6 +422,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     _startCountdownTimer();
   }
 
+  /// Starts response countdown.
   void _startResponseCountdown({
     required FallDetectionSettings settings,
     required DateTime now,
@@ -431,6 +444,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     _startCountdownTimer();
   }
 
+  /// Starts countdown timer.
   void _startCountdownTimer() {
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -438,6 +452,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     });
   }
 
+  /// Updates countdown.
   void _updateCountdown() {
     final settings = _settings;
     final current = _snapshot;
@@ -516,6 +531,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     }
   }
 
+  /// Handles barometer.
   void _handleBarometer(BarometerEvent event) {
     final now = _clock();
     final altitude = _altitudeFromPressure(event.pressure);
@@ -526,6 +542,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     );
   }
 
+  /// Computes altitude drop before.
   double? _altitudeDropBefore(DateTime impactAt) {
     final recent = _altitudeHistory
         .where(
@@ -546,12 +563,14 @@ class FallStillnessMonitor extends ChangeNotifier {
     return math.max(0, highestBeforeImpact - latestAltitude);
   }
 
+  /// Computes altitude from pressure.
   double _altitudeFromPressure(double pressureHpa) {
     return 44330.0 *
         (1 - math.pow(pressureHpa / _seaLevelPressureHpa, 1 / 5.255))
             .toDouble();
   }
 
+  /// Resets transient state.
   void _resetTransientState() {
     _phase = _FallDetectionPhase.normal;
     _freeFallObservedAt = null;
@@ -566,6 +585,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     _isStationaryLocationWatch = false;
   }
 
+  /// Resets to normal.
   void _resetToNormal({
     required FallDetectionSettings settings,
     String? message,
@@ -583,6 +603,7 @@ class FallStillnessMonitor extends ChangeNotifier {
     );
   }
 
+  /// Sets snapshot.
   void _setSnapshot(FallStillnessMonitorSnapshot snapshot) {
     _snapshot = snapshot;
     if (!_isDisposed) {
@@ -590,10 +611,12 @@ class FallStillnessMonitor extends ChangeNotifier {
     }
   }
 
+  /// Computes magnitude.
   double _magnitude(double x, double y, double z) {
     return math.sqrt(x * x + y * y + z * z);
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _isDisposed = true;
@@ -605,6 +628,7 @@ class FallStillnessMonitor extends ChangeNotifier {
   }
 }
 
+/// Defines the fall detection phase choices.
 enum _FallDetectionPhase {
   normal,
   impactWindow,
@@ -613,13 +637,16 @@ enum _FallDetectionPhase {
   responseCountdown,
 }
 
+/// Represents timed value.
 class _TimedValue {
+  /// Creates timed value.
   const _TimedValue(this.recordedAt, this.value);
 
   final DateTime recordedAt;
   final double value;
 }
 
+/// Defines the fall stillness monitor status choices.
 enum FallStillnessMonitorStatus {
   inactive,
   listening,
@@ -630,6 +657,7 @@ enum FallStillnessMonitorStatus {
   triggering,
   unavailable;
 
+  /// Returns label.
   String get label {
     switch (this) {
       case FallStillnessMonitorStatus.inactive:
@@ -652,7 +680,9 @@ enum FallStillnessMonitorStatus {
   }
 }
 
+/// Represents fall stillness monitor snapshot.
 class FallStillnessMonitorSnapshot {
+  /// Creates fall stillness monitor snapshot.
   const FallStillnessMonitorSnapshot({
     required this.status,
     this.settings,
@@ -668,9 +698,11 @@ class FallStillnessMonitorSnapshot {
     this.message,
   });
 
+  /// Creates fall stillness monitor snapshot using inactive.
   const FallStillnessMonitorSnapshot.inactive()
     : this(status: FallStillnessMonitorStatus.inactive);
 
+  /// Creates fall stillness monitor snapshot using listening.
   factory FallStillnessMonitorSnapshot.listening({
     required FallDetectionSettings settings,
     String? message,
@@ -684,6 +716,7 @@ class FallStillnessMonitorSnapshot {
     );
   }
 
+  /// Creates fall stillness monitor snapshot using impact window.
   factory FallStillnessMonitorSnapshot.impactWindow({
     required FallDetectionSettings settings,
     required DateTime detectedAt,
@@ -700,6 +733,7 @@ class FallStillnessMonitorSnapshot {
     );
   }
 
+  /// Creates fall stillness monitor snapshot using impact detected.
   factory FallStillnessMonitorSnapshot.impactDetected({
     required FallDetectionSettings settings,
     required DateTime detectedAt,
@@ -720,6 +754,7 @@ class FallStillnessMonitorSnapshot {
     );
   }
 
+  /// Creates fall stillness monitor snapshot using verifying stillness.
   factory FallStillnessMonitorSnapshot.verifyingStillness({
     required FallDetectionSettings settings,
     required DateTime detectedAt,
@@ -749,6 +784,7 @@ class FallStillnessMonitorSnapshot {
     );
   }
 
+  /// Creates fall stillness monitor snapshot using awaiting response.
   factory FallStillnessMonitorSnapshot.awaitingResponse({
     required FallDetectionSettings settings,
     required DateTime detectedAt,
@@ -775,6 +811,7 @@ class FallStillnessMonitorSnapshot {
     );
   }
 
+  /// Creates fall stillness monitor snapshot using triggering.
   factory FallStillnessMonitorSnapshot.triggering({
     required FallDetectionSettings settings,
     required DateTime detectedAt,
@@ -798,6 +835,7 @@ class FallStillnessMonitorSnapshot {
     );
   }
 
+  /// Creates fall stillness monitor snapshot using unavailable.
   factory FallStillnessMonitorSnapshot.unavailable({
     required FallDetectionSettings settings,
     required String message,
@@ -822,6 +860,7 @@ class FallStillnessMonitorSnapshot {
   final bool isProlongedStillnessDetection;
   final String? message;
 
+  /// Returns a copy with the supplied fields changed.
   FallStillnessMonitorSnapshot copyWith({
     FallStillnessMonitorStatus? status,
     FallDetectionSettings? settings,

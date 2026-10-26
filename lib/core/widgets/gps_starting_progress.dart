@@ -5,6 +5,7 @@ import 'package:lottie/lottie.dart';
 
 /// The bundled GPS animation is shared by live-location and hike starts.
 class GpsStartingProgress extends StatelessWidget {
+  /// Creates gps starting progress.
   const GpsStartingProgress({
     super.key,
     required this.title,
@@ -18,6 +19,7 @@ class GpsStartingProgress extends StatelessWidget {
   final String message;
   final double animationSize;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -73,6 +75,7 @@ class GpsStartingProgress extends StatelessWidget {
 /// A route-owned busy state; completion remains controlled by the operation.
 /// A watchdog preserves callers' existing timeout behavior where configured.
 class GpsStartingOverlay extends StatefulWidget {
+  /// Creates gps starting overlay.
   const GpsStartingOverlay({
     super.key,
     required this.title,
@@ -90,19 +93,23 @@ class GpsStartingOverlay extends StatefulWidget {
   final Duration timeout;
   final VoidCallback? onTimeout;
 
+  /// Creates the presentation state for this widget.
   @override
   State<GpsStartingOverlay> createState() => _GpsStartingOverlayState();
 }
 
+/// Manages the gps starting overlay presentation and lifecycle.
 class _GpsStartingOverlayState extends State<GpsStartingOverlay> {
   Timer? _watchdog;
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
     _scheduleWatchdog();
   }
 
+  /// Updates bindings when the parent changes this widget.
   @override
   void didUpdateWidget(GpsStartingOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -112,6 +119,7 @@ class _GpsStartingOverlayState extends State<GpsStartingOverlay> {
     }
   }
 
+  /// Computes schedule watchdog.
   void _scheduleWatchdog() {
     _watchdog?.cancel();
     if (widget.timeout <= Duration.zero || widget.onTimeout == null) return;
@@ -120,12 +128,14 @@ class _GpsStartingOverlayState extends State<GpsStartingOverlay> {
     });
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _watchdog?.cancel();
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

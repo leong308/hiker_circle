@@ -8,7 +8,9 @@ typedef HikerCircleAssistantCallable =
       List<Map<String, String>> history,
     );
 
+/// Represents hiker circle assistant trail.
 class HikerCircleAssistantTrail {
+  /// Creates hiker circle assistant trail.
   const HikerCircleAssistantTrail({
     required this.id,
     required this.name,
@@ -26,6 +28,7 @@ class HikerCircleAssistantTrail {
   final int estimatedDurationMinutes;
   final double? distanceFromUserKm;
 
+  /// Creates hiker circle assistant trail from stored map data.
   factory HikerCircleAssistantTrail.fromMap(Map<String, dynamic> value) =>
       HikerCircleAssistantTrail(
         id: value['id']?.toString() ?? '',
@@ -41,7 +44,9 @@ class HikerCircleAssistantTrail {
       );
 }
 
+/// Represents hiker circle assistant action.
 class HikerCircleAssistantAction {
+  /// Creates hiker circle assistant action.
   const HikerCircleAssistantAction({
     required this.destinationId,
     required this.label,
@@ -49,12 +54,15 @@ class HikerCircleAssistantAction {
   final String destinationId, label;
 }
 
+/// Represents hiker circle assistant source.
 class HikerCircleAssistantSource {
+  /// Creates hiker circle assistant source.
   const HikerCircleAssistantSource({required this.id, required this.title});
 
   final String id;
   final String title;
 
+  /// Creates hiker circle assistant source from stored map data.
   factory HikerCircleAssistantSource.fromMap(Map<String, dynamic> map) {
     return HikerCircleAssistantSource(
       id: map['id']?.toString().trim() ?? '',
@@ -63,7 +71,9 @@ class HikerCircleAssistantSource {
   }
 }
 
+/// Represents hiker circle assistant answer.
 class HikerCircleAssistantAnswer {
+  /// Creates hiker circle assistant answer.
   const HikerCircleAssistantAnswer({
     required this.answer,
     required this.sources,
@@ -80,10 +90,14 @@ class HikerCircleAssistantAnswer {
   final List<HikerCircleAssistantTrail> trails;
   final HikerCircleAssistantAction? action;
 
+  /// Returns is emergency.
   bool get isEmergency => responseMode == 'curated_emergency';
+
+  /// Returns is curated fallback.
   bool get isCuratedFallback =>
       responseMode == 'curated_fallback' || responseMode == 'curated_guide';
 
+  /// Creates hiker circle assistant answer from stored map data.
   factory HikerCircleAssistantAnswer.fromMap(Map<String, dynamic> map) {
     final answer = map['answer']?.toString().trim() ?? '';
     if (answer.isEmpty) {
@@ -136,17 +150,22 @@ class HikerCircleAssistantAnswer {
   }
 }
 
+/// Represents hiker circle assistant exception.
 class HikerCircleAssistantException implements Exception {
+  /// Creates hiker circle assistant exception.
   const HikerCircleAssistantException(this.message, {this.code});
 
   final String message;
   final String? code;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents hiker circle assistant repository.
 class HikerCircleAssistantRepository {
+  /// Creates hiker circle assistant repository.
   HikerCircleAssistantRepository({
     FirebaseFunctions? functions,
     HikerCircleAssistantCallable? callable,
@@ -158,6 +177,7 @@ class HikerCircleAssistantRepository {
 
   final HikerCircleAssistantCallable _callable;
 
+  /// Computes firebase callable.
   static HikerCircleAssistantCallable _firebaseCallable(
     FirebaseFunctions functions,
   ) {
@@ -220,6 +240,7 @@ class HikerCircleAssistantRepository {
     }
   }
 
+  /// Computes friendly message.
   static String _friendlyMessage(String code, String? serverMessage) {
     final message = serverMessage?.trim();
     if (message != null && message.isNotEmpty) return message;

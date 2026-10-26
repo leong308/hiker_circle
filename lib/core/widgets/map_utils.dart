@@ -33,10 +33,13 @@ const mapStyleNames = [
   'Bright',
 ];
 
+/// Defines the map dimension choices.
 enum MapDimension { twoD, threeD }
 
+/// Represents map view settings.
 @immutable
 class MapViewSettings {
+  /// Creates map view settings.
   const MapViewSettings({
     this.styleIndex = 0,
     this.dimension = MapDimension.threeD,
@@ -44,12 +47,23 @@ class MapViewSettings {
 
   final int styleIndex;
   final MapDimension dimension;
+
+  /// Returns safe style index.
   int get safeStyleIndex => styleIndex.clamp(0, mapStyleUrls.length - 1);
+
+  /// Returns style url.
   String get styleUrl => mapStyleUrls[safeStyleIndex];
+
+  /// Returns style name.
   String get styleName => mapStyleNames[safeStyleIndex];
+
+  /// Returns is3 d.
   bool get is3D => dimension == MapDimension.threeD;
+
+  /// Returns dimension label.
   String get dimensionLabel => is3D ? '3D' : '2D';
 
+  /// Returns a copy with the supplied fields changed.
   MapViewSettings copyWith({int? styleIndex, MapDimension? dimension}) =>
       MapViewSettings(
         styleIndex: (styleIndex ?? this.styleIndex).clamp(
@@ -59,12 +73,14 @@ class MapViewSettings {
         dimension: dimension ?? this.dimension,
       );
 
+  /// Computes ==.
   @override
   bool operator ==(Object other) =>
       other is MapViewSettings &&
       other.safeStyleIndex == safeStyleIndex &&
       other.dimension == dimension;
 
+  /// Returns hash code.
   @override
   int get hashCode => Object.hash(safeStyleIndex, dimension);
 }
@@ -74,6 +90,7 @@ const fpvMapStyleUrl = MapboxStyles.STANDARD_SATELLITE;
 
 const mapTerrainExaggeration = 1.5;
 
+/// Computes enable terrain3 d.
 Future<void> enableTerrain3D(MapboxMap map) async {
   try {
     await map.style.addSource(
@@ -90,6 +107,7 @@ Future<void> enableTerrain3D(MapboxMap map) async {
   } catch (_) {}
 }
 
+/// Computes disable terrain3 d.
 Future<void> disableTerrain3D(MapboxMap map) async {
   try {
     await map.style.setStyleTerrain('null');
@@ -127,6 +145,7 @@ Future<void> applyMapDimension(
   );
 }
 
+/// Computes schedule pitch.
 void schedulePitch(MapboxMap map, {double pitch = 50}) {
   Future.delayed(const Duration(milliseconds: 300), () async {
     try {
@@ -161,6 +180,7 @@ bool mapPointListsEqual(List<Point>? left, List<Point>? right) {
   return true;
 }
 
+/// Computes map point coordinates or null.
 ({double longitude, double latitude})? mapPointCoordinatesOrNull(Point point) {
   final coordinates = point.coordinates;
   if (coordinates.length < 2) return null;
@@ -180,6 +200,7 @@ bool mapPointListsEqual(List<Point>? left, List<Point>? right) {
   return (longitude: longitude, latitude: latitude);
 }
 
+/// Computes center for.
 Point centerFor(List<Point> points) {
   final bounds = boundsFor(points);
   return Point(
@@ -190,6 +211,7 @@ Point centerFor(List<Point> points) {
   );
 }
 
+/// Computes bounds for.
 ({double minLat, double maxLat, double minLon, double maxLon}) boundsFor(
   List<Point> points,
 ) {
@@ -227,6 +249,7 @@ Point centerFor(List<Point> points) {
   return (minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon);
 }
 
+/// Computes distance meters.
 double distanceMeters(Point a, Point b) {
   const earthRadiusMeters = 6371000.0;
   if (a.coordinates.length < 2 || b.coordinates.length < 2) {

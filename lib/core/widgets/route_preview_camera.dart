@@ -8,6 +8,7 @@ import 'map_utils.dart';
 
 /// The map position and heading used by the route preview's follow camera.
 class RoutePreviewCameraFrame {
+  /// Creates route preview camera frame.
   const RoutePreviewCameraFrame({
     required this.center,
     required this.bearing,
@@ -28,6 +29,7 @@ class RoutePreviewHeadingFilter {
   double? _distance;
   Duration? _time;
 
+  /// Resets.
   void reset() {
     _heading = null;
     _target = null;
@@ -35,6 +37,7 @@ class RoutePreviewHeadingFilter {
     _time = null;
   }
 
+  /// Updates.
   double update({
     required double bearing,
     required double distanceMeters,
@@ -65,11 +68,14 @@ class RoutePreviewHeadingFilter {
     return _heading!;
   }
 
+  /// Computes angle delta.
   static double _angleDelta(double from, double to) =>
       (to - from + 540) % 360 - 180;
 }
 
+/// Represents route preview camera tuning.
 class RoutePreviewCameraTuning {
+  /// Creates route preview camera tuning.
   const RoutePreviewCameraTuning({
     required this.pitch,
     required this.zoomOffset,
@@ -243,6 +249,7 @@ double routePreviewBearing(mapbox.Point from, mapbox.Point to) {
   return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
 }
 
+/// Computes point at distance.
 mapbox.Point? _pointAtDistance(
   List<mapbox.Point> points,
   List<double> cumulativeDistances,
@@ -271,6 +278,7 @@ mapbox.Point? _pointAtDistance(
   return _interpolatePoint(points[startIndex], points[endIndex], fraction);
 }
 
+/// Computes interpolate point.
 mapbox.Point? _interpolatePoint(
   mapbox.Point start,
   mapbox.Point end,

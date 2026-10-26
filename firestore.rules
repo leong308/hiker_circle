@@ -834,7 +834,7 @@ service cloud.firestore {
           return data.enabled is bool
             && data.firstReminderMinutesBefore is int
             && data.firstReminderMinutesBefore in [
-              15, 30, 60, 120, 180, 360, 720, 1440
+              5, 10, 15, 30, 60, 120, 180, 360, 720, 1440
             ]
             && data.repeatIntervalMinutes is int
             && data.repeatIntervalMinutes in [0, 15, 30, 60, 120, 360]

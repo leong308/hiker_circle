@@ -3,6 +3,7 @@ import '../../trail/Model/trail_models.dart';
 
 /// An hourly sample represents [time, time + 1 hour). All comparisons use epochs.
 class HikeWeatherHour {
+  /// Creates hike weather hour.
   const HikeWeatherHour(
     this.time,
     this.temperature,
@@ -10,6 +11,8 @@ class HikeWeatherHour {
     this.values = const {},
   });
   final Map<String, double?> values;
+
+  /// Computes value.
   double? value(String key) => key == "temperature_2m"
       ? temperature
       : key == "precipitation_probability"
@@ -22,6 +25,7 @@ class HikeWeatherHour {
 
 /// Compare forecast epochs with the planned hike window instead of using the viewing device's clock labels.
 class HikeWeatherBriefing {
+  /// Creates hike weather briefing.
   const HikeWeatherBriefing({
     required this.hours,
     required this.covered,
@@ -42,6 +46,7 @@ class HikeWeatherBriefing {
   final DateTime? sunrise, sunset;
   final bool startsBeforeSunrise, endsAfterSunset;
 
+  /// Creates from weather.
   static HikeWeatherBriefing fromWeather(
     TrailWeather weather,
     DateTime departure,
@@ -137,10 +142,15 @@ class HikeWeatherBriefing {
     );
   }
 
+  /// Computes same day.
   static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// Computes date.
   static DateTime _date(num epoch) =>
       DateTime.fromMillisecondsSinceEpoch((epoch * 1000).round(), isUtc: true);
+
+  /// Computes number.
   static double? _number(dynamic values, int i) {
     if (values is! List || i >= values.length || values[i] is! num) return null;
     final value = (values[i] as num).toDouble();

@@ -13,6 +13,7 @@ import 'hiking_route_service.dart';
 /// Queries a slightly expanded, simplified corridor, then checks every returned
 /// geometry against the original route with a strict 50 m segment-distance test.
 class RouteGearAnalysisService {
+  /// Creates route gear analysis service.
   RouteGearAnalysisService({
     required this.database,
     http.Client? client,
@@ -30,10 +31,14 @@ class RouteGearAnalysisService {
   final http.Client _client;
   final Future<HikingRouteResult> Function(Trail) _routeLoader;
   final Uri _endpoint;
+
+  /// Releases resources owned by this instance.
   void dispose() => _client.close();
 
   final _pending = <String, Future<RouteGearAssessment>>{};
   final _memory = <String, RouteGearAssessment>{};
+
+  /// Computes input key.
   static String inputKey(Trail trail) => sha256
       .convert(
         utf8.encode(
@@ -41,7 +46,11 @@ class RouteGearAnalysisService {
         ),
       )
       .toString();
+
+  /// Computes peek.
   RouteGearAssessment? peek(Trail trail) => _memory[inputKey(trail)];
+
+  /// Computes analyze.
   Future<RouteGearAssessment> analyze(Trail trail, {bool force = false}) {
     final key = inputKey(trail), cached = _memory[inputKey(trail)];
     if (!force &&
@@ -66,6 +75,7 @@ class RouteGearAnalysisService {
     );
   }
 
+  /// Loads.
   Future<RouteGearAssessment> _load(Trail trail, String key, bool force) async {
     RouteGearAssessment? cached;
     String? storageKey;
@@ -189,6 +199,7 @@ class RouteGearAnalysisService {
     }
   }
 
+  /// Computes classify.
   static RouteGearAssessment classify(
     List<LatLng> route,
     Iterable<Map<String, dynamic>> elements, {
@@ -224,6 +235,8 @@ class RouteGearAnalysisService {
         }
       }
     }
+
+    /// Computes positive.
     bool positive(Object? value) =>
         value != null && value != 'no' && value != 'none';
     final bridges = nearby
@@ -327,7 +340,9 @@ class RouteGearAnalysisService {
   }
 }
 
+/// Computes geometries.
 List<List<LatLng>> _geometries(Map element) {
+  /// Computes points.
   List<LatLng> points(Object? raw) => raw is List
       ? raw
             .whereType<Map>()
@@ -364,15 +379,22 @@ List<List<LatLng>> _geometries(Map element) {
 
 typedef _Point = ({double x, double y});
 
+/// Represents projector.
 class _Projector {
+  /// Creates projector.
   _Projector(double latitude)
     : scale = 111320 * math.cos(latitude * math.pi / 180);
   final double scale;
+
+  /// Computes point.
   _Point point(LatLng p) => (x: p.longitude * scale, y: p.latitude * 111320);
 }
 
+/// Computes dist.
 double _dist(_Point a, _Point b) =>
     math.sqrt(math.pow(a.x - b.x, 2) + math.pow(a.y - b.y, 2));
+
+/// Computes project.
 _Point _project(_Point p, _Point a, _Point b) {
   final dx = b.x - a.x, dy = b.y - a.y, len = dx * dx + dy * dy;
   final t = len == 0
@@ -381,6 +403,7 @@ _Point _project(_Point p, _Point a, _Point b) {
   return (x: a.x + t * dx, y: a.y + t * dy);
 }
 
+/// Computes intersection.
 _Point? _intersection(_Point a, _Point b, _Point c, _Point d) {
   final rx = b.x - a.x, ry = b.y - a.y, sx = d.x - c.x, sy = d.y - c.y;
   final cross = rx * sy - ry * sx;
@@ -392,6 +415,7 @@ _Point? _intersection(_Point a, _Point b, _Point c, _Point d) {
       : null;
 }
 
+/// Computes nearest.
 ({double distance, _Point point}) _nearest(
   List<_Point> geometry,
   List<_Point> line,
@@ -431,6 +455,7 @@ _Point? _intersection(_Point a, _Point b, _Point c, _Point d) {
   return (distance: best, point: point);
 }
 
+/// Computes simplify.
 List<LatLng> _simplify(List<LatLng> points, double tolerance) {
   final projector = _Projector(points.first.latitude),
       keep = <int>{0, points.length - 1};
@@ -460,6 +485,7 @@ List<LatLng> _simplify(List<LatLng> points, double tolerance) {
   return indices.map((i) => points[i]).toList();
 }
 
+/// Computes classify in background.
 RouteGearAssessment _classifyInBackground(Map<String, dynamic> payload) =>
     RouteGearAnalysisService.classify(
       payload['route'] as List<LatLng>,

@@ -4,6 +4,7 @@ import '../Model/hike_session_models.dart';
 /// Serializes active-hike configuration writes and resolves the draft at execution
 /// time. A newer choice is reconciled before a pending request releases the queue.
 class ActiveHikeCloudSyncCoordinator {
+  /// Creates active hike cloud sync coordinator.
   ActiveHikeCloudSyncCoordinator({
     required this.readCurrent,
     required this.ensure,
@@ -23,8 +24,10 @@ class ActiveHikeCloudSyncCoordinator {
   Future<void> _tail = Future<void>.value();
   ({String sessionId, bool sharing, int seconds})? _lastSynchronized;
 
+  /// Computes invalidate.
   void invalidate() => _lastSynchronized = null;
 
+  /// Synchronizes.
   Future<ActiveHikeSession?> synchronize(
     String sessionId, {
     bool force = false,
@@ -36,6 +39,7 @@ class ActiveHikeCloudSyncCoordinator {
     return operation;
   }
 
+  /// Synchronizes current.
   Future<ActiveHikeSession?> _synchronizeCurrent(
     String sessionId,
     bool force,
@@ -75,6 +79,7 @@ class ActiveHikeCloudSyncCoordinator {
     }
   }
 
+  /// Computes key.
   ({String sessionId, bool sharing, int seconds}) _key(
     ActiveHikeSession hike,
   ) => (

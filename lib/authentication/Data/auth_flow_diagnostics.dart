@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 /// Debug-only stage markers. Never include request bodies, identifiers or tokens.
 abstract final class AuthFlowDiagnostics {
+  /// Computes event.
   static void event(
     String stage,
     String event, {

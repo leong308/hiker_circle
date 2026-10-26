@@ -13,6 +13,7 @@ const bool _iosNativePasskeysEnabled = bool.fromEnvironment(
   defaultValue: false,
 );
 
+/// Computes native passkeys enabled for build.
 bool nativePasskeysEnabledForBuild({
   bool? isWeb,
   TargetPlatform? platform,
@@ -26,7 +27,9 @@ bool nativePasskeysEnabledForBuild({
   return true;
 }
 
+/// Represents passkeys unavailable for build exception.
 class PasskeysUnavailableForBuildException implements Exception {
+  /// Creates passkeys unavailable for build exception.
   const PasskeysUnavailableForBuildException();
 }
 

@@ -6,13 +6,20 @@ import 'local_session_database.dart';
 
 /// Local-first non-real-time reads. Hash checks never poll the full collection.
 class ConditionalCloudCache {
-  ConditionalCloudCache(this.database, this.functions, {String? Function()? currentOwner})
-    : currentOwner = currentOwner ?? (() => FirebaseAuth.instance.currentUser?.uid);
+  /// Creates conditional cloud cache.
+  ConditionalCloudCache(
+    this.database,
+    this.functions, {
+    String? Function()? currentOwner,
+  }) : currentOwner =
+           currentOwner ?? (() => FirebaseAuth.instance.currentUser?.uid);
   final LocalSessionDatabase database;
   final FirebaseFunctions Function() functions;
   final String? Function() currentOwner;
   final _pending = <String, Future<Map<String, dynamic>>>{};
   final _checked = <String, DateTime>{};
+
+  /// Computes require owner.
   void _requireOwner(String owner) {
     if (owner.isNotEmpty && currentOwner() != owner) {
       throw FirebaseFunctionsException(
@@ -24,6 +31,7 @@ class ConditionalCloudCache {
 
   // ConditionalCloudCache.read coalesces requests by owner/resource and rejects responses after an
   // account change.
+  /// Reads.
   Future<Map<String, dynamic>> read({
     required String owner,
     required String type,
@@ -56,6 +64,7 @@ class ConditionalCloudCache {
     }
   }
 
+  /// Reads.
   Future<Map<String, dynamic>> _read(
     String owner,
     String type,
@@ -74,16 +83,31 @@ class ConditionalCloudCache {
       includeExpired: true,
     );
     final now = DateTime.now().toUtc();
-    final validation = cached == null ? null : await database.loadCachedEntity(
-      ownerPhoneNumber: owner, entityType: '$type:validation', entityId: id, includeExpired: true);
-    final validMetadata = validation?.payload['contentHash'] == cached?.payload['contentHash'] ? validation : null;
-    final revision = validMetadata?.payload['revisionHash'] ?? cached?.payload['revisionHash'];
-    final fullCheckedAt = (validMetadata?.payload['fullCheckedAtMillis'] as num?)?.toInt()
-      ?? cached?.cachedAt.millisecondsSinceEpoch ?? 0;
+    final validation = cached == null
+        ? null
+        : await database.loadCachedEntity(
+            ownerPhoneNumber: owner,
+            entityType: '$type:validation',
+            entityId: id,
+            includeExpired: true,
+          );
+    final validMetadata =
+        validation?.payload['contentHash'] == cached?.payload['contentHash']
+        ? validation
+        : null;
+    final revision =
+        validMetadata?.payload['revisionHash'] ??
+        cached?.payload['revisionHash'];
+    final fullCheckedAt =
+        (validMetadata?.payload['fullCheckedAtMillis'] as num?)?.toInt() ??
+        cached?.cachedAt.millisecondsSinceEpoch ??
+        0;
     final checked = _checked[key] ?? cached?.cachedAt;
     if (cached != null &&
         (!online ||
-            (!force && checked != null && now.difference(checked) < freshness))) {
+            (!force &&
+                checked != null &&
+                now.difference(checked) < freshness))) {
       return cached.payload;
     }
     if (!online) return const {};
@@ -100,7 +124,8 @@ class ConditionalCloudCache {
             'forcePayload':
                 force ||
                 (cached != null &&
-                    now.millisecondsSinceEpoch - fullCheckedAt > const Duration(hours: 6).inMilliseconds),
+                    now.millisecondsSinceEpoch - fullCheckedAt >
+                        const Duration(hours: 6).inMilliseconds),
           })
           .timeout(const Duration(seconds: 20));
       final data = Map<String, dynamic>.from(response.data);
@@ -111,11 +136,24 @@ class ConditionalCloudCache {
             data['contentHash'] != cached.payload['contentHash']) {
           throw const FormatException('Invalid cache validation');
         }
-        if (data['revisionHash'] != revision || data['payloadChecked'] == true) {
-          await database.saveCachedEntity(LocalCachedEntity(ownerPhoneNumber: owner,
-            entityType: '$type:validation', entityId: id, parentId: '', cachedAt: now,
-            payload: {'revisionHash': data['revisionHash'], 'contentHash': data['contentHash'],
-              'fullCheckedAtMillis': data['payloadChecked'] == true ? now.millisecondsSinceEpoch : fullCheckedAt}));
+        if (data['revisionHash'] != revision ||
+            data['payloadChecked'] == true) {
+          await database.saveCachedEntity(
+            LocalCachedEntity(
+              ownerPhoneNumber: owner,
+              entityType: '$type:validation',
+              entityId: id,
+              parentId: '',
+              cachedAt: now,
+              payload: {
+                'revisionHash': data['revisionHash'],
+                'contentHash': data['contentHash'],
+                'fullCheckedAtMillis': data['payloadChecked'] == true
+                    ? now.millisecondsSinceEpoch
+                    : fullCheckedAt,
+              },
+            ),
+          );
         }
         // Only small validation metadata changes; unchanged history rows stay intact.
         return cached.payload;
@@ -130,10 +168,20 @@ class ConditionalCloudCache {
           cachedAt: now,
         ),
       );
-      await database.saveCachedEntity(LocalCachedEntity(ownerPhoneNumber: owner,
-        entityType: '$type:validation', entityId: id, parentId: '', cachedAt: now,
-        payload: {'revisionHash': data['revisionHash'], 'contentHash': data['contentHash'],
-          'fullCheckedAtMillis': now.millisecondsSinceEpoch}));
+      await database.saveCachedEntity(
+        LocalCachedEntity(
+          ownerPhoneNumber: owner,
+          entityType: '$type:validation',
+          entityId: id,
+          parentId: '',
+          cachedAt: now,
+          payload: {
+            'revisionHash': data['revisionHash'],
+            'contentHash': data['contentHash'],
+            'fullCheckedAtMillis': now.millisecondsSinceEpoch,
+          },
+        ),
+      );
       return data;
     } on FirebaseFunctionsException catch (error) {
       if (const {'unauthenticated', 'permission-denied'}.contains(error.code)) {
