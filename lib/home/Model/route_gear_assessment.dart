@@ -1,5 +1,7 @@
 // RouteGearAssessment records cached terrain findings used by TrailGearPlan.
+/// Represents route gear assessment.
 class RouteGearAssessment {
+  /// Creates route gear assessment.
   const RouteGearAssessment({
     required this.routeKey,
     required this.checkedAt,
@@ -21,10 +23,15 @@ class RouteGearAssessment {
       muddy,
       technical,
       surfaceMapped;
+
+  /// Returns is fresh.
   bool get isFresh =>
       DateTime.now().difference(checkedAt) < const Duration(days: 7);
+
   /// Allow complete or partial terrain findings while retaining their status for explanatory packing advice.
   bool get usable => status == 'complete' || status == 'partial';
+
+  /// Serializes this value as JSON.
   Map<String, dynamic> toJson() => {
     'routeKey': routeKey,
     'checkedAt': checkedAt.toUtc().toIso8601String(),
@@ -37,6 +44,8 @@ class RouteGearAssessment {
     'technical': technical,
     'surfaceMapped': surfaceMapped,
   };
+
+  /// Creates route gear assessment from JSON data.
   factory RouteGearAssessment.fromJson(Map data) => RouteGearAssessment(
     routeKey: data['routeKey'] as String,
     checkedAt: DateTime.parse(data['checkedAt'] as String),

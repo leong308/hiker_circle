@@ -7,9 +7,11 @@ import 'package:flutter/services.dart';
 import '../../app/Data/local_session_database.dart';
 import '../../authentication/Data/auth_flow_diagnostics.dart';
 
+/// Represents mobile security service.
 abstract final class MobileSecurityService {
   static const channel = MethodChannel('hiker_circle/security');
 
+  /// Computes device.
   static Future<Map<String, dynamic>> device() async {
     AuthFlowDiagnostics.event('local-installation-id', 'start');
     final id = await LocalSessionDatabase().loadOrCreateAppInstanceId();
@@ -29,6 +31,7 @@ abstract final class MobileSecurityService {
 
   // prepareLogin requests the server-side login decision for the current installation before
   // activation.
+  /// Prepares login.
   static Future<Map<String, dynamic>> prepareLogin() async {
     final deviceDetails = await device();
     AuthFlowDiagnostics.event('prepare-mobile-session-call', 'start');
@@ -41,17 +44,20 @@ abstract final class MobileSecurityService {
 
   // activateLogin confirms which previous mobile session may be replaced, preventing an
   // unconfirmed takeover.
+  /// Computes activate login.
   static Future<void> activateLogin(String expectedPreviousSessionId) async {
     await FirebaseFunctions.instance
         .httpsCallable('activateMobileSession')
         .call({'expectedPreviousSessionId': expectedPreviousSessionId});
   }
 
+  /// Computes current session id.
   static Future<String> currentSessionId() async {
     final token = await FirebaseAuth.instance.currentUser?.getIdTokenResult();
     return token?.claims?['mobileSessionId'] as String? ?? '';
   }
 
+  /// Ends session.
   static Future<void> endSession() async {
     if (FirebaseAuth.instance.currentUser == null) return;
     await FirebaseFunctions.instance.httpsCallable('endMobileSession').call();

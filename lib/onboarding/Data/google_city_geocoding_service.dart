@@ -6,16 +6,21 @@ import 'package:http/http.dart' as http;
 
 import '../../core/config/google_api_config.dart';
 
+/// Represents city geocoding exception.
 class CityGeocodingException implements Exception {
+  /// Creates city geocoding exception.
   const CityGeocodingException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents residential city selection.
 class ResidentialCitySelection {
+  /// Creates residential city selection.
   const ResidentialCitySelection({
     required this.city,
     required this.state,
@@ -30,6 +35,7 @@ class ResidentialCitySelection {
   final double latitude;
   final double longitude;
 
+  /// Returns label.
   String get label => [
     city,
     state,
@@ -37,7 +43,9 @@ class ResidentialCitySelection {
   ].where((part) => part.trim().isNotEmpty).toSet().join(', ');
 }
 
+/// Represents google city geocoding service.
 class GoogleCityGeocodingService {
+  /// Creates google city geocoding service.
   GoogleCityGeocodingService({http.Client? client, String? apiKey})
     : _client = client,
       _apiKey = apiKey ?? GoogleApiConfig.geocodingApiKey;
@@ -45,6 +53,7 @@ class GoogleCityGeocodingService {
   final http.Client? _client;
   final String _apiKey;
 
+  /// Resolves city.
   Future<ResidentialCitySelection> resolveCity({
     required double latitude,
     required double longitude,

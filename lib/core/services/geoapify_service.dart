@@ -8,16 +8,21 @@ import 'package:http/http.dart' as http;
 import '../config/google_api_config.dart';
 import '../../trail/Model/trail_models.dart';
 
+/// Represents geoapify exception.
 class GeoapifyException implements Exception {
+  /// Creates geoapify exception.
   const GeoapifyException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents geoapify location.
 class GeoapifyLocation {
+  /// Creates geoapify location.
   const GeoapifyLocation({
     required this.area,
     required this.state,
@@ -29,7 +34,9 @@ class GeoapifyLocation {
   final String country;
 }
 
+/// Represents geoapify route result.
 class GeoapifyRouteResult {
+  /// Creates geoapify route result.
   const GeoapifyRouteResult({
     required this.distanceMeters,
     required this.durationSeconds,
@@ -43,7 +50,9 @@ class GeoapifyRouteResult {
   final double? elevationGainMeters;
 }
 
+/// Represents parsed route data.
 class _ParsedRouteData {
+  /// Creates parsed route data.
   _ParsedRouteData({
     required this.distanceMeters,
     required this.durationSeconds,
@@ -57,7 +66,9 @@ class _ParsedRouteData {
   final double? elevationGainMeters;
 }
 
+/// Represents geoapify service.
 class GeoapifyService {
+  /// Creates geoapify service.
   GeoapifyService({http.Client? client, String? apiKey})
     : _client = client,
       _apiKey = apiKey ?? GoogleApiConfig.geoapifyApiKey;
@@ -65,6 +76,7 @@ class GeoapifyService {
   final http.Client? _client;
   final String _apiKey;
 
+  /// Computes reverse geocode.
   Future<GeoapifyLocation> reverseGeocode({
     required double latitude,
     required double longitude,
@@ -150,6 +162,7 @@ class GeoapifyService {
     }
   }
 
+  /// Computes hiking route.
   Future<GeoapifyRouteResult> computeHikingRoute({
     required double startLatitude,
     required double startLongitude,
@@ -215,6 +228,7 @@ class GeoapifyService {
     }
   }
 
+  /// Parses route response.
   _ParsedRouteData _parseRouteResponse(String body) {
     final decoded = jsonDecode(body);
     if (decoded is! Map<String, dynamic>) {
@@ -283,9 +297,11 @@ class GeoapifyService {
     );
   }
 
+  /// Computes route coordinates from.
   List<List<double>> _routeCoordinatesFrom(Object? raw) {
     final coordinates = <List<double>>[];
 
+    /// Computes collect.
     void collect(Object? value) {
       if (value is! List || value.isEmpty) return;
       if (value.length >= 2 && value[0] is num && value[1] is num) {

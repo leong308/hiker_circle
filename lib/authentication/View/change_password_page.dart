@@ -5,18 +5,25 @@ import '../../core/widgets/password_capture_protection.dart';
 import '../../core/widgets/page_header_style.dart';
 import '../Model/password_validator.dart';
 
+/// Displays the change password page.
 class ChangePasswordPage extends StatefulWidget {
+  /// Creates change password page.
   const ChangePasswordPage({super.key});
+
+  /// Creates the presentation state for this widget.
   @override
   State<ChangePasswordPage> createState() => _ChangePasswordPageState();
 }
 
+/// Manages the change password page presentation and lifecycle.
 class _ChangePasswordPageState extends State<ChangePasswordPage> {
   final _form = GlobalKey<FormState>();
   final _password = TextEditingController();
   final _confirmation = TextEditingController();
   bool _busy = false;
   String? _error;
+
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _password.dispose();
@@ -24,6 +31,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
     super.dispose();
   }
 
+  /// Saves.
   Future<void> _save() async {
     if (_busy || !_form.currentState!.validate()) return;
     setState(() {
@@ -36,9 +44,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
           .call({'newPassword': _password.text});
       if (!mounted) return;
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Your password has been changed.')),
-      );
+      _presentSaveEffect1();
     } on FirebaseFunctionsException catch (error) {
       if (mounted) {
         setState(
@@ -50,6 +56,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => PasswordCaptureProtection(
     child: Scaffold(
@@ -105,5 +112,10 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
         ),
       ),
     ),
+  );
+
+  /// Presents the save effect1 UI.
+  void _presentSaveEffect1() => ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('Your password has been changed.')),
   );
 }

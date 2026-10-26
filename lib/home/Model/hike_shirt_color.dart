@@ -1,6 +1,7 @@
 // HikeShirtColorAdvice evaluates the selected shirt color for hike visibility and conditions.
 import 'hike_weather_briefing.dart';
 
+/// Defines the hike shirt color suitability choices.
 enum HikeShirtColorSuitability { recommended, visible, avoidInDaylight }
 
 /// A per-hike clothing choice stored alongside the local preparation answers.
@@ -61,6 +62,7 @@ enum HikeShirtColor {
     suitability: HikeShirtColorSuitability.avoidInDaylight,
   );
 
+  /// Creates this model.
   const HikeShirtColor({
     required this.label,
     required this.colorValue,
@@ -73,12 +75,15 @@ enum HikeShirtColor {
   final int colorValue;
   final HikeShirtColorSuitability suitability;
 
+  /// Returns preference.
   String get preference => '$preferencePrefix$name';
 
+  /// Checks whether preference.
   static bool isPreference(String value) =>
       value.startsWith(preferencePrefix) &&
       values.any((color) => color.preference == value);
 
+  /// Creates from preferences.
   static HikeShirtColor? fromPreferences(Iterable<String> values) {
     for (final value in values) {
       for (final color in HikeShirtColor.values) {
@@ -88,6 +93,7 @@ enum HikeShirtColor {
     return null;
   }
 
+  /// Sets preference.
   static Set<String> setPreference(
     Iterable<String> values,
     HikeShirtColor color,
@@ -97,7 +103,9 @@ enum HikeShirtColor {
   };
 }
 
+/// Represents hike shirt color advice.
 class HikeShirtColorAdvice {
+  /// Creates hike shirt color advice.
   const HikeShirtColorAdvice({
     required this.tone,
     required this.title,
@@ -110,6 +118,7 @@ class HikeShirtColorAdvice {
   final String summary;
   final List<String> points;
 
+  /// Selects for selection.
   static HikeShirtColorAdvice forSelection({
     required HikeShirtColor color,
     required bool overlapsDaylight,

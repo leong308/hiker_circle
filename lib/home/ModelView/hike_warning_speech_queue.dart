@@ -4,6 +4,7 @@ import 'dart:async';
 /// Serializes routine hike warnings so a new alert does not interrupt a
 /// precaution that is still being read. Native SOS speech retains priority.
 class HikeWarningSpeechQueue {
+  /// Creates hike warning speech queue.
   HikeWarningSpeechQueue({required this.speak, required this.stop});
 
   final Future<bool> Function(String requestId, String message) speak;
@@ -14,6 +15,7 @@ class HikeWarningSpeechQueue {
   String? _sessionKey;
   bool _disposed = false;
 
+  /// Synchronizes session.
   void synchronizeSession(String? key) {
     if (_disposed || key == _sessionKey) return;
     _sessionKey = key;
@@ -22,6 +24,7 @@ class HikeWarningSpeechQueue {
     }
   }
 
+  /// Computes enqueue.
   Future<bool> enqueue({
     required String requestId,
     required String message,
@@ -55,6 +58,7 @@ class HikeWarningSpeechQueue {
     return request.result.future;
   }
 
+  /// Cancels.
   Future<void> cancel(String requestId) async {
     final request = _pending[requestId];
     if (request == null || request.cancelled) return;
@@ -67,6 +71,7 @@ class HikeWarningSpeechQueue {
     _finish(request, false);
   }
 
+  /// Stops.
   Future<void> _stop(String requestId) async {
     try {
       await stop(requestId).timeout(const Duration(seconds: 2));
@@ -75,11 +80,13 @@ class HikeWarningSpeechQueue {
     }
   }
 
+  /// Finishes.
   void _finish(_WarningSpeech request, bool completed) {
     if (identical(_pending[request.id], request)) _pending.remove(request.id);
     if (!request.result.isCompleted) request.result.complete(completed);
   }
 
+  /// Releases resources owned by this instance.
   void dispose() {
     _disposed = true;
     for (final request in _pending.values.toList()) {
@@ -88,7 +95,9 @@ class HikeWarningSpeechQueue {
   }
 }
 
+/// Represents warning speech.
 class _WarningSpeech {
+  /// Creates warning speech.
   _WarningSpeech(this.id);
   final String id;
   final result = Completer<bool>();
@@ -96,15 +105,21 @@ class _WarningSpeech {
   bool cancelled = false;
 }
 
+/// Represents path deviation alert message.
 class PathDeviationAlertMessage {
+  /// Creates path deviation alert message.
   PathDeviationAlertMessage(double distanceMeters)
     : distanceMeters = distanceMeters.round();
 
   static const title = 'You may be off the planned trail';
   final int distanceMeters;
+
+  /// Returns body.
   String get body =>
       'Your location has deviated about $distanceMeters m from the route. '
       'Check the map and retrace safely.';
+
+  /// Returns speech.
   String get speech =>
       '$title. Your location has deviated about $distanceMeters meters from '
       'the route. Check the map and retrace safely.';

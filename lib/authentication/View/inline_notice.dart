@@ -1,7 +1,9 @@
 // InlineNotice displays themed authentication feedback directly beside the current form.
 import 'package:flutter/material.dart';
 
+/// Displays the inline notice.
 class InlineNotice extends StatelessWidget {
+  /// Creates inline notice.
   const InlineNotice({
     super.key,
     required this.icon,
@@ -13,6 +15,7 @@ class InlineNotice extends StatelessWidget {
   final Color color;
   final String text;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return Container(

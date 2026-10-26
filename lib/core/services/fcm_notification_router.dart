@@ -1,6 +1,8 @@
 // FcmNotificationRouter maps known notification payloads to supported app deep links without
 // invoking navigation itself.
+/// Represents fcm notification router.
 abstract final class FcmNotificationRouter {
+  /// Computes deep link for.
   static String? deepLinkFor(Map<String, dynamic> data) {
     final type = data['type']?.toString().trim() ?? '';
     if (type == 'trail_hazard_alert') {
@@ -147,6 +149,7 @@ abstract final class FcmNotificationRouter {
     }
   }
 
+  /// Computes valid hazard identity.
   static bool _validHazardIdentity(String value) =>
       value.isNotEmpty &&
       value.length <= 180 &&
@@ -154,6 +157,7 @@ abstract final class FcmNotificationRouter {
       value != '.' &&
       value != '..';
 
+  /// Computes link.
   static String? _link({
     required String host,
     required String path,

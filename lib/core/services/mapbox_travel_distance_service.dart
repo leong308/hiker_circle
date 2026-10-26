@@ -11,6 +11,7 @@ typedef TravelDestination = ({String id, double latitude, double longitude});
 /// Distances along Mapbox's fastest driving routes, in kilometres.
 /// Null means unavailable; never substitute a straight-line estimate.
 class MapboxTravelDistanceService {
+  /// Creates mapbox travel distance service.
   MapboxTravelDistanceService({http.Client? client, String? accessToken})
     : _client = client,
       _accessToken = accessToken ?? GoogleApiConfig.mapboxAccessToken;
@@ -19,9 +20,11 @@ class MapboxTravelDistanceService {
   final String _accessToken;
   final _cache = <String, ({double? km, DateTime expires})>{};
 
+  /// Computes valid.
   static bool _valid(double lat, double lon) =>
       lat.isFinite && lon.isFinite && lat.abs() <= 90 && lon.abs() <= 180;
 
+  /// Computes distances km.
   Future<Map<String, double?>> distancesKm({
     required double latitude,
     required double longitude,
@@ -33,6 +36,8 @@ class MapboxTravelDistanceService {
     }
     final now = DateTime.now();
     _cache.removeWhere((_, value) => !value.expires.isAfter(now));
+
+    /// Computes key.
     String key(TravelDestination d) =>
         '$latitude,$longitude:${d.latitude},${d.longitude}';
     final pending = <TravelDestination>[];
@@ -92,6 +97,7 @@ class MapboxTravelDistanceService {
           if (row.length != expected || targets.length != expected) continue;
           // A distant road snap can otherwise produce a convincing but
           // misleading distance to a remote summit or inaccessible trailhead.
+          /// Computes near road.
           bool nearRoad(dynamic waypoint) =>
               waypoint is Map &&
               waypoint['distance'] is num &&

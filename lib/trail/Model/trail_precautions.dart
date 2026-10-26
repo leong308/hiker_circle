@@ -1,7 +1,9 @@
 // trailPrecautions derives explainable safety observations without treating missing measurements as safe.
 import 'trail_models.dart';
 
+/// Represents trail precaution.
 class TrailPrecaution {
+  /// Creates trail precaution.
   const TrailPrecaution(
     this.id,
     this.priority,
@@ -30,6 +32,8 @@ List<TrailPrecaution> trailPrecautions({
   DateTime? assessmentEnd,
 }) {
   final result = <TrailPrecaution>[];
+
+  /// Adds.
   void add(
     String id,
     int priority,
@@ -50,6 +54,8 @@ List<TrailPrecaution> trailPrecautions({
   final data = weather.forecastData;
   final daily = data['daily'] is Map ? data['daily'] as Map : const {};
   final hourly = data['hourly'] is Map ? data['hourly'] as Map : const {};
+
+  /// Reads.
   num? read(Map map, String key, int index) {
     final list = map[key];
     if (list is! List || index < 0 || index >= list.length) return null;
@@ -84,12 +90,17 @@ List<TrailPrecaution> trailPrecautions({
       rows.add(i);
     }
   }
+
+  /// Computes peak.
   num? peak(String key) {
     final values = rows.map((i) => read(hourly, key, i)).whereType<num>();
     return values.isEmpty ? null : values.reduce((a, b) => a > b ? a : b);
   }
 
+  /// Computes any.
   bool any(bool Function(int) predicate) => rows.any(predicate);
+
+  /// Computes metric.
   String metric(String key, String unit) => peak(key) == null
       ? 'unavailable'
       : '${peak(key)!.toStringAsFixed(0)}$unit';
@@ -264,6 +275,8 @@ List<TrailPrecaution> trailPrecautions({
       quickAction: 'Fog can hide markers and trail edges.',
     );
   }
+
+  /// Computes clock.
   String clock(num epoch) {
     final date = DateTime.fromMillisecondsSinceEpoch(
       ((epoch + ((data['utc_offset_seconds'] as num?) ?? 0)) * 1000).round(),

@@ -5,6 +5,7 @@ part of 'local_session_database.dart';
 // Community data has one canonical cached copy. Viewer reactions and unfinished
 // drafts are account scoped; hydrated author/level aliases are never duplicated
 // inside every post/comment payload.
+/// Creates community tables.
 Future<void> _createCommunityTables(DatabaseExecutor db) async {
   await db.execute('''CREATE TABLE IF NOT EXISTS community_authors (
     user_id TEXT PRIMARY KEY, name TEXT NOT NULL, photo_url TEXT NOT NULL DEFAULT '',
@@ -56,6 +57,7 @@ Future<void> _createCommunityTables(DatabaseExecutor db) async {
   )''');
 }
 
+/// Computes community millis.
 int _communityMillis(Object? value) {
   if (value is num) return value.toInt();
   if (value is DateTime) return value.millisecondsSinceEpoch;
@@ -63,8 +65,10 @@ int _communityMillis(Object? value) {
       0;
 }
 
+/// Computes community text.
 String _communityText(Object? value) => value is String ? value : '';
 
+/// Computes put community row.
 Future<void> _putCommunityRow(
   DatabaseExecutor db,
   String table,
@@ -79,6 +83,7 @@ Future<void> _putCommunityRow(
 
 // _cacheCommunityAuthor merges the freshest profile while distinguishing verified clears from
 // missing partial fields.
+/// Computes cache community author.
 Future<void> _cacheCommunityAuthor(
   DatabaseExecutor db,
   Map<String, dynamic> row,
@@ -96,6 +101,8 @@ Future<void> _cacheCommunityAuthor(
       ? (row['authorCachedAtMillis'] as num).toInt()
       : DateTime.now().millisecondsSinceEpoch;
   if (_communityMillis(old['cached_at_millis']) > cachedAt) return;
+
+  /// Computes text.
   String text(String field, String column, [String fallback = '']) {
     if (row['authorProfileLoaded'] == true && row.containsKey(field)) {
       final value = _communityText(row[field]);
@@ -132,6 +139,7 @@ Future<void> _cacheCommunityAuthor(
   );
 }
 
+/// Computes cache community post rows.
 Future<void> _cacheCommunityPostRows(
   DatabaseExecutor db,
   List<Map<String, dynamic>> rows,
@@ -190,6 +198,7 @@ Future<void> _cacheCommunityPostRows(
   }
 }
 
+/// Computes community cached view.
 Map<String, dynamic> _communityCachedView(
   Map<String, Object?> row, {
   bool comment = false,
@@ -244,6 +253,7 @@ const _communityAuthorColumns =
   a.phone_number AS author_phone_number, a.handle AS author_handle,
   a.achievement_points AS author_points''';
 
+/// Computes migrate community cache.
 Future<void> _migrateCommunityCache(DatabaseExecutor db) async {
   final tables = await db.rawQuery(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='cached_entities'",
@@ -384,6 +394,7 @@ Future<List<String>> _staleCommunityPageIds(
   return stale.map((row) => row[idColumn] as String).toList();
 }
 
+/// Provides helpers for `LocalSessionDatabase`.
 extension LocalCommunityStorage on LocalSessionDatabase {
   /// Reconcile only successful public-feed first pages, never profile/admin lists.
   Future<void> cacheCommunityPosts(
@@ -420,6 +431,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     });
   }
 
+  /// Loads cached community posts.
   Future<List<Map<String, dynamic>>> loadCachedCommunityPosts({
     String ownerPhoneNumber = '',
     String? authorId,
@@ -466,6 +478,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
 
   // cacheCommunityComments reconciles one successful first-page range and preserves older pages
   // and other threads.
+  /// Computes cache community comments.
   Future<void> cacheCommunityComments(
     String postId,
     List<Map<String, dynamic>> rows, {
@@ -525,6 +538,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     });
   }
 
+  /// Loads cached community comments.
   Future<List<Map<String, dynamic>>> loadCachedCommunityComments(
     String postId, {
     String? afterCommentId,
@@ -561,6 +575,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     return rows.map((row) => _communityCachedView(row, comment: true)).toList();
   }
 
+  /// Updates cached community comment count.
   Future<void> updateCachedCommunityCommentCount(
     String postId,
     int count,
@@ -574,6 +589,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     );
   }
 
+  /// Computes cache community reaction.
   Future<void> cacheCommunityReaction({
     required String ownerPhoneNumber,
     required String postId,
@@ -603,6 +619,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
     });
   }
 
+  /// Removes cached community post.
   Future<void> removeCachedCommunityPost(String postId) async {
     final db = await _openDatabase();
     await db.transaction((tx) => _removeCommunityPost(tx, postId));
@@ -610,6 +627,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
 
   // saveCommunityDraft writes caption state and ordered photos atomically, reusing
   // content/occurrence photo identities.
+  /// Saves community draft.
   Future<void> saveCommunityDraft({
     required String ownerPhoneNumber,
     required String draftKey,
@@ -707,6 +725,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
 
   // loadCommunityDraft restores only the requested account/composer key and its selected photo
   // order.
+  /// Loads community draft.
   Future<Map<String, dynamic>?> loadCommunityDraft({
     required String ownerPhoneNumber,
     required String draftKey,
@@ -744,6 +763,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
 
   // deleteCommunityDraft removes photo rows and caption state only for the requested
   // account/composer key.
+  /// Deletes community draft.
   Future<void> deleteCommunityDraft({
     required String ownerPhoneNumber,
     required String draftKey,
@@ -764,6 +784,7 @@ extension LocalCommunityStorage on LocalSessionDatabase {
   }
 }
 
+/// Removes community post.
 Future<void> _removeCommunityPost(DatabaseExecutor db, String postId) async {
   await db.delete(
     'community_comments',
@@ -779,6 +800,7 @@ Future<void> _removeCommunityPost(DatabaseExecutor db, String postId) async {
   await _removeUnusedCommunityAuthors(db);
 }
 
+/// Removes unused community authors.
 Future<void> _removeUnusedCommunityAuthors(DatabaseExecutor db) async {
   await db.rawDelete(
     '''DELETE FROM community_authors WHERE user_id NOT IN

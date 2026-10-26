@@ -7,5 +7,6 @@ import 'dart:async';
 // incorrectly marked successful completions as pending.
 const hikeCompletionTimeout = Duration(seconds: 45);
 
+/// Computes wait for hike completion.
 Future<T> waitForHikeCompletion<T>(Future<T> request) =>
     request.timeout(hikeCompletionTimeout);

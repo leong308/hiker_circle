@@ -7,16 +7,21 @@ import '../../app/Data/firebase_user_repository.dart';
 import '../../app/Model/app_session.dart';
 import '../Model/onboarding_profile.dart';
 
+/// Represents onboarding repository exception.
 class OnboardingRepositoryException implements Exception {
+  /// Creates onboarding repository exception.
   const OnboardingRepositoryException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents onboarding repository.
 class OnboardingRepository {
+  /// Creates onboarding repository.
   const OnboardingRepository({
     FirebaseFirestore? firestore,
     FirebaseBootstrapResult firebaseBootstrapResult =
@@ -28,9 +33,11 @@ class OnboardingRepository {
   final FirebaseBootstrapResult _firebaseBootstrapResult;
   static const Duration _firebaseReadTimeout = Duration(seconds: 12);
 
+  /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
 
+  /// Computes user document.
   DocumentReference<Map<String, dynamic>> _userDocument(AppSession session) {
     return userModuleDocument(
       _resolvedFirestore
@@ -44,6 +51,7 @@ class OnboardingRepository {
     );
   }
 
+  /// Loads profile.
   Future<OnboardingProfile> loadProfile(AppSession session) async {
     _ensureFirebaseAvailable();
     try {
@@ -137,6 +145,7 @@ class OnboardingRepository {
     }
   }
 
+  /// Ensures firebase available.
   void _ensureFirebaseAvailable() {
     if (_firebaseBootstrapResult.isAvailable) {
       return;
@@ -147,6 +156,7 @@ class OnboardingRepository {
     );
   }
 
+  /// Computes firebase message.
   String _firebaseMessage(FirebaseException error) {
     return 'Cloud sync failed (${error.code}). ${error.message ?? 'Please try again.'}';
   }

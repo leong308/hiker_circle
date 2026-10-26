@@ -19,6 +19,7 @@ enum MalaysiaMapRegion {
   labuan('Labuan (Federal Territory)', 115.1, 5.15, 115.35, 5.4),
   putrajaya('Putrajaya (Federal Territory)', 101.64, 2.86, 101.75, 2.982445);
 
+  /// Creates this model.
   const MalaysiaMapRegion(
     this.label,
     this.west,
@@ -50,6 +51,9 @@ enum MalaysiaMapRegion {
     putrajaya => 'MY-16',
   };
 
+  /// Returns longitude.
   double get longitude => (west + east) / 2;
+
+  /// Returns latitude.
   double get latitude => (south + north) / 2;
 }

@@ -7,6 +7,7 @@ import 'hike_weather_briefing.dart';
 /// Map-based additions come from a 50 m route corridor assessment. Legacy
 /// preference tokens are readable but cannot override automatic recommendations.
 class TrailGearPlan {
+  /// Creates trail gear plan.
   TrailGearPlan(
     this.sections,
     this.reasons,
@@ -14,13 +15,21 @@ class TrailGearPlan {
     this.requiredReasons,
   );
   final Map<String, String> requiredReasons;
+
+  /// Returns required items.
   Set<String> get requiredItems => requiredReasons.keys.toSet();
+
+  /// Computes missing required.
   Set<String> missingRequired(Iterable<String> saved) =>
       requiredItems.difference(saved.toSet());
   final Map<String, List<String>> sections;
   final Map<String, String> reasons;
   final Map<String, bool> scenarios;
+
+  /// Returns items.
   Set<String> get items => sections.values.expand((items) => items).toSet();
+
+  /// Computes completed.
   int completed(Iterable<String> saved) =>
       saved.where(items.contains).toSet().length;
   static const scenarioLabels = {
@@ -84,14 +93,20 @@ class TrailGearPlan {
     ],
     'Steep ascent': ['Trekking poles', 'Blister care'],
   };
+
+  /// Returns all items.
   static Set<String> get allItems => {
     ...base,
     ...additions.values.expand((v) => v),
   };
+
+  /// Checks whether preference.
   static bool isPreference(String value) => scenarioLabels.keys.any(
     (key) =>
         value == 'gear:scenario:$key:on' || value == 'gear:scenario:$key:off',
   );
+
+  /// Sets scenario.
   static Set<String> setScenario(
     Iterable<String> saved,
     String key,
@@ -123,6 +138,7 @@ class TrailGearPlan {
     return false;
   }
 
+  /// Selects for trail.
   static TrailGearPlan forTrail(
     Trail trail,
     DateTime start,
@@ -184,6 +200,8 @@ class TrailGearPlan {
     };
     final sections = <String, List<String>>{'Essentials': base};
     final added = <String>{...base};
+
+    /// Adds.
     void add(String name, String reason) {
       final items = additions[name]!.where(added.add).toList();
       if (items.isNotEmpty) {

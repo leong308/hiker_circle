@@ -6,12 +6,14 @@ import 'package:flutter/services.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart' as cipher;
 
+/// Represents secure local database.
 abstract final class SecureLocalDatabase {
   // Registered by the plugin on every foreground and headless Flutter engine.
   static const _channel = MethodChannel('hiker_circle/database_security');
 
   // SecureLocalDatabase.open validates the native key, then holds the migration lease while
   // opening the protected database.
+  /// Opens.
   static Future<Database> open(
     String path, {
     int? version,
@@ -70,6 +72,7 @@ abstract final class SecureLocalDatabase {
     }
   }
 
+  /// Computes plain.
   static Future<bool> _plain(File file) async {
     if (!await file.exists() || await file.length() < 16) return false;
     final handle = await file.open();
@@ -83,6 +86,7 @@ abstract final class SecureLocalDatabase {
 
   // _migratePlaintext exports into a verified encrypted replacement and keeps recoverable rename
   // state across crashes.
+  /// Computes migrate plaintext.
   static Future<void> _migratePlaintext(String path, String key) async {
     final source = File(path);
     final backup = File('$path.migration-original');

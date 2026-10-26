@@ -17,6 +17,8 @@ class StateBoundaryOverlay {
     'state-border-edge',
   ];
   static Future<String>? _asset;
+
+  /// Computes prewarm.
   static Future<String> prewarm() =>
       _asset ??= rootBundle.loadString(assetPath);
 
@@ -29,11 +31,13 @@ class StateBoundaryOverlay {
   final _glowTimers = <Timer>[];
   double _fillOpacity = 0;
 
+  /// Computes on style loaded.
   Future<void> onStyleLoaded(mapbox.MapboxMap map) {
     _map = map;
     return _render();
   }
 
+  /// Selects.
   Future<void> select(MalaysiaMapRegion region) {
     _cancelGlow();
     _fillOpacity = 0;
@@ -43,6 +47,7 @@ class StateBoundaryOverlay {
     return _render();
   }
 
+  /// Releases resources owned by this instance.
   void dispose() {
     _cancelGlow();
     _selectionRevision++;
@@ -50,6 +55,7 @@ class StateBoundaryOverlay {
     _map = null;
   }
 
+  /// Computes render.
   Future<void> _render() {
     final revision = ++_revision;
     final map = _map;
@@ -163,6 +169,7 @@ class StateBoundaryOverlay {
     return _pending;
   }
 
+  /// Cancels glow.
   void _cancelGlow() {
     for (final timer in _glowTimers) {
       timer.cancel();
@@ -170,6 +177,7 @@ class StateBoundaryOverlay {
     _glowTimers.clear();
   }
 
+  /// Starts glow.
   void _startGlow() {
     final selectionRevision = _selectionRevision;
     // Native 400ms paint transitions animate smoothly without sending a
@@ -197,6 +205,7 @@ class StateBoundaryOverlay {
     );
   }
 
+  /// Sets fill opacity.
   void _setFillOpacity(double opacity, int selectionRevision) {
     if (selectionRevision != _selectionRevision || _map == null) return;
     _fillOpacity = opacity;
@@ -219,6 +228,7 @@ class StateBoundaryOverlay {
         });
   }
 
+  /// Filters for.
   static List<Object> filterFor(MalaysiaMapRegion region) => [
     '==',
     ['get', 'shapeISO'],

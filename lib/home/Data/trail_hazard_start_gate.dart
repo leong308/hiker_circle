@@ -2,11 +2,13 @@ import '../../trail/Model/trail_hazard_alert.dart';
 import '../../trail/Model/trail_hazard_assessment.dart';
 import '../../trail/View/trail_hazard_alert_dialog.dart';
 
+/// Defines the unavailable hazard action choices.
 enum UnavailableHazardAction { retry, proceed, abort }
 
 /// One start attempt may check again at READY and after a team countdown.
 /// Acknowledgements belong to this attempt; a new report/cycle still interrupts.
 class TrailHazardStartGate {
+  /// Creates trail hazard start gate.
   TrailHazardStartGate({
     required this.load,
     required this.confirm,
@@ -17,9 +19,10 @@ class TrailHazardStartGate {
   final Future<TrailHazardAlertAction> Function(List<TrailHazardAlert>) confirm;
   final Future<UnavailableHazardAction> Function() confirmUnavailable;
   final Set<String> _acknowledged = {};
-  bool _acceptedUnavailable = false;
+  final Set<String> _acceptedUnavailableTrails = {};
   String? fatalHazardId;
 
+  /// Checks.
   Future<TrailHazardAlertAction> check(String trailId) async {
     while (true) {
       final assessment = await load(trailId);
@@ -48,14 +51,14 @@ class TrailHazardStartGate {
         }
         _acknowledged.addAll(pending.map((alert) => alert.fingerprint));
       }
-      if (assessment.isFresh || _acceptedUnavailable) {
+      if (assessment.isFresh || _acceptedUnavailableTrails.contains(trailId)) {
         return TrailHazardAlertAction.proceed;
       }
       switch (await confirmUnavailable()) {
         case UnavailableHazardAction.retry:
           continue;
         case UnavailableHazardAction.proceed:
-          _acceptedUnavailable = true;
+          _acceptedUnavailableTrails.add(trailId);
           return TrailHazardAlertAction.proceed;
         case UnavailableHazardAction.abort:
           return TrailHazardAlertAction.abort;

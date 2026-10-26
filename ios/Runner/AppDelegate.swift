@@ -59,7 +59,7 @@ import ActivityKit
       guard let self else { return }
       self.startFallStillnessCountdownVibration()
       self.speakFallStillnessPrompt(
-        "Are you okay? Tap I'm Safe on the notification or Live Activity within 15 seconds."
+        "Are you okay? Respond to the safety notification or open the safety alert in the app within 15 seconds."
       )
       self.updateLiveActivitySafetyState()
       // Foreground iOS users need the in-app, non-dismissable countdown as
@@ -492,6 +492,8 @@ import ActivityKit
         } catch {
           result(FlutterError(code: "native_location_buffer_ack_failed", message: error.localizedDescription, details: nil))
         }
+      case "getActiveHikePowerSettings":
+        result(self.iosHikeSafetyMonitor.powerSettings(owner: Auth.auth().currentUser?.uid ?? ""))
       case "startOrUpdateActiveHikeLiveStatus":
         guard let status = ManualHikeLiveStatus(arguments: call.arguments) else {
           result(FlutterError(
@@ -1265,7 +1267,6 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private static let defaultsPrefix = "ios_hike_safety_"
   private static let warningDuration: TimeInterval = 15
   private static let watchdogDuration: TimeInterval = 120
-  private static let locationSampleInterval: TimeInterval = 5
   private static let locationMaximumAge: TimeInterval = 30
 
   private enum Phase: String {
@@ -1292,6 +1293,10 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
   private var sessionId = ""
   private var trailName = "Active hike"
   private var longestRestDuration: TimeInterval = 180
+  private var batterySafetyAdjusted = false
+  private var batterySafetyRevision = 0
+  private var batteryOriginalSensitivity: Double?
+  private var batteryOriginalInterval: TimeInterval?
   private var sensitivity = 5.0
   private var fallDetectionEnabled = true
   private var shareLiveLocation = false
@@ -1348,6 +1353,111 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     locationManager.delegate = self
   }
 
+  func powerSettings(owner: String) -> [String: Any]? {
+    guard isActive, !owner.isEmpty, owner == ownerUid else { return nil }
+    var value: [String: Any] = ["sessionId": sessionId, "batterySafetyAdjusted": batterySafetyAdjusted,
+      "batterySafetyRevision": batterySafetyRevision, "sensorSensitivity": sensitivity, "intervalSeconds": Int(locationUploadInterval)]
+    value["batteryOriginalSensorSensitivity"] = batteryOriginalSensitivity
+    value["batteryOriginalFootprintIntervalSeconds"] = batteryOriginalInterval.map { Int($0) }
+    return value
+  }
+
+  private func clearBatterySafetyState() {
+    batterySafetyAdjusted = false
+    batterySafetyRevision = 0
+    batteryOriginalSensitivity = nil
+    batteryOriginalInterval = nil
+    defaults.removeObject(forKey: key("battery_safety_state"))
+    defaults.removeObject(forKey: key("battery_safety_adjusted"))
+  }
+
+  // Keep the original values and effective values in one durable, hike-scoped record.
+  private func persistBatterySafetyState() {
+    var value: [String: Any] = ["sessionId": sessionId, "ownerUid": ownerUid,
+      "active": batterySafetyAdjusted, "revision": batterySafetyRevision,
+      "sensitivity": sensitivity, "interval": locationUploadInterval]
+    value["originalSensitivity"] = batteryOriginalSensitivity
+    value["originalInterval"] = batteryOriginalInterval
+    defaults.set(value, forKey: key("battery_safety_state"))
+    // Legacy keys remain readable during an upgrade from the old monitor.
+    defaults.set(batterySafetyAdjusted, forKey: key("battery_safety_adjusted"))
+    defaults.set(sensitivity, forKey: key("sensitivity"))
+    defaults.set(locationUploadInterval, forKey: key("location_upload_interval"))
+  }
+
+  private func storedBatterySafetyState() -> [String: Any]? {
+    guard let value = defaults.dictionary(forKey: key("battery_safety_state")),
+          value["sessionId"] as? String == sessionId,
+          value["ownerUid"] as? String == ownerUid else { return nil }
+    return value
+  }
+
+  private func restoreBatterySafetyState() {
+    guard let value = storedBatterySafetyState() else {
+      batterySafetyAdjusted = defaults.bool(forKey: key("battery_safety_adjusted"))
+      batterySafetyRevision = 0
+      batteryOriginalSensitivity = nil
+      batteryOriginalInterval = nil
+      return
+    }
+    batterySafetyAdjusted = value["active"] as? Bool ?? false
+    batterySafetyRevision = max(0, (value["revision"] as? NSNumber)?.intValue ?? 0)
+    sensitivity = min(10, max(1, Self.doubleValue(value["sensitivity"], fallback: sensitivity)))
+    locationUploadInterval = max(5, Self.doubleValue(value["interval"], fallback: locationUploadInterval))
+    batteryOriginalSensitivity = (value["originalSensitivity"] as? NSNumber)?.doubleValue
+    batteryOriginalInterval = (value["originalInterval"] as? NSNumber)?.doubleValue
+  }
+
+  private func mergeBatterySafetyConfiguration(_ data: [String: Any], replacingSession: Bool) {
+    let stored = replacingSession ? nil : storedBatterySafetyState()
+    let storedRevision = max(0, (stored?["revision"] as? NSNumber)?.intValue ?? 0)
+    let storedActive = !replacingSession && (stored?["active"] as? Bool ?? defaults.bool(forKey: key("battery_safety_adjusted")))
+    let incomingRevision = max(0, (data["batterySafetyRevision"] as? NSNumber)?.intValue ?? 0)
+    let incomingActive = data["batterySafetyAdjusted"] as? Bool ?? false
+    let legacyPending = storedActive && storedRevision == 0 && incomingRevision == 0 && !incomingActive
+    if !replacingSession && (storedRevision > incomingRevision || legacyPending) {
+      restoreBatterySafetyState()
+      if stored == nil {
+        sensitivity = min(10, max(1, defaults.double(forKey: key("sensitivity"))))
+        locationUploadInterval = max(5, defaults.double(forKey: key("location_upload_interval")))
+      }
+      if batterySafetyAdjusted {
+        batteryOriginalSensitivity = batteryOriginalSensitivity ?? (data["batteryOriginalSensorSensitivity"] as? NSNumber)?.doubleValue
+        batteryOriginalInterval = batteryOriginalInterval ?? (data["batteryOriginalFootprintIntervalSeconds"] as? NSNumber)?.doubleValue
+      }
+    } else {
+      batterySafetyRevision = incomingRevision
+      batterySafetyAdjusted = incomingActive
+      batteryOriginalSensitivity = incomingActive ? (data["batteryOriginalSensorSensitivity"] as? NSNumber)?.doubleValue : nil
+      batteryOriginalInterval = incomingActive ? (data["batteryOriginalFootprintIntervalSeconds"] as? NSNumber)?.doubleValue : nil
+    }
+    persistBatterySafetyState()
+  }
+
+  private func applyBatterySafetyIfNeeded() {
+    guard isActive else { return }
+    UIDevice.current.isBatteryMonitoringEnabled = true
+    let level = UIDevice.current.batteryLevel
+    guard level >= 0, level <= 1 else { return }
+    if !batterySafetyAdjusted && level < 0.30 {
+      batteryOriginalSensitivity = sensitivity
+      batteryOriginalInterval = locationUploadInterval
+      batterySafetyAdjusted = true
+      sensitivity = 5
+      locationUploadInterval = 60
+    } else if batterySafetyAdjusted && level > 0.30 {
+      guard let originalSensitivity = batteryOriginalSensitivity,
+            let originalInterval = batteryOriginalInterval else { return }
+      sensitivity = min(10, max(1, originalSensitivity))
+      locationUploadInterval = max(5, originalInterval)
+      batterySafetyAdjusted = false
+      batteryOriginalSensitivity = nil
+      batteryOriginalInterval = nil
+    } else { return }
+    batterySafetyRevision += 1
+    persistBatterySafetyState()
+  }
+
   func startOrUpdate(arguments: Any?) {
     guard let data = arguments as? [String: Any],
           let incomingSessionId = data["sessionId"] as? String,
@@ -1385,6 +1495,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     ownerUid = incomingOwnerUid
     locationUploadInterval = min(86400, max(5,
       Self.doubleValue(data["locationUploadIntervalMillis"], fallback: 60000) / 1000))
+    mergeBatterySafetyConfiguration(data, replacingSession: replacingSession)
     firebaseTelemetryReady = true
 
     if replacingSession {
@@ -1445,6 +1556,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     shareLiveLocation = defaults.bool(forKey: key("share_live_location"))
     ownerUid = defaults.string(forKey: key("owner_uid")) ?? ""
     locationUploadInterval = max(5, defaults.double(forKey: key("location_upload_interval")))
+    restoreBatterySafetyState()
     restoreState()
     // Ending a hike stops tracking, but an escalated receipt may still need
     // Flutter dispatch after the process restarts.
@@ -1502,11 +1614,13 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     lastLocationSampleAt = nil
     firebaseTelemetryReady = false
     monitoringReset()
+    clearBatterySafetyState()
   }
 
   func remapSession(oldSession: String, newSession: String, owner: String) {
     guard sessionId == oldSession, ownerUid == owner, !newSession.isEmpty else { return }
     sessionId = newSession
+    persistBatterySafetyState()
     defaults.set(newSession, forKey: key("session_id"))
   }
 
@@ -1789,6 +1903,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
 
   private func evaluateState() {
     guard isActive else { return }
+    applyBatterySafetyIfNeeded()
     publishTelemetry()
     guard fallDetectionEnabled else { return }
     refreshTerminationWatchdog()
@@ -1887,7 +2002,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
     if FirebaseApp.app() != nil, Auth.auth().currentUser?.uid == ownerUid,
        UIApplication.shared.applicationState != .active,
        let location = latestLocation, isFreshLocation(location), !ownerUid.isEmpty,
-       lastLocationSampleAt == nil || now.timeIntervalSince(lastLocationSampleAt!) >= Self.locationSampleInterval {
+       lastLocationSampleAt == nil || now.timeIntervalSince(lastLocationSampleAt!) >= locationUploadInterval {
       do {
         try NativeLocationSampleBuffer.shared.append(sessionId: sessionId, ownerUid: ownerUid,
           sampledAt: Int64(now.timeIntervalSince1970 * 1000), location: location)
@@ -2132,7 +2247,6 @@ private struct ManualHikeLiveStatus {
   let startedAtMillis: Double
   let expectedReturnAtMillis: Double
   let checkIns: Int
-  let manualPins: Int
   let queuedUpdates: Int
   let batteryLevel: Int
   let distanceKm: Double
@@ -2156,7 +2270,6 @@ private struct ManualHikeLiveStatus {
     self.startedAtMillis = startedAtMillis
     self.expectedReturnAtMillis = Self.doubleValue(data["expectedReturnAtMillis"]) ?? 0
     self.checkIns = Self.intValue(data["checkIns"])
-    self.manualPins = Self.intValue(data["manualPins"])
     self.queuedUpdates = Self.intValue(data["queuedUpdates"])
     self.batteryLevel = min(100, max(0, Self.intValue(data["batteryLevel"])))
     self.distanceKm = max(0, Self.doubleValue(data["distanceKm"]) ?? 0)
@@ -2201,7 +2314,6 @@ private struct ManualHikeLiveStatus {
       startedAt: Date(timeIntervalSince1970: startedAtMillis / 1000),
       expectedReturnAt: expectedReturnAt,
       checkIns: checkIns,
-      manualPins: manualPins,
       queuedUpdates: queuedUpdates,
       batteryLevel: batteryLevel,
       distanceKm: distanceKm,
@@ -2221,7 +2333,6 @@ struct ManualHikeAttributes: ActivityAttributes {
     var startedAt: Date
     var expectedReturnAt: Date?
     var checkIns: Int
-    var manualPins: Int
     var queuedUpdates: Int
     var batteryLevel: Int
     var distanceKm: Double

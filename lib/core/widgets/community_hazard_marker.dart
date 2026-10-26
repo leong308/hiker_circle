@@ -5,121 +5,49 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
+import '../../trail/Model/trail_hazard_categories.dart';
+import '../../trail/Model/community_hazard.dart';
+export '../../trail/Model/community_hazard.dart';
 import '../../trail/View/trail_caution_details.dart';
 
-class CommunityHazard {
-  const CommunityHazard({
-    required this.id,
-    required this.type,
-    required this.latitude,
-    required this.longitude,
-    this.description = '',
-    this.reportedAt,
-    this.expiresAt,
-    this.status = 'unverified',
-    this.reportCount = 1,
-    this.resolutionCount = 0,
-    this.media = const [],
-    this.latestEvidence = const {},
-    this.resolutionId,
-  });
-  final String id;
-  final String type;
-  final String description;
-  final double latitude;
-  final double longitude;
-  final DateTime? reportedAt, expiresAt;
-  final String status;
-  final int reportCount, resolutionCount;
-  final List<Map<String, dynamic>> media;
-  final Map<String, dynamic> latestEvidence;
-  final String? resolutionId;
-  bool get isResolved => status == 'resolved';
-  bool isActiveAt(DateTime now) =>
-      !['rejected', 'deleted'].contains(status) &&
-      now.isBefore(
-        expiresAt ??
-            reportedAt?.add(const Duration(days: 7)) ??
-            DateTime.fromMillisecondsSinceEpoch(0),
-      );
-
-  static CommunityHazard? fromMap(
-    String id,
-    Map<String, dynamic> data, {
-    bool includeExpired = false,
-    DateTime? now,
-  }) {
-    if (const {'rejected', 'deleted'}.contains(data['status'])) {
-      return null;
-    }
-    final lat = data['latitude'];
-    final lon = data['longitude'];
-    if (lat is! num ||
-        lon is! num ||
-        !lat.isFinite ||
-        !lon.isFinite ||
-        lat.abs() > 90 ||
-        lon.abs() > 180) {
-      return null;
-    }
-    final time = data['reportedAt'];
-    final result = CommunityHazard(
-      id: id,
-      type: data['hazardType'] is String
-          ? data['hazardType'] as String
-          : 'Caution',
-      latitude: lat.toDouble(),
-      longitude: lon.toDouble(),
-      description: data['description'] is String
-          ? data['description'] as String
-          : '',
-      expiresAt: data['expiresAt'] is Timestamp
-          ? (data['expiresAt'] as Timestamp).toDate()
-          : DateTime.tryParse('${data['expiresAtLocal'] ?? ''}'),
-      status: data['status'] is String
-          ? data['status'] as String
-          : 'unverified',
-      reportCount: data['reportCount'] is num
-          ? (data['reportCount'] as num).toInt().clamp(1, 1000000)
-          : 1,
-      resolutionCount: data['resolutionCount'] is num
-          ? (data['resolutionCount'] as num).toInt().clamp(0, 1000000)
-          : 0,
-      resolutionId: data['resolutionId'] is String
-          ? data['resolutionId'] as String
-          : null,
-      media: cautionMediaFrom(data['media']),
-      latestEvidence: data['latestEvidence'] is Map
-          ? Map<String, dynamic>.from(data['latestEvidence'] as Map)
-          : const {},
-      reportedAt: time is Timestamp
-          ? time.toDate()
-          : DateTime.tryParse(
-              data['reportedAtLocal'] is String
-                  ? data['reportedAtLocal'] as String
-                  : '',
-            ),
-    );
-    return includeExpired || result.isActiveAt(now ?? DateTime.now())
-        ? result
-        : null;
-  }
-}
-
+/// Represents community hazard cluster.
 class CommunityHazardCluster {
+  /// Creates community hazard cluster.
   const CommunityHazardCluster(this.reports);
   final List<CommunityHazard> reports;
+
+  /// Returns latitude.
   double get latitude => reports.first.latitude;
+
+  /// Returns longitude.
   double get longitude => reports.first.longitude;
+
+  /// Returns count.
   int get count => reports.length;
+
+  /// Returns confirmations.
   int get confirmations =>
       reports.fold(0, (total, report) => total + report.reportCount);
+
+  /// Returns is resolved.
   bool get isResolved => reports.every((r) => r.isResolved);
+
+  /// Returns has serious risk.
+  bool get hasSeriousRisk => reports.any((r) => r.isFatal && !r.isResolved);
+
+  /// Returns lead report.
+  CommunityHazard get leadReport => reports.firstWhere(
+    (r) => r.isFatal && !r.isResolved,
+    orElse: () => reports.firstWhere(
+      (r) => trailHazardCategoryFor(r.type) == 'Weather',
+      orElse: () => reports.first,
+    ),
+  );
 }
 
+/// Computes cluster community hazards.
 List<CommunityHazardCluster> clusterCommunityHazards(
   Iterable<CommunityHazard> reports,
 ) {
@@ -154,10 +82,22 @@ List<CommunityHazardCluster> clusterCommunityHazards(
       .toList();
 }
 
-Future<Uint8List> communityHazardMarkerImage(int count) async {
+/// Computes community hazard marker image.
+Future<Uint8List> communityHazardMarkerImage(
+  int count, {
+  String? type,
+  bool seriousRisk = false,
+  bool badgeBright = true,
+}) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
-  _paintCommunityHazardMarker(canvas, count);
+  _paintCommunityHazardMarker(
+    canvas,
+    count,
+    type: type,
+    seriousRisk: seriousRisk,
+    badgeBright: badgeBright,
+  );
   final picture = recorder.endRecording();
   final image = await picture.toImage(80, 76);
   final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -168,7 +108,10 @@ Future<Uint8List> communityHazardMarkerImage(int count) async {
 
 /// Matches the single-report marker shown on trail maps.
 class CommunityHazardMarkerIcon extends StatelessWidget {
+  /// Creates community hazard marker icon.
   const CommunityHazardMarkerIcon({super.key});
+
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => const CustomPaint(
     size: Size(44, 42),
@@ -176,8 +119,12 @@ class CommunityHazardMarkerIcon extends StatelessWidget {
   );
 }
 
+/// Represents community hazard icon painter.
 class _CommunityHazardIconPainter extends CustomPainter {
+  /// Creates community hazard icon painter.
   const _CommunityHazardIconPainter();
+
+  /// Computes paint.
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
@@ -186,22 +133,33 @@ class _CommunityHazardIconPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Computes should repaint.
   @override
   bool shouldRepaint(_CommunityHazardIconPainter oldDelegate) => false;
 }
 
-void _paintCommunityHazardMarker(Canvas canvas, int count) {
+/// Computes paint community hazard marker.
+void _paintCommunityHazardMarker(
+  Canvas canvas,
+  int count, {
+  String? type,
+  bool seriousRisk = false,
+  bool badgeBright = true,
+}) {
   canvas.drawCircle(const Offset(36, 40), 27, Paint()..color = Colors.white);
   canvas.drawCircle(
     const Offset(36, 40),
     23,
     Paint()..color = const Color(0xFFFFC857),
   );
+  final icon = type == null ? null : trailHazardIconFor(type);
   final warning = TextPainter(
-    text: const TextSpan(
-      text: '!',
+    text: TextSpan(
+      text: icon == null ? '!' : String.fromCharCode(icon.codePoint),
       style: TextStyle(
-        fontSize: 36,
+        fontFamily: icon?.fontFamily ?? 'Inter',
+        package: icon?.fontPackage,
+        fontSize: icon == null ? 36 : 32,
         fontWeight: FontWeight.w900,
         color: Color(0xFF342500),
       ),
@@ -212,17 +170,36 @@ void _paintCommunityHazardMarker(Canvas canvas, int count) {
     canvas,
     Offset(36 - warning.width / 2, 39 - warning.height / 2),
   );
-  if (count > 1) {
-    canvas.drawCircle(const Offset(58, 17), 16, Paint()..color = Colors.white);
+  if (seriousRisk) {
+    canvas.drawCircle(const Offset(58, 17), 15, Paint()..color = Colors.white);
     canvas.drawCircle(
       const Offset(58, 17),
-      14,
-      Paint()..color = const Color(0xFFE24B3C),
+      13,
+      Paint()
+        ..color = const Color(
+          0xFFD32F2F,
+        ).withValues(alpha: badgeBright ? 1 : .25),
     );
+    // Draw the small exclamation directly so its shape stays crisp at map scale.
+    canvas.drawLine(
+      const Offset(58, 11),
+      const Offset(58, 17),
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawCircle(const Offset(58, 23), 1.8, Paint()..color = Colors.white);
+  }
+  if (count > 1) {
+    final center = seriousRisk ? const Offset(60, 60) : const Offset(58, 17);
+    canvas.drawCircle(center, 16, Paint()..color = Colors.white);
+    canvas.drawCircle(center, 14, Paint()..color = const Color(0xFFE24B3C));
     final badge = TextPainter(
       text: TextSpan(
         text: count > 99 ? '99+' : '$count',
         style: const TextStyle(
+          fontFamily: 'Inter',
           fontSize: 15,
           fontWeight: FontWeight.w800,
           color: Colors.white,
@@ -230,10 +207,14 @@ void _paintCommunityHazardMarker(Canvas canvas, int count) {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    badge.paint(canvas, Offset(58 - badge.width / 2, 17 - badge.height / 2));
+    badge.paint(
+      canvas,
+      Offset(center.dx - badge.width / 2, center.dy - badge.height / 2),
+    );
   }
 }
 
+/// Computes community hazard annotation.
 mapbox.PointAnnotationOptions communityHazardAnnotation(
   CommunityHazardCluster cluster,
   Uint8List image, {
@@ -248,6 +229,7 @@ mapbox.PointAnnotationOptions communityHazardAnnotation(
   iconAnchor: mapbox.IconAnchor.CENTER,
 );
 
+/// Shows community hazard details.
 Future<void> showCommunityHazardDetails(
   BuildContext context,
   CommunityHazardCluster cluster, {
@@ -256,24 +238,16 @@ Future<void> showCommunityHazardDetails(
   context: context,
   showDragHandle: true,
   isScrollControlled: true,
+  backgroundColor: Theme.of(context).colorScheme.surfaceContainerLow,
+  shape: const RoundedRectangleBorder(
+    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+  ),
+  clipBehavior: Clip.antiAlias,
   builder: (_) => TrailCautionDetailsSheet(
     reports: cluster.reports,
     allowFeedback: allowFeedback,
   ),
 );
-
-List<Map<String, dynamic>> cautionMediaFrom(Object? value) => value is List
-    ? value
-          .whereType<Map>()
-          .map((m) => Map<String, dynamic>.from(m))
-          .where(
-            (m) =>
-                m['url'] is String &&
-                Uri.tryParse(m['url'] as String)?.scheme == 'https' &&
-                m['contentType'] is String,
-          )
-          .toList()
-    : const [];
 
 /// 38 logical pixels represent roughly a centimetre on typical phone screens.
 /// Grow continuously from the 100 m scale to 3.5 times the size at 10 m.
@@ -287,17 +261,23 @@ double cautionMarkerScale(double zoom, double latitude) {
   return .65 * (1 + progress * 2.5);
 }
 
+/// Represents caution marker sizer.
 class CautionMarkerSizer {
   final _markers = <String, (mapbox.PointAnnotation, double)>{};
   mapbox.PointAnnotationManager? _manager;
   double _factor = 1;
   bool _updating = false, _dirty = false;
+
+  /// Clears.
   void clear() => _markers.clear();
+
+  /// Adds.
   void add(mapbox.PointAnnotation marker, double baseSize) {
     _markers[marker.id] = (marker, baseSize);
     _dirty = true;
   }
 
+  /// Computes resize.
   Future<void> resize(
     mapbox.PointAnnotationManager? manager,
     double factor,
@@ -337,8 +317,14 @@ class CautionMarkerSizer {
 
 /// Community changes update their own annotation layer. Route geometry and the
 /// playback controller are never cleared or restarted by a vote or expiry.
-class CommunityCautionMapLayer {
-  CommunityCautionMapLayer({required this.onTap});
+class CommunityCautionMapLayer with WidgetsBindingObserver {
+  /// Creates community caution map layer.
+  CommunityCautionMapLayer({required this.onTap}) {
+    WidgetsBinding.instance.addObserver(this);
+    _foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  }
   final void Function(CommunityHazardCluster) onTap;
   final _sizer = CautionMarkerSizer();
   final _byId = <String, CommunityHazardCluster>{};
@@ -350,7 +336,82 @@ class CommunityCautionMapLayer {
   int _generation = 0, _styleGeneration = -1, _revision = 0;
   double _factor = 1;
   bool _dirty = false, _disposed = false;
+  final _badgeMarkers =
+      <String, (mapbox.PointAnnotation, Uint8List, Uint8List)>{};
+  Timer? _badgeTimer;
+  Future<void>? _badgeUpdate;
+  bool _animationsEnabled = true, _foreground = true, _badgeBright = true;
+  bool _badgeDirty = false;
 
+  /// Sets animations enabled.
+  void setAnimationsEnabled(bool enabled) {
+    if (_animationsEnabled == enabled) return;
+    _animationsEnabled = enabled;
+    _syncBadgeTimer();
+  }
+
+  /// Responds to foreground and background transitions.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed;
+    _syncBadgeTimer();
+  }
+
+  /// Synchronizes badge timer.
+  void _syncBadgeTimer() {
+    if (_disposed ||
+        _badgeMarkers.isEmpty ||
+        !_animationsEnabled ||
+        !_foreground) {
+      _badgeTimer?.cancel();
+      _badgeTimer = null;
+      if (!_badgeBright) {
+        _badgeBright = true;
+        unawaited(_updateBadgeFrames());
+      }
+      return;
+    }
+    _badgeTimer ??= Timer.periodic(const Duration(milliseconds: 900), (_) {
+      _badgeBright = !_badgeBright;
+      unawaited(_updateBadgeFrames());
+    });
+  }
+
+  /// Updates badge frames.
+  Future<void> _updateBadgeFrames() {
+    if (_disposed || _manager == null || _badgeMarkers.isEmpty) {
+      return Future.value();
+    }
+    _badgeDirty = true;
+    if (_badgeUpdate != null) return _badgeUpdate!;
+    final manager = _manager!, generation = _generation;
+    late Future<void> updating;
+    updating =
+        (() async {
+          while (_badgeDirty && !_disposed && generation == _generation) {
+            _badgeDirty = false;
+            final bright = _badgeBright;
+            for (final entry in _badgeMarkers.values.toList()) {
+              if (_disposed || generation != _generation) return;
+              entry.$1.image = bright ? entry.$2 : entry.$3;
+              // Reuse two native image names instead of allocating one per blink.
+              entry.$1.iconImage =
+                  'community-risk-$generation-${entry.$1.id}-${bright ? 'bright' : 'dim'}';
+              try {
+                await manager.update(entry.$1);
+              } catch (_) {
+                // A style change may have removed this annotation.
+              }
+            }
+          }
+        })().whenComplete(() {
+          if (identical(_badgeUpdate, updating)) _badgeUpdate = null;
+        });
+    _badgeUpdate = updating;
+    return updating;
+  }
+
+  /// Sets reports.
   void setReports(List<CommunityHazardCluster> reports) {
     if (_disposed) return;
     _reports = reports;
@@ -359,11 +420,13 @@ class CommunityCautionMapLayer {
     unawaited(_render());
   }
 
+  /// Sets scale.
   void setScale(double zoom, double latitude) {
     _factor = cautionMarkerScale(zoom, latitude) / .65;
     unawaited(_sizer.resize(_manager, _factor));
   }
 
+  /// Computes attach.
   Future<void> attach(mapbox.MapboxMap map, int styleGeneration) {
     if (_disposed) return Future.value();
     if (identical(map, _map) &&
@@ -414,6 +477,7 @@ class CommunityCautionMapLayer {
     return attaching;
   }
 
+  /// Computes render.
   Future<void> _render() {
     if (_disposed || _manager == null || !_dirty) return Future.value();
     if (_rendering != null) return _rendering!;
@@ -425,15 +489,35 @@ class CommunityCautionMapLayer {
                 _dirty = false;
                 final revision = _revision,
                     reports = List<CommunityHazardCluster>.of(_reports);
+                _badgeTimer?.cancel();
+                _badgeTimer = null;
+                _badgeMarkers.clear();
+                // Finish a frame already being sent before replacing markers.
+                await _badgeUpdate;
                 await manager.deleteAll();
                 if (_disposed || generation != _generation) return;
                 _byId.clear();
                 _sizer.clear();
                 final images = await Future.wait(
                   reports.map(
-                    (r) => communityHazardMarkerImage(r.confirmations),
+                    (r) => communityHazardMarkerImage(
+                      r.confirmations,
+                      type: r.leadReport.type,
+                      seriousRisk: r.hasSeriousRisk,
+                    ),
                   ),
                 );
+                final dimImages = await Future.wait([
+                  for (var i = 0; i < reports.length; i++)
+                    reports[i].hasSeriousRisk
+                        ? communityHazardMarkerImage(
+                            reports[i].confirmations,
+                            type: reports[i].leadReport.type,
+                            seriousRisk: true,
+                            badgeBright: false,
+                          )
+                        : Future<Uint8List>.value(images[i]),
+                ]);
                 if (_disposed || generation != _generation) return;
                 final annotations = await manager.createMulti([
                   for (var i = 0; i < reports.length; i++)
@@ -449,9 +533,18 @@ class CommunityCautionMapLayer {
                   if (annotation != null) {
                     _byId[annotation.id] = reports[i];
                     _sizer.add(annotation, .65);
+                    if (reports[i].hasSeriousRisk) {
+                      _badgeMarkers[annotation.id] = (
+                        annotation,
+                        images[i],
+                        dimImages[i],
+                      );
+                    }
                   }
                 }
                 await _sizer.resize(manager, _factor);
+                _badgeBright = true;
+                _syncBadgeTimer();
                 if (revision != _revision) _dirty = true;
               }
             })()
@@ -468,12 +561,20 @@ class CommunityCautionMapLayer {
     return rendering;
   }
 
+  /// Resets.
   void reset() {
     unawaited(resetAndWait());
   }
 
+  /// Resets and wait.
   Future<void> resetAndWait() async {
     _generation++;
+    _badgeTimer?.cancel();
+    _badgeTimer = null;
+    _badgeMarkers.clear();
+    _badgeUpdate = null;
+    _badgeDirty = false;
+    _badgeBright = true;
     _tap?.cancel();
     _tap = null;
     final old = _manager;
@@ -493,7 +594,9 @@ class CommunityCautionMapLayer {
     }
   }
 
+  /// Releases resources owned by this instance.
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     reset();
     _disposed = true;
   }

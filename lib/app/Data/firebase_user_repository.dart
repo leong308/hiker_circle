@@ -7,7 +7,9 @@ import '../Model/app_session.dart';
 import 'firebase_bootstrap.dart';
 import 'user_module_paths.dart';
 
+/// Represents firebase user repository exception.
 class FirebaseUserRepositoryException implements Exception {
+  /// Creates firebase user repository exception.
   const FirebaseUserRepositoryException(
     this.message, {
     this.requiresSignIn = false,
@@ -16,11 +18,14 @@ class FirebaseUserRepositoryException implements Exception {
   final String message;
   final bool requiresSignIn;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents firebase user repository.
 class FirebaseUserRepository {
+  /// Creates firebase user repository.
   FirebaseUserRepository({
     FirebaseFirestore? firestore,
     FirebaseAuth? firebaseAuth,
@@ -34,25 +39,31 @@ class FirebaseUserRepository {
   final FirebaseAuth? _firebaseAuth;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
+  /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
 
+  /// Returns resolved firebase auth.
   FirebaseAuth get _resolvedFirebaseAuth =>
       _firebaseAuth ?? FirebaseAuth.instance;
 
+  /// Returns users.
   CollectionReference<Map<String, dynamic>> get _users {
     return _resolvedFirestore.collection('users');
   }
 
+  /// Computes document id for phone number.
   static String documentIdForPhoneNumber(String phoneNumber) {
     return phoneNumber.replaceAll('/', '_');
   }
 
+  /// Computes register or load user.
   Future<AppSession> registerOrLoadUser(AppSession session) async {
     // Login activation and device ownership are committed by the server.
     return refreshBoundSession(session);
   }
 
+  /// Watches session state.
   Stream<Map<String, dynamic>> watchSessionState(String phoneNumber) {
     return _resolvedFirestore
         .collection('mobileSessions')
@@ -62,6 +73,7 @@ class FirebaseUserRepository {
         .map((event) => event.data() ?? <String, dynamic>{});
   }
 
+  /// Refreshes bound session.
   Future<AppSession> refreshBoundSession(AppSession session) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       throw FirebaseUserRepositoryException(
@@ -122,6 +134,7 @@ class FirebaseUserRepository {
     }
   }
 
+  /// Computes require authenticated mfa session.
   Future<User> _requireAuthenticatedMfaSession(AppSession session) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       throw FirebaseUserRepositoryException(
@@ -182,10 +195,12 @@ class FirebaseUserRepository {
     }
   }
 
+  /// Computes sign out.
   Future<void> signOut() async {
     await _resolvedFirebaseAuth.signOut();
   }
 
+  /// Checks whether admin.
   bool _isAdmin(Map<String, dynamic>? data) {
     if (data == null) {
       return false;
@@ -199,11 +214,13 @@ class FirebaseUserRepository {
             roles.any((value) => _stringFrom(value).toLowerCase() == 'admin'));
   }
 
+  /// Computes requires onboarding.
   bool _requiresOnboarding(Map<String, dynamic>? data) {
     final value = data?['requiresOnboarding'];
     return value is bool ? value : true;
   }
 
+  /// Computes username.
   String _username(Map<String, dynamic>? data) {
     final profile = data?['profile'];
     final canonical = profile is Map
@@ -213,15 +230,18 @@ class FirebaseUserRepository {
     return '';
   }
 
+  /// Computes photo url.
   String? _photoURL(Map<String, dynamic>? data) {
     final profile = data?['profile'];
     final value = profile is Map ? _stringFrom(profile['photoURL']).trim() : '';
     return value.isEmpty ? null : value;
   }
 
+  /// Checks whether profile setup complete.
   bool _isProfileSetupComplete(Map<String, dynamic>? data) =>
       data?['profileSetupCompleted'] == true;
 
+  /// Computes string from.
   String _stringFrom(Object? value) {
     return value is String ? value : '';
   }

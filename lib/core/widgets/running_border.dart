@@ -2,7 +2,9 @@
 // settings.
 import 'package:flutter/material.dart';
 
+/// Displays the running border.
 class RunningBorder extends StatefulWidget {
+  /// Creates running border.
   const RunningBorder({
     super.key,
     required this.child,
@@ -12,16 +14,21 @@ class RunningBorder extends StatefulWidget {
   final Widget child;
   final Color color;
   final double radius;
+
+  /// Creates the presentation state for this widget.
   @override
   State<RunningBorder> createState() => _RunningBorderState();
 }
 
+/// Manages the running border presentation and lifecycle.
 class _RunningBorderState extends State<RunningBorder>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(seconds: 2),
   );
+
+  /// Refreshes presentation dependencies.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -33,12 +40,14 @@ class _RunningBorderState extends State<RunningBorder>
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Stack(
     children: [
@@ -63,7 +72,9 @@ class _RunningBorderState extends State<RunningBorder>
   );
 }
 
+/// Represents border travel painter.
 class BorderTravelPainter extends CustomPainter {
+  /// Creates border travel painter.
   BorderTravelPainter({
     required this.progress,
     required this.color,
@@ -74,6 +85,7 @@ class BorderTravelPainter extends CustomPainter {
   final Color color;
   final double radius;
 
+  /// Computes paint.
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
@@ -146,6 +158,7 @@ class BorderTravelPainter extends CustomPainter {
     }
   }
 
+  /// Computes should repaint.
   @override
   bool shouldRepaint(BorderTravelPainter oldDelegate) =>
       oldDelegate.progress != progress ||

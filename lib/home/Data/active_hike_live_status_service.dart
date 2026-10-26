@@ -1,3 +1,5 @@
+import '../../app/Data/app_settings_controller.dart';
+import 'location_update_interval_controller.dart';
 // ActiveHikeLiveStatusService bridges hike status, native GPS buffers and native safety events.
 import 'dart:async';
 
@@ -5,13 +7,16 @@ import 'package:flutter/services.dart';
 
 import '../Model/hike_session_models.dart';
 
+/// Represents active hike live status service.
 class ActiveHikeLiveStatusService {
+  /// Creates active hike live status service.
   const ActiveHikeLiveStatusService();
 
   static const MethodChannel _channel = MethodChannel(
     'hiker_circle/active_hike_live_status',
   );
 
+  /// Sets native safety event handler.
   void setNativeSafetyEventHandler(Future<void> Function()? handler) {
     _channel.setMethodCallHandler(
       handler == null
@@ -42,6 +47,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Returns pending native location samples.
   Future<List<Map<String, dynamic>>> getPendingNativeLocationSamples(
     String sessionId,
   ) async {
@@ -78,6 +84,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Marks native location samples cloud acknowledged.
   Future<void> markNativeLocationSamplesCloudAcknowledged(
     String sessionId,
     List<int> sampledAtMillis,
@@ -94,6 +101,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Returns native location buffer sessions.
   Future<List<String>> getNativeLocationBufferSessions() async {
     try {
       return await _channel.invokeListMethod<String>(
@@ -107,6 +115,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Computes remap native location session.
   Future<void> remapNativeLocationSession(
     String oldSessionId,
     String newSessionId,
@@ -123,6 +132,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Stops.
   Future<bool> stop() async {
     try {
       await _channel
@@ -138,6 +148,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Computes consume pending safety event.
   Future<NativeHikeSafetyEvent?> consumePendingSafetyEvent({
     bool strict = false,
   }) async {
@@ -159,6 +170,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Computes acknowledge safety event.
   Future<bool> acknowledgeSafetyEvent(String eventId) async {
     try {
       await _channel.invokeMethod<void>('acknowledgeSafetyEvent', {
@@ -172,6 +184,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Cancels native safety alert.
   Future<void> cancelNativeSafetyAlert() async {
     try {
       await _channel.invokeMethod<void>('cancelNativeSafetyAlert');
@@ -215,6 +228,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Marks safety event dispatched.
   Future<bool> markSafetyEventDispatched(
     String eventId, {
     String? message,
@@ -232,6 +246,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Computes request ios safety permissions.
   Future<void> requestIosSafetyPermissions() async {
     try {
       await _channel.invokeMethod<bool>('requestIosSafetyPermissions');
@@ -242,6 +257,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Opens ios safety settings.
   Future<void> openIosSafetySettings() async {
     try {
       await _channel.invokeMethod<void>('openIosSafetySettings');
@@ -252,6 +268,21 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Computes active power settings.
+  Future<Map<String, dynamic>?> activePowerSettings() async {
+    try {
+      final value = await _channel.invokeMapMethod<String, dynamic>(
+        'getActiveHikePowerSettings',
+      );
+      return value;
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  /// Computes native safety status.
   Future<NativeHikeSafetyStatus> nativeSafetyStatus() async {
     try {
       final data = await _channel.invokeMapMethod<Object?, Object?>(
@@ -265,6 +296,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Opens background location settings.
   Future<void> openBackgroundLocationSettings() async {
     try {
       await _channel.invokeMethod<void>('openBackgroundLocationSettings');
@@ -275,6 +307,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Opens full screen intent settings.
   Future<void> openFullScreenIntentSettings() async {
     try {
       await _channel.invokeMethod<void>('openFullScreenIntentSettings');
@@ -285,6 +318,7 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Opens overlay settings.
   Future<void> openOverlaySettings() async {
     try {
       await _channel.invokeMethod<void>('openOverlaySettings');
@@ -295,15 +329,23 @@ class ActiveHikeLiveStatusService {
     }
   }
 
+  /// Computes active hike to platform map.
   Map<String, Object?> _activeHikeToPlatformMap(ActiveHikeSession activeHike) {
     return {
       'sessionId': activeHike.sessionId,
+      'batterySafetyAdjusted': activeHike.batterySafetyAdjusted,
+      'batterySafetyRevision': activeHike.batterySafetyRevision,
+      'batteryOriginalFootprintIntervalSeconds':
+          activeHike.batteryOriginalFootprintIntervalSeconds ??
+          LocationUpdateIntervalController.instance.preferredInterval.inSeconds,
+      'batteryOriginalSensorSensitivity':
+          activeHike.batteryOriginalSensorSensitivity ??
+          AppSettingsController.instance.fallSensorSensitivity,
       'trailName': activeHike.trail.name,
       'startedAtMillis': activeHike.startedAt.millisecondsSinceEpoch,
       'expectedReturnAtMillis':
           activeHike.draft.expectedReturnTime.millisecondsSinceEpoch,
       'checkIns': activeHike.checkIns,
-      'manualPins': activeHike.manualPins,
       'queuedUpdates': activeHike.queuedUpdates,
       'batteryLevel': activeHike.batteryLevel,
       'distanceKm': activeHike.recordedDistanceKm,
@@ -326,7 +368,9 @@ class ActiveHikeLiveStatusService {
   }
 }
 
+/// Represents native hike safety event.
 class NativeHikeSafetyEvent {
+  /// Creates native hike safety event.
   const NativeHikeSafetyEvent({
     required this.eventId,
     required this.sessionId,
@@ -340,7 +384,9 @@ class NativeHikeSafetyEvent {
     this.ownerUid = '',
   });
 
+  /// Creates native hike safety event using from platform.
   factory NativeHikeSafetyEvent.fromPlatform(Map<Object?, Object?> data) {
+    /// Computes date from.
     DateTime? dateFrom(Object? value) {
       final millis = value is num ? value.toInt() : 0;
       return millis > 0
@@ -373,15 +419,28 @@ class NativeHikeSafetyEvent {
   final bool localAlarmStopped;
   final String ownerUid;
 
+  /// Returns is triggering.
   bool get isTriggering => phase == 'triggering';
+
+  /// Returns is dispatching.
   bool get isDispatching => phase == 'dispatching';
+
+  /// Returns is dispatched.
   bool get isDispatched => phase == 'dispatched';
+
+  /// Returns is dispatch failed.
   bool get isDispatchFailed => phase == 'dispatch_failed';
+
+  /// Returns is ready for flutter dispatch.
   bool get isReadyForFlutterDispatch => phase == 'ready_for_flutter_dispatch';
+
+  /// Returns is prolonged stillness.
   bool get isProlongedStillness => kind == 'prolonged_stillness';
 }
 
+/// Represents native hike safety status.
 class NativeHikeSafetyStatus {
+  /// Creates native hike safety status.
   const NativeHikeSafetyStatus({
     required this.supported,
     required this.configured,
@@ -398,6 +457,7 @@ class NativeHikeSafetyStatus {
     this.motionGranted = false,
   });
 
+  /// Creates native hike safety status using unsupported.
   const NativeHikeSafetyStatus.unsupported()
     : this(
         supported: false,
@@ -409,6 +469,7 @@ class NativeHikeSafetyStatus {
         platform: 'unsupported',
       );
 
+  /// Creates native hike safety status using from platform.
   factory NativeHikeSafetyStatus.fromPlatform(Map<Object?, Object?>? data) {
     if (data == null) return const NativeHikeSafetyStatus.unsupported();
     return NativeHikeSafetyStatus(

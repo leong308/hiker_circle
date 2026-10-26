@@ -1,11 +1,13 @@
 // PathDeviationPolicy normalizes warning distances and accounts for GPS accuracy.
 import 'dart:math' as math;
 
+/// Represents path deviation policy.
 abstract final class PathDeviationPolicy {
   static const int minimumDistanceMeters = 10;
   static const int maximumDistanceMeters = 50;
   static const int defaultDistanceMeters = 30;
 
+  /// Normalizes distance.
   static int normalizeDistance(Object? value) {
     if (value is! num || !value.isFinite) return defaultDistanceMeters;
     return value.round().clamp(minimumDistanceMeters, maximumDistanceMeters);

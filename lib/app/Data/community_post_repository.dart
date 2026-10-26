@@ -2,8 +2,11 @@
 // scoped cache, drafts, uploads and reactions.
 part of 'hiker_circle_firebase_repository.dart';
 
+/// Computes post map.
 Map<String, dynamic> _postMap(Object? value) =>
     value is Map ? Map<String, dynamic>.from(value) : {};
+
+/// Computes post millis.
 int _postMillis(Object? value) => value is Timestamp
     ? value.millisecondsSinceEpoch
     : value is num
@@ -82,6 +85,7 @@ Map<String, dynamic> communityPostViewData(
   };
 }
 
+/// Computes community comment view.
 Map<String, dynamic> _communityCommentView(
   Map<String, dynamic> data,
   String id,
@@ -116,6 +120,7 @@ Map<String, dynamic> _communityCommentView(
   };
 }
 
+/// Computes community call.
 Future<Map<String, dynamic>> _communityCall(
   HikerCircleFirebaseRepository r,
   String name,
@@ -143,6 +148,7 @@ Future<Map<String, dynamic>> _communityCall(
   }
 }
 
+/// Computes community account.
 String _communityAccount(HikerCircleFirebaseRepository r, AppSession session) {
   final uid = r._captureAccountUid(session);
   if (uid == null) {
@@ -155,6 +161,7 @@ String _communityAccount(HikerCircleFirebaseRepository r, AppSession session) {
 
 // _publishCommunity reuses a stable post ID and content-addressed uploads so uncertain submissions
 // can be retried safely.
+/// Computes publish community.
 Future<void> _publishCommunity(
   HikerCircleFirebaseRepository r, {
   required AppSession session,
@@ -269,6 +276,7 @@ Future<void> _publishCommunity(
 
 // _readCommunityPosts hydrates viewer state and reconciles successful public feed refreshes before
 // offline fallback.
+/// Computes community posts.
 Future<List<Map<String, dynamic>>> _readCommunityPosts(
   HikerCircleFirebaseRepository r, {
   AppSession? session,
@@ -279,10 +287,14 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
 }) async {
   final owner = session?.phoneNumber ?? '';
   final viewer = session == null ? '' : r._userIdFor(session);
+
+  /// Computes same account.
   bool sameAccount() =>
       session == null ||
       !r._firebaseBootstrapResult.isAvailable ||
       r._accountStillMatches(session, viewer);
+
+  /// Computes cached.
   Future<List<Map<String, dynamic>>> cached() async {
     if (!sameAccount()) return [];
     try {
@@ -346,7 +358,8 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
                     .get())
                 .exists;
           } on FirebaseException catch (error) {
-            if (error.code == 'permission-denied' || error.code == 'not-found') {
+            if (error.code == 'permission-denied' ||
+                error.code == 'not-found') {
               return false;
             }
             rethrow;
@@ -428,6 +441,7 @@ Future<List<Map<String, dynamic>>> _readCommunityPosts(
 
 // _readCommunityComments paginates one thread and reconciles only the range confirmed by a
 // successful refresh.
+/// Computes community comments.
 Future<List<Map<String, dynamic>>> _readCommunityComments(
   HikerCircleFirebaseRepository r,
   String postId, {
@@ -435,8 +449,12 @@ Future<List<Map<String, dynamic>>> _readCommunityComments(
   int limit = 50,
 }) async {
   final uid = _communityCurrentUid(r);
+
+  /// Computes same account.
   bool sameAccount() =>
       !r._firebaseBootstrapResult.isAvailable || _communityCurrentUid(r) == uid;
+
+  /// Computes cached.
   Future<List<Map<String, dynamic>>> cached() async {
     if (!sameAccount()) return [];
     try {
@@ -540,6 +558,7 @@ Future<List<Map<String, dynamic>>> _readCommunityComments(
   }
 }
 
+/// Computes community current uid.
 String _communityCurrentUid(HikerCircleFirebaseRepository r) {
   try {
     return r._authenticatedUid?.call() ??
@@ -550,6 +569,7 @@ String _communityCurrentUid(HikerCircleFirebaseRepository r) {
   }
 }
 
+/// Loads community draft.
 Future<CommunityPostDraftData?> _loadCommunityDraft(
   HikerCircleFirebaseRepository r,
   AppSession session,

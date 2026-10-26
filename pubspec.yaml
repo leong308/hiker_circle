@@ -72,6 +72,7 @@ dependencies:
   sqflite_sqlcipher: 3.4.1
   local_auth: 3.0.2
   firebase_app_check: 0.4.8
+  shared_preferences: ^2.5.6
 
 
 dev_dependencies:

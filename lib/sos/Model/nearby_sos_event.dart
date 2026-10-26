@@ -3,7 +3,9 @@ import 'dart:math' as math;
 
 import 'sos_models.dart';
 
+/// Represents nearby sos event.
 class NearbySosEvent {
+  /// Creates nearby sos event.
   const NearbySosEvent({
     required this.ownerPhoneNumber,
     required this.eventKey,
@@ -29,13 +31,16 @@ class NearbySosEvent {
   final SosTriggerLocation? location;
   final SosTriggerLocation? detectorLocation;
 
+  /// Returns has reported location.
   bool get hasReportedLocation => _isValidLocation(location);
 
+  /// Computes age at.
   Duration ageAt(DateTime now) {
     final age = now.toUtc().difference(receivedAt.toUtc());
     return age.isNegative ? Duration.zero : age;
   }
 
+  /// Computes distance meters from.
   double? distanceMetersFrom(SosTriggerLocation? phoneLocation) {
     final target = location;
     if (!_isValidLocation(target) || !_isValidLocation(phoneLocation)) {
@@ -57,12 +62,14 @@ class NearbySosEvent {
     return earthRadiusMeters * centralAngle;
   }
 
+  /// Checks whether active at.
   bool isActiveAt({required DateTime now, SosTriggerLocation? phoneLocation}) {
     if (ageAt(now) > activeDuration) return false;
     final distance = distanceMetersFrom(phoneLocation);
     return distance == null || distance <= activeRadiusMeters;
   }
 
+  /// Computes event key for.
   static String eventKeyFor({
     required String deviceId,
     required DateTime receivedAt,
@@ -76,6 +83,7 @@ class NearbySosEvent {
     return '$normalizedDeviceId:$eventId';
   }
 
+  /// Checks whether valid location.
   static bool _isValidLocation(SosTriggerLocation? value) {
     return value != null &&
         value.latitude.isFinite &&
@@ -86,5 +94,6 @@ class NearbySosEvent {
         value.longitude <= 180;
   }
 
+  /// Computes radians.
   static double _radians(double degrees) => degrees * math.pi / 180;
 }

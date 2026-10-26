@@ -12,6 +12,7 @@ import 'weather_map_service.dart';
 /// One fixed zoom, independent of the map camera. At Malaysian latitudes the
 /// 100 km bounding box requires at most four 256px tiles per selected layer.
 class WeatherAreaGrid {
+  /// Creates weather area grid.
   WeatherAreaGrid(this.latitude, this.longitude) {
     if (!latitude.isFinite ||
         !longitude.isFinite ||
@@ -39,10 +40,20 @@ class WeatherAreaGrid {
   final double latitude;
   final double longitude;
   late final int left, right, top, bottom;
+
+  /// Returns width.
   int get width => (right - left + 1) * 256;
+
+  /// Returns height.
   int get height => (bottom - top + 1) * 256;
+
+  /// Returns tile count.
   int get tileCount => (right - left + 1) * (bottom - top + 1);
+
+  /// Computes tile x.
   static double tileX(double lon) => (lon + 180) / 360 * tilesPerWorld;
+
+  /// Computes tile y.
   static double tileY(double lat) {
     final radians = lat * math.pi / 180;
     return (1 - math.log(math.tan(radians) + 1 / math.cos(radians)) / math.pi) /
@@ -50,12 +61,16 @@ class WeatherAreaGrid {
         tilesPerWorld;
   }
 
+  /// Computes longitude at.
   static double longitudeAt(double x) => x / tilesPerWorld * 360 - 180;
+
+  /// Computes latitude at.
   static double latitudeAt(double y) {
     final n = math.pi * (1 - 2 * y / tilesPerWorld);
     return math.atan((math.exp(n) - math.exp(-n)) / 2) * 180 / math.pi;
   }
 
+  /// Returns corners.
   List<List<double>> get corners => [
     [longitudeAt(left.toDouble()), latitudeAt(top.toDouble())],
     [longitudeAt(right + 1.0), latitudeAt(top.toDouble())],
@@ -93,14 +108,18 @@ class WeatherAreaGrid {
   }
 }
 
+/// Represents weather area image.
 class WeatherAreaImage {
+  /// Creates weather area image.
   const WeatherAreaImage(this.grid, this.png, this.loadedAt);
   final WeatherAreaGrid grid;
   final Uint8List png;
   final DateTime loadedAt;
 }
 
+/// Represents weather area service.
 class WeatherAreaService {
+  /// Creates weather area service.
   WeatherAreaService({http.Client? client, DateTime Function()? now})
     : _client = client,
       _now = now ?? DateTime.now;
@@ -110,6 +129,7 @@ class WeatherAreaService {
   final _cache = <String, WeatherAreaImage>{};
   final _pending = <String, Future<WeatherAreaImage>>{};
 
+  /// Loads.
   Future<WeatherAreaImage> load({
     required double latitude,
     required double longitude,
@@ -142,6 +162,7 @@ class WeatherAreaService {
     }
   }
 
+  /// Downloads.
   Future<WeatherAreaImage> _download(
     WeatherAreaGrid grid,
     WeatherMapLayer layer,

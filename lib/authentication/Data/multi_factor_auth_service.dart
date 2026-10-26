@@ -12,7 +12,9 @@ import '../Model/mfa_models.dart';
 import 'passkey_build_support.dart';
 import 'auth_flow_diagnostics.dart';
 
+/// Represents multi factor auth service.
 class MultiFactorAuthService {
+  /// Creates multi factor auth service.
   MultiFactorAuthService({
     FirebaseFunctions? functions,
     FirebaseAuth? auth,
@@ -25,8 +27,11 @@ class MultiFactorAuthService {
   final FirebaseAuth? _authOverride;
   final PasskeyAuthenticator _passkeys;
 
+  /// Returns functions.
   FirebaseFunctions get _functions =>
       _functionsOverride ?? FirebaseFunctions.instance;
+
+  /// Returns auth.
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
 
   /// Read the verified phone claim from the authenticated token before changing security factors.
@@ -50,6 +55,7 @@ class MultiFactorAuthService {
     );
   }
 
+  /// Begins totp enrollment.
   Future<TotpEnrollment> beginTotpEnrollment({String? mfaToken}) async {
     final data = await _call(
       'beginTotpEnrollment',
@@ -65,6 +71,7 @@ class MultiFactorAuthService {
     );
   }
 
+  /// Finishes totp enrollment.
   Future<AppSession?> finishTotpEnrollment({
     required String challengeId,
     required String code,
@@ -101,6 +108,7 @@ class MultiFactorAuthService {
     return _sessionFromTokenResponse(completed);
   }
 
+  /// Computes verify totp login.
   Future<AppSession> verifyTotpLogin({
     required String mfaToken,
     required String code,
@@ -130,6 +138,7 @@ class MultiFactorAuthService {
     return _requiredSession(data);
   }
 
+  /// Computes verify password reset passkey.
   Future<void> verifyPasswordResetPasskey({required String resetToken}) async {
     _requirePasskeysEnabled();
     final begin = await _call('beginPasswordResetPasskey', {
@@ -148,6 +157,7 @@ class MultiFactorAuthService {
     });
   }
 
+  /// Loads status.
   Future<MfaStatus> loadStatus() async {
     final data = await _call('getMfaStatus', const {});
     final rawFactors = data['factors'];
@@ -174,16 +184,19 @@ class MultiFactorAuthService {
     );
   }
 
+  /// Removes factor.
   Future<void> removeFactor(String factorId) async {
     await _call('removeMfaFactor', {'factorId': factorId});
   }
 
+  /// Computes require passkeys enabled.
   void _requirePasskeysEnabled() {
     if (!nativePasskeysEnabledForBuild()) {
       throw const PasskeysUnavailableForBuildException();
     }
   }
 
+  /// Computes run passkey operation.
   Future<T> _runPasskeyOperation<T>({
     required String operation,
     required Future<T> Function() callback,
@@ -218,6 +231,7 @@ class MultiFactorAuthService {
     }
   }
 
+  /// Computes call.
   Future<Map<String, dynamic>> _call(
     String name,
     Map<String, Object?> data,
@@ -232,6 +246,7 @@ class MultiFactorAuthService {
     return _stringMap(result.data as Map);
   }
 
+  /// Computes session from token response.
   Future<AppSession?> _sessionFromTokenResponse(
     Map<String, dynamic> data,
   ) async {
@@ -255,6 +270,7 @@ class MultiFactorAuthService {
     return AppSession(phoneNumber: phoneNumber, signedInAt: DateTime.now());
   }
 
+  /// Computes string map.
   static Map<String, dynamic> _stringMap(Map raw) => raw.map(
     (key, value) => MapEntry(
       key.toString(),
@@ -266,6 +282,7 @@ class MultiFactorAuthService {
     ),
   );
 
+  /// Computes required map.
   static Map<String, dynamic> _requiredMap(
     Map<String, dynamic> data,
     String key,
@@ -275,23 +292,27 @@ class MultiFactorAuthService {
     throw const FormatException('Missing security options.');
   }
 
+  /// Computes required string.
   static String _requiredString(Map<String, dynamic> data, String key) {
     final value = data[key];
     if (value is String && value.isNotEmpty) return value;
     throw FormatException('Missing security field: $key');
   }
 
+  /// Computes required int.
   static int _requiredInt(Map<String, dynamic> data, String key) {
     final value = data[key];
     if (value is num) return value.toInt();
     throw FormatException('Missing security field: $key');
   }
 
+  /// Computes string list.
   static List<String> _stringList(Object? value) => value is List
       ? value.map((item) => item.toString()).toList(growable: false)
       : const [];
 }
 
+/// Computes readable mfa error.
 String readableMfaError(Object error) {
   if (error is FirebaseFunctionsException) {
     return error.message ?? 'The security request could not be completed.';
@@ -368,6 +389,7 @@ String readableMfaError(Object error) {
   return 'The security request could not be completed. Please try again.';
 }
 
+/// Computes requires recent mfa authentication.
 bool requiresRecentMfaAuthentication(Object error) {
   if (error is! FirebaseFunctionsException ||
       error.code != 'failed-precondition') {

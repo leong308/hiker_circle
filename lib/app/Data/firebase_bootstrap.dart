@@ -8,11 +8,14 @@ import 'package:flutter/foundation.dart';
 import '../../firebase_options.dart';
 import 'app_check_build_support.dart';
 
+/// Represents firebase bootstrap result.
 class FirebaseBootstrapResult {
+  /// Creates firebase bootstrap result using available.
   const FirebaseBootstrapResult.available()
     : isAvailable = true,
       errorMessage = null;
 
+  /// Creates firebase bootstrap result using unavailable.
   const FirebaseBootstrapResult.unavailable(this.errorMessage)
     : isAvailable = false;
 
@@ -20,7 +23,9 @@ class FirebaseBootstrapResult {
   final String? errorMessage;
 }
 
+/// Represents firebase bootstrap.
 abstract final class FirebaseBootstrap {
+  /// Computes initialize.
   static Future<FirebaseBootstrapResult> initialize() async {
     try {
       if (Firebase.apps.isEmpty) {
@@ -52,6 +57,7 @@ abstract final class FirebaseBootstrap {
     }
   }
 
+  /// Computes require authenticated user.
   static User requireAuthenticatedUser() {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) return user;

@@ -8,6 +8,7 @@ import 'sos_device_alert_service.dart';
 
 /// Share the native snapshot path while checking timestamp, coordinate and accuracy validity.
 class LocationSnapshotService with WidgetsBindingObserver {
+  /// Creates location snapshot service using .
   LocationSnapshotService._();
 
   static final LocationSnapshotService instance = LocationSnapshotService._();
@@ -25,8 +26,10 @@ class LocationSnapshotService with WidgetsBindingObserver {
   Duration _refreshInterval = passiveSnapshotInterval;
   bool _isStarted = false;
 
+  /// Returns latest location.
   SosTriggerLocation? get latestLocation => _freshLocation(_latestLocation);
 
+  /// Returns debug snapshot.
   Map<String, Object?> get debugSnapshot => {
     'storageType': 'In-memory location snapshot service',
     'persistence': 'Cleared when the service stops or the process exits',
@@ -39,6 +42,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     'maximumEmergencySnapshotAgeSeconds': maximumEmergencySnapshotAge.inSeconds,
   };
 
+  /// Starts.
   Future<void> start({Duration interval = passiveSnapshotInterval}) async {
     final normalizedInterval = _normalizeInterval(interval);
     if (_isStarted) {
@@ -53,6 +57,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     await refresh();
   }
 
+  /// Stops.
   void stop() {
     if (!_isStarted) {
       return;
@@ -65,6 +70,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
   }
 
+  /// Sets refresh interval.
   void setRefreshInterval(Duration interval) {
     final normalizedInterval = _normalizeInterval(interval);
     if (_refreshInterval == normalizedInterval) {
@@ -81,10 +87,12 @@ class LocationSnapshotService with WidgetsBindingObserver {
     _startTimer();
   }
 
+  /// Refreshes.
   Future<SosTriggerLocation?> refresh() async {
     return _refreshFuture ??= _refreshNow();
   }
 
+  /// Refreshes now.
   Future<SosTriggerLocation?> _refreshNow() async {
     try {
       final location = await _deviceAlertService
@@ -108,6 +116,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     return latestLocation;
   }
 
+  /// Responds to foreground and background transitions.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_isStarted) {
@@ -131,6 +140,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     }
   }
 
+  /// Starts timer.
   void _startTimer() {
     if (_timer?.isActive == true) {
       return;
@@ -141,6 +151,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     });
   }
 
+  /// Normalizes interval.
   Duration _normalizeInterval(Duration interval) {
     if (interval < liveSnapshotInterval) {
       return liveSnapshotInterval;
@@ -148,6 +159,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     return interval;
   }
 
+  /// Checks whether newer than cached.
   bool _isNewerThanCached(SosTriggerLocation location) {
     final cachedAt = _latestLocation?.capturedAt;
     final capturedAt = location.capturedAt;
@@ -155,6 +167,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
         (capturedAt != null && capturedAt.isAfter(cachedAt));
   }
 
+  /// Checks whether valid location.
   bool _isValidLocation(SosTriggerLocation? location) {
     if (location == null ||
         !location.latitude.isFinite ||
@@ -168,6 +181,7 @@ class LocationSnapshotService with WidgetsBindingObserver {
     return location.capturedAt != null;
   }
 
+  /// Computes fresh location.
   SosTriggerLocation? _freshLocation(SosTriggerLocation? location) {
     if (!_isValidLocation(location)) {
       return null;

@@ -9,6 +9,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 
 import '../../app/Data/local_session_database.dart';
 
+/// Defines the static hazard marker kind choices.
 enum StaticHazardMarkerKind {
   generic,
   water,
@@ -30,14 +31,17 @@ enum StaticHazardMarkerKind {
 final Map<StaticHazardMarkerKind, Future<Uint8List>> _staticHazardMarkerImages =
     {};
 
+/// Computes static hazard marker image.
 Future<Uint8List> staticHazardMarkerImage() {
   return _markerImage(StaticHazardMarkerKind.generic);
 }
 
+/// Computes static hazard marker image for.
 Future<Uint8List> staticHazardMarkerImageFor(LocalTrailHazardMatch match) {
   return _markerImage(staticHazardMarkerKindFor(match));
 }
 
+/// Computes marker image.
 Future<Uint8List> _markerImage(StaticHazardMarkerKind kind) {
   return _staticHazardMarkerImages.putIfAbsent(
     kind,
@@ -45,10 +49,12 @@ Future<Uint8List> _markerImage(StaticHazardMarkerKind kind) {
   );
 }
 
+/// Computes static hazard marker kind for.
 StaticHazardMarkerKind staticHazardMarkerKindFor(LocalTrailHazardMatch match) {
   return staticHazardMarkerKindForType(match.hazard.hazardType);
 }
 
+/// Computes static hazard marker kind for type.
 StaticHazardMarkerKind staticHazardMarkerKindForType(String hazardType) {
   return switch (hazardType.trim().toLowerCase()) {
     'river' ||
@@ -71,6 +77,7 @@ StaticHazardMarkerKind staticHazardMarkerKindForType(String hazardType) {
   };
 }
 
+/// Computes uses bridge hazard marker.
 bool usesBridgeHazardMarker(LocalTrailHazardMatch match) {
   return staticHazardMarkerKindFor(match) == StaticHazardMarkerKind.bridge;
 }
@@ -139,6 +146,7 @@ List<LocalTrailHazardMatch> prepareStaticHazardsForMapDisplay(
   return result;
 }
 
+/// Checks whether steep type.
 bool _isSteepType(String type) {
   final normalized = type.trim().toLowerCase();
   return normalized == 'steep_ascent' ||
@@ -146,6 +154,7 @@ bool _isSteepType(String type) {
       normalized == 'steep_section';
 }
 
+/// Computes compare hazards by strength.
 int _compareHazardsByStrength(
   LocalTrailHazardMatch first,
   LocalTrailHazardMatch second,
@@ -155,6 +164,7 @@ int _compareHazardsByStrength(
   ).gradePercent.compareTo(_steepDetails(first).gradePercent);
 }
 
+/// Computes combine steep display cluster.
 LocalTrailHazardMatch _combineSteepDisplayCluster(
   List<LocalTrailHazardMatch> cluster,
 ) {
@@ -226,6 +236,7 @@ LocalTrailHazardMatch _combineSteepDisplayCluster(
   );
 }
 
+/// Computes coordinate distance.
 double _coordinateDistance(
   double firstLatitude,
   double firstLongitude,
@@ -251,6 +262,7 @@ double _coordinateDistance(
       );
 }
 
+/// Computes static hazard annotation.
 mapbox.PointAnnotationOptions staticHazardAnnotation(
   LocalTrailHazardMatch match,
   Uint8List markerImage, {
@@ -274,6 +286,7 @@ mapbox.PointAnnotationOptions staticHazardAnnotation(
   );
 }
 
+/// Shows static hazard details.
 Future<void> showStaticHazardDetails(
   BuildContext context,
   LocalTrailHazardMatch match,
@@ -286,11 +299,14 @@ Future<void> showStaticHazardDetails(
   );
 }
 
+/// Displays the static hazard details sheet.
 class _StaticHazardDetailsSheet extends StatelessWidget {
+  /// Creates static hazard details sheet.
   const _StaticHazardDetailsSheet({required this.match});
 
   final LocalTrailHazardMatch match;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final hazard = match.hazard;
@@ -442,11 +458,14 @@ class _StaticHazardDetailsSheet extends StatelessWidget {
   }
 }
 
+/// Displays the steep section summary.
 class _SteepSectionSummary extends StatelessWidget {
+  /// Creates steep section summary.
   const _SteepSectionSummary({required this.details});
 
   final _SteepHazardDetails details;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -521,7 +540,9 @@ class _SteepSectionSummary extends StatelessWidget {
   }
 }
 
+/// Displays the hazard metric.
 class _HazardMetric extends StatelessWidget {
+  /// Creates hazard metric.
   const _HazardMetric({
     required this.icon,
     required this.label,
@@ -532,6 +553,7 @@ class _HazardMetric extends StatelessWidget {
   final String label;
   final String value;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -568,8 +590,11 @@ class _HazardMetric extends StatelessWidget {
   }
 }
 
+/// Computes steep details.
 _SteepHazardDetails _steepDetails(LocalTrailHazardMatch match) {
   final hazard = match.hazard;
+
+  /// Reads.
   int read(String key) {
     final structured = RegExp(
       '$key=(\\d+)',
@@ -617,7 +642,9 @@ _SteepHazardDetails _steepDetails(LocalTrailHazardMatch match) {
   );
 }
 
+/// Represents steep hazard details.
 class _SteepHazardDetails {
+  /// Creates steep hazard details.
   const _SteepHazardDetails({
     required this.gradePercent,
     required this.changeMeters,
@@ -634,6 +661,7 @@ class _SteepHazardDetails {
   final bool ascent;
   final bool combinedDirections;
 
+  /// Returns level.
   String get level => gradePercent >= 40
       ? 'Extreme'
       : gradePercent >= 30
@@ -641,6 +669,7 @@ class _SteepHazardDetails {
       : 'Steep';
 }
 
+/// Computes marker color.
 Color _markerColor(StaticHazardMarkerKind kind) {
   return switch (kind) {
     StaticHazardMarkerKind.water => const Color(0xFF2089D8),
@@ -661,6 +690,7 @@ Color _markerColor(StaticHazardMarkerKind kind) {
   };
 }
 
+/// Computes draw static hazard marker.
 Future<Uint8List> _drawStaticHazardMarker(StaticHazardMarkerKind kind) async {
   const width = 80;
   const height = 72;
@@ -682,8 +712,11 @@ Future<Uint8List> _drawStaticHazardMarker(StaticHazardMarkerKind kind) async {
 
 /// Uses the exact same artwork as the native map annotation.
 class StaticHazardMarkerIcon extends StatelessWidget {
+  /// Creates static hazard marker icon.
   const StaticHazardMarkerIcon({super.key, required this.kind});
   final StaticHazardMarkerKind kind;
+
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => CustomPaint(
     size: const Size(44, 40),
@@ -691,9 +724,13 @@ class StaticHazardMarkerIcon extends StatelessWidget {
   );
 }
 
+/// Represents static hazard icon painter.
 class _StaticHazardIconPainter extends CustomPainter {
+  /// Creates static hazard icon painter.
   const _StaticHazardIconPainter(this.kind);
   final StaticHazardMarkerKind kind;
+
+  /// Computes paint.
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
@@ -702,11 +739,13 @@ class _StaticHazardIconPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Computes should repaint.
   @override
   bool shouldRepaint(_StaticHazardIconPainter oldDelegate) =>
       oldDelegate.kind != kind;
 }
 
+/// Computes paint static hazard marker.
 void _paintStaticHazardMarker(ui.Canvas canvas, StaticHazardMarkerKind kind) {
   final triangle = ui.Path()
     ..moveTo(40, 5)
@@ -746,6 +785,7 @@ void _paintStaticHazardMarker(ui.Canvas canvas, StaticHazardMarkerKind kind) {
   );
 }
 
+/// Computes draw hazard glyph.
 void _drawHazardGlyph(
   ui.Canvas canvas,
   StaticHazardMarkerKind kind,
@@ -761,7 +801,11 @@ void _drawHazardGlyph(
   final fill = ui.Paint()
     ..color = color
     ..style = ui.PaintingStyle.fill;
+
+  /// Computes x.
   double x(double value) => bounds.left + bounds.width * value;
+
+  /// Computes y.
   double y(double value) => bounds.top + bounds.height * value;
 
   switch (kind) {
@@ -945,7 +989,9 @@ void _drawHazardGlyph(
   }
 }
 
+/// Displays the hazard glyph.
 class _HazardGlyph extends StatelessWidget {
+  /// Creates hazard glyph.
   const _HazardGlyph({
     required this.kind,
     required this.size,
@@ -956,6 +1002,7 @@ class _HazardGlyph extends StatelessWidget {
   final double size;
   final Color color;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return SizedBox.square(
@@ -965,17 +1012,21 @@ class _HazardGlyph extends StatelessWidget {
   }
 }
 
+/// Represents hazard glyph painter.
 class _HazardGlyphPainter extends CustomPainter {
+  /// Creates hazard glyph painter.
   const _HazardGlyphPainter(this.kind, this.color);
 
   final StaticHazardMarkerKind kind;
   final Color color;
 
+  /// Computes paint.
   @override
   void paint(Canvas canvas, Size size) {
     _drawHazardGlyph(canvas, kind, Offset.zero & size, color);
   }
 
+  /// Computes should repaint.
   @override
   bool shouldRepaint(_HazardGlyphPainter oldDelegate) {
     return oldDelegate.kind != kind || oldDelegate.color != color;

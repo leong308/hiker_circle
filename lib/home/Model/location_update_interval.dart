@@ -1,4 +1,4 @@
-/// One upload cadence for live sharing and the saved footprint batch.
+/// One cadence for saved GPS footprints, uploads and live sharing.
 abstract final class LocationUpdateInterval {
   static const defaultValue = Duration(seconds: 30);
   static const options = [
@@ -8,9 +8,11 @@ abstract final class LocationUpdateInterval {
     Duration(minutes: 1),
   ];
 
+  /// Normalizes.
   static Duration normalize(Duration value) =>
       options.contains(value) ? value : defaultValue;
 
+  /// Computes label.
   static String label(Duration value) => value == const Duration(minutes: 1)
       ? 'Every 1 minute'
       : 'Every ${value.inSeconds} seconds';

@@ -1,5 +1,7 @@
 // Trail, TrailWeather and TrailHazard model discovery data, forecast samples and trail cautions.
+/// Represents trail checkpoint.
 class TrailCheckpoint {
+  /// Creates trail checkpoint.
   const TrailCheckpoint({
     required this.name,
     required this.latitude,
@@ -7,6 +9,7 @@ class TrailCheckpoint {
     required this.order,
   });
 
+  /// Creates trail checkpoint using from persistence.
   factory TrailCheckpoint.fromPersistence(Map<String, dynamic> data) {
     return TrailCheckpoint(
       name: _trailStringFrom(data['name']),
@@ -21,6 +24,7 @@ class TrailCheckpoint {
   final double longitude;
   final int order;
 
+  /// Returns has valid coordinate.
   bool get hasValidCoordinate =>
       latitude.isFinite &&
       longitude.isFinite &&
@@ -29,6 +33,7 @@ class TrailCheckpoint {
       longitude >= -180 &&
       longitude <= 180;
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'name': name,
@@ -38,6 +43,7 @@ class TrailCheckpoint {
     };
   }
 
+  /// Returns a copy with the supplied fields changed.
   TrailCheckpoint copyWith({
     String? name,
     double? latitude,
@@ -53,7 +59,9 @@ class TrailCheckpoint {
   }
 }
 
+/// Represents hourly forecast.
 class HourlyForecast {
+  /// Creates hourly forecast.
   const HourlyForecast({
     required this.time,
     required this.temperature,
@@ -66,6 +74,7 @@ class HourlyForecast {
   final int precipitationProbability;
   final int weatherCode;
 
+  /// Creates hourly forecast using from persistence.
   factory HourlyForecast.fromPersistence(Map<String, dynamic> data) {
     return HourlyForecast(
       time:
@@ -77,6 +86,7 @@ class HourlyForecast {
     );
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'timeLocal': time.toUtc().toIso8601String(),
@@ -86,11 +96,13 @@ class HourlyForecast {
     };
   }
 
+  /// Returns weather label.
   String get weatherLabel => _wmoSummary(weatherCode);
 }
 
 /// Keep raw forecast data with its cache time for trail-local weather presentation.
 class TrailWeather {
+  /// Creates trail weather.
   const TrailWeather({
     required this.summary,
     required this.temperatureRange,
@@ -115,6 +127,7 @@ class TrailWeather {
   final List<HourlyForecast> hourlyForecast;
   final Map<String, dynamic> forecastData;
 
+  /// Creates trail weather using from persistence.
   factory TrailWeather.fromPersistence(Map<String, dynamic> data) {
     return TrailWeather(
       summary: _trailStringFrom(data['summary']),
@@ -136,6 +149,7 @@ class TrailWeather {
     );
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'summary': summary,
@@ -152,11 +166,13 @@ class TrailWeather {
     };
   }
 
+  /// Returns is stale.
   bool get isStale {
     return DateTime.now().toUtc().difference(cachedAt.toUtc()).inHours >= 4;
   }
 }
 
+/// Computes wmo summary.
 String _wmoSummary(int code) {
   const mapping = {
     0: 'Clear sky',
@@ -191,7 +207,9 @@ String _wmoSummary(int code) {
   return mapping[code] ?? 'Unknown';
 }
 
+/// Represents trail hazard.
 class TrailHazard {
+  /// Creates trail hazard.
   const TrailHazard({
     required this.type,
     required this.description,
@@ -206,6 +224,7 @@ class TrailHazard {
   final String locationLabel;
   final DateTime reportedAt;
 
+  /// Creates trail hazard using from persistence.
   factory TrailHazard.fromPersistence(Map<String, dynamic> data) {
     return TrailHazard(
       type: _trailStringFrom(data['type']),
@@ -218,6 +237,7 @@ class TrailHazard {
     );
   }
 
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'type': type,
@@ -229,7 +249,9 @@ class TrailHazard {
   }
 }
 
+/// Represents trail image credit.
 class TrailImageCredit {
+  /// Creates trail image credit.
   const TrailImageCredit({
     required this.sourceName,
     required this.sourcePageUrl,
@@ -239,6 +261,7 @@ class TrailImageCredit {
     required this.description,
   });
 
+  /// Creates trail image credit using from persistence.
   factory TrailImageCredit.fromPersistence(Map<String, dynamic> data) {
     return TrailImageCredit(
       sourceName: _trailStringFrom(data['sourceName']),
@@ -257,6 +280,41 @@ class TrailImageCredit {
   final String licenseUrl;
   final String description;
 
+  /// Recorded license terms are attribution metadata, not proof of permission.
+  bool get hasLicenseInformation {
+    if (licenseUri != null) return true;
+    final name = licenseName.trim().toLowerCase();
+    return name.isNotEmpty &&
+        !const {
+          'generated route cover',
+          'unknown',
+          'none',
+          'no license',
+          'not provided',
+          'not specified',
+          'n/a',
+          '-',
+        }.contains(name);
+  }
+
+  /// Returns license uri.
+  Uri? get licenseUri => _creditWebUri(licenseUrl);
+
+  /// Returns source page uri.
+  Uri? get sourcePageUri => _creditWebUri(sourcePageUrl);
+
+  /// Computes credit web uri.
+  static Uri? _creditWebUri(String value) {
+    final uri = Uri.tryParse(value.trim());
+    return uri != null &&
+            const {'https', 'http'}.contains(uri.scheme) &&
+            uri.host.isNotEmpty &&
+            uri.userInfo.isEmpty
+        ? uri
+        : null;
+  }
+
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() => {
     'sourceName': sourceName,
     'sourcePageUrl': sourcePageUrl,
@@ -269,6 +327,7 @@ class TrailImageCredit {
 
 /// Represent the trail catalog entry and its route, forecast, caution and attribution data.
 class Trail {
+  /// Creates trail.
   const Trail({
     required this.trailId,
     required this.name,
@@ -313,6 +372,7 @@ class Trail {
     this.routeVerifiedAtLocal = '',
   });
 
+  /// Creates trail using from persistence.
   factory Trail.fromPersistence(Map<String, dynamic> data) {
     final coverValue = data['coverImageUrl'] ?? data['coverImageUrls'];
     final coverImageUrls = switch (coverValue) {
@@ -394,6 +454,8 @@ class Trail {
   final String country;
   final double latitude;
   final double longitude;
+
+  /// Returns is unlisted.
   bool get isUnlisted =>
       routeProvider == 'recorded-location-hike' &&
       trailId.startsWith('unlisted_');
@@ -417,6 +479,15 @@ class Trail {
   final List<String> coverImageUrls;
   final List<TrailImageCredit> coverImageCredits;
 
+  /// Returns licensed image credits.
+  List<({int imageNumber, TrailImageCredit credit})> get licensedImageCredits =>
+      [
+        for (var index = 0; index < coverImageCredits.length; index++)
+          if (coverImageCredits[index].hasLicenseInformation)
+            (imageNumber: index + 1, credit: coverImageCredits[index]),
+      ];
+
+  /// Returns cover image url.
   String get coverImageUrl =>
       coverImageUrls.isNotEmpty ? coverImageUrls.first : '';
   final List<TrailCheckpoint> checkpoints;
@@ -436,16 +507,20 @@ class Trail {
   final String routeReferenceNote;
   final String routeVerifiedAtLocal;
 
+  /// Returns difficulty rating count.
   int get difficultyRatingCount =>
       easyDifficultyVotes + moderateDifficultyVotes + hardDifficultyVotes;
 
+  /// Returns difficulty display label.
   String get difficultyDisplayLabel => hasCommunityDifficulty
       ? '${difficulty[0].toUpperCase()}${difficulty.substring(1).toLowerCase()}'
       : 'Difficulty not rated';
 
+  /// Returns has community difficulty.
   bool get hasCommunityDifficulty =>
       difficultyRatingCount > 0 && difficulty.trim().isNotEmpty;
 
+  /// Computes difficulty vote fraction.
   double difficultyVoteFraction(String value) {
     if (difficultyRatingCount <= 0) return 0;
     final votes = switch (value.trim().toLowerCase()) {
@@ -457,6 +532,35 @@ class Trail {
     return votes / difficultyRatingCount;
   }
 
+  /// The leading hiker vote is separate from the weighted route difficulty used for planning.
+  String get communityDifficultyVoteSummary {
+    final votes = <String, int>{
+      'Hard': hardDifficultyVotes < 0 ? 0 : hardDifficultyVotes,
+      'Moderate': moderateDifficultyVotes < 0 ? 0 : moderateDifficultyVotes,
+      'Easy': easyDifficultyVotes < 0 ? 0 : easyDifficultyVotes,
+    };
+    final total = votes.values.fold<int>(0, (sum, value) => sum + value);
+    if (total == 0) return '';
+    final highest = votes.values.reduce((a, b) => a > b ? a : b);
+    final leaders = votes.entries
+        .where((entry) => entry.value == highest)
+        .toList();
+    final canonical = difficulty.trim().toLowerCase();
+    final winner = leaders.firstWhere(
+      (entry) => entry.key.toLowerCase() == canonical,
+      orElse: () => leaders.first,
+    );
+    return '(${winner.key} - ${(winner.value * 100 / total).round()}%)';
+  }
+
+  /// Returns card rating label.
+  String get cardRatingLabel {
+    final rating = ratingCount <= 0 ? 'New' : ratingAverage.toStringAsFixed(1);
+    final difficulty = communityDifficultyVoteSummary;
+    return difficulty.isEmpty ? rating : '$rating $difficulty';
+  }
+
+  /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
     return {
       'trailId': trailId,
@@ -522,16 +626,19 @@ class Trail {
     };
   }
 
+  /// Converts to persistence.
   Map<String, dynamic> toPersistence() {
     return {...toFirestore(), 'difficulty': difficulty};
   }
 
+  /// Returns location label.
   String get locationLabel => [
     area,
     state,
     country,
   ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(', ');
 
+  /// Returns duration label.
   String get durationLabel {
     final hours = estimatedDurationMinutes ~/ 60;
     final minutes = estimatedDurationMinutes % 60;
@@ -544,21 +651,26 @@ class Trail {
     return '${hours}h ${minutes}m';
   }
 
+  /// Returns distance label.
   String get distanceLabel => '${distanceKm.toStringAsFixed(1)} km';
 
+  /// Returns has elevation range.
   bool get hasElevationRange =>
       minElevationMeters != null &&
       maxElevationMeters != null &&
       maxElevationMeters! >= minElevationMeters!;
 
+  /// Returns elevation range label.
   String get elevationRangeLabel => hasElevationRange
       ? '$minElevationMeters m – $maxElevationMeters m'
       : 'Not available';
 
+  /// Returns rating label.
   String get ratingLabel => ratingCount <= 0
       ? 'No ratings yet'
       : '${ratingAverage.toStringAsFixed(1)} ($ratingCount)';
 
+  /// Returns a copy with the supplied fields changed.
   Trail copyWith({
     String? trailId,
     String? name,
@@ -655,10 +767,12 @@ class Trail {
   }
 }
 
+/// Computes trail map from.
 Map<String, dynamic> _trailMapFrom(Object? value) {
   return value is Map ? Map<String, dynamic>.from(value) : const {};
 }
 
+/// Computes trail list of maps.
 List<Map<String, dynamic>> _trailListOfMaps(Object? value) {
   if (value is! Iterable) {
     return const [];
@@ -669,25 +783,32 @@ List<Map<String, dynamic>> _trailListOfMaps(Object? value) {
       .toList();
 }
 
+/// Computes trail string from.
 String _trailStringFrom(Object? value) => value is String ? value : '';
 
+/// Computes trail nullable string from.
 String? _trailNullableStringFrom(Object? value) {
   final result = _trailStringFrom(value).trim();
   return result.isEmpty ? null : result;
 }
 
+/// Computes trail int from.
 int _trailIntFrom(Object? value) =>
     value is num && value.isFinite ? value.toInt() : 0;
 
+/// Computes trail nullable int from.
 int? _trailNullableIntFrom(Object? value) =>
     value is num && value.isFinite ? value.toInt() : null;
 
+/// Computes trail double from.
 double _trailDoubleFrom(Object? value) =>
     value is num && value.isFinite ? value.toDouble() : 0;
 
+/// Computes trail nullable double from.
 double? _trailNullableDoubleFrom(Object? value) =>
     value is num && value.isFinite ? value.toDouble() : null;
 
+/// Computes trail checkpoint map has valid coordinate.
 bool _trailCheckpointMapHasValidCoordinate(Map<String, dynamic> data) {
   final latitude = data['latitude'];
   final longitude = data['longitude'];
@@ -701,6 +822,7 @@ bool _trailCheckpointMapHasValidCoordinate(Map<String, dynamic> data) {
       longitude <= 180;
 }
 
+/// Computes trail difficulty from.
 String _trailDifficultyFrom(Object? value) {
   switch (_trailStringFrom(value).trim().toLowerCase()) {
     case 'easy':
@@ -715,6 +837,7 @@ String _trailDifficultyFrom(Object? value) {
   }
 }
 
+/// Computes trail date from.
 DateTime? _trailDateFrom(Object? value) {
   if (value is DateTime) {
     return value;

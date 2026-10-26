@@ -17,10 +17,12 @@ Future<Uint8List> routeEndpointPinImage() {
   return _routeEndpointPinImageFuture ??= _drawRouteEndpointPin();
 }
 
+/// Computes should separate route endpoint labels.
 bool shouldSeparateRouteEndpointLabels(mapbox.Point start, mapbox.Point end) {
   return distanceMeters(start, end) <= _overlappingEndpointDistanceMeters;
 }
 
+/// Computes route endpoint annotation.
 mapbox.PointAnnotationOptions routeEndpointAnnotation({
   required mapbox.Point geometry,
   required String label,
@@ -53,6 +55,7 @@ mapbox.PointAnnotationOptions routeEndpointAnnotation({
   );
 }
 
+/// Computes draw route endpoint pin.
 Future<Uint8List> _drawRouteEndpointPin() async {
   const width = 72;
   const height = 88;

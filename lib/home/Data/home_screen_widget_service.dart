@@ -10,6 +10,7 @@ import 'hike_briefing_weather_service.dart';
 /// Publishes a small, account-scoped snapshot to the native launcher widgets.
 /// Widgets never receive authentication tokens or emergency contact details.
 class HomeScreenWidgetService {
+  /// Creates home screen widget service.
   HomeScreenWidgetService({
     MethodChannel? channel,
     HikeBriefingWeatherService? weather,
@@ -21,6 +22,7 @@ class HomeScreenWidgetService {
   int _revision = 0;
   bool _enabled = true;
 
+  /// Computes activate.
   void activate() {
     _enabled = true;
   }
@@ -31,6 +33,7 @@ class HomeScreenWidgetService {
   PlannedHike? _plan;
   final _failures = <String>{};
 
+  /// Clears.
   Future<void> clear() async {
     _enabled = false;
     _revision++;
@@ -102,6 +105,7 @@ class HomeScreenWidgetService {
     await _publish(_items());
   }
 
+  /// Computes items.
   List<Map<String, dynamic>> _items() => _hikes.map((hike) {
     final preparation = _plan?.upcomingHikeId == hike.id ? _plan : null;
     final key = _forecastKey(hike);
@@ -138,6 +142,7 @@ class HomeScreenWidgetService {
     };
   }).toList();
 
+  /// Computes store forecast.
   void _storeForecast(UpcomingHike next, TrailWeather forecast) {
     _failures.remove(_forecastKey(next));
     final briefing = HikeWeatherBriefing.fromWeather(
@@ -160,9 +165,11 @@ class HomeScreenWidgetService {
     };
   }
 
+  /// Computes forecast key.
   String _forecastKey(UpcomingHike h) =>
       '${h.latitude},${h.longitude},${h.departureTime.toUtc()},${h.expectedReturnTime.toUtc()}';
 
+  /// Applies a state change and publishes it to listeners.
   Future<void> _publish(List<Map<String, dynamic>> hikes) async {
     final payload = jsonEncode({'version': 1, 'hikes': hikes});
     if (payload == _lastPayload || kIsWeb) return;

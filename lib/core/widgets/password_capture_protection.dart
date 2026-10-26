@@ -10,13 +10,17 @@ final passwordRouteObserver = RouteObserver<PageRoute<dynamic>>();
 
 /// Protection follows the visible password route, including push/pop transitions.
 class PasswordCaptureProtection extends StatefulWidget {
+  /// Creates password capture protection.
   const PasswordCaptureProtection({super.key, required this.child});
   final Widget child;
+
+  /// Creates the presentation state for this widget.
   @override
   State<PasswordCaptureProtection> createState() =>
       _PasswordCaptureProtectionState();
 }
 
+/// Manages the password capture protection presentation and lifecycle.
 class _PasswordCaptureProtectionState extends State<PasswordCaptureProtection>
     with RouteAware {
   static const _channel = MethodChannel('hiker_circle/security');
@@ -24,6 +28,8 @@ class _PasswordCaptureProtectionState extends State<PasswordCaptureProtection>
   PageRoute<dynamic>? _route;
   bool _ready = false;
   int _visibility = 0;
+
+  /// Refreshes presentation dependencies.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -36,6 +42,7 @@ class _PasswordCaptureProtectionState extends State<PasswordCaptureProtection>
     }
   }
 
+  /// Computes protect.
   Future<void> _protect(bool enabled) async {
     try {
       if (enabled && _ready && mounted) setState(() => _ready = false);
@@ -52,14 +59,18 @@ class _PasswordCaptureProtectionState extends State<PasswordCaptureProtection>
     }
   }
 
+  /// Computes did push.
   @override
   void didPush() => unawaited(_protect(true));
+
+  /// Computes did pop next.
   @override
   void didPopNext() {
     _visibility++;
     unawaited(_protect(true));
   }
 
+  /// Computes did push next.
   @override
   void didPushNext() {
     final epoch = ++_visibility;
@@ -69,11 +80,13 @@ class _PasswordCaptureProtectionState extends State<PasswordCaptureProtection>
     });
   }
 
+  /// Computes did pop.
   @override
   void didPop() {
     _releaseAfterTransition();
   }
 
+  /// Computes release after transition.
   void _releaseAfterTransition() {
     if (Platform.isAndroid || Platform.isIOS) {
       Future<void>.delayed(
@@ -85,6 +98,7 @@ class _PasswordCaptureProtectionState extends State<PasswordCaptureProtection>
     }
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     passwordRouteObserver.unsubscribe(this);
@@ -93,6 +107,7 @@ class _PasswordCaptureProtectionState extends State<PasswordCaptureProtection>
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) =>
       _ready ? widget.child : const ColoredBox(color: Colors.black);

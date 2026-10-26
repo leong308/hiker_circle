@@ -14,20 +14,27 @@ import '../../app/Data/local_session_database.dart';
 import '../../sos/Model/sos_models.dart';
 import '../Model/live_location_models.dart';
 
+/// Represents live location repository exception.
 class LiveLocationRepositoryException implements Exception {
+  /// Creates live location repository exception.
   const LiveLocationRepositoryException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents live location stop persistence exception.
 class LiveLocationStopPersistenceException implements Exception {
+  /// Creates live location stop persistence exception.
   const LiveLocationStopPersistenceException();
 }
 
+/// Represents live location repository.
 class LiveLocationRepository {
+  /// Creates live location repository.
   LiveLocationRepository({
     FirebaseFirestore? firestore,
     FirebaseFunctions? functions,
@@ -55,17 +62,21 @@ class LiveLocationRepository {
   final FirebaseFirestore? _firestore;
   final FirebaseBootstrapResult _firebaseBootstrapResult;
 
+  /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
 
+  /// Returns users.
   CollectionReference<Map<String, dynamic>> get _users {
     return _resolvedFirestore.collection('users');
   }
 
+  /// Returns live location shares.
   CollectionReference<Map<String, dynamic>> get _liveLocationShares {
     return _resolvedFirestore.collection('live_location_shares');
   }
 
+  /// Loads auto share on hike start.
   Future<bool> loadAutoShareOnHikeStart({required String phoneNumber}) async {
     _throwIfFirebaseUnavailable();
     try {
@@ -81,6 +92,7 @@ class LiveLocationRepository {
     }
   }
 
+  /// Sets auto share on hike start.
   Future<void> setAutoShareOnHikeStart({
     required String phoneNumber,
     required bool enabled,
@@ -107,6 +119,7 @@ class LiveLocationRepository {
     }
   }
 
+  /// Loads for user.
   Future<LiveLocationShare?> loadForUser({required String phoneNumber}) async {
     if (await hasPendingStop(phoneNumber)) {
       try {
@@ -156,6 +169,7 @@ class LiveLocationRepository {
     }
   }
 
+  /// Computes activate.
   Future<LiveLocationShare> activate({
     required String phoneNumber,
     required SosTriggerLocation location,
@@ -222,6 +236,7 @@ class LiveLocationRepository {
 
   // A response can be lost after the server commits. Read its authoritative
   // result before reporting failure; never issue a second activation here.
+  /// Reconciles activation.
   Future<LiveLocationShare?> _reconcileActivation(String phoneNumber) async {
     try {
       return await loadForUser(phoneNumber: phoneNumber);
@@ -230,6 +245,7 @@ class LiveLocationRepository {
     }
   }
 
+  /// Computes activate cloud share.
   @protected
   Future<Map<String, dynamic>> activateCloudShare(
     SosTriggerLocation location,
@@ -258,6 +274,8 @@ class LiveLocationRepository {
       final data = await notifyStandaloneContactsCloud(
         shareId,
       ).timeout(const Duration(seconds: 120));
+
+      /// Computes count.
       int count(String key) {
         final value = data[key];
         return value is num && value.isFinite && value >= 0 ? value.toInt() : 0;
@@ -282,6 +300,7 @@ class LiveLocationRepository {
     }
   }
 
+  /// Notifies standalone contacts cloud.
   @protected
   Future<Map<String, dynamic>> notifyStandaloneContactsCloud(
     String shareId,
@@ -295,6 +314,7 @@ class LiveLocationRepository {
     return response.data;
   }
 
+  /// Updates location.
   Future<void> updateLocation({
     required String phoneNumber,
     required LiveLocationShare share,
@@ -346,6 +366,7 @@ class LiveLocationRepository {
     }
   }
 
+  /// Checks whether there is pending stop.
   Future<bool> hasPendingStop(String phoneNumber) async {
     final value = await _localDatabase.loadLocalPreference(
       ownerPhoneNumber: phoneNumber,
@@ -390,6 +411,7 @@ class LiveLocationRepository {
     }
   }
 
+  /// Sends stop.
   Future<void> _sendStop(String phoneNumber, Map pending) async {
     _throwIfFirebaseUnavailable();
     final shareId = pending['shareId'];
@@ -404,6 +426,7 @@ class LiveLocationRepository {
     );
   }
 
+  /// Computes deactivate cloud share.
   @protected
   Future<void> deactivateCloudShare(
     String phoneNumber,
@@ -428,6 +451,7 @@ class LiveLocationRepository {
     await batch.commit().timeout(_cloudTimeout);
   }
 
+  /// Computes share id for user.
   Future<String?> _shareIdForUser(
     DocumentReference<Map<String, dynamic>> userDocument,
   ) async {
@@ -436,6 +460,7 @@ class LiveLocationRepository {
     return shareId is String ? shareId : null;
   }
 
+  /// Computes user document for.
   DocumentReference<Map<String, dynamic>> _userDocumentFor(String phoneNumber) {
     return userModuleDocument(
       _users.doc(_userIdFor(phoneNumber)),
@@ -443,20 +468,24 @@ class LiveLocationRepository {
     );
   }
 
+  /// Computes user id for.
   String _userIdFor(String phoneNumber) {
     return FirebaseUserRepository.documentIdForPhoneNumber(phoneNumber);
   }
 
+  /// Computes share url for.
   String _shareUrlFor(String shareId) {
     return '$_hostingBaseUrl?share=${Uri.encodeComponent(shareId)}';
   }
 
+  /// Computes date from value.
   DateTime? _dateFromValue(Object? value) {
     if (value is Timestamp) return value.toDate().toUtc();
     if (value is String) return DateTime.tryParse(value)?.toUtc();
     return null;
   }
 
+  /// Computes throw if firebase unavailable.
   void _throwIfFirebaseUnavailable() {
     if (_firebaseBootstrapResult.isAvailable) {
       return;

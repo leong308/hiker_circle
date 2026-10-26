@@ -8,8 +8,10 @@ import 'hiking_route_service.dart';
 
 /// Converts the complete saved API polyline into the native Firestore geometry.
 class TrailGeometryStorage {
+  /// Creates trail geometry storage using .
   TrailGeometryStorage._(this.encodedPolyline, this.checksum, this.points);
 
+  /// Creates trail geometry storage using from polyline.
   factory TrailGeometryStorage.fromPolyline(String encoded) {
     final polyline = encoded.trim();
     final decoded = PolylineCodec.decode(polyline);
@@ -39,6 +41,7 @@ class TrailGeometryStorage {
     );
   }
 
+  /// Creates trail geometry storage using from coordinates.
   factory TrailGeometryStorage.fromCoordinates(
     List<Map<String, double>> coordinates,
   ) {
@@ -89,6 +92,7 @@ class TrailGeometryStorage {
   final String checksum;
   final List<Map<String, double>> points;
 
+  /// Computes document.
   Map<String, dynamic> document(String updatedAt) => {
     'coordinateSystem': 'WGS84',
     if (!isChunked) 'points': points,
@@ -97,6 +101,7 @@ class TrailGeometryStorage {
     'updatedAt': updatedAt,
   };
 
+  /// Computes metadata.
   Map<String, dynamic> metadata(String documentPath, String updatedAt) => {
     'schemaVersion': 1,
     'geometrySha256': checksum,

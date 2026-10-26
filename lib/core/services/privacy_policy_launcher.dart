@@ -5,6 +5,7 @@ const privacyPolicyUrl = 'https://hiker-circle.web.app/privacy-policy';
 
 final privacyPolicyUri = Uri.parse(privacyPolicyUrl);
 
+/// Computes launch privacy policy.
 Future<bool> launchPrivacyPolicy() async {
   try {
     if (!await supportsLaunchMode(LaunchMode.inAppBrowserView)) {

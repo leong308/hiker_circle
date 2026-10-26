@@ -7,12 +7,14 @@ import '../Model/hike_session_models.dart';
 
 /// Resolves preparation from locally persisted drafts and cloud schedule metadata.
 class PlannedHikeStateResolver {
+  /// Creates planned hike state resolver using .
   const PlannedHikeStateResolver._();
 
   static const Duration visibleAfterDepartureGrace =
       UpcomingHike.visibleAfterDepartureGrace;
   static const Duration weatherFreshness = Duration(hours: 4);
 
+  /// Computes merge upcoming hikes.
   static List<UpcomingHike> mergeUpcomingHikes({
     required Iterable<UpcomingHike> remote,
     required Iterable<UpcomingHike> cached,
@@ -21,6 +23,8 @@ class PlannedHikeStateResolver {
     DateTime? now,
   }) {
     final currentTime = now ?? DateTime.now();
+
+    /// Computes eligible.
     bool eligible(UpcomingHike hike) =>
         hike.isUpcomingAt(currentTime) && !consumedHikeIds.contains(hike.id);
     final remoteHikes = remote.where(eligible).toList();
@@ -44,6 +48,7 @@ class PlannedHikeStateResolver {
     final ids = <String>{};
     final scheduleKeys = <String>{};
 
+    /// Adds.
     void add(UpcomingHike hike) {
       if (!eligible(hike)) return;
       final scheduleKey = _scheduleKey(hike);
@@ -80,6 +85,7 @@ class PlannedHikeStateResolver {
     return List<UpcomingHike>.unmodifiable(merged);
   }
 
+  /// Selects next.
   static UpcomingHike? selectNext(
     Iterable<UpcomingHike> hikes, {
     DateTime? now,
@@ -91,10 +97,12 @@ class PlannedHikeStateResolver {
     return eligible.isEmpty ? null : eligible.first;
   }
 
+  /// Computes represents same schedule.
   static bool representsSameSchedule(UpcomingHike first, UpcomingHike second) {
     return _scheduleKey(first) == _scheduleKey(second);
   }
 
+  /// Resolves.
   static PlannedHike resolve({
     required UpcomingHike upcomingHike,
     required Iterable<Trail> liveTrails,
@@ -139,6 +147,7 @@ class PlannedHikeStateResolver {
     ).withGearProgress();
   }
 
+  /// Computes provisional from confirmed draft.
   static UpcomingHike provisionalFromConfirmedDraft({
     required HikeSessionDraft draft,
     required String creatorPhone,
@@ -181,6 +190,7 @@ class PlannedHikeStateResolver {
     );
   }
 
+  /// Computes schedule key.
   static String _scheduleKey(UpcomingHike hike) {
     final creatorPhone = hike.creatorPhone.replaceAll(RegExp(r'[^0-9]'), '');
     return jsonEncode([
@@ -194,6 +204,7 @@ class PlannedHikeStateResolver {
     ]);
   }
 
+  /// Computes resolved trail.
   static Trail _resolvedTrail(UpcomingHike hike, Trail? liveTrail) {
     final savedTrail = hike.draft?.trail;
     var trail = savedTrail ?? liveTrail ?? _fallbackTrail(hike);
@@ -248,6 +259,7 @@ class PlannedHikeStateResolver {
     );
   }
 
+  /// Computes fallback trail.
   static Trail _fallbackTrail(UpcomingHike hike) {
     return Trail(
       trailId: hike.trailId,
@@ -280,6 +292,7 @@ class PlannedHikeStateResolver {
     );
   }
 
+  /// Checks whether there is fresh weather.
   static bool _hasFreshWeather(TrailWeather weather, DateTime now) {
     final cachedAt = weather.cachedAt.toUtc();
     final currentTime = now.toUtc();
@@ -291,9 +304,11 @@ class PlannedHikeStateResolver {
     return currentTime.difference(cachedAt) < weatherFreshness;
   }
 
+  /// Computes valid latitude.
   static bool _validLatitude(double value) =>
       value.isFinite && value >= -90 && value <= 90;
 
+  /// Computes valid longitude.
   static bool _validLongitude(double value) =>
       value.isFinite && value >= -180 && value <= 180;
 }

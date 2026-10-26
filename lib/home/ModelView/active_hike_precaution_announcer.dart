@@ -9,6 +9,7 @@ import '../Model/hike_session_models.dart';
 /// Owns the visible warning and its speech together. Ordinary snackbars cannot
 /// replace it, and an accepted warning is claimed before asynchronous playback.
 class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
+  /// Creates active hike precaution announcer.
   ActiveHikePrecautionAnnouncer({required this.speak, required this.stop});
 
   final Future<bool> Function(String requestId, String message) speak;
@@ -21,12 +22,15 @@ class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
   bool _disposed = false;
   int _sequence = 0;
 
+  /// Returns notice.
   ActiveHikePrecautionNotice? get notice => _notice;
 
   // A cloud ID remap does not create a new hike or reset warning history.
+  /// Computes session key.
   static String sessionKey(ActiveHikeSession hike) =>
       '${hike.trail.trailId}:${hike.startedAt.toUtc().microsecondsSinceEpoch}';
 
+  /// Synchronizes session.
   void synchronizeSession(String? key) {
     if (_disposed || key == _sessionKey) return;
     dismiss();
@@ -34,6 +38,7 @@ class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
     _announced.clear();
   }
 
+  /// Computes announce.
   Future<void> announce({
     required String sessionKey,
     required List<TrailPrecaution> cautions,
@@ -82,6 +87,7 @@ class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
     await closed.future;
   }
 
+  /// Computes play.
   Future<bool> _play(ActiveHikePrecautionNotice current) async {
     try {
       return await speak(
@@ -94,6 +100,7 @@ class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
     }
   }
 
+  /// Stops.
   Future<void> _stop(String requestId) async {
     try {
       await stop(requestId);
@@ -102,8 +109,10 @@ class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
     }
   }
 
+  /// Computes dismiss.
   void dismiss() => _dismiss(stopSpeech: true);
 
+  /// Computes dismiss.
   void _dismiss({required bool stopSpeech}) {
     _closeTimer?.cancel();
     _closeTimer = null;
@@ -117,6 +126,7 @@ class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
     if (stopSpeech) unawaited(_stop(current.requestId));
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _disposed = true;
@@ -125,7 +135,9 @@ class ActiveHikePrecautionAnnouncer extends ChangeNotifier {
   }
 }
 
+/// Represents active hike precaution notice.
 class ActiveHikePrecautionNotice {
+  /// Creates active hike precaution notice.
   const ActiveHikePrecautionNotice({
     required this.requestId,
     required this.message,

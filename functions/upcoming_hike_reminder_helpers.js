@@ -21,7 +21,7 @@ function normalizeUpcomingHikeReminderPreference(raw, { legacy = false } = {}) {
   const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const first = allowed(
     value.firstReminderMinutesBefore,
-    [15, 30, 60, 120, 180, 360, 720, 1440],
+    [5, 10, 15, 30, 60, 120, 180, 360, 720, 1440],
     legacy ? 30 : 120
   );
   const repeat = allowed(
@@ -49,7 +49,23 @@ function normalizeUpcomingHikeReminderPreference(raw, { legacy = false } = {}) {
   };
 }
 
-// upcomingHikeReminderDue: Combine enabled preferences, sent-count bounds, and the final pre-departure cutoff.
+// Match the app preview: the maximum bounds fixed slots, not a rolling window
+// beginning whenever the worker first happens to see a hike.
+function upcomingHikeReminderTimes(preference, departureMillis) {
+  if (!preference.enabled || !Number.isFinite(departureMillis)) return [];
+  const times = [];
+  let minutes = preference.firstReminderMinutesBefore;
+  for (let index = 0; index < preference.maximumReminders; index++) {
+    times.push(departureMillis - minutes * 60000);
+    if (preference.repeatIntervalMinutes === 0) break;
+    minutes -= preference.repeatIntervalMinutes;
+    if (minutes < preference.finalReminderMinutesBefore) break;
+  }
+  return times;
+}
+
+// A five-minute scheduler may deliver a slot a few minutes late. Older slots
+// are skipped permanently; a delayed worker must never replay a backlog.
 function upcomingHikeReminderDue({
   rawPreference,
   departureMillis,
@@ -80,27 +96,21 @@ function upcomingHikeReminderDue({
     : Number.NaN;
   const minutesUntil = Math.ceil((departureMillis - nowMillis) / 60000);
 
-  if (
-    minutesUntil > preference.firstReminderMinutesBefore
-    || minutesUntil < preference.finalReminderMinutesBefore
-    || sentCount >= preference.maximumReminders
-  ) {
+  // The slots enforce the maximum. A lifetime count would incorrectly block
+  // a new future slot when the hiker changes their reminder preferences.
+  if (sentCount > 0 && !Number.isFinite(lastSentMillis)) {
     return { due: false, preference, sentCount, minutesUntil };
   }
-  if (sentCount === 0) {
-    return { due: true, preference, sentCount, minutesUntil };
-  }
-  if (
-    preference.repeatIntervalMinutes <= 0
-    || !Number.isFinite(lastSentMillis)
-    || nowMillis - lastSentMillis < preference.repeatIntervalMinutes * 60000
-  ) {
-    return { due: false, preference, sentCount, minutesUntil };
-  }
-  return { due: true, preference, sentCount, minutesUntil };
+  const times = upcomingHikeReminderTimes(preference, departureMillis);
+  const slot = times.findLast(time => time <= nowMillis);
+  const due = Number.isFinite(slot)
+    && nowMillis - slot < 5 * 60000
+    && (!Number.isFinite(lastSentMillis) || lastSentMillis < slot);
+  return { due, preference, sentCount, minutesUntil, slotMillis: slot };
 }
 
 module.exports = {
   normalizeUpcomingHikeReminderPreference,
+  upcomingHikeReminderTimes,
   upcomingHikeReminderDue,
 };

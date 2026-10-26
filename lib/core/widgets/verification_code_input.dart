@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 /// platform one-time-code autofill are accepted by the focused field and
 /// distributed across all slots.
 class VerificationCodeInput extends StatefulWidget {
+  /// Creates verification code input.
   const VerificationCodeInput({
     super.key,
     required this.controller,
@@ -30,10 +31,12 @@ class VerificationCodeInput extends StatefulWidget {
   final ValueChanged<String>? onCompleted;
   final ValueChanged<String>? onSubmitted;
 
+  /// Creates the presentation state for this widget.
   @override
   State<VerificationCodeInput> createState() => _VerificationCodeInputState();
 }
 
+/// Manages the verification code input presentation and lifecycle.
 class _VerificationCodeInputState extends State<VerificationCodeInput>
     with WidgetsBindingObserver {
   late List<TextEditingController> _slotControllers;
@@ -44,6 +47,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
   bool _pasting = false;
   String? _pasteError;
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
@@ -54,6 +58,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     _syncFromController();
   }
 
+  /// Updates bindings when the parent changes this widget.
   @override
   void didUpdateWidget(covariant VerificationCodeInput oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -68,6 +73,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     _syncFromController();
   }
 
+  /// Responds to foreground and background transitions.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final previousState = _lastLifecycleState;
@@ -95,6 +101,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     }
   }
 
+  /// Computes paste code.
   Future<void> _pasteCode() async {
     if (!widget.enabled || _pasting) return;
     setState(() {
@@ -141,6 +148,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     }
   }
 
+  /// Creates slots.
   void _createSlots() {
     _slotControllers = List.generate(
       widget.length,
@@ -156,6 +164,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     }
   }
 
+  /// Releases slots.
   void _disposeSlots() {
     for (final controller in _slotControllers) {
       controller.dispose();
@@ -167,10 +176,12 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     }
   }
 
+  /// Handles focus change.
   void _handleFocusChange() {
     if (mounted) setState(() {});
   }
 
+  /// Computes digits.
   String _digits(String value) {
     final digits = value.replaceAll(RegExp(r'\D'), '');
     return digits.length <= widget.length
@@ -178,6 +189,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
         : digits.substring(0, widget.length);
   }
 
+  /// Synchronizes from controller.
   void _syncFromController() {
     if (_synchronizing) return;
     final value = _digits(widget.controller.text);
@@ -195,6 +207,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     if (mounted) setState(() {});
   }
 
+  /// Sets code.
   void _setCode(String value) {
     final code = _digits(value);
     final previous = _digits(widget.controller.text);
@@ -218,6 +231,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     }
   }
 
+  /// Handles slot changed.
   void _handleSlotChanged(int index, String rawValue) {
     if (_synchronizing) return;
     final entered = rawValue.replaceAll(RegExp(r'\D'), '');
@@ -266,6 +280,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     }
   }
 
+  /// Handles key event.
   KeyEventResult _handleKeyEvent(int index, KeyEvent event) {
     if (event is! KeyDownEvent ||
         event.logicalKey != LogicalKeyboardKey.backspace ||
@@ -281,6 +296,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     return KeyEventResult.handled;
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -289,6 +305,7 @@ class _VerificationCodeInputState extends State<VerificationCodeInput>
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

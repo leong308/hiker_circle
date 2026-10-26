@@ -6,16 +6,21 @@ import 'package:http/http.dart' as http;
 
 import '../Model/hike_session_models.dart';
 
+/// Represents active hike weather exception.
 class ActiveHikeWeatherException implements Exception {
+  /// Creates active hike weather exception.
   const ActiveHikeWeatherException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents active hike weather sample.
 class ActiveHikeWeatherSample {
+  /// Creates active hike weather sample.
   const ActiveHikeWeatherSample({
     required this.label,
     required this.shortLabel,
@@ -44,10 +49,13 @@ class ActiveHikeWeatherSample {
   final DateTime observedAt;
   final bool isCached;
 
+  /// Returns summary.
   String get summary => activeHikeWeatherSummary(weatherCode);
 }
 
+/// Represents active hike weather snapshot.
 class ActiveHikeWeatherSnapshot {
+  /// Creates active hike weather snapshot.
   const ActiveHikeWeatherSnapshot({
     required this.samples,
     required this.fetchedAt,
@@ -58,9 +66,11 @@ class ActiveHikeWeatherSnapshot {
   final DateTime fetchedAt;
   final bool isCachedFallback;
 
+  /// Returns current.
   ActiveHikeWeatherSample? get current =>
       samples.isEmpty ? null : samples.first;
 
+  /// Converts to persistence.
   Map<String, dynamic> toPersistence() => {
     'fetchedAt': fetchedAt.toUtc().toIso8601String(),
     'isCachedFallback': isCachedFallback,
@@ -83,7 +93,9 @@ class ActiveHikeWeatherSnapshot {
     ],
   };
 
+  /// Creates active hike weather snapshot using from persistence.
   factory ActiveHikeWeatherSnapshot.fromPersistence(Map<String, dynamic> data) {
+    /// Computes date.
     DateTime date(Object? value) {
       final parsed = value is String ? DateTime.tryParse(value) : null;
       if (parsed == null) {
@@ -92,6 +104,7 @@ class ActiveHikeWeatherSnapshot {
       return parsed;
     }
 
+    /// Computes number.
     double number(Map sample, String key) {
       final value = sample[key];
       if (value is! num || !value.isFinite) {
@@ -142,7 +155,9 @@ class ActiveHikeWeatherSnapshot {
   }
 }
 
+/// Represents active hike weather service.
 class ActiveHikeWeatherService {
+  /// Creates active hike weather service.
   const ActiveHikeWeatherService({http.Client? client}) : _client = client;
 
   final http.Client? _client;
@@ -229,6 +244,7 @@ class ActiveHikeWeatherService {
     }
   }
 
+  /// Fetches current weather.
   Future<ActiveHikeWeatherSample> _fetchCurrentWeather({
     required http.Client client,
     required HikeCoordinate coordinate,
@@ -305,6 +321,7 @@ class ActiveHikeWeatherService {
     }
   }
 
+  /// Computes route coordinates.
   List<HikeCoordinate> _routeCoordinates(ActiveHikeSession activeHike) {
     if (activeHike.trail.isUnlisted) {
       final latest = activeHike.latestLocation;
@@ -355,6 +372,7 @@ class ActiveHikeWeatherService {
     return latest?.hasValidPosition == true ? [latest!] : const [];
   }
 
+  /// Computes decode polyline.
   List<HikeCoordinate> _decodePolyline(String encoded) {
     try {
       final points = <HikeCoordinate>[];
@@ -362,6 +380,7 @@ class ActiveHikeWeatherService {
       var latitude = 0;
       var longitude = 0;
 
+      /// Computes delta.
       int? readDelta() {
         var shift = 0;
         var result = 0;
@@ -405,6 +424,7 @@ class ActiveHikeWeatherService {
     }
   }
 
+  /// Computes cached trail weather snapshot.
   ActiveHikeWeatherSnapshot? _cachedTrailWeatherSnapshot({
     required ActiveHikeSession activeHike,
     required List<({String label, String shortLabel, int meters})> targets,
@@ -466,11 +486,13 @@ class ActiveHikeWeatherService {
     );
   }
 
+  /// Computes temperature from range.
   double? _temperatureFromRange(String value) {
     final match = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(value);
     return match == null ? null : double.tryParse(match.group(0)!);
   }
 
+  /// Computes weather code from summary.
   int _weatherCodeFromSummary(String summary) {
     final normalized = summary.toLowerCase();
     if (normalized.contains('thunder')) return 95;
@@ -483,6 +505,7 @@ class ActiveHikeWeatherService {
     return 3;
   }
 
+  /// Computes orient route.
   List<HikeCoordinate> _orientRoute(
     List<HikeCoordinate> route,
     ActiveHikeSession hike,
@@ -507,6 +530,7 @@ class ActiveHikeWeatherService {
     return reverse < forward ? route.reversed.toList() : route;
   }
 
+  /// Computes progress along route.
   double _progressAlongRoute(
     List<HikeCoordinate> route,
     HikeCoordinate current,
@@ -535,6 +559,7 @@ class ActiveHikeWeatherService {
     return bestProgress;
   }
 
+  /// Computes project on segment.
   ({HikeCoordinate coordinate, double fraction}) _projectOnSegment(
     HikeCoordinate point,
     HikeCoordinate start,
@@ -565,6 +590,7 @@ class ActiveHikeWeatherService {
     );
   }
 
+  /// Computes coordinate at distance.
   HikeCoordinate _coordinateAtDistance(
     List<HikeCoordinate> route,
     double targetDistance,
@@ -594,15 +620,19 @@ class ActiveHikeWeatherService {
     return route.last;
   }
 
+  /// Computes double from.
   double _doubleFrom(Object? value) =>
       value is num && value.isFinite ? value.toDouble() : 0;
 
+  /// Computes int from.
   int _intFrom(Object? value) =>
       value is num && value.isFinite ? value.toInt() : 0;
 
+  /// Computes string from.
   String _stringFrom(Object? value) => value is String ? value : '';
 }
 
+/// Computes active hike weather summary.
 String activeHikeWeatherSummary(int code) {
   const summaries = <int, String>{
     0: 'Clear sky',

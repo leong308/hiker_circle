@@ -1,6 +1,7 @@
 // CommunityFlag keeps moderation provenance and safe rule evidence distinct.
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+/// Defines the community flag source choices.
 enum CommunityFlagSource {
   keywords,
   pattern,
@@ -10,6 +11,7 @@ enum CommunityFlagSource {
   unavailable,
 }
 
+/// Defines the community flag source filter choices.
 enum CommunityFlagSourceFilter {
   all,
   keywords,
@@ -19,6 +21,7 @@ enum CommunityFlagSourceFilter {
   localRules,
   unavailable;
 
+  /// Returns label.
   String get label => switch (this) {
     all => 'All sources',
     keywords => 'Keywords',
@@ -75,36 +78,62 @@ const _ruleLabels = <String, String>{
   'record:invalid_author': 'Missing or invalid author',
 };
 
+/// Represents community flag.
 class CommunityFlag {
+  /// Creates community flag.
   CommunityFlag({required this.id, required Map<String, dynamic> data})
     : data = Map<String, dynamic>.unmodifiable(data);
 
   final String id;
   final Map<String, dynamic> data;
 
+  /// Returns content type.
   String get contentType => _string(data['contentType']).toLowerCase();
+
+  /// Returns is comment.
   bool get isComment => contentType == 'comment';
+
+  /// Returns content type label.
   String get contentTypeLabel => isComment ? 'Comment' : 'Post';
+
+  /// Returns post id.
   String get postId => _string(data['postId']);
+
+  /// Returns source path.
   String get sourcePath => _string(data['sourcePath']);
+
+  /// Returns fingerprint.
   String get fingerprint => _string(data['fingerprint']);
+
+  /// Returns status.
   String get status => _string(data['status']).toLowerCase();
+
+  /// Returns model.
   String get model => _string(data['model']);
+
+  /// Returns provider.
   String get provider => _string(data['provider']);
 
+  /// Returns categories.
   List<String> get categories => _strings(data['categories']);
+
+  /// Returns category labels.
   List<String> get categoryLabels => {
     for (final category in categories)
       _categoryLabels[category] ?? 'Other review concern',
   }.toList(growable: false);
+
+  /// Returns reasons.
   List<String> get reasons => _strings(data['reasons']);
 
+  /// Returns title.
   String get title {
     if (reasons.isNotEmpty) return reasons.first;
     if (categoryLabels.isNotEmpty) return categoryLabels.first;
     return 'Content needs review';
   }
 
+  /// Returns severity.
   String get severity {
     final value = _string(data['severity']).toLowerCase();
     return const {'low', 'medium', 'high', 'critical'}.contains(value)
@@ -112,6 +141,7 @@ class CommunityFlag {
         : 'unknown';
   }
 
+  /// Returns severity label.
   String get severityLabel => switch (severity) {
     'low' => 'Low',
     'medium' => 'Medium',
@@ -120,10 +150,12 @@ class CommunityFlag {
     _ => 'Unspecified',
   };
 
+  /// Returns flagged at.
   DateTime? get flaggedAt =>
       parseCommunityFlagTimestamp(data['flaggedAtMillis']) ??
       parseCommunityFlagTimestamp(data['flaggedAt']);
 
+  /// Returns source.
   CommunityFlagSource get source {
     final explicit = _string(data['detectionSource']).toLowerCase();
     switch (explicit) {
@@ -155,6 +187,7 @@ class CommunityFlag {
     return CommunityFlagSource.unavailable;
   }
 
+  /// Returns source label.
   String get sourceLabel => switch (source) {
     CommunityFlagSource.keywords => 'Keyword match',
     CommunityFlagSource.pattern => 'Pattern match',
@@ -164,6 +197,7 @@ class CommunityFlag {
     CommunityFlagSource.unavailable => 'Source unavailable',
   };
 
+  /// Returns source description.
   String get sourceDescription => switch (source) {
     CommunityFlagSource.keywords =>
       'A policy phrase matched. Pattern checks may also have matched.',
@@ -179,6 +213,7 @@ class CommunityFlag {
       'This flag does not identify a recognized detection source.',
   };
 
+  /// Returns matched keywords.
   List<String> get matchedKeywords => _strings(data['matchedKeywords'])
       .map((value) => value.toLowerCase())
       .where(communityFlagAllowedKeywords.contains)
@@ -207,9 +242,11 @@ class CommunityFlag {
     return labels.toList(growable: false);
   }
 
+  /// Computes matches source.
   bool matchesSource(CommunityFlagSourceFilter filter) =>
       filter == CommunityFlagSourceFilter.all || filter.name == source.name;
 
+  /// Returns searchable text.
   String get searchableText => [
     contentTypeLabel,
     sourceLabel,
@@ -221,14 +258,17 @@ class CommunityFlag {
     ...evidenceLabels,
   ].join(' ').toLowerCase();
 
+  /// Computes matches query.
   bool matchesQuery(String query) {
     final terms = query.trim().toLowerCase().split(RegExp(r'\s+'));
     return terms.every(searchableText.contains);
   }
 }
 
+/// Computes string.
 String _string(Object? value) => value is String ? value.trim() : '';
 
+/// Computes strings.
 List<String> _strings(Object? value) => value is List
     ? value
           .whereType<String>()
@@ -238,6 +278,7 @@ List<String> _strings(Object? value) => value is List
           .toList(growable: false)
     : const [];
 
+/// Checks whether gemini model.
 bool _isGeminiModel(String value) => RegExp(
   r'^(?:(?:publishers/google/)?models/|google/)?gemini(?:-[a-z0-9][a-z0-9._-]*)?$',
   caseSensitive: false,

@@ -2,8 +2,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../core/widgets/caution_icon.dart';
 import '../Model/trail_hazard_alert.dart';
+import '../Model/trail_hazard_categories.dart';
 
+/// Defines the trail hazard alert action choices.
 enum TrailHazardAlertAction {
   acknowledge,
   proceed,
@@ -12,6 +15,7 @@ enum TrailHazardAlertAction {
   cancelHike,
 }
 
+/// Shows trail hazard alert dialog.
 Future<TrailHazardAlertAction> showTrailHazardAlertDialog(
   BuildContext context, {
   required List<TrailHazardAlert> alerts,
@@ -35,7 +39,9 @@ Future<TrailHazardAlertAction> showTrailHazardAlertDialog(
           : TrailHazardAlertAction.acknowledge);
 }
 
+/// Displays the trail hazard alert dialog.
 class TrailHazardAlertDialog extends StatelessWidget {
+  /// Creates trail hazard alert dialog.
   const TrailHazardAlertDialog({
     super.key,
     required this.alerts,
@@ -47,6 +53,7 @@ class TrailHazardAlertDialog extends StatelessWidget {
   final bool beforeStart;
   final bool canCancelHike;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -58,6 +65,8 @@ class TrailHazardAlertDialog extends StatelessWidget {
     );
     final accent = fatal ? colors.error : colors.primary;
     final media = MediaQuery.of(context);
+
+    /// Closes.
     void close(TrailHazardAlertAction action) =>
         Navigator.of(context).pop(action);
 
@@ -93,10 +102,9 @@ class TrailHazardAlertDialog extends StatelessWidget {
                       color: accent.withValues(alpha: .1),
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: Icon(
-                      fatal
-                          ? Icons.warning_rounded
-                          : Icons.info_outline_rounded,
+                    child: CautionIcon(
+                      icon: trailHazardIconFor(lead.type),
+                      seriousRisk: fatal,
                       color: accent,
                       size: 28,
                     ),
@@ -118,6 +126,10 @@ class TrailHazardAlertDialog extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 18),
+                if (alerts.any((alert) => alert.isCriticalWeather)) ...[
+                  _WeatherReportTimes(alerts: alerts),
+                  const SizedBox(height: 12),
+                ],
                 for (final alert in alerts) ...[
                   _CautionSummary(alert: alert),
                   const SizedBox(height: 10),
@@ -196,10 +208,107 @@ class TrailHazardAlertDialog extends StatelessWidget {
   }
 }
 
+/// Computes weather hazard report time.
+String weatherHazardReportTime(DateTime value) {
+  final local = value.toLocal();
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  /// Computes two.
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${local.day} ${months[local.month - 1]} ${local.year} · ${two(local.hour)}:${two(local.minute)}:${two(local.second)}';
+}
+
+/// Displays the weather report times.
+class _WeatherReportTimes extends StatelessWidget {
+  /// Creates weather report times.
+  const _WeatherReportTimes({required this.alerts});
+  final List<TrailHazardAlert> alerts;
+
+  /// Builds this widget from its current presentation state.
+  @override
+  Widget build(BuildContext context) {
+    final weather = alerts.where((alert) => alert.isCriticalWeather).toList();
+    final types = weather.map((alert) => alert.type).toSet();
+    final theme = Theme.of(context);
+    return Container(
+      key: const ValueKey('critical-weather-report-times'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.errorContainer.withValues(alpha: .45),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Reported and confirmed at',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text('Your local time', style: theme.textTheme.bodySmall),
+          for (final type in types) ...[
+            const SizedBox(height: 10),
+            Text(
+              type,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            ..._timesFor(weather.where((alert) => alert.type == type)).map(
+              (time) => Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Text(
+                  '• ${weatherHazardReportTime(time)}',
+                  style: theme.textTheme.bodySmall?.copyWith(height: 1.4),
+                ),
+              ),
+            ),
+            if (_timesFor(weather.where((alert) => alert.type == type)).isEmpty)
+              const Text('Report time unavailable.'),
+          ],
+          if (weather.any((alert) => !alert.reportTimesComplete)) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Additional report times could not be loaded.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Computes times for.
+  List<DateTime> _timesFor(Iterable<TrailHazardAlert> reports) =>
+      (<int, DateTime>{
+        for (final alert in reports)
+          for (final time in alert.reportTimes)
+            time.microsecondsSinceEpoch: time,
+      }.values.toList()..sort((a, b) => b.compareTo(a)));
+}
+
+/// Displays the caution summary.
 class _CautionSummary extends StatelessWidget {
+  /// Creates caution summary.
   const _CautionSummary({required this.alert});
   final TrailHazardAlert alert;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -213,11 +322,23 @@ class _CautionSummary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            alert.type,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+          Row(
+            children: [
+              CautionIcon(
+                icon: trailHazardIconFor(alert.type),
+                seriousRisk: alert.isFatal,
+                color: alert.isFatal ? colors.error : colors.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  alert.type,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           Text(

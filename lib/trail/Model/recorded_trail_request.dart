@@ -4,6 +4,7 @@ import '../../core/services/hiking_route_service.dart';
 import '../../core/services/trail_geometry_storage.dart';
 import 'trail_models.dart';
 
+/// Computes recorded trail candidate.
 Trail recordedTrailCandidate(
   Map<String, dynamic> request,
   List<HikeCoordinate> points,

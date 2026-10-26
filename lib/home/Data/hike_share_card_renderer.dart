@@ -57,6 +57,7 @@ List<ui.Offset> projectRecordedHikeRoute(
 /// Render a shareable PNG from recorded movement, without network tiles or
 /// inventing a planned trail. The card is deliberately labelled as a GPS trace.
 abstract final class HikeShareCardRenderer {
+  /// Computes render.
   static Future<Uint8List?> render({
     required ActiveHikeSession hike,
     required HikeSummaryReport report,
@@ -242,6 +243,7 @@ abstract final class HikeShareCardRenderer {
     }
   }
 
+  /// Computes marker.
   static void _marker(
     ui.Canvas canvas,
     ui.Offset point,
@@ -256,6 +258,7 @@ abstract final class HikeShareCardRenderer {
     canvas.drawCircle(point, radius, ui.Paint()..color = color);
   }
 
+  /// Computes metric.
   static void _metric(
     ui.Canvas canvas,
     double left,
@@ -281,6 +284,7 @@ abstract final class HikeShareCardRenderer {
     );
   }
 
+  /// Computes text.
   static void _text(
     ui.Canvas canvas,
     String value,
@@ -310,11 +314,14 @@ abstract final class HikeShareCardRenderer {
     painter.dispose();
   }
 
+  /// Computes duration.
   static String _duration(Duration value) => value.inHours > 0
       ? '${value.inHours}h ${value.inMinutes.remainder(60)}m'
       : value.inMinutes > 0
       ? '${value.inMinutes}m ${value.inSeconds.remainder(60)}s'
       : '${value.inSeconds}s';
+
+  /// Computes date.
   static String _date(DateTime value) {
     final date = value.toLocal();
     const months = [

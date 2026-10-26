@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 /// Capture is only a preview step; the separate review page performs upload.
 class HikerFeedbackCaptureForm extends StatefulWidget {
+  /// Creates hiker feedback capture form.
   const HikerFeedbackCaptureForm({
     super.key,
     required this.onSubmit,
@@ -14,22 +15,26 @@ class HikerFeedbackCaptureForm extends StatefulWidget {
   final OnSubmit onSubmit;
   final ScrollController? scrollController;
 
+  /// Creates the presentation state for this widget.
   @override
   State<HikerFeedbackCaptureForm> createState() =>
       _HikerFeedbackCaptureFormState();
 }
 
+/// Manages the hiker feedback capture form presentation and lifecycle.
 class _HikerFeedbackCaptureFormState extends State<HikerFeedbackCaptureForm> {
   final _text = TextEditingController();
   bool _busy = false;
   String? _error;
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _text.dispose();
     super.dispose();
   }
 
+  /// Computes preview.
   Future<void> _preview() async {
     if (_busy) return;
     setState(() {
@@ -52,6 +57,7 @@ class _HikerFeedbackCaptureFormState extends State<HikerFeedbackCaptureForm> {
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Column(
     children: [

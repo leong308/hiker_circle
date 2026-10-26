@@ -3,6 +3,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+/// Represents page header style.
 abstract final class PageHeaderStyle {
   static const double titleSize = 26;
   static const double iconSize = 19;
@@ -10,6 +11,7 @@ abstract final class PageHeaderStyle {
   static const double actionTapSize = 44;
   static const double toolbarHeight = 76;
 
+  /// Computes title.
   static TextStyle title(BuildContext context, Color color) =>
       Theme.of(context).textTheme.headlineSmall!.copyWith(
         color: color == Colors.white
@@ -23,6 +25,7 @@ abstract final class PageHeaderStyle {
         height: 1.2,
       );
 
+  /// Computes subtitle.
   static TextStyle subtitle(BuildContext context, Color color) =>
       Theme.of(context).textTheme.bodySmall!.copyWith(
         color: color == Colors.white
@@ -55,7 +58,9 @@ abstract final class PageHeaderStyle {
   );
 }
 
+/// Displays the page header action.
 class PageHeaderAction extends StatelessWidget {
+  /// Creates page header action.
   const PageHeaderAction({
     super.key,
     required this.tooltip,
@@ -70,6 +75,7 @@ class PageHeaderAction extends StatelessWidget {
   final Color color;
   final Color surface;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Tooltip(
     message: tooltip,
@@ -102,6 +108,7 @@ class PageHeaderAction extends StatelessWidget {
 
 /// A shared navigation header for pages which keep their header in the body.
 class PageHeader extends StatelessWidget {
+  /// Creates page header.
   const PageHeader({
     super.key,
     required this.title,
@@ -118,6 +125,7 @@ class PageHeader extends StatelessWidget {
   final List<Widget> actions;
   final Color? foregroundColor;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -172,6 +180,7 @@ class PageHeader extends StatelessWidget {
 /// headers. Search fields, tabs, disabled callbacks and media contrast remain
 /// owned by the page.
 class PageHeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
+  /// Creates page header app bar.
   const PageHeaderAppBar({
     super.key,
     this.title,
@@ -188,11 +197,13 @@ class PageHeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
   final Color? backgroundColor, foregroundColor;
   final bool automaticallyImplyLeading;
 
+  /// Returns preferred size.
   @override
   Size get preferredSize => Size.fromHeight(
     PageHeaderStyle.toolbarHeight + (bottom?.preferredSize.height ?? 0),
   );
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
@@ -205,6 +216,8 @@ class PageHeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
     final surface = backgroundColor == Colors.black
         ? Colors.white.withValues(alpha: .12)
         : colors.surface;
+
+    /// Computes action.
     Widget action(Widget widget) =>
         _standardHeaderControl(context, widget, iconColor, surface);
     final impliedBack =
@@ -253,9 +266,13 @@ class PageHeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
+/// Displays the page header control.
 class PageHeaderControl extends StatelessWidget {
+  /// Creates page header control.
   const PageHeaderControl({super.key, required this.child});
   final Widget child;
+
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => _standardHeaderControl(
     context,
@@ -265,6 +282,7 @@ class PageHeaderControl extends StatelessWidget {
   );
 }
 
+/// Computes standard header title.
 Widget _standardHeaderTitle(
   BuildContext context,
   Widget title,
@@ -300,6 +318,7 @@ Widget _standardHeaderTitle(
   return title;
 }
 
+/// Computes header icon.
 Icon? _headerIcon(Widget? widget) {
   if (widget is Icon) return widget;
   if (widget is Container) return _headerIcon(widget.child);
@@ -310,6 +329,7 @@ Icon? _headerIcon(Widget? widget) {
   return null;
 }
 
+/// Computes standard header control.
 Widget _standardHeaderControl(
   BuildContext context,
   Widget widget,
@@ -386,6 +406,7 @@ Widget _standardHeaderControl(
   );
 }
 
+/// Computes header action label.
 String _headerActionLabel(IconData? icon) {
   if ({Icons.close_rounded, Icons.close, CupertinoIcons.xmark}.contains(icon)) {
     return 'Close';

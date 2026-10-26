@@ -2,7 +2,9 @@
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+/// Represents green api send result.
 class GreenApiSendResult {
+  /// Creates green api send result.
   const GreenApiSendResult({
     required this.wasSent,
     required this.retryable,
@@ -18,7 +20,9 @@ class GreenApiSendResult {
   final String? message;
 }
 
+/// Represents green api client.
 class GreenApiClient {
+  /// Creates green api client.
   GreenApiClient({
     FirebaseFunctions? firebaseFunctions,
     FirebaseAuth? firebaseAuth,
@@ -28,9 +32,11 @@ class GreenApiClient {
   final FirebaseFunctions? _firebaseFunctions;
   final FirebaseAuth? _firebaseAuth;
 
+  /// Returns resolved functions.
   FirebaseFunctions get _resolvedFunctions =>
       _firebaseFunctions ?? FirebaseFunctions.instance;
 
+  /// Returns resolved auth.
   FirebaseAuth get _resolvedAuth => _firebaseAuth ?? FirebaseAuth.instance;
 
   /// Validate SOS dispatch identity and preserve retryable or uncertain delivery results from the backend.
@@ -170,12 +176,15 @@ class GreenApiClient {
   }
 }
 
+/// Represents green api exception.
 class GreenApiException implements Exception {
+  /// Creates green api exception.
   const GreenApiException(this.message, {this.retryable = true});
 
   final String message;
   final bool retryable;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }

@@ -10,11 +10,14 @@ import 'package:flutter/material.dart';
 import '../core/widgets/loading_toast.dart';
 import 'feedback_repository.dart';
 
+/// Displays the feedback page.
 class FeedbackPage extends StatelessWidget {
+  /// Creates feedback page.
   const FeedbackPage({super.key, this.isAdmin = false, this.repository});
   final bool isAdmin;
   final FeedbackRepository? repository;
 
+  /// Captures.
   void _capture(BuildContext context) {
     final navigator = Navigator.of(context);
     final feedback = BetterFeedback.of(context);
@@ -40,6 +43,7 @@ class FeedbackPage extends StatelessWidget {
     });
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
@@ -185,7 +189,9 @@ class FeedbackPage extends StatelessWidget {
   }
 }
 
+/// Displays the feedback choice card.
 class _FeedbackChoiceCard extends StatefulWidget {
+  /// Creates feedback choice card.
   const _FeedbackChoiceCard({
     required this.title,
     required this.subtitle,
@@ -197,12 +203,17 @@ class _FeedbackChoiceCard extends StatefulWidget {
   final IconData icon;
   final VoidCallback onTap;
   final bool prominent;
+
+  /// Creates the presentation state for this widget.
   @override
   State<_FeedbackChoiceCard> createState() => _FeedbackChoiceCardState();
 }
 
+/// Manages the feedback choice card presentation and lifecycle.
 class _FeedbackChoiceCardState extends State<_FeedbackChoiceCard> {
   bool pressed = false;
+
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
@@ -274,6 +285,7 @@ class _FeedbackChoiceCardState extends State<_FeedbackChoiceCard> {
 
 /// Review the screenshot and message together before submitting the stable FeedbackDraft.
 class FeedbackComposePage extends StatefulWidget {
+  /// Creates feedback compose page.
   const FeedbackComposePage({
     super.key,
     this.initialText = '',
@@ -283,10 +295,13 @@ class FeedbackComposePage extends StatefulWidget {
   final String initialText;
   final Uint8List? screenshot;
   final FeedbackRepository? repository;
+
+  /// Creates the presentation state for this widget.
   @override
   State<FeedbackComposePage> createState() => _FeedbackComposePageState();
 }
 
+/// Manages the feedback compose page presentation and lifecycle.
 class _FeedbackComposePageState extends State<FeedbackComposePage> {
   final _form = GlobalKey<FormState>();
   late final _repository = widget.repository ?? FeedbackRepository();
@@ -298,12 +313,14 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
   bool _sent = false;
   String? _error;
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _message.dispose();
     super.dispose();
   }
 
+  /// Sends.
   Future<void> _send() async {
     if (_busy || !_form.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
@@ -328,6 +345,7 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_busy,
@@ -490,23 +508,31 @@ class _FeedbackComposePageState extends State<FeedbackComposePage> {
   );
 }
 
+/// Displays the feedback inbox page.
 class FeedbackInboxPage extends StatefulWidget {
+  /// Creates feedback inbox page.
   const FeedbackInboxPage({super.key, this.admin = false, this.repository});
   final bool admin;
   final FeedbackRepository? repository;
+
+  /// Creates the presentation state for this widget.
   @override
   State<FeedbackInboxPage> createState() => _FeedbackInboxPageState();
 }
 
+/// Manages the feedback inbox page presentation and lifecycle.
 class _FeedbackInboxPageState extends State<FeedbackInboxPage> {
   late final _repository = widget.repository ?? FeedbackRepository();
   late Stream<QuerySnapshot<Map<String, dynamic>>> _reports;
+
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
     _reports = _repository.reports(admin: widget.admin);
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: PageHeaderAppBar(
@@ -580,7 +606,9 @@ class _FeedbackInboxPageState extends State<FeedbackInboxPage> {
   );
 }
 
+/// Displays the feedback detail page.
 class _FeedbackDetailPage extends StatefulWidget {
+  /// Creates feedback detail page.
   const _FeedbackDetailPage({
     required this.id,
     required this.data,
@@ -589,10 +617,13 @@ class _FeedbackDetailPage extends StatefulWidget {
   final String id;
   final Map<String, dynamic> data;
   final bool admin;
+
+  /// Creates the presentation state for this widget.
   @override
   State<_FeedbackDetailPage> createState() => _FeedbackDetailPageState();
 }
 
+/// Manages the feedback detail page presentation and lifecycle.
 class _FeedbackDetailPageState extends State<_FeedbackDetailPage> {
   final _repository = FeedbackRepository();
   late String _status = widget.data['status'] as String;
@@ -604,6 +635,7 @@ class _FeedbackDetailPageState extends State<_FeedbackDetailPage> {
             .timeout(const Duration(seconds: 30));
   bool _busy = false;
 
+  /// Computes change status.
   Future<void> _changeStatus(String status) async {
     setState(() => _busy = true);
     try {
@@ -624,6 +656,7 @@ class _FeedbackDetailPageState extends State<_FeedbackDetailPage> {
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: PageHeaderAppBar(title: const Text('Feedback details')),
@@ -720,6 +753,7 @@ class _FeedbackDetailPageState extends State<_FeedbackDetailPage> {
   );
 }
 
+/// Computes feedback date.
 String _feedbackDate(BuildContext context, Timestamp timestamp) {
   final date = timestamp.toDate().toLocal();
   return '${MaterialLocalizations.of(context).formatMediumDate(date)} · ${TimeOfDay.fromDateTime(date).format(context)}';

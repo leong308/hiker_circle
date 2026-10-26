@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 
 import 'loading_toast.dart';
 
+/// Represents worldwide region.
 class WorldwideRegion {
+  /// Creates worldwide region.
   const WorldwideRegion({
     required this.country,
     required this.countryCode,
@@ -20,6 +22,7 @@ class WorldwideRegion {
   final String stateCode;
 }
 
+/// Represents worldwide region catalog.
 abstract final class WorldwideRegionCatalog {
   static Future<List<csc.Country>>? _countriesFuture;
   static final Map<String, Future<List<csc.State>>> _statesFutures = {};
@@ -48,6 +51,7 @@ abstract final class WorldwideRegionCatalog {
     'wilayahpersekutuanputrajaya': (name: 'Putrajaya', code: '16'),
   };
 
+  /// Normalizes.
   static Future<WorldwideRegion?> normalize({
     required String country,
     required String state,
@@ -96,6 +100,7 @@ abstract final class WorldwideRegionCatalog {
     );
   }
 
+  /// Computes key.
   static String _key(String value) => value
       .toLowerCase()
       .replaceAll('&', 'and')
@@ -106,7 +111,9 @@ abstract final class WorldwideRegionCatalog {
       .replaceAll(RegExp(r'[^a-z0-9]'), '');
 }
 
+/// Represents worldwide region picker.
 abstract final class WorldwideRegionPicker {
+  /// Shows.
   static Future<WorldwideRegion?> show(
     BuildContext context, {
     String initialCountry = '',
@@ -127,7 +134,9 @@ abstract final class WorldwideRegionPicker {
   }
 }
 
+/// Displays the worldwide region sheet.
 class _WorldwideRegionSheet extends StatefulWidget {
+  /// Creates worldwide region sheet.
   const _WorldwideRegionSheet({
     required this.initialCountry,
     required this.initialState,
@@ -138,10 +147,12 @@ class _WorldwideRegionSheet extends StatefulWidget {
   final String initialState;
   final String? countryCodeFilter;
 
+  /// Creates the presentation state for this widget.
   @override
   State<_WorldwideRegionSheet> createState() => _WorldwideRegionSheetState();
 }
 
+/// Manages the worldwide region sheet presentation and lifecycle.
 class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
   List<csc.Country> _countries = const [];
   List<csc.State> _states = const [];
@@ -150,12 +161,14 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
   bool _loading = true;
   String? _error;
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
     _loadCountries();
   }
 
+  /// Loads countries.
   Future<void> _loadCountries() async {
     try {
       final countries = await csc.getAllCountries();
@@ -189,6 +202,7 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
     }
   }
 
+  /// Loads states.
   Future<void> _loadStates(
     csc.Country? country, {
     String preferName = '',
@@ -230,6 +244,7 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
     }
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -340,7 +355,9 @@ class _WorldwideRegionSheetState extends State<_WorldwideRegionSheet> {
   }
 }
 
+/// Displays the region wheel.
 class _RegionWheel<T> extends StatefulWidget {
+  /// Creates region wheel.
   const _RegionWheel({
     required this.label,
     required this.values,
@@ -357,13 +374,16 @@ class _RegionWheel<T> extends StatefulWidget {
   final ValueChanged<T> onSelected;
   final bool loading;
 
+  /// Creates the presentation state for this widget.
   @override
   State<_RegionWheel<T>> createState() => _RegionWheelState<T>();
 }
 
+/// Manages the region wheel presentation and lifecycle.
 class _RegionWheelState<T> extends State<_RegionWheel<T>> {
   late final FixedExtentScrollController _scrollController;
 
+  /// Computes selected index.
   int _selectedIndex() {
     final selected = widget.selected;
     if (selected == null) return 0;
@@ -371,6 +391,7 @@ class _RegionWheelState<T> extends State<_RegionWheel<T>> {
     return index < 0 ? 0 : index;
   }
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
@@ -379,6 +400,7 @@ class _RegionWheelState<T> extends State<_RegionWheel<T>> {
     );
   }
 
+  /// Updates bindings when the parent changes this widget.
   @override
   void didUpdateWidget(covariant _RegionWheel<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -391,12 +413,14 @@ class _RegionWheelState<T> extends State<_RegionWheel<T>> {
     });
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return Column(

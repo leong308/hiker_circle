@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 /// Only Firebase receives provider secrets. The mobile binary carries no key.
 abstract final class PrivateProviderClient {
+  /// Computes request.
   static Future<http.Response> request(
     String operation,
     Map<String, Object?> data,

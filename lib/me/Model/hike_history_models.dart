@@ -1,25 +1,35 @@
 // HikeHistorySummary and detail models parse completed hikes, route samples and team tracks.
 import '../../home/Model/hike_session_models.dart';
 
+/// Computes map.
 Map<String, dynamic> _map(Object? value) =>
     value is Map ? Map<String, dynamic>.from(value) : const <String, dynamic>{};
 
+/// Computes maps.
 List<Map<String, dynamic>> _maps(Object? value) => value is Iterable
     ? value.whereType<Map>().map(Map<String, dynamic>.from).toList()
     : const <Map<String, dynamic>>[];
 
+/// Computes text.
 String _text(Object? value) => value is String ? value.trim() : '';
+
+/// Computes integer.
 int _integer(Object? value) => value is num && value.isFinite
     ? value.round()
     : int.tryParse('$value') ?? 0;
+
+/// Computes number.
 double _number(Object? value) => value is num && value.isFinite
     ? value.toDouble()
     : double.tryParse('$value') ?? 0;
+
+/// Computes date.
 DateTime? _date(Object? value) =>
     value is String ? DateTime.tryParse(value)?.toLocal() : null;
 
 /// Parse the compact history row separately from route and telemetry detail payloads.
 class HikeHistorySummary {
+  /// Creates hike history summary.
   const HikeHistorySummary({
     required this.sessionId,
     required this.trailId,
@@ -40,6 +50,7 @@ class HikeHistorySummary {
     required this.coverImageUrl,
   });
 
+  /// Creates hike history summary from stored map data.
   factory HikeHistorySummary.fromMap(Map<String, dynamic> data) {
     return HikeHistorySummary(
       sessionId: _text(data['sessionId']),
@@ -84,10 +95,13 @@ class HikeHistorySummary {
   final int teamMemberCount;
   final String coverImageUrl;
 
+  /// Returns is team.
   bool get isTeam => hikeType == 'team';
 }
 
+/// Represents hike history checkpoint.
 class HikeHistoryCheckpoint {
+  /// Creates hike history checkpoint.
   const HikeHistoryCheckpoint({
     required this.name,
     required this.order,
@@ -95,6 +109,7 @@ class HikeHistoryCheckpoint {
     required this.longitude,
   });
 
+  /// Creates hike history checkpoint from stored map data.
   factory HikeHistoryCheckpoint.fromMap(Map<String, dynamic> data) =>
       HikeHistoryCheckpoint(
         name: _text(data['name']).isEmpty ? 'Checkpoint' : _text(data['name']),
@@ -109,7 +124,9 @@ class HikeHistoryCheckpoint {
   final double longitude;
 }
 
+/// Represents hike history check in.
 class HikeHistoryCheckIn {
+  /// Creates hike history check in.
   const HikeHistoryCheckIn({
     required this.id,
     required this.status,
@@ -118,6 +135,7 @@ class HikeHistoryCheckIn {
     this.coordinate,
   });
 
+  /// Creates hike history check in from stored map data.
   factory HikeHistoryCheckIn.fromMap(Map<String, dynamic> data) =>
       HikeHistoryCheckIn(
         id: _text(data['checkInId']),
@@ -136,13 +154,16 @@ class HikeHistoryCheckIn {
   final HikeCoordinate? coordinate;
 }
 
+/// Represents hike history member track.
 class HikeHistoryMemberTrack {
+  /// Creates hike history member track.
   const HikeHistoryMemberTrack({
     required this.name,
     required this.isCurrentUser,
     required this.routePoints,
   });
 
+  /// Creates hike history member track from stored map data.
   factory HikeHistoryMemberTrack.fromMap(Map<String, dynamic> data) =>
       HikeHistoryMemberTrack(
         name: _text(data['name']).isEmpty ? 'Hiker' : _text(data['name']),
@@ -157,7 +178,9 @@ class HikeHistoryMemberTrack {
   final List<HikeCoordinate> routePoints;
 }
 
+/// Represents hike history detail.
 class HikeHistoryDetail {
+  /// Creates hike history detail.
   const HikeHistoryDetail({
     required this.summary,
     required this.startPointName,
@@ -205,6 +228,7 @@ class HikeHistoryDetail {
     required this.routeCaptureAvailable,
   });
 
+  /// Creates hike history detail from stored map data.
   factory HikeHistoryDetail.fromMap(Map<String, dynamic> data) {
     final plan = _map(data['plan']);
     final trail = _map(data['trail']);
@@ -289,6 +313,16 @@ class HikeHistoryDetail {
           .toList(),
       insights: data['insights'] is Iterable
           ? List<String>.from(data['insights'])
+                .map(
+                  (insight) =>
+                      insight.startsWith('Route notes: ') &&
+                          insight.endsWith(
+                            'pinned locations and automatic GPS tracking.',
+                          )
+                      ? 'Route recorded with automatic GPS tracking.'
+                      : insight,
+                )
+                .toList()
           : const [],
       ratingStars: _integer(rating['stars']).clamp(0, 5),
       ratingDifficulty: _text(rating['difficulty']),
@@ -346,6 +380,7 @@ class HikeHistoryDetail {
   final bool routeCaptureAvailable;
 }
 
+/// Parses hike history list.
 List<HikeHistorySummary> parseHikeHistoryList(Object? payload) {
   final data = _map(payload);
   return _maps(data['hikes'])
@@ -354,6 +389,7 @@ List<HikeHistorySummary> parseHikeHistoryList(Object? payload) {
       .toList();
 }
 
+/// Parses hike history detail.
 HikeHistoryDetail parseHikeHistoryDetail(Object? payload) {
   final detail = _map(_map(payload)['detail']);
   if (detail.isEmpty) {

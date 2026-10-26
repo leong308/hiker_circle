@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 
 import '../services/privacy_policy_launcher.dart';
 
+/// Displays the privacy policy link.
 class PrivacyPolicyLink extends StatelessWidget {
+  /// Creates privacy policy link.
   const PrivacyPolicyLink({super.key});
 
+  /// Opens.
   Future<void> _open(BuildContext context) async {
     final launched = await launchPrivacyPolicy();
     if (!context.mounted || launched) return;
@@ -23,6 +26,7 @@ class PrivacyPolicyLink extends StatelessWidget {
       );
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(

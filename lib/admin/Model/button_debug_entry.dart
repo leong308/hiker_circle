@@ -5,6 +5,7 @@ import 'button_debug_field.dart';
 
 /// Application-visible BLE payloads, not radio/link-layer frames.
 class ButtonDebugEntry {
+  /// Creates button debug entry.
   ButtonDebugEntry({
     required this.timestamp,
     required this.direction,
@@ -16,6 +17,7 @@ class ButtonDebugEntry {
     required this.interpretation,
   });
 
+  /// Creates button debug entry using from event.
   factory ButtonDebugEntry.fromEvent(Map<Object?, Object?> event) {
     final characteristic = '${event['characteristic'] ?? ''}';
     final bytes = buttonDebugSafePayload(
@@ -53,10 +55,13 @@ class ButtonDebugEntry {
       status,
       interpretation;
   final Uint8List bytes;
+
+  /// Returns hex.
   String get hex => bytes
       .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
       .join(' ');
 
+  /// Converts to row.
   Map<String, Object?> toRow(String sessionId, int sequence) => {
     'session_id': sessionId,
     'sequence': sequence,
@@ -70,6 +75,7 @@ class ButtonDebugEntry {
     'interpretation': interpretation,
   };
 
+  /// Formats row.
   static String formatRow(Map<String, Object?> row) {
     final characteristic = '${row['characteristic'] ?? ''}';
     final bytes = buttonDebugSafePayload(
@@ -97,13 +103,21 @@ String decodeButtonPayload(Uint8List bytes, String characteristic) {
   }
   final c = characteristic.toLowerCase();
   final d = ByteData.sublistView(bytes);
+
+  /// Computes hex.
   String hex(int a, int b) => bytes
       .sublist(a, b)
       .map((v) => v.toRadixString(16).padLeft(2, '0'))
       .join('')
       .toUpperCase();
+
+  /// Computes u32.
   int u32(int p) => d.getUint32(p, Endian.big);
+
+  /// Computes coord.
   double coord(int p) => d.getInt32(p, Endian.big) / 1e7;
+
+  /// Computes uuid.
   bool uuid(String prefix) => c.startsWith('7e2a1d$prefix');
   if (uuid('3f') && bytes.length <= 2) {
     return 'Log page index=${bytes[0]}${bytes.length == 2 ? ', chunk index=${bytes[1]}' : ''} (zero-based).';

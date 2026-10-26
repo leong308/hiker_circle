@@ -14,6 +14,7 @@ const _brandedAnimationScale = 2.0;
 /// A non-null [value] remains a determinate Material progress ring because it
 /// communicates measurable progress rather than an indeterminate wait.
 class HikerCircleMinorLoadingIndicator extends StatelessWidget {
+  /// Creates hiker circle minor loading indicator.
   const HikerCircleMinorLoadingIndicator({
     super.key,
     this.value,
@@ -27,6 +28,7 @@ class HikerCircleMinorLoadingIndicator extends StatelessWidget {
     this.semanticsValue,
   });
 
+  /// Creates hiker circle minor loading indicator using adaptive.
   const HikerCircleMinorLoadingIndicator.adaptive({
     super.key,
     this.value,
@@ -50,6 +52,7 @@ class HikerCircleMinorLoadingIndicator extends StatelessWidget {
   final String? semanticsLabel;
   final String? semanticsValue;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     if (value != null) {
@@ -88,6 +91,7 @@ class HikerCircleMinorLoadingIndicator extends StatelessWidget {
 /// [LoadingToast]. The original animation's word layer is removed at render
 /// time and the real HikerCircle app icon is placed inside the animation.
 class HikerCircleLoadingToast extends StatefulWidget {
+  /// Creates hiker circle loading toast.
   const HikerCircleLoadingToast({
     super.key,
     required this.message,
@@ -101,14 +105,17 @@ class HikerCircleLoadingToast extends StatefulWidget {
   final ValueListenable<double>? progress;
   final bool compact;
 
+  /// Creates the presentation state for this widget.
   @override
   State<HikerCircleLoadingToast> createState() =>
       _HikerCircleLoadingToastState();
 }
 
+/// Manages the hiker circle loading toast presentation and lifecycle.
 class _HikerCircleLoadingToastState extends State<HikerCircleLoadingToast> {
   bool _showFileTransfer = false;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -251,7 +258,9 @@ class _HikerCircleLoadingToastState extends State<HikerCircleLoadingToast> {
   }
 }
 
+/// Displays the hiker circle loading view.
 class HikerCircleLoadingView extends StatelessWidget {
+  /// Creates hiker circle loading view.
   const HikerCircleLoadingView({
     super.key,
     required this.message,
@@ -267,6 +276,7 @@ class HikerCircleLoadingView extends StatelessWidget {
   final bool compact;
   final EdgeInsetsGeometry padding;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return Center(
@@ -283,7 +293,9 @@ class HikerCircleLoadingView extends StatelessWidget {
   }
 }
 
+/// Displays the hiker circle loading toast overlay.
 class HikerCircleLoadingToastOverlay extends StatefulWidget {
+  /// Creates hiker circle loading toast overlay.
   const HikerCircleLoadingToastOverlay({
     super.key,
     required this.message,
@@ -306,21 +318,25 @@ class HikerCircleLoadingToastOverlay extends StatefulWidget {
   final Duration timeout;
   final VoidCallback? onTimeout;
 
+  /// Creates the presentation state for this widget.
   @override
   State<HikerCircleLoadingToastOverlay> createState() =>
       _HikerCircleLoadingToastOverlayState();
 }
 
+/// Manages the hiker circle loading toast overlay presentation and lifecycle.
 class _HikerCircleLoadingToastOverlayState
     extends State<HikerCircleLoadingToastOverlay> {
   Timer? _timeoutTimer;
 
+  /// Initializes bindings and starts the screen lifecycle.
   @override
   void initState() {
     super.initState();
     _scheduleTimeout();
   }
 
+  /// Updates bindings when the parent changes this widget.
   @override
   void didUpdateWidget(HikerCircleLoadingToastOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -330,6 +346,7 @@ class _HikerCircleLoadingToastOverlayState
     }
   }
 
+  /// Computes schedule timeout.
   void _scheduleTimeout() {
     _timeoutTimer?.cancel();
     if (widget.timeout <= Duration.zero || widget.onTimeout == null) return;
@@ -338,12 +355,14 @@ class _HikerCircleLoadingToastOverlayState
     });
   }
 
+  /// Releases resources owned by this instance.
   @override
   void dispose() {
     _timeoutTimer?.cancel();
     super.dispose();
   }
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     return Positioned.fill(

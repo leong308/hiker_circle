@@ -4,7 +4,9 @@ import 'dart:math' as math;
 
 import '../../home/Model/hike_session_models.dart';
 
+/// Represents hike checkpoint analysis.
 class HikeCheckpointAnalysis {
+  /// Creates hike checkpoint analysis.
   const HikeCheckpointAnalysis({
     required this.name,
     required this.order,
@@ -32,7 +34,9 @@ class HikeCheckpointAnalysis {
   final double speedKmh;
 }
 
+/// Represents hike pace sample.
 class HikePaceSample {
+  /// Creates hike pace sample.
   const HikePaceSample({
     required this.distanceKm,
     required this.paceMinutesPerKm,
@@ -48,7 +52,9 @@ class HikePaceSample {
   final double? altitudeMeters;
 }
 
+/// Represents hike route analysis.
 class HikeRouteAnalysis {
+  /// Creates hike route analysis.
   const HikeRouteAnalysis({
     required this.checkpoints,
     required this.samples,
@@ -66,7 +72,9 @@ class HikeRouteAnalysis {
   final double fastestPaceMinutesPerKm;
 }
 
+/// Represents hike analysis checkpoint.
 class HikeAnalysisCheckpoint {
+  /// Creates hike analysis checkpoint.
   const HikeAnalysisCheckpoint({
     required this.name,
     required this.order,
@@ -82,6 +90,7 @@ class HikeAnalysisCheckpoint {
 
 // analyzeHikeRoute orders valid fixes, separates movement from stops and matches checkpoints
 // against recorded progress.
+/// Computes analyze hike route.
 HikeRouteAnalysis analyzeHikeRoute({
   required List<HikeCoordinate> routePoints,
   required List<HikeAnalysisCheckpoint> checkpoints,
@@ -221,6 +230,7 @@ HikeRouteAnalysis analyzeHikeRoute({
   );
 }
 
+/// Computes downsample.
 List<HikePaceSample> _downsample(List<HikePaceSample> samples, int maximum) {
   if (samples.length <= maximum) return List.unmodifiable(samples);
   final result = <HikePaceSample>[];

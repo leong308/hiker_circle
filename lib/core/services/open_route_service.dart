@@ -8,16 +8,21 @@ import 'package:http/http.dart' as http;
 import '../config/google_api_config.dart';
 import '../../trail/Model/trail_models.dart';
 
+/// Represents open route service exception.
 class OpenRouteServiceException implements Exception {
+  /// Creates open route service exception.
   const OpenRouteServiceException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents open route result.
 class OpenRouteResult {
+  /// Creates open route result.
   const OpenRouteResult({
     required this.distanceMeters,
     required this.durationSeconds,
@@ -31,7 +36,9 @@ class OpenRouteResult {
   final List<List<double>> coordinates;
 }
 
+/// Represents open route service.
 class OpenRouteService {
+  /// Creates open route service.
   OpenRouteService({http.Client? client, String? apiKey})
     : _client = client,
       _apiKey = apiKey ?? GoogleApiConfig.openRouteServiceApiKey;
@@ -39,6 +46,7 @@ class OpenRouteService {
   final http.Client? _client;
   final String _apiKey;
 
+  /// Computes foot hiking route.
   Future<OpenRouteResult> computeFootHikingRoute({
     required double startLatitude,
     required double startLongitude,
@@ -110,6 +118,7 @@ class OpenRouteService {
     }
   }
 
+  /// Parses route response.
   OpenRouteResult _parseRouteResponse(String body) {
     final decoded = jsonDecode(body);
     if (decoded is! Map<String, dynamic>) {
@@ -217,6 +226,7 @@ class OpenRouteService {
     );
   }
 
+  /// Computes num value.
   double _numValue(dynamic value) {
     if (value is num && value.isFinite) return value.toDouble();
     return 0.0;

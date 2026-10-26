@@ -10,16 +10,21 @@ import '../../core/services/mobile_security_service.dart';
 import 'firebase_user_repository.dart';
 import 'local_session_database.dart';
 
+/// Represents session repository exception.
 class SessionRepositoryException implements Exception {
+  /// Creates session repository exception.
   const SessionRepositoryException(this.message);
 
   final String message;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
+/// Represents session repository.
 class SessionRepository {
+  /// Creates session repository.
   SessionRepository({
     LocalSessionDatabase? localSessionDatabase,
     FirebaseUserRepository? firebaseUserRepository,
@@ -40,6 +45,8 @@ class SessionRepository {
   final Future<String> Function() _readSessionId;
   final Future<void> Function() _endServerSession;
   final _changes = StreamController<AppSession?>.broadcast();
+
+  /// Returns changes.
   Stream<AppSession?> get changes => _changes.stream;
   AppSession? _session;
   int _generation = 0;
@@ -51,6 +58,7 @@ class SessionRepository {
 
   // _watchServerSession detects server revocation or replacement without treating transient read
   // failures as sign-out.
+  /// Watches server session.
   Future<void> _watchServerSession(AppSession session) async {
     final generation = _generation;
     try {
@@ -65,7 +73,8 @@ class SessionRepository {
           .watchSessionState(session.phoneNumber)
           .listen(
             (state) {
-              if (generation != _generation || state['activeSessionId'] == sid) {
+              if (generation != _generation ||
+                  state['activeSessionId'] == sid) {
                 return;
               }
               final reason = state['reason'];
@@ -87,6 +96,7 @@ class SessionRepository {
     }
   }
 
+  /// Computes publish session.
   void _publishSession(AppSession? session) {
     _session = session;
     _changes.add(session);
@@ -99,6 +109,7 @@ class SessionRepository {
     }
   }
 
+  /// Persists if current.
   Future<void> _persistIfCurrent(int generation, AppSession? session) {
     final operation = _localWrites.then((_) async {
       if (generation != _generation) return;
@@ -112,12 +123,15 @@ class SessionRepository {
     return operation;
   }
 
+  /// Returns current session.
   AppSession? get currentSession => _session;
 
+  /// Returns is signed in.
   bool get isSignedIn => _session != null;
 
   // loadSavedSession restores local state first, then validates the current Firebase
   // account/session asynchronously.
+  /// Loads saved session.
   Future<void> loadSavedSession() async {
     final generation = ++_generation;
     try {
@@ -147,6 +161,7 @@ class SessionRepository {
     }
   }
 
+  /// Refreshes saved session.
   Future<void> _refreshSavedSession(AppSession saved, int generation) async {
     try {
       final refreshed = await _firebaseUserRepository
@@ -169,6 +184,7 @@ class SessionRepository {
 
   // signIn serializes local profile persistence and starts the server-session observer for the new
   // account.
+  /// Computes sign in.
   Future<void> signIn(AppSession session) async {
     await _signOutFuture;
     final generation = ++_generation;
@@ -206,6 +222,7 @@ class SessionRepository {
     }
   }
 
+  /// Refreshes current session.
   Future<void> refreshCurrentSession() async {
     final session = _session;
     final generation = _generation;
@@ -234,6 +251,7 @@ class SessionRepository {
 
   // signOut invalidates pending profile writes, ends the server session and removes only local
   // account state.
+  /// Computes sign out.
   Future<void> signOut({String? securityNotice}) {
     securityMessage = securityNotice;
     final generation = ++_generation;
@@ -247,7 +265,7 @@ class SessionRepository {
         (() async {
           if (securityNotice == null) {
             try {
-                await _endServerSession().timeout(_cloudTimeout);
+              await _endServerSession().timeout(_cloudTimeout);
             } catch (_) {}
           }
           await _firebaseUserRepository.signOut().timeout(_cloudTimeout);
@@ -258,6 +276,7 @@ class SessionRepository {
     return cleanup;
   }
 
+  /// Computes ignore sign out failure.
   Future<void> _ignoreSignOutFailure(Future<void> operation) async {
     try {
       await operation;
@@ -266,6 +285,7 @@ class SessionRepository {
     }
   }
 
+  /// Applies cached profile photo.
   Future<AppSession> _withCachedProfilePhoto(
     AppSession session, {
     AppSession? previousSession,
@@ -291,6 +311,7 @@ class SessionRepository {
     return session.copyWith(photoBytes: downloadedBytes);
   }
 
+  /// Downloads profile photo.
   Future<Uint8List?> _downloadProfilePhoto(String url) async {
     final client = http.Client();
     try {
@@ -334,6 +355,7 @@ class SessionRepository {
     }
   }
 
+  /// Checks whether trusted profile photo host.
   bool _isTrustedProfilePhotoHost(String host) {
     final normalized = host.trim().toLowerCase();
     return normalized == 'firebasestorage.googleapis.com' ||
@@ -342,6 +364,7 @@ class SessionRepository {
         normalized.endsWith('.appspot.com');
   }
 
+  /// Checks whether there is supported image signature.
   bool _hasSupportedImageSignature(Uint8List bytes) {
     if (bytes.length < 4) return false;
     final isJpeg = bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;

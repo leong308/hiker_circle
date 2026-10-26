@@ -3,16 +3,21 @@ import 'dart:typed_data';
 
 /// Byte ranges use zero-based, inclusive offsets, matching the captured payload.
 class ButtonDebugField {
+  /// Creates button debug field.
   const ButtonDebugField(this.start, this.end, this.hex, this.name, this.value);
   final int start, end;
   final String hex, name, value;
+
+  /// Returns range.
   String get range => start == end ? '$start' : '$start–$end';
 }
 
+/// Computes button payload hex.
 String buttonPayloadHex(List<int> bytes) => bytes
     .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
     .join(' ');
 
+/// Computes button debug safe payload.
 Uint8List buttonDebugSafePayload(List<int> payload, String characteristic) {
   final bytes = Uint8List.fromList(payload);
   if (characteristic.toLowerCase().startsWith('7e2a1d38') &&
@@ -32,8 +37,12 @@ List<ButtonDebugField> decodeButtonFields(
   if (bytes.isEmpty) return const [];
   final data = ByteData.sublistView(bytes);
   final fields = <ButtonDebugField>[];
+
+  /// Computes uuid.
   bool uuid(String suffix) =>
       characteristic.toLowerCase().startsWith('7e2a1d$suffix');
+
+  /// Adds.
   void add(int start, int length, String name, String value) {
     fields.add(
       ButtonDebugField(
@@ -46,6 +55,7 @@ List<ButtonDebugField> decodeButtonFields(
     );
   }
 
+  /// Computes number.
   void number(int start, int length, String name, [String unit = '']) {
     final value = length == 4
         ? data.getUint32(start, Endian.big)
@@ -55,18 +65,23 @@ List<ButtonDebugField> decodeButtonFields(
     add(start, length, name, '$value$unit');
   }
 
+  /// Computes identifier.
   void identifier(int start, int length, String name) => add(
     start,
     length,
     name,
     buttonPayloadHex(bytes.sublist(start, start + length)).replaceAll(' ', ''),
   );
+
+  /// Computes tag.
   void tag(int start, int length) => add(
     start,
     length,
     'Authentication tag',
     'Truncated HMAC-SHA256; reception alone does not verify authentication.',
   );
+
+  /// Computes location.
   void location(int lat, int lon, int accuracy) {
     add(
       lat,
@@ -88,11 +103,13 @@ List<ButtonDebugField> decodeButtonFields(
     );
   }
 
+  /// Computes epoch.
   void epoch(int start, String name) {
     final seconds = data.getUint32(start, Endian.big);
     add(start, 4, name, '$seconds seconds since Unix epoch (UTC)');
   }
 
+  /// Computes remaining.
   void remaining() {
     final start = fields.isEmpty ? 0 : fields.last.end + 1;
     if (start < bytes.length) {

@@ -293,6 +293,20 @@ exports.notifyUpcomingHikersAboutTrailHazard = onDocumentWritten({
       userId: userDocumentIdForPhone, tokensFor: latestFcmTokensForUser});
   }
 });
+// Both admin-added and approved recorded trails use this same missing-cover pipeline.
+exports.generateMissingTrailCover = onDocumentWritten({
+  document: 'trails/{trailId}', region: 'asia-southeast1', retry: true,
+  timeoutSeconds: 120, memory: '512MiB', concurrency: 4, maxInstances: 4,
+}, async event => {
+  if (!event.data?.after?.exists) return;
+  const {coverPlan, ensureTrailCover} = require('./trail_cover_generation');
+  if (!coverPlan(event.params.trailId, event.data.after.data())) return;
+  const result = await ensureTrailCover({
+    db: admin.firestore(), bucket: getStorage().bucket(), trailId: event.params.trailId,
+  });
+  if (result.written) logger.info('Generated missing trail cover.', {trailId: event.params.trailId});
+});
+
 exports.finalizeRecordedTrailRequest = onCall({timeoutSeconds: 120, memory: '512MiB'}, async request => {
   const {uid} = authenticatedPhoneFor(request, 'Sign in to submit your recorded trail.');
   try {
@@ -2309,146 +2323,16 @@ exports.projectLiveLocationFootprints = onDocumentWritten(
   }
 );
 
-// manageBuddyRequest: Commit reciprocal incoming/outgoing relationship state with requester ownership and action limits.
-exports.manageBuddyRequest = onCall({}, async (request) => {
-  const ownerPhone = authenticatedPhoneClaim(request);
-  const uid = String(request.auth?.uid || '');
-  const action = String(request.data?.action || '');
-  const otherPhone = String(request.data?.phoneNumber || '').trim();
-  if (
-    !uid
-    || uid !== userDocumentIdForPhone(ownerPhone)
-    || !/^\+[1-9]\d{7,14}$/.test(ownerPhone)
-  ) {
-    throw new HttpsError('unauthenticated', 'Sign in to manage buddies.');
-  }
-  if (
-    !['send', 'accept', 'decline'].includes(action)
-    || !/^\+[1-9]\d{7,14}$/.test(otherPhone)
-    || phoneKeyFor(ownerPhone) === phoneKeyFor(otherPhone)
-  ) {
-    throw new HttpsError('invalid-argument', 'The buddy request is invalid.');
-  }
-
-  const db = admin.firestore();
-  const ownerRef = db.collection('users').doc(uid);
-  const otherRef = db
-    .collection('users')
-    .doc(userDocumentIdForPhone(otherPhone));
-  const ownerKey = phoneKeyFor(ownerPhone);
-  const otherKey = phoneKeyFor(otherPhone);
-
-  if (action === 'send') {
-    const rateRef = db.collection('buddyRequestRateLimits').doc(uid);
-    await db.runTransaction(async (transaction) => {
-      const [rateSnapshot, ownerSnapshot, otherSnapshot] = await Promise.all([
-        transaction.get(rateRef),
-        readUser(ownerRef, ["profile","social"], transaction),
-        readUser(otherRef, ["profile","social"], transaction),
-      ]);
-      if (!ownerSnapshot.exists || !otherSnapshot.exists) {
-        throw new HttpsError('not-found', 'This hiker is no longer available.');
-      }
-      const other = otherSnapshot.data() || {};
-      if (other.accountDisabled === true || other.status === 'disabled') {
-        throw new HttpsError('failed-precondition', 'This hiker is unavailable.');
-      }
-      const rate = rateSnapshot.data() || {};
-      const nowMillis = Date.now();
-      const windowStartedAtMillis = Number(rate.windowStartedAtMillis || 0);
-      const inWindow = nowMillis - windowStartedAtMillis < 60 * 60 * 1000;
-      const requestCount = inWindow ? Number(rate.requestCount || 0) : 0;
-      if (requestCount >= 20) {
-        throw new HttpsError(
-          'resource-exhausted',
-          'Too many buddy requests were sent. Try again later.'
-        );
-      }
-      const owner = ownerSnapshot.data() || {};
-      const profile = owner.profile && typeof owner.profile === 'object'
-        ? owner.profile
-        : {};
-      const displayName = String(
-        canonicalUsername(owner, `Hiker ${ownerKey.slice(-4)}`)
-      ).slice(0, 80);
-      const photoURL = String(profile.photoURL || '').slice(
-        0,
-        2000
-      );
-      const nowIso = new Date(nowMillis).toISOString();
-      setUser(transaction, otherRef, {
-          buddyRequestsIncoming: { [ownerKey]: {
-            phoneNumber: ownerPhone,
-            displayName,
-            handle: `@hiker${ownerKey.slice(-4)}`,
-            ...(photoURL ? { photoURL } : {}),
-            createdAtLocal: nowIso,
-          } },
-          buddyRequestsUpdatedAt:
-            admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-      setUser(transaction, ownerRef, {
-          buddyRequestsOutgoing: { [otherKey]: {
-            phoneNumber: otherPhone,
-            createdAtLocal: nowIso,
-          } },
-          buddyRequestsUpdatedAt:
-            admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-      transaction.set(
-        rateRef,
-        {
-          windowStartedAtMillis: inWindow ? windowStartedAtMillis : nowMillis,
-          requestCount: requestCount + 1,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    });
-    return { status: 'sent' };
-  }
-
-  await db.runTransaction(async (transaction) => {
-    const [ownerSnapshot, otherSnapshot] = await Promise.all([
-      readUser(ownerRef, ["profile","social"], transaction),
-      readUser(otherRef, ["profile","social"], transaction),
-    ]);
-    if (!ownerSnapshot.exists || !otherSnapshot.exists) {
-      throw new HttpsError('not-found', 'This buddy request no longer exists.');
-    }
-    const ownerData = ownerSnapshot.data() || {};
-    const incoming = ownerData.buddyRequestsIncoming;
-    if (!incoming?.[otherKey]) {
-      throw new HttpsError(
-        'failed-precondition',
-        'This buddy request has already been handled.'
-      );
-    }
-    const ownerUpdate = {
-      [`buddyRequestsIncoming.${otherKey}`]:
-        admin.firestore.FieldValue.delete(),
-      buddyRequestsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    const otherUpdate = {
-      [`buddyRequestsOutgoing.${ownerKey}`]:
-        admin.firestore.FieldValue.delete(),
-      buddyRequestsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-    if (action === 'accept') {
-      ownerUpdate.buddyPhoneNumbers =
-        admin.firestore.FieldValue.arrayUnion(otherPhone);
-      ownerUpdate.buddiesUpdatedAt =
-        admin.firestore.FieldValue.serverTimestamp();
-      otherUpdate.buddyPhoneNumbers =
-        admin.firestore.FieldValue.arrayUnion(ownerPhone);
-      otherUpdate.buddiesUpdatedAt =
-        admin.firestore.FieldValue.serverTimestamp();
-    }
-    updateUser(transaction, ownerRef, ownerUpdate);
-    updateUser(transaction, otherRef, otherUpdate);
-  });
-  return { status: action === 'accept' ? 'accepted' : 'declined' };
+const buddyRequestService = require('./buddy_requests').createBuddyRequestService({
+  db: admin.firestore(), FieldValue, HttpsError, userIdFor: userDocumentIdForPhone,
+  tokensFor: latestFcmTokensForUser, messaging: () => admin.messaging(), displayNameFor: canonicalUsername,
 });
+
+// manageBuddyRequest: Keep reciprocal relationships and their cancellable notification atomic.
+exports.manageBuddyRequest = onCall({}, request => buddyRequestService.manage({
+  ownerPhone: authenticatedPhoneClaim(request), uid: String(request.auth?.uid || ''),
+  action: String(request.data?.action || ''), otherPhone: String(request.data?.phoneNumber || '').trim(),
+}));
 
 // Public discovery uses a server allow-list so private participant, safety,
 // and route-planning fields never cross the trust boundary. Full documents
@@ -6247,12 +6131,14 @@ exports.submitCompletedHikeRating = onCall({}, async (request) => {
 // private even if another account learns a document ID.
 exports.listExpiredScheduledHikes = onCall({}, async (request) => {
   const { uid, phoneNumber } = authenticatedPhoneFor(request, 'Sign in to view scheduled hike history.');
+  const {START_WINDOW_MS, loadExpiredScheduledHikePage} = require('./expired_hike_history');
+  const now = Date.now();
   const limit = Math.round(boundedNumber(request.data?.limit, 1, 200, 100));
   const { Filter } = require('firebase-admin/firestore');
   let query = admin.firestore().collection('upcomingHikes')
     .where(Filter.or(Filter.where('creatorUserId', '==', uid),
       Filter.where('participantPhones', 'array-contains', phoneNumber)))
-    .where('departureTimeLocal', '<=', new Date().toISOString())
+    .where('departureTimeLocal', '<=', new Date(now - START_WINDOW_MS).toISOString())
     .orderBy('departureTimeLocal', 'desc').orderBy(admin.firestore.FieldPath.documentId(), 'desc');
   const cursor = request.data?.cursor;
   if (cursor != null) {
@@ -6261,13 +6147,8 @@ exports.listExpiredScheduledHikes = onCall({}, async (request) => {
     }
     query = query.startAfter(String(cursor.departureTimeLocal), String(cursor.hikeId));
   }
-  const snapshot = await query.limit(limit + 1).get();
-  const rows = snapshot.docs.slice(0, limit);
-  const last = rows.at(-1);
-  return { ownerPhoneNumber: phoneNumber, hikes: rows.map(document => ({ ...sanitizedPlainValue(document.data()), hikeId: document.id })),
-    nextCursor: snapshot.size > limit && last ? {
-      departureTimeLocal: String(last.data().departureTimeLocal), hikeId: last.id,
-    } : null };
+  return loadExpiredScheduledHikePage({query, ownerPhoneNumber: phoneNumber,
+    now, limit, sanitize: sanitizedPlainValue});
 });
 
 // listMyHikeHistory: Use the owner revision hash to avoid rereading an unchanged history payload.
@@ -10899,6 +10780,9 @@ exports.notifyGroupMembersAboutMessage = onDocumentCreated(
 
 // deliverFcmOutboxDocument: Fence preflight and outbound phases before delivering a queued push notification.
 async function deliverFcmOutboxDocument(reference, messageId) {
+  const initial = await reference.get();
+  if (initial.data()?.type === 'buddy_request') return buddyRequestService.deliver(reference);
+
   const db = admin.firestore();
   const lifecycle = require('./fcm_outbox_delivery');
   const timestamp = () => admin.firestore.FieldValue.serverTimestamp();
@@ -11411,7 +11295,8 @@ async function sendUpcomingHikeReminderToPhone(
   minutesUntil
 ) {
   const phone = String(phoneNumber || '').trim();
-  if (!phone) {
+  const departureMillis = dateMillis(hike.departureTimeLocal || hike.departureTime);
+  if (!phone || !Number.isFinite(departureMillis) || departureMillis <= Date.now()) {
     return { successCount: 0, failureCount: 0, skipped: true };
   }
   const userSnapshot = await readUser(db
@@ -11435,6 +11320,7 @@ async function sendUpcomingHikeReminderToPhone(
   let successCount = 0;
   let failureCount = 0;
   for (let index = 0; index < tokenList.length; index += 500) {
+    if (departureMillis <= Date.now()) break;
     const response = await admin.messaging().sendEachForMulticast({
       tokens: tokenList.slice(index, index + 500),
       notification: {
@@ -11451,13 +11337,17 @@ async function sendUpcomingHikeReminderToPhone(
       },
       android: {
         priority: 'high',
+        ttl: Math.max(0, departureMillis - Date.now()),
         notification: {
           channelId: 'hiker_circle_upcoming_hikes',
           priority: 'high',
         },
       },
       apns: {
-        headers: { 'apns-priority': '10' },
+        headers: {
+          'apns-priority': '10',
+          'apns-expiration': String(Math.floor(departureMillis / 1000)),
+        },
         payload: { aps: { sound: 'default' } },
       },
     });

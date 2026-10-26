@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../Model/sos_models.dart';
 
+/// Represents sos device alert service.
 class SosDeviceAlertService {
+  /// Creates sos device alert service.
   const SosDeviceAlertService();
 
   static const String sosAlarmAsset = 'assets/audios/sos_alarm.mp3';
@@ -13,6 +15,7 @@ class SosDeviceAlertService {
     'hiker_circle/sos_device_alerts',
   );
 
+  /// Starts manual sos pattern.
   Future<void> startManualSosPattern({
     String alarmAsset = sosAlarmAsset,
   }) async {
@@ -21,16 +24,19 @@ class SosDeviceAlertService {
     });
   }
 
+  /// Starts sos pattern for mode.
   Future<void> startSosPatternForMode(SosAlertMode mode) async {
     await startManualSosPattern(alarmAsset: alarmAssetForMode(mode));
   }
 
+  /// Starts siren only for mode.
   Future<void> startSirenOnlyForMode(SosAlertMode mode) async {
     await _channel.invokeMethod<void>('startSirenOnly', {
       'alarmAsset': alarmAssetForMode(mode),
     });
   }
 
+  /// Computes alarm asset for mode.
   String alarmAssetForMode(SosAlertMode mode) {
     return switch (mode) {
       SosAlertMode.medical => medicalAlarmAsset,
@@ -38,13 +44,16 @@ class SosDeviceAlertService {
     };
   }
 
+  /// Stops manual sos pattern.
   Future<void> stopManualSosPattern({bool strict = false}) =>
       _stopNativeOutput('stopManualSosPattern', strict: strict);
 
+  /// Starts flashlight pattern.
   Future<void> startFlashlightPattern() async {
     await _channel.invokeMethod<void>('startFlashlightPattern');
   }
 
+  /// Stops flashlight pattern.
   Future<void> stopFlashlightPattern() async {
     try {
       await _channel.invokeMethod<void>('stopFlashlightPattern');
@@ -55,6 +64,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Starts fall stillness countdown vibration.
   Future<void> startFallStillnessCountdownVibration() async {
     try {
       await _channel.invokeMethod<void>('startFallStillnessCountdownVibration');
@@ -63,6 +73,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Stops fall stillness countdown vibration.
   Future<void> stopFallStillnessCountdownVibration({bool strict = false}) =>
       _stopNativeOutput('stopFallStillnessCountdownVibration', strict: strict);
 
@@ -83,6 +94,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Returns battery level.
   Future<int?> getBatteryLevel() async {
     try {
       final batteryLevel = await _channel.invokeMethod<int>('getBatteryLevel');
@@ -97,6 +109,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Loads device contacts.
   Future<List<EmergencyContactCandidate>> loadDeviceContacts() async {
     try {
       final rawContacts = await _channel.invokeListMethod<Object?>(
@@ -120,6 +133,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Begins output volume monitoring.
   Future<void> beginOutputVolumeMonitoring() async {
     try {
       await _channel.invokeMethod<void>('beginOutputVolumeMonitoring');
@@ -130,6 +144,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Ends output volume monitoring.
   Future<void> endOutputVolumeMonitoring() async {
     try {
       await _channel.invokeMethod<void>('endOutputVolumeMonitoring');
@@ -140,6 +155,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Computes speak fall stillness prompt.
   Future<void> speakFallStillnessPrompt({required String message}) async {
     await _channel.invokeMethod<void>('speakFallStillnessPrompt', {
       'message': message,
@@ -164,9 +180,11 @@ class SosDeviceAlertService {
     });
   }
 
+  /// Stops spoken prompt.
   Future<void> stopSpokenPrompt({bool strict = false}) =>
       _stopNativeOutput('stopSpokenPrompt', strict: strict);
 
+  /// Returns output volume status.
   Future<SosOutputVolumeStatus> getOutputVolumeStatus({
     double minimumRequiredVolume = minimumAudibleOutputVolume,
   }) async {
@@ -190,6 +208,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Returns current trigger location.
   Future<SosTriggerLocation?> getCurrentTriggerLocation({
     bool allowLastKnown = false,
     bool requirePrecise = false,
@@ -206,6 +225,7 @@ class SosDeviceAlertService {
     return location.hasValidPosition ? location : null;
   }
 
+  /// Sets precise location enabled.
   Future<void> setPreciseLocationEnabled(bool enabled) async {
     try {
       await _channel.invokeMethod<void>('setPreciseLocationEnabled', {
@@ -216,6 +236,7 @@ class SosDeviceAlertService {
     }
   }
 
+  /// Computes share text.
   Future<void> shareText({
     required String subject,
     required String text,

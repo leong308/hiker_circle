@@ -3,6 +3,7 @@
 import 'package:timezone/data/latest.dart' as time_zone_data;
 import 'package:timezone/timezone.dart' as time_zone;
 
+/// Represents preferred time zone.
 abstract final class PreferredTimeZone {
   static const String fallbackId = 'Asia/Kuala_Lumpur';
   static const Map<String, String> _friendlyNames = {
@@ -11,12 +12,14 @@ abstract final class PreferredTimeZone {
 
   static bool _initialized = false;
 
+  /// Ensures initialized.
   static void ensureInitialized() {
     if (_initialized) return;
     time_zone_data.initializeTimeZones();
     _initialized = true;
   }
 
+  /// Checks whether valid.
   static bool isValid(String? timeZoneId) {
     ensureInitialized();
     final normalized = timeZoneId?.trim() ?? '';
@@ -25,12 +28,14 @@ abstract final class PreferredTimeZone {
             time_zone.timeZoneDatabase.locations.containsKey(normalized));
   }
 
+  /// Normalizes.
   static String normalize(String? timeZoneId) {
     final normalized = timeZoneId?.trim() ?? '';
     if (normalized == 'Asia/Kuching') return fallbackId;
     return isValid(normalized) ? normalized : fallbackId;
   }
 
+  /// Returns all ids.
   static List<String> get allIds {
     ensureInitialized();
     final ids = time_zone.timeZoneDatabase.locations.keys.toList()..sort();
@@ -39,6 +44,7 @@ abstract final class PreferredTimeZone {
     return [fallbackId, ...ids];
   }
 
+  /// Computes compact label.
   static String compactLabel(String timeZoneId, {DateTime? at}) {
     final normalized = normalize(timeZoneId);
     final name =
@@ -47,6 +53,7 @@ abstract final class PreferredTimeZone {
     return '$name (${offsetLabel(normalized, at: at)})';
   }
 
+  /// Computes full label.
   static String fullLabel(String timeZoneId, {DateTime? at}) {
     final normalized = normalize(timeZoneId);
     final friendly = _friendlyNames[normalized];
@@ -55,6 +62,7 @@ abstract final class PreferredTimeZone {
         '${friendly == null ? '' : ' · $normalized'}';
   }
 
+  /// Computes offset label.
   static String offsetLabel(String timeZoneId, {DateTime? at}) {
     ensureInitialized();
     final location = _location(timeZoneId);
@@ -69,6 +77,7 @@ abstract final class PreferredTimeZone {
         : 'GMT$sign$hours:${minutes.toString().padLeft(2, '0')}';
   }
 
+  /// Computes location.
   static time_zone.Location _location(String? timeZoneId) {
     final id = normalize(timeZoneId);
     // Some bundled databases omit the Kuala Lumpur alias. Keep the standard
@@ -80,6 +89,7 @@ abstract final class PreferredTimeZone {
     );
   }
 
+  /// Formats instant.
   static String formatInstant(DateTime instant, String? timeZoneId) {
     ensureInitialized();
     final normalized = normalize(timeZoneId);

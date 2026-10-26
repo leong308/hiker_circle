@@ -1,6 +1,10 @@
 // HikerCircleFirebaseRepository connects hike, chat, community and safety workflows to validated
 // cloud operations and durable local queues.
 import 'conditional_cloud_cache.dart';
+import '../../achievements/Model/achievement_progress.dart';
+import '../../achievements/Data/achievement_notification_events.dart';
+export '../../achievements/Model/achievement_progress.dart'
+    show achievementProgressContentHash;
 import '../../core/services/content_hash.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -72,6 +76,7 @@ const Set<String> _upcomingHikePreviewFields = {
   'deletedAtLocal',
 };
 
+/// Parses upcoming hike preview payload.
 @visibleForTesting
 List<UpcomingHike> parseUpcomingHikePreviewPayload(Object? payload) {
   if (payload is! Map) {
@@ -117,7 +122,9 @@ List<UpcomingHike> parseUpcomingHikePreviewPayload(Object? payload) {
   return hikes;
 }
 
+/// Represents hiker circle firebase repository exception.
 class HikerCircleFirebaseRepositoryException implements Exception {
+  /// Creates hiker circle firebase repository exception.
   const HikerCircleFirebaseRepositoryException(
     this.message, {
     this.allowsOfflineFallback = false,
@@ -126,41 +133,28 @@ class HikerCircleFirebaseRepositoryException implements Exception {
   final String message;
   final bool allowsOfflineFallback;
 
+  /// Converts to string.
   @override
   String toString() => message;
 }
 
-String achievementProgressContentHash(List<Map<String, dynamic>> rows) {
-  String stringValue(Object? value) => value is String ? value : '';
-  int intValue(Object? value) =>
-      value is num && value.isFinite ? value.toInt() : 0;
-  final normalized =
-      rows.map((row) {
-        return <Object>[
-          stringValue(row['achievementId']),
-          stringValue(row['title']),
-          stringValue(row['condition']),
-          stringValue(row['category']),
-          stringValue(row['iconName']),
-          intValue(row['rewardPoints']),
-          intValue(row['pointsAwarded']),
-          stringValue(row['rewardType']),
-          stringValue(row['metricKey']),
-          intValue(row['targetCount']),
-          intValue(row['progressCount']),
-          intValue(row['sortOrder']),
-          intValue(row['accentColorValue']),
-          row['isActive'] != false,
-          row['isUnlocked'] == true,
-          stringValue(row['awardedAtLocal']),
-        ];
-      }).toList()..sort((left, right) {
-        return (left.first as String).compareTo(right.first as String);
-      });
-  return crypto.sha256.convert(utf8.encode(jsonEncode(normalized))).toString();
+/// Represents buddy relationships.
+class BuddyRelationships {
+  /// Creates buddy relationships.
+  const BuddyRelationships({
+    required this.buddyPhoneNumbers,
+    required this.outgoingRequestPhones,
+    required this.incomingRequests,
+  });
+
+  final Set<String> buddyPhoneNumbers;
+  final Set<String> outgoingRequestPhones;
+  final List<Map<String, dynamic>> incomingRequests;
 }
 
+/// Represents nearby sos forward result.
 class NearbySosForwardResult {
+  /// Creates nearby sos forward result.
   const NearbySosForwardResult({
     required this.incidentId,
     required this.deduplicated,
@@ -172,7 +166,9 @@ class NearbySosForwardResult {
   final int reporterCount;
 }
 
+/// Represents live location contact notification result.
 class LiveLocationContactNotificationResult {
+  /// Creates live location contact notification result.
   const LiveLocationContactNotificationResult({
     required this.contactCount,
     required this.sentCount,
@@ -189,9 +185,11 @@ class LiveLocationContactNotificationResult {
   final int inProgressCount;
   final int failedCount;
 
+  /// Returns should retry.
   bool get shouldRetry => retryableFailureCount > 0 || inProgressCount > 0;
 }
 
+/// Computes active hike start allows offline fallback for functions code.
 @visibleForTesting
 bool activeHikeStartAllowsOfflineFallbackForFunctionsCode(String code) {
   return const {
@@ -205,8 +203,10 @@ bool activeHikeStartAllowsOfflineFallbackForFunctionsCode(String code) {
   }.contains(code.trim().toLowerCase());
 }
 
+/// Represents active hike cloud restore result.
 @immutable
 class ActiveHikeCloudRestoreResult {
+  /// Creates active hike cloud restore result.
   const ActiveHikeCloudRestoreResult({
     required this.sessionId,
     required this.ensured,
@@ -220,8 +220,10 @@ class ActiveHikeCloudRestoreResult {
   final String status;
 }
 
+/// Represents active hike cloud completion result.
 @immutable
 class ActiveHikeCloudCompletionResult {
+  /// Creates active hike cloud completion result.
   const ActiveHikeCloudCompletionResult({
     required this.sessionId,
     required this.completed,
@@ -235,8 +237,10 @@ class ActiveHikeCloudCompletionResult {
   final String status;
 }
 
+/// Represents active hike end result.
 @immutable
 class ActiveHikeEndResult {
+  /// Creates active hike end result.
   const ActiveHikeEndResult({
     required this.cloudSynced,
     required this.sessionId,
@@ -248,9 +252,15 @@ class ActiveHikeEndResult {
   final String sessionId;
   final bool completed;
   final String status;
+
+  /// Allows feedback after the durable local save, including pending cloud sync.
+  bool get canCollectFeedback =>
+      status == 'pending' || (completed && status == 'completed');
 }
 
+/// Represents active hike post completion sync exception.
 class _ActiveHikePostCompletionSyncException implements Exception {
+  /// Creates active hike post completion sync exception.
   const _ActiveHikePostCompletionSyncException({
     required this.completion,
     required this.cause,
@@ -259,6 +269,7 @@ class _ActiveHikePostCompletionSyncException implements Exception {
   final ActiveHikeCloudCompletionResult completion;
   final Object cause;
 
+  /// Converts to string.
   @override
   String toString() => cause.toString();
 }
@@ -271,6 +282,7 @@ const Set<String> _terminalActiveHikeStatuses = {
   'expired',
 };
 
+/// Parses active hike cloud restore result.
 @visibleForTesting
 ActiveHikeCloudRestoreResult parseActiveHikeCloudRestoreResult(
   Object? payload, {
@@ -305,6 +317,7 @@ ActiveHikeCloudRestoreResult parseActiveHikeCloudRestoreResult(
   );
 }
 
+/// Parses active hike cloud completion result.
 @visibleForTesting
 ActiveHikeCloudCompletionResult parseActiveHikeCloudCompletionResult(
   Object? payload, {
@@ -330,6 +343,7 @@ ActiveHikeCloudCompletionResult parseActiveHikeCloudCompletionResult(
   );
 }
 
+/// Computes team hike creation key for.
 @visibleForTesting
 String teamHikeCreationKeyFor({
   required String appInstanceId,
@@ -356,6 +370,7 @@ String teamHikeCreationKeyFor({
   return 'team_create_$digest';
 }
 
+/// Computes upcoming hike creation key for.
 @visibleForTesting
 String upcomingHikeCreationKeyFor({
   required String appInstanceId,
@@ -388,6 +403,7 @@ String upcomingHikeCreationKeyFor({
   return 'schedule_$digest';
 }
 
+/// Builds active hike completion payload.
 @visibleForTesting
 Map<String, dynamic> buildActiveHikeCompletionPayload({
   required ActiveHikeSession activeHike,
@@ -452,6 +468,7 @@ Map<String, dynamic> buildActiveHikeCompletionPayload({
   };
 }
 
+/// Computes downsample hike route for cloud.
 @visibleForTesting
 List<HikeCoordinate> downsampleHikeRouteForCloud(
   Iterable<HikeCoordinate> routePoints, {
@@ -465,6 +482,7 @@ List<HikeCoordinate> downsampleHikeRouteForCloud(
   return _evenlyDownsample(points, maxPoints: maxPoints);
 }
 
+/// Computes callable map from.
 Map<String, dynamic> _callableMapFrom(Object? payload) {
   if (payload is! Map) {
     throw const HikerCircleFirebaseRepositoryException(
@@ -474,8 +492,10 @@ Map<String, dynamic> _callableMapFrom(Object? payload) {
   return Map<String, dynamic>.from(payload);
 }
 
+/// Computes top level string from.
 String _topLevelStringFrom(Object? value) => value is String ? value : '';
 
+/// Checks whether valid cloud document id.
 bool _isValidCloudDocumentId(String value) {
   final normalized = value.trim();
   if (normalized.isEmpty ||
@@ -486,6 +506,7 @@ bool _isValidCloudDocumentId(String value) {
   return !normalized.codeUnits.any((codeUnit) => codeUnit < 0x20);
 }
 
+/// Computes evenly downsample.
 List<T> _evenlyDownsample<T>(List<T> values, {required int maxPoints}) {
   if (values.length <= maxPoints) {
     return List<T>.unmodifiable(values);
@@ -501,7 +522,9 @@ List<T> _evenlyDownsample<T>(List<T> values, {required int maxPoints}) {
   ]);
 }
 
+/// Represents admin trail image upload.
 class AdminTrailImageUpload {
+  /// Creates admin trail image upload.
   const AdminTrailImageUpload({
     required this.bytes,
     required this.fileName,
@@ -513,6 +536,7 @@ class AdminTrailImageUpload {
   final String? contentType;
 }
 
+/// Computes acknowledged location sample times.
 @visibleForTesting
 Set<int> acknowledgedLocationSampleTimes(
   Object? payload, {
@@ -539,7 +563,9 @@ Set<int> acknowledgedLocationSampleTimes(
   return acknowledged;
 }
 
+/// Represents hiker circle firebase repository.
 class HikerCircleFirebaseRepository {
+  /// Creates hiker circle firebase repository.
   HikerCircleFirebaseRepository({
     FirebaseFirestore? firestore,
     FirebaseStorage? storage,
@@ -571,6 +597,8 @@ class HikerCircleFirebaseRepository {
   final Future<void> Function(String, HikeReminderPreference)?
   _reminderPreferenceRequest;
   static final _planningChanges = StreamController<String>.broadcast();
+
+  /// Returns planning changes.
   static Stream<String> get planningChanges => _planningChanges.stream;
   static final Map<String, Future<void>> _planningSyncs = {};
   final Map<String, String> _teamHikeCreationRetryKeys = {};
@@ -586,20 +614,26 @@ class HikerCircleFirebaseRepository {
   static const Duration _firebaseReadTimeout = Duration(seconds: 12);
   static const Duration _firebaseWriteTimeout = Duration(seconds: 8);
 
+  /// Returns local database.
   LocalSessionDatabase get localDatabase => _localDatabase;
 
+  /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
 
+  /// Returns firestore.
   FirebaseFirestore get firestore => _resolvedFirestore;
 
+  /// Returns resolved storage.
   FirebaseStorage get _resolvedStorage => _storage ?? FirebaseStorage.instance;
 
+  /// Returns resolved functions.
   FirebaseFunctions get _resolvedFunctions {
     _throwIfFirebaseUnavailable();
     return _functions ?? FirebaseFunctions.instance;
   }
 
+  /// Captures account uid.
   String? _captureAccountUid(AppSession session) {
     try {
       final uid = _authenticatedUid != null
@@ -611,9 +645,11 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes account still matches.
   bool _accountStillMatches(AppSession session, String uid) =>
       _captureAccountUid(session) == uid;
 
+  /// Computes require same account.
   void _requireSameAccount(AppSession session, String uid) {
     if (!_accountStillMatches(session, uid)) {
       throw const HikerCircleFirebaseRepositoryException(
@@ -622,6 +658,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes register fcm token.
   Future<void> registerFcmToken({
     required AppSession session,
     required String token,
@@ -645,6 +682,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Removes fcm token.
   Future<void> removeFcmToken({required AppSession session}) async {
     if (!_firebaseBootstrapResult.isAvailable ||
         session.appInstanceId.isEmpty) {
@@ -666,6 +704,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Updates active hike monitoring heartbeat.
   Future<void> updateActiveHikeMonitoringHeartbeat({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -687,6 +726,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Computes signal active hike potential termination.
   Future<void> signalActiveHikePotentialTermination({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -709,43 +749,72 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Returns trails.
   CollectionReference<Map<String, dynamic>> get _trails =>
       _resolvedFirestore.collection('trails');
+
+  /// Returns users.
   CollectionReference<Map<String, dynamic>> get _users =>
       _resolvedFirestore.collection('users');
 
+  /// Computes module for.
   DocumentReference<Map<String, dynamic>> _moduleFor(
     AppSession session,
     UserModule module,
   ) => userModuleDocument(_users.doc(_userIdFor(session)), module);
+
+  /// Returns hike sessions.
   CollectionReference<Map<String, dynamic>> get _hikeSessions =>
       _resolvedFirestore.collection('hikeSessions');
+
+  /// Returns hazard reports.
   CollectionReference<Map<String, dynamic>> get _hazardReports =>
       _resolvedFirestore.collection('hazardReports');
+
+  /// Returns upcoming hikes.
   CollectionReference<Map<String, dynamic>> get _upcomingHikes =>
       _resolvedFirestore.collection('upcomingHikes');
+
+  /// Returns team hike sessions.
   CollectionReference<Map<String, dynamic>> get _teamHikeSessions =>
       _resolvedFirestore.collection('teamHikeSessions');
+
+  /// Returns community posts.
   CollectionReference<Map<String, dynamic>> get _communityPosts =>
       _resolvedFirestore.collection('communityPosts');
+
+  /// Returns sos alerts.
   CollectionReference<Map<String, dynamic>> get _sosAlerts =>
       _resolvedFirestore.collection('sosAlerts');
+
+  /// Computes community comments for.
   CollectionReference<Map<String, dynamic>> _communityCommentsFor(
     String postId,
   ) {
     return _communityPosts.doc(postId).collection('comments');
   }
 
+  /// Returns achievements.
   CollectionReference<Map<String, dynamic>> get _achievements =>
       _resolvedFirestore.collection('achievements');
+
+  /// Returns user achievements.
   CollectionReference<Map<String, dynamic>> get _userAchievements =>
       _resolvedFirestore.collection('userAchievements');
+
+  /// Returns network observations.
   CollectionReference<Map<String, dynamic>> get _networkObservations =>
       _resolvedFirestore.collection('networkObservations');
+
+  /// Returns hike route captures.
   CollectionReference<Map<String, dynamic>> get _hikeRouteCaptures =>
       _resolvedFirestore.collection('hikeRouteCaptures');
+
+  /// Returns group chats.
   CollectionReference<Map<String, dynamic>> get _groupChats =>
       _resolvedFirestore.collection('groupChats');
+
+  /// Computes group chat messages for.
   CollectionReference<Map<String, dynamic>> _groupChatMessagesFor(
     String chatId,
   ) {
@@ -1069,6 +1138,7 @@ class HikerCircleFirebaseRepository {
 
   // loadTrails uses conditional cloud validation and local payloads for non-real-time trail
   // browsing.
+  /// Loads trails.
   Future<List<Trail>> loadTrails() async {
     final cached = await _loadCachedTrails();
     if (!_firebaseBootstrapResult.isAvailable) {
@@ -1099,6 +1169,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Watches trails.
   Stream<List<Trail>> watchTrails() async* {
     final cached = await _loadCachedTrails();
     if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
@@ -1126,6 +1197,7 @@ class HikerCircleFirebaseRepository {
         .handleError((Object _, StackTrace __) {});
   }
 
+  /// Loads cached trails.
   Future<List<Trail>> _loadCachedTrails() async {
     try {
       final rows = await _localDatabase.loadCachedEntities(
@@ -1139,6 +1211,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes cache trails.
   Future<void> _cacheTrails(List<Trail> trails) async {
     final payload = trails.map((trail) => trail.toPersistence()).toList();
     final hash = stableContentHash(payload);
@@ -1168,6 +1241,7 @@ class HikerCircleFirebaseRepository {
     _trailCacheHash = hash;
   }
 
+  /// Computes enrich with live weather.
   Future<void> _enrichWithLiveWeather(
     List<Trail> trails,
     List<DocumentSnapshot<Map<String, dynamic>>> docs,
@@ -1205,6 +1279,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Refreshes trail weather via cloud.
   Future<Trail> refreshTrailWeatherViaCloud(Trail trail) async {
     final data = await _conditionalCache.read(
       owner: '',
@@ -1221,6 +1296,7 @@ class HikerCircleFirebaseRepository {
         : trail;
   }
 
+  /// Loads upcoming hikes.
   Future<List<UpcomingHike>> loadUpcomingHikes() async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return const [];
@@ -1248,6 +1324,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads upcoming hike by id.
   Future<UpcomingHike?> loadUpcomingHikeById(String hikeId) async {
     if (!_firebaseBootstrapResult.isAvailable || hikeId.trim().isEmpty) {
       return null;
@@ -1312,6 +1389,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads my upcoming hikes.
   Future<List<UpcomingHike>> loadMyUpcomingHikes(String phoneNumber) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return const [];
@@ -1340,6 +1418,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Watches my upcoming hikes.
   Stream<List<UpcomingHike>> watchMyUpcomingHikes(
     String phoneNumber, {
     void Function(bool authoritative)? onSourceChanged,
@@ -1353,6 +1432,7 @@ class HikerCircleFirebaseRepository {
       var createdFromServer = false;
       var joinedFromServer = false;
 
+      /// Computes emit.
       void emit() {
         if (created == null || joined == null) {
           return;
@@ -1400,6 +1480,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Computes join upcoming hike.
   Future<bool> joinUpcomingHike({required String hikeId}) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return false;
@@ -1414,6 +1495,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Sets upcoming hike join policy.
   Future<void> setUpcomingHikeJoinPolicy({
     required String hikeId,
     required String joinPolicy,
@@ -1433,6 +1515,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes remind upcoming hike host.
   Future<Map<String, dynamic>> remindUpcomingHikeHost({
     required String hikeId,
   }) async {
@@ -1449,6 +1532,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes request to join upcoming hike.
   Future<String> requestToJoinUpcomingHike({required String hikeId}) async {
     _throwIfFirebaseUnavailable();
     try {
@@ -1472,6 +1556,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads upcoming hike join request.
   Future<UpcomingHikeJoinRequestReview> loadUpcomingHikeJoinRequest(
     String requestId,
   ) async {
@@ -1494,6 +1579,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Resolves upcoming hike join request.
   Future<UpcomingHikeJoinRequestReview> resolveUpcomingHikeJoinRequest({
     required String requestId,
     required bool accept,
@@ -1520,6 +1606,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads public hiker profile.
   Future<Map<String, dynamic>> loadPublicHikerProfile({
     String userId = '',
     String phoneNumber = '',
@@ -1541,6 +1628,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads user group chats.
   Future<List<GroupChat>> loadUserGroupChats(String phoneNumber) async {
     final cached = await _loadCachedGroupChats(phoneNumber);
     if (!_firebaseBootstrapResult.isAvailable) {
@@ -1568,6 +1656,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads group chat by id.
   Future<GroupChat?> loadGroupChatById(String chatId) async {
     if (!_firebaseBootstrapResult.isAvailable || chatId.trim().isEmpty) {
       return null;
@@ -1588,6 +1677,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes user group chats stream.
   Stream<List<GroupChat>> userGroupChatsStream(String phoneNumber) async* {
     final cached = await _loadCachedGroupChats(phoneNumber);
     if (cached.isNotEmpty || !_firebaseBootstrapResult.isAvailable) {
@@ -1617,6 +1707,7 @@ class HikerCircleFirebaseRepository {
         .handleError((Object _, StackTrace __) {});
   }
 
+  /// Loads cached group chats.
   Future<List<GroupChat>> _loadCachedGroupChats(String phoneNumber) async {
     try {
       final rows = await _localDatabase.loadCachedEntities(
@@ -1633,6 +1724,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes cache group chats.
   Future<void> _cacheGroupChats(
     String phoneNumber,
     List<GroupChat> chats,
@@ -1657,6 +1749,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes formed team chats for host stream.
   Stream<List<GroupChat>> formedTeamChatsForHostStream(String phoneNumber) {
     if (!_firebaseBootstrapResult.isAvailable) {
       return Stream<List<GroupChat>>.value(const []);
@@ -1679,6 +1772,7 @@ class HikerCircleFirebaseRepository {
         );
   }
 
+  /// Computes name formed hike group chat.
   Future<void> nameFormedHikeGroupChat({
     required String chatId,
     required String name,
@@ -1699,6 +1793,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Marks formed hike group naming prompt shown.
   Future<void> markFormedHikeGroupNamingPromptShown({
     required String chatId,
     required String defaultName,
@@ -1718,6 +1813,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Opens direct chat.
   Future<GroupChat> openDirectChat({
     required AppSession session,
     required String otherPhoneNumber,
@@ -1753,6 +1849,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads community profiles.
   Future<List<Map<String, dynamic>>> loadCommunityProfiles({
     required AppSession session,
   }) async {
@@ -1782,6 +1879,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads community profile.
   Future<Map<String, dynamic>?> loadCommunityProfile({
     String userId = '',
     String phoneNumber = '',
@@ -1806,6 +1904,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Returns public profiles.
   Future<List<Map<String, dynamic>>> _getPublicProfiles(
     Map<String, dynamic> request,
   ) async {
@@ -1841,6 +1940,7 @@ class HikerCircleFirebaseRepository {
     }).toList();
   }
 
+  /// Loads buddy phone numbers.
   Future<Set<String>> loadBuddyPhoneNumbers({
     required AppSession session,
   }) async {
@@ -1859,6 +1959,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads outgoing buddy request phone numbers.
   Future<Set<String>> loadOutgoingBuddyRequestPhoneNumbers({
     required AppSession session,
   }) async {
@@ -1883,6 +1984,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads buddy requests.
   Future<List<Map<String, dynamic>>> loadBuddyRequests({
     required AppSession session,
   }) async {
@@ -1897,6 +1999,7 @@ class HikerCircleFirebaseRepository {
     return _buddyRequestsFromRaw(raw);
   }
 
+  /// Watches buddy requests.
   Stream<List<Map<String, dynamic>>> watchBuddyRequests({
     required AppSession session,
   }) {
@@ -1909,6 +2012,35 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Watches buddy relationships.
+  Stream<BuddyRelationships> watchBuddyRelationships({
+    required AppSession session,
+  }) {
+    /// Parses.
+    BuddyRelationships parse(Map<String, dynamic> data) {
+      final buddies = data['buddyPhoneNumbers'];
+      final outgoing = data['buddyRequestsOutgoing'];
+      return BuddyRelationships(
+        buddyPhoneNumbers: buddies is Iterable
+            ? buddies.whereType<String>().toSet()
+            : const {},
+        outgoingRequestPhones: outgoing is Map
+            ? outgoing.keys.map((key) => key.toString()).toSet()
+            : const {},
+        incomingRequests: _buddyRequestsFromRaw(data['buddyRequestsIncoming']),
+      );
+    }
+
+    if (!_firebaseBootstrapResult.isAvailable) {
+      return Stream.value(parse(const {}));
+    }
+    return _moduleFor(
+      session,
+      UserModule.social,
+    ).snapshots().map((snapshot) => parse(snapshot.data() ?? const {}));
+  }
+
+  /// Sends buddy request.
   Future<void> sendBuddyRequest({
     required AppSession session,
     required String buddyPhoneNumber,
@@ -1922,6 +2054,7 @@ class HikerCircleFirebaseRepository {
     await _manageBuddyRequest(action: 'send', phoneNumber: recipientPhone);
   }
 
+  /// Accepts buddy request.
   Future<void> acceptBuddyRequest({
     required AppSession session,
     required String requesterPhoneNumber,
@@ -1936,6 +2069,18 @@ class HikerCircleFirebaseRepository {
     await _manageBuddyRequest(action: 'accept', phoneNumber: requesterPhone);
   }
 
+  /// Cancels buddy request.
+  Future<void> cancelBuddyRequest({
+    required AppSession session,
+    required String buddyPhoneNumber,
+  }) async {
+    _throwIfFirebaseUnavailable();
+    final phone = buddyPhoneNumber.trim();
+    if (phone.isEmpty || _samePhone(session.phoneNumber, phone)) return;
+    await _manageBuddyRequest(action: 'cancel', phoneNumber: phone);
+  }
+
+  /// Declines buddy request.
   Future<void> declineBuddyRequest({
     required AppSession session,
     required String requesterPhoneNumber,
@@ -1950,6 +2095,7 @@ class HikerCircleFirebaseRepository {
     await _manageBuddyRequest(action: 'decline', phoneNumber: requesterPhone);
   }
 
+  /// Computes manage buddy request.
   Future<void> _manageBuddyRequest({
     required String action,
     required String phoneNumber,
@@ -1966,6 +2112,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads group chat notifications enabled.
   Future<bool> loadGroupChatNotificationsEnabled({
     required AppSession session,
   }) async {
@@ -1980,6 +2127,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Sets group chat notifications enabled.
   Future<void> setGroupChatNotificationsEnabled({
     required AppSession session,
     required bool enabled,
@@ -1994,6 +2142,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Loads preferred time zone.
   Future<String?> loadPreferredTimeZone({required AppSession session}) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return null;
@@ -2009,6 +2158,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Saves preferred time zone.
   Future<void> savePreferredTimeZone({
     required AppSession session,
     required String preferredTimeZone,
@@ -2028,6 +2178,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Saves team safety preferences.
   Future<void> saveTeamSafetyPreferences({
     required AppSession session,
     required Map<String, dynamic> preferences,
@@ -2042,6 +2193,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Loads team safety preferences.
   Future<Map<String, dynamic>?> loadTeamSafetyPreferences({
     required AppSession session,
   }) async {
@@ -2060,6 +2212,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads group chat muted until.
   Future<DateTime?> loadGroupChatMutedUntil({
     required AppSession session,
     required String chatId,
@@ -2083,6 +2236,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Sets group chat muted until.
   Future<void> setGroupChatMutedUntil({
     required AppSession session,
     required String chatId,
@@ -2118,6 +2272,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Loads pinned chats.
   Future<Set<String>> loadPinnedChats({required AppSession session}) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return {};
@@ -2140,6 +2295,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Sets chat pinned.
   Future<void> setChatPinned({
     required AppSession session,
     required String chatId,
@@ -2159,6 +2315,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Deletes chat for user.
   Future<void> deleteChatForUser({
     required AppSession session,
     required String chatId,
@@ -2177,6 +2334,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Sends chat reminder.
   Future<Map<String, dynamic>> sendChatReminder({
     required String chatId,
     required String recipientPhone,
@@ -2249,6 +2407,7 @@ class HikerCircleFirebaseRepository {
 
   // sendGroupChatMessage preserves the caller-provided message identity across local queuing and
   // cloud submission.
+  /// Sends group chat message.
   Future<void> sendGroupChatMessage({
     required String chatId,
     required String senderPhone,
@@ -2317,6 +2476,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Uploads group chat attachment.
   Future<ChatAttachment> uploadGroupChatAttachment({
     required String chatId,
     required String senderPhone,
@@ -2398,6 +2558,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Uploads profile photo.
   Future<String> uploadProfilePhoto({
     required String phoneNumber,
     required Uint8List bytes,
@@ -2458,6 +2619,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes attachment summary.
   String _attachmentSummary(ChatAttachment? attachment) {
     return switch (attachment?.type) {
       ChatAttachmentType.image => 'Photo',
@@ -2467,6 +2629,7 @@ class HikerCircleFirebaseRepository {
     };
   }
 
+  /// Marks message as seen.
   Future<void> markMessageAsSeen({
     required String chatId,
     required String messageId,
@@ -2482,6 +2645,7 @@ class HikerCircleFirebaseRepository {
     } catch (_) {}
   }
 
+  /// Marks group chat as read.
   Future<void> markGroupChatAsRead({
     required String chatId,
     required String phoneNumber,
@@ -2512,6 +2676,7 @@ class HikerCircleFirebaseRepository {
     } catch (_) {}
   }
 
+  /// Synchronizes pending read receipts.
   Future<void> syncPendingReadReceipts({required String phoneNumber}) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
@@ -2547,6 +2712,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads local last read at.
   Future<DateTime?> loadLocalLastReadAt(
     String chatId, {
     required String ownerPhoneNumber,
@@ -2557,6 +2723,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Loads all local last read at.
   Future<Map<String, DateTime>> loadAllLocalLastReadAt({
     required String ownerPhoneNumber,
   }) async {
@@ -2565,6 +2732,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Loads pending messages for chat.
   Future<List<ChatMessage>> loadPendingMessagesForChat(
     String chatId, {
     required String ownerPhoneNumber,
@@ -2590,6 +2758,7 @@ class HikerCircleFirebaseRepository {
         .toList();
   }
 
+  /// Loads all local messages for chat.
   Future<List<ChatMessage>> loadAllLocalMessagesForChat(
     String chatId, {
     required String ownerPhoneNumber,
@@ -2620,6 +2789,7 @@ class HikerCircleFirebaseRepository {
     }).toList();
   }
 
+  /// Computes cache chat messages.
   Future<void> cacheChatMessages(
     List<ChatMessage> messages,
     String chatId, {
@@ -2649,6 +2819,7 @@ class HikerCircleFirebaseRepository {
     await _localDatabase.upsertChatMessages(rows);
   }
 
+  /// Flushes pending messages.
   Future<void> flushPendingMessages({String? ownerPhoneNumber}) async {
     final owner = ownerPhoneNumber?.trim().isNotEmpty == true
         ? ownerPhoneNumber!.trim()
@@ -2726,6 +2897,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes firestore message id for local id.
   String _firestoreMessageIdForLocalId(String localId) {
     final normalized = localId.trim().replaceAll(RegExp(r'[/\\]'), '_');
     if (normalized.isNotEmpty && normalized.length <= 512) {
@@ -2736,6 +2908,7 @@ class HikerCircleFirebaseRepository {
     return encoded.length <= 512 ? encoded : encoded.substring(0, 512);
   }
 
+  /// Computes attachment from local row.
   ChatAttachment? _attachmentFromLocalRow(Map<String, dynamic> row) {
     final raw = row['attachment_json'];
     if (raw is! String || raw.isEmpty) {
@@ -2751,6 +2924,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads upcoming hike for chat.
   Future<UpcomingHike?> loadUpcomingHikeForChat(String hikeSessionId) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return null;
@@ -2766,6 +2940,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes group chat messages stream.
   Stream<List<ChatMessage>> groupChatMessagesStream(String chatId) {
     return _groupChatMessagesFor(chatId)
         .orderBy('sentAtLocal', descending: false)
@@ -2777,6 +2952,7 @@ class HikerCircleFirebaseRepository {
         );
   }
 
+  /// Cancels upcoming hike.
   Future<void> cancelUpcomingHike({
     required String hikeId,
     bool withdrawSelf = false,
@@ -2824,13 +3000,17 @@ class HikerCircleFirebaseRepository {
       hike: hike,
       creationKey: creationKey,
       joinPolicy: joinPolicy,
-      reminderPreference: reminderPreference,
+      reminderPreference: reminderPreference.fitToDeparture(
+        draft.departureTime,
+        DateTime.now(),
+      ),
     );
     _planningChanges.add(session.phoneNumber);
     unawaited(flushPendingUpcomingHikes(session: session));
     return id;
   }
 
+  /// Flushes pending upcoming hikes.
   Future<void> flushPendingUpcomingHikes({required AppSession session}) {
     if (!_firebaseBootstrapResult.isAvailable) return Future.value();
     final owner = session.phoneNumber;
@@ -2845,6 +3025,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Flushes pending upcoming hikes.
   Future<void> _flushPendingUpcomingHikes(AppSession session) async {
     final uid = _captureAccountUid(session);
     if (uid == null) return;
@@ -2933,6 +3114,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes local planning state.
   Future<LocalPlannedHikeState?> _localPlanningState(
     AppSession session,
     String hikeId,
@@ -2945,6 +3127,7 @@ class HikerCircleFirebaseRepository {
     return null;
   }
 
+  /// Loads upcoming hike reminder preference.
   Future<HikeReminderPreference> loadUpcomingHikeReminderPreference({
     required AppSession session,
     required String hikeId,
@@ -2984,6 +3167,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Saves upcoming hike reminder preference.
   Future<void> saveUpcomingHikeReminderPreference({
     required AppSession session,
     required String hikeId,
@@ -3001,7 +3185,8 @@ class HikerCircleFirebaseRepository {
         upcomingHikes: [hike],
       );
     }
-    if (await _localPlanningState(session, hikeId) == null) {
+    final local = await _localPlanningState(session, hikeId);
+    if (local == null) {
       throw const HikerCircleFirebaseRepositoryException(
         'Open this hike again before changing its reminders.',
       );
@@ -3009,12 +3194,16 @@ class HikerCircleFirebaseRepository {
     await _localDatabase.savePlannedReminderPreference(
       ownerPhoneNumber: session.phoneNumber,
       hikeId: hikeId.trim(),
-      preference: preference,
+      preference: preference.fitToDeparture(
+        local.upcomingHike.departureTime,
+        DateTime.now(),
+      ),
     );
     _planningChanges.add(session.phoneNumber);
     unawaited(flushPendingUpcomingHikes(session: session));
   }
 
+  /// Creates active hike session.
   Future<ActiveHikeSession> createActiveHikeSession({
     required AppSession session,
     required HikeSessionDraft draft,
@@ -3063,6 +3252,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Notifies emergency contacts of live location.
   Future<LiveLocationContactNotificationResult>
   notifyEmergencyContactsOfLiveLocation({
     required String activeHikeSessionId,
@@ -3098,6 +3288,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Creates team hike session.
   Future<TeamHikeSession> createTeamHikeSession({
     required AppSession session,
     required HikeSessionDraft draft,
@@ -3119,6 +3310,8 @@ class HikerCircleFirebaseRepository {
       sourceUpcomingHikeId: sourceUpcomingHikeId,
     );
     final retryScope = '${session.phoneNumber}:$creationKey';
+
+    /// Computes submit.
     Future<TeamHikeSession> submit(String key) async =>
         _teamHikeSessionFromCallable(
           await _callTeamHikeFunction(
@@ -3147,6 +3340,7 @@ class HikerCircleFirebaseRepository {
     return submit(_teamHikeCreationRetryKeys[retryScope]!);
   }
 
+  /// Watches team hike session.
   Stream<TeamHikeSession?> watchTeamHikeSession(String teamHikeSessionId) {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
       return Stream<TeamHikeSession?>.value(null);
@@ -3157,6 +3351,7 @@ class HikerCircleFirebaseRepository {
         .map(_teamHikeSessionFromDocument);
   }
 
+  /// Watches team readiness for participant.
   Stream<List<TeamHikeSession>> watchTeamReadinessForParticipant(
     String phoneNumber,
   ) {
@@ -3187,6 +3382,7 @@ class HikerCircleFirebaseRepository {
         });
   }
 
+  /// Loads team hike session.
   Future<TeamHikeSession?> loadTeamHikeSession(String teamHikeSessionId) async {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
       return null;
@@ -3197,6 +3393,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Accepts team hike invite.
   Future<TeamHikeSession> acceptTeamHikeInvite({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3207,6 +3404,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Begins team hike readiness.
   Future<TeamHikeSession> beginTeamHikeReadiness({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3217,6 +3415,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Marks team participant ready.
   Future<TeamHikeSession> markTeamParticipantReady({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3239,6 +3438,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Ensures active hike session in cloud.
   Future<ActiveHikeCloudRestoreResult> ensureActiveHikeSessionInCloud({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3285,6 +3485,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Removes pending team invitees.
   Future<TeamHikeSession> removePendingTeamInvitees({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3295,6 +3496,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Cancels team hike session.
   Future<void> cancelTeamHikeSession({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3305,6 +3507,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes activate team hike session.
   Future<TeamHikeSession> activateTeamHikeSession({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3315,6 +3518,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Synchronizes team hike participant location.
   Future<TeamHikeSession?> syncTeamHikeParticipantLocation({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3339,6 +3543,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes ping team participant.
   Future<TeamHikeSession> pingTeamParticipant({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3351,6 +3556,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes respond to team ping.
   Future<TeamHikeSession> respondToTeamPing({
     required AppSession session,
     required String teamHikeSessionId,
@@ -3363,6 +3569,7 @@ class HikerCircleFirebaseRepository {
 
   // drainNativeLocationSamples imports native samples for the active account before acknowledging
   // the local transfer.
+  /// Computes drain native location samples.
   Future<void> drainNativeLocationSamples({
     required AppSession session,
     String? sessionId,
@@ -3454,6 +3661,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes merge stored route.
   Future<ActiveHikeSession> mergeStoredRoute({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3482,6 +3690,7 @@ class HikerCircleFirebaseRepository {
 
   // recordFootprint persists the sample in SQLite first, keeping route recording independent of
   // connectivity.
+  /// Records footprint.
   Future<int> recordFootprint({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3510,6 +3719,7 @@ class HikerCircleFirebaseRepository {
 
   final Map<String, Future<int>> _footprintUploads = {};
 
+  /// Flushes footprints.
   Future<int> flushFootprints({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3531,6 +3741,7 @@ class HikerCircleFirebaseRepository {
 
   // _flushFootprints uploads bounded batches and clears only sample times explicitly acknowledged
   // by the backend.
+  /// Flushes footprints.
   Future<int> _flushFootprints({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3639,6 +3850,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Flushes sync outbox.
   Future<void> flushSyncOutbox({required AppSession session}) async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
@@ -3651,6 +3863,16 @@ class HikerCircleFirebaseRepository {
         continue;
       }
       try {
+        if (operation.payload['status'] == 'safe') {
+          final id =
+              operation.payload['checkInId']?.toString() ?? operation.entityId;
+          await recordLocalAchievementEvents(
+            session: session,
+            events: [
+              AchievementMetricEvent('check_in_completed', 'check-in:$id'),
+            ],
+          );
+        }
         await _resolvedFunctions
             .httpsCallable('recordActiveHikeCheckIn')
             .call(operation.payload)
@@ -3672,6 +3894,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Records path deviation alert.
   Future<void> recordPathDeviationAlert({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3722,6 +3945,19 @@ class HikerCircleFirebaseRepository {
       summary: summary,
       endedAt: endedAt,
     );
+    final trail = activeHike.draft.trail;
+    await recordLocalAchievementEvents(
+      session: session,
+      events: completedHikeAchievementEvents(
+        owner: session.phoneNumber,
+        sessionId: activeHike.sessionId,
+        sourceUpcomingHikeId: activeHike.sourceUpcomingHikeId,
+        teamSessionId: activeHike.teamHikeSessionId,
+        trailId: trail.trailId,
+        state: trail.state,
+        country: trail.isUnlisted ? '' : trail.country,
+      ),
+    );
     // Durable local completion is the UI boundary. Cloud completion, route
     // uploads and team synchronization retry independently in the background.
     unawaited(
@@ -3766,6 +4002,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Computes confirm ended hike for sharing.
   Future<ActiveHikeEndResult> confirmEndedHikeForSharing({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3804,6 +4041,7 @@ class HikerCircleFirebaseRepository {
 
   // flushPendingHikeEnds retries durable completion intents while retaining the original hike end
   // time.
+  /// Flushes pending hike ends.
   Future<int> flushPendingHikeEnds({
     required AppSession session,
     int limit = 20,
@@ -3829,6 +4067,7 @@ class HikerCircleFirebaseRepository {
     return future.whenComplete(() => _pendingEndUploads.remove(key));
   }
 
+  /// Flushes pending hike ends.
   Future<int> _flushPendingHikeEnds({
     required AppSession session,
     required int limit,
@@ -3890,6 +4129,7 @@ class HikerCircleFirebaseRepository {
     return synced;
   }
 
+  /// Applies canonical team source.
   Future<ActiveHikeSession> _withCanonicalTeamSource(
     ActiveHikeSession activeHike,
   ) async {
@@ -3916,6 +4156,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Synchronizes ended hike to cloud.
   Future<ActiveHikeCloudCompletionResult> _syncEndedHikeToCloud({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -3990,6 +4231,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes complete active hike session.
   Future<ActiveHikeCloudCompletionResult> _completeActiveHikeSession({
     required ActiveHikeSession activeHike,
     required DateTime endedAt,
@@ -4031,6 +4273,36 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Confirms a locally ended hike before submitting its public trail feedback.
+  Future<void> submitEndedHikeRating({
+    required AppSession session,
+    required ActiveHikeSession activeHike,
+    required HikeSummaryReport summary,
+    required int rating,
+    required String difficulty,
+    String comment = '',
+  }) async {
+    final completion = await confirmEndedHikeForSharing(
+      session: session,
+      activeHike: activeHike,
+      summary: summary,
+    );
+    if (!completion.completed || completion.status != 'completed') {
+      throw const HikerCircleFirebaseRepositoryException(
+        'This hike was not marked completed, so it cannot be rated.',
+      );
+    }
+    await submitCompletedHikeRating(
+      session: session,
+      sessionId: completion.sessionId,
+      trailId: activeHike.trail.trailId,
+      rating: rating,
+      difficulty: difficulty,
+      comment: comment,
+    );
+  }
+
+  /// Saves a vote only after the backend validates the completed owner session.
   Future<void> submitCompletedHikeRating({
     required AppSession session,
     required String sessionId,
@@ -4066,6 +4338,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes submit hazard report.
   Future<void> submitHazardReport({
     required AppSession session,
     required Trail trail,
@@ -4160,6 +4433,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Creates completed hike post.
   Future<void> createCompletedHikePost({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -4178,6 +4452,7 @@ class HikerCircleFirebaseRepository {
     postId: postId,
   );
 
+  /// Creates community post.
   Future<void> createCommunityPost({
     required AppSession session,
     required String caption,
@@ -4195,6 +4470,7 @@ class HikerCircleFirebaseRepository {
     trailId: trailId,
   );
 
+  /// Loads community posts.
   Future<List<Map<String, dynamic>>> loadCommunityPosts({
     AppSession? session,
     int limit = 20,
@@ -4206,6 +4482,7 @@ class HikerCircleFirebaseRepository {
     afterPostId: afterPostId,
   );
 
+  /// Sets community post liked.
   Future<int> setCommunityPostLiked({
     required AppSession session,
     required String postId,
@@ -4231,6 +4508,7 @@ class HikerCircleFirebaseRepository {
     return count;
   }
 
+  /// Adds community comment.
   Future<void> addCommunityComment({
     required AppSession session,
     required String postId,
@@ -4252,6 +4530,7 @@ class HikerCircleFirebaseRepository {
     } catch (_) {}
   }
 
+  /// Loads community comments.
   Future<List<Map<String, dynamic>>> loadCommunityComments({
     required String postId,
     String? afterCommentId,
@@ -4263,6 +4542,7 @@ class HikerCircleFirebaseRepository {
     limit: limit,
   );
 
+  /// Deletes community post.
   Future<void> deleteCommunityPost({
     required AppSession session,
     required String postId,
@@ -4275,11 +4555,13 @@ class HikerCircleFirebaseRepository {
     } catch (_) {}
   }
 
+  /// Loads community post draft.
   Future<CommunityPostDraftData?> loadCommunityPostDraft({
     required AppSession session,
     required String draftKey,
   }) => _loadCommunityDraft(this, session, draftKey);
 
+  /// Saves community post draft.
   Future<void> saveCommunityPostDraft({
     required AppSession session,
     required String draftKey,
@@ -4304,6 +4586,7 @@ class HikerCircleFirebaseRepository {
         .toList(),
   );
 
+  /// Deletes community post draft.
   Future<void> deleteCommunityPostDraft({
     required AppSession session,
     required String draftKey,
@@ -4312,6 +4595,7 @@ class HikerCircleFirebaseRepository {
     draftKey: draftKey,
   );
 
+  /// Loads admin hazard reports.
   Future<List<Map<String, dynamic>>> loadAdminHazardReports({
     required AppSession session,
   }) async {
@@ -4331,6 +4615,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads admin community posts.
   Future<List<Map<String, dynamic>>> loadAdminCommunityPosts({
     required AppSession session,
   }) {
@@ -4338,6 +4623,7 @@ class HikerCircleFirebaseRepository {
     return _readCommunityPosts(this, session: session, limit: 50, admin: true);
   }
 
+  /// Loads admin dashboard analytics.
   Future<Map<String, dynamic>> loadAdminDashboardAnalytics({
     required AppSession session,
     bool forceRefresh = false,
@@ -4365,6 +4651,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads admin trails.
   Future<List<Trail>> loadAdminTrails({required AppSession session}) async {
     _throwIfAdminUnavailable(session);
     try {
@@ -4388,6 +4675,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Updates trail by admin.
   Future<void> updateTrailByAdmin({
     required AppSession session,
     required Trail trail,
@@ -4408,6 +4696,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Creates trail by admin.
   Future<void> createTrailByAdmin({
     required AppSession session,
     required Trail trail,
@@ -4423,6 +4712,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes admin trail creation data.
   Map<String, dynamic> _adminTrailCreationData(
     AppSession session,
     Trail trail,
@@ -4441,6 +4731,7 @@ class HikerCircleFirebaseRepository {
     'updatedAtLocal': DateTime.now().toUtc().toIso8601String(),
   };
 
+  /// Computes approve recorded trail request.
   Future<void> approveRecordedTrailRequest({
     required AppSession session,
     required String requestId,
@@ -4506,9 +4797,37 @@ class HikerCircleFirebaseRepository {
             final risk = (b.isFatal ? 1 : 0).compareTo(a.isFatal ? 1 : 0);
             return risk != 0 ? risk : a.id.compareTo(b.id);
           });
-    return TrailHazardAssessment(alerts: alerts, isFresh: fresh);
+    final detailed = await Future.wait(
+      alerts.map((alert) async {
+        if (!alert.isCriticalWeather) return alert;
+        final updates = _hazardReports.doc(alert.id).collection('updates');
+        try {
+          final result = await updates
+              .get(GetOptions(source: fresh ? Source.server : Source.cache))
+              .timeout(const Duration(seconds: 6));
+          return alert.withReportUpdates(
+            result.docs.map((doc) => doc.data()),
+            complete: fresh && !result.metadata.isFromCache,
+          );
+        } catch (_) {
+          try {
+            final cached = await updates
+                .get(const GetOptions(source: Source.cache))
+                .timeout(const Duration(seconds: 2));
+            return alert.withReportUpdates(
+              cached.docs.map((doc) => doc.data()),
+              complete: false,
+            );
+          } catch (_) {
+            return alert.withReportUpdates(const [], complete: false);
+          }
+        }
+      }),
+    );
+    return TrailHazardAssessment(alerts: detailed, isFresh: fresh);
   }
 
+  /// Watches pending trail requests.
   Stream<bool> watchPendingTrailRequests({required AppSession session}) {
     if (!session.isAdmin || !_firebaseBootstrapResult.isAvailable) {
       return Stream.value(false);
@@ -4522,6 +4841,7 @@ class HikerCircleFirebaseRepository {
         .distinct();
   }
 
+  /// Loads admin trail requests.
   Future<List<Map<String, dynamic>>> loadAdminTrailRequests({
     required AppSession session,
   }) async {
@@ -4541,6 +4861,7 @@ class HikerCircleFirebaseRepository {
     return rows;
   }
 
+  /// Loads recorded trail request points.
   Future<List<HikeCoordinate>> loadRecordedTrailRequestPoints({
     required AppSession session,
     required String requestId,
@@ -4570,6 +4891,7 @@ class HikerCircleFirebaseRepository {
     ];
   }
 
+  /// Computes reject recorded trail request.
   Future<void> rejectRecordedTrailRequest({
     required AppSession session,
     required String requestId,
@@ -4585,6 +4907,7 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Computes recorded request hash.
   String _recordedRequestHash(List<Map<String, dynamic>> points) => crypto
       .sha256
       .convert(
@@ -4599,6 +4922,7 @@ class HikerCircleFirebaseRepository {
       )
       .toString();
 
+  /// Computes recorded trail callable.
   Future<Map<String, dynamic>> _recordedTrailCallable(
     String name,
     Map<String, dynamic> data, {
@@ -4627,6 +4951,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes submit recorded trail request.
   Future<String> submitRecordedTrailRequest({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -4817,8 +5142,10 @@ class HikerCircleFirebaseRepository {
     });
   }
 
+  /// Computes new trail id for name.
   String newTrailIdForName(String name) => _newTrailId(name);
 
+  /// Uploads trail cover images by admin.
   Future<List<String>> uploadTrailCoverImagesByAdmin({
     required AppSession session,
     required String trailId,
@@ -4884,6 +5211,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Deletes trail by admin.
   Future<void> deleteTrailByAdmin({
     required AppSession session,
     required Trail trail,
@@ -4904,6 +5232,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads admin sos alerts.
   Future<List<Map<String, dynamic>>> loadAdminSosAlerts({
     required AppSession session,
   }) async {
@@ -4923,6 +5252,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes review hazard report.
   Future<void> reviewHazardReport({
     required AppSession session,
     required Map<String, dynamic> report,
@@ -4976,6 +5306,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Loads more admin community posts.
   Future<List<Map<String, dynamic>>> loadMoreAdminCommunityPosts({
     required AppSession session,
     required String afterPostId,
@@ -4990,6 +5321,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes edit admin community post.
   Future<void> editAdminCommunityPost({
     required AppSession session,
     required Map<String, dynamic> original,
@@ -5024,6 +5356,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes moderate community post.
   Future<void> moderateCommunityPost({
     required AppSession session,
     required String postId,
@@ -5047,6 +5380,7 @@ class HikerCircleFirebaseRepository {
     } catch (_) {}
   }
 
+  /// Removes admin community comment.
   Future<void> removeAdminCommunityComment({
     required AppSession session,
     required String postId,
@@ -5068,6 +5402,95 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes local achievement seeds.
+  List<Map<String, dynamic>> _localAchievementSeeds() =>
+      _achievementProgressFrom(
+        achievements: _achievementSeedRows(),
+        userAwardsByAchievementId: const {},
+      );
+
+  /// The notification host is awaited before callers may start their cloud work.
+  Future<void> recordLocalAchievementEvents({
+    required AppSession session,
+    required List<AchievementMetricEvent> events,
+  }) async {
+    await _localDatabase.updateLocalAchievementProgress(
+      ownerPhoneNumber: session.phoneNumber,
+      seedRows: _localAchievementSeeds(),
+      events: events,
+    );
+    await AchievementNotificationEvents.changed(session.phoneNumber);
+  }
+
+  /// Computes merge achievement rows.
+  Future<List<Map<String, dynamic>>> _mergeAchievementRows({
+    required AppSession session,
+    List<Map<String, dynamic>>? serverRows,
+    bool fresh = false,
+  }) async {
+    final rows = await _localDatabase.updateLocalAchievementProgress(
+      ownerPhoneNumber: session.phoneNumber,
+      seedRows: _localAchievementSeeds(),
+      serverRows: serverRows,
+      freshServerSnapshot: fresh,
+    );
+    await AchievementNotificationEvents.changed(session.phoneNumber);
+    return rows;
+  }
+
+  /// Server-only approvals arrive through Firestore; banners are always local.
+  Stream<List<Map<String, dynamic>>> watchUserAchievementProgress({
+    required AppSession session,
+  }) {
+    if (!_firebaseBootstrapResult.isAvailable) return const Stream.empty();
+    final uid = _userIdFor(session);
+    return _userAchievements
+        .where('userId', isEqualTo: uid)
+        .snapshots()
+        .asyncMap((snapshot) async {
+          if (!_accountStillMatches(session, uid)) {
+            return <Map<String, dynamic>>[];
+          }
+          final cached = await loadCachedAchievementProgress(session: session);
+          final definitions = [...?cached?.rows];
+          if (definitions.isEmpty) definitions.addAll(_achievementSeedRows());
+          final known = definitions.map((row) => row['achievementId']).toSet();
+          final awards = <String, Map<String, dynamic>>{};
+          for (final document in snapshot.docs) {
+            final award = {
+              ...document.data(),
+              'userAchievementId': document.id,
+            };
+            final id = _stringFrom(award['achievementId']);
+            if (id.isEmpty) continue;
+            awards[id] = award;
+            if (known.add(id)) {
+              definitions.add({
+                'achievementId': id,
+                'title': award['achievementTitle'],
+                'rewardPoints': award['pointsAwarded'],
+                'rewardType': award['rewardType'],
+                'metricKey': award['metricKey'],
+                'targetCount': award['targetCount'],
+                'isActive': true,
+              });
+            }
+          }
+          if (!_accountStillMatches(session, uid)) {
+            return <Map<String, dynamic>>[];
+          }
+          return _mergeAchievementRows(
+            session: session,
+            serverRows: _achievementProgressFrom(
+              achievements: definitions,
+              userAwardsByAchievementId: awards,
+            ),
+            fresh: !snapshot.metadata.isFromCache,
+          );
+        });
+  }
+
+  /// Loads cached achievement progress.
   Future<LocalAchievementProgressCache?> loadCachedAchievementProgress({
     required AppSession session,
   }) {
@@ -5076,18 +5499,21 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Loads local achievement progress.
+  Future<List<Map<String, dynamic>>> loadLocalAchievementProgress({
+    required AppSession session,
+  }) => _mergeAchievementRows(session: session);
+
+  /// Saves cached achievement progress.
   Future<void> saveCachedAchievementProgress({
     required AppSession session,
     required String contentHash,
     required List<Map<String, dynamic>> rows,
-  }) {
-    return _localDatabase.saveAchievementProgressCache(
-      ownerPhoneNumber: session.phoneNumber,
-      contentHash: contentHash,
-      rows: rows,
-    );
+  }) async {
+    await _mergeAchievementRows(session: session, serverRows: rows);
   }
 
+  /// Loads achievement progress hash.
   Future<String> loadAchievementProgressHash({
     required AppSession session,
   }) async {
@@ -5109,14 +5535,12 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads user achievement progress.
   Future<List<Map<String, dynamic>>> loadUserAchievementProgress({
     required AppSession session,
   }) async {
     if (!_firebaseBootstrapResult.isAvailable) {
-      return _achievementProgressFrom(
-        achievements: _achievementSeedRows(),
-        userAwardsByAchievementId: const <String, Map<String, dynamic>>{},
-      );
+      return _mergeAchievementRows(session: session);
     }
 
     try {
@@ -5162,15 +5586,17 @@ class HikerCircleFirebaseRepository {
             : achievements,
         userAwardsByAchievementId: awardsByAchievementId,
       );
-      return rows;
-    } catch (_) {
-      return _achievementProgressFrom(
-        achievements: _achievementSeedRows(),
-        userAwardsByAchievementId: const <String, Map<String, dynamic>>{},
+      return _mergeAchievementRows(
+        session: session,
+        serverRows: rows,
+        fresh: true,
       );
+    } catch (_) {
+      return _mergeAchievementRows(session: session);
     }
   }
 
+  /// Loads community posts for user.
   Future<List<Map<String, dynamic>>> loadCommunityPostsForUser({
     required AppSession session,
   }) => _readCommunityPosts(
@@ -5180,6 +5606,7 @@ class HikerCircleFirebaseRepository {
     limit: 100,
   );
 
+  /// Loads achievement leaderboard.
   Future<List<Map<String, dynamic>>> loadAchievementLeaderboard({
     String period = 'month',
   }) async {
@@ -5207,6 +5634,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Loads my hike history.
   Future<List<HikeHistorySummary>> loadMyHikeHistory({
     int limit = 100,
     bool force = false,
@@ -5226,6 +5654,7 @@ class HikerCircleFirebaseRepository {
     return parseHikeHistoryList(data);
   }
 
+  /// Loads my hike history detail.
   Future<HikeHistoryDetail> loadMyHikeHistoryDetail(
     String sessionId, {
     bool force = false,
@@ -5249,6 +5678,7 @@ class HikerCircleFirebaseRepository {
     return parseHikeHistoryDetail(data);
   }
 
+  /// Ensures achievement seeds.
   Future<void> ensureAchievementSeeds() async {
     if (!_firebaseBootstrapResult.isAvailable) {
       return;
@@ -5262,6 +5692,7 @@ class HikerCircleFirebaseRepository {
     } catch (_) {}
   }
 
+  /// Loads admin achievements.
   Future<List<Map<String, dynamic>>> loadAdminAchievements({
     required AppSession session,
   }) async {
@@ -5273,6 +5704,7 @@ class HikerCircleFirebaseRepository {
         .toList();
   }
 
+  /// Saves achievement by admin.
   Future<String> saveAchievementByAdmin({
     required AppSession session,
     required Map<String, dynamic> achievement,
@@ -5301,6 +5733,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Sets achievement active by admin.
   Future<void> setAchievementActiveByAdmin({
     required AppSession session,
     required String achievementId,
@@ -5325,12 +5758,14 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes achievement seed rows.
   List<Map<String, dynamic>> _achievementSeedRows() {
     return _achievementSeeds.entries.map((entry) {
       return {'achievementId': entry.key, ...entry.value};
     }).toList();
   }
 
+  /// Computes achievement progress from.
   List<Map<String, dynamic>> _achievementProgressFrom({
     required List<Map<String, dynamic>> achievements,
     required Map<String, Map<String, dynamic>> userAwardsByAchievementId,
@@ -5413,6 +5848,7 @@ class HikerCircleFirebaseRepository {
 
   // _hydrateCommunityAuthorLevels adds current public profile/level fields to views without
   // expanding canonical post documents.
+  /// Computes hydrate community author levels.
   Future<List<Map<String, dynamic>>> _hydrateCommunityAuthorLevels(
     List<Map<String, dynamic>> rows,
   ) async {
@@ -5459,6 +5895,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes hydrate group chats with photos.
   Future<List<GroupChat>> _hydrateGroupChatsWithPhotos(
     List<GroupChat> chats,
   ) async {
@@ -5485,6 +5922,7 @@ class HikerCircleFirebaseRepository {
         .toList(growable: false);
   }
 
+  /// Loads cached map entities.
   Future<List<Map<String, dynamic>>> _loadCachedMapEntities({
     required String ownerPhoneNumber,
     required String entityType,
@@ -5503,6 +5941,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes cache map entities.
   Future<void> _cacheMapEntities({
     required String ownerPhoneNumber,
     required String entityType,
@@ -5530,7 +5969,9 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes json safe map.
   Map<String, dynamic> _jsonSafeMap(Map<String, dynamic> source) {
+    /// Computes convert.
     Object? convert(Object? value) {
       if (value == null || value is String || value is num || value is bool) {
         return value;
@@ -5558,6 +5999,7 @@ class HikerCircleFirebaseRepository {
     return Map<String, dynamic>.from(convert(source) as Map);
   }
 
+  /// Computes hydrate group chat with photos.
   Future<GroupChat> _hydrateGroupChatWithPhotos(GroupChat chat) async {
     final resolved = await _photoURLsForPhones(chat.participantPhones);
     if (resolved.isEmpty) {
@@ -5568,10 +6010,12 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes should render upcoming hike.
   bool _shouldRenderUpcomingHike(UpcomingHike hike) {
     return hike.isUpcomingAt(DateTime.now());
   }
 
+  /// Computes should render group chat.
   bool _shouldRenderGroupChat(GroupChat chat) {
     if (chat.isDeleted) {
       return false;
@@ -5583,6 +6027,7 @@ class HikerCircleFirebaseRepository {
     return true;
   }
 
+  /// Computes photo urls for phones.
   Future<Map<String, String>> _photoURLsForPhones(
     Iterable<String> phoneNumbers,
   ) async {
@@ -5614,6 +6059,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes photo urlfor phone.
   Future<String> _photoURLForPhone(String phoneNumber) async {
     final photos = await _photoURLsForPhones([phoneNumber]);
     return photos[_phoneKeyFor(phoneNumber)] ?? '';
@@ -5621,6 +6067,7 @@ class HikerCircleFirebaseRepository {
 
   // recordNetworkObservation submits best-effort cloud diagnostics; the actual pin is persisted
   // separately as a footprint.
+  /// Records network observation.
   Future<void> recordNetworkObservation({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -5664,6 +6111,8 @@ class HikerCircleFirebaseRepository {
         allowsOfflineFallback: true,
       );
     }
+
+    /// Computes location payload.
     Map<String, Object?> locationPayload(SosTriggerLocation value) => {
       'latitude': value.latitude,
       'longitude': value.longitude,
@@ -5707,6 +6156,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes call team hike function.
   Future<Map<String, dynamic>> _callTeamHikeFunction({
     required String callableName,
     required Map<String, dynamic> data,
@@ -5727,6 +6177,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes manage team hike action.
   Future<TeamHikeSession> _manageTeamHikeAction({
     required String action,
     required String teamHikeSessionId,
@@ -5740,6 +6191,7 @@ class HikerCircleFirebaseRepository {
     return _teamHikeSessionFromCallable(response);
   }
 
+  /// Computes team hike session from callable.
   TeamHikeSession _teamHikeSessionFromCallable(Map<String, dynamic> response) {
     final rawSession = response['teamSession'];
     if (rawSession is! Map) {
@@ -5757,6 +6209,7 @@ class HikerCircleFirebaseRepository {
     return TeamHikeSession.fromFirestore(data, id: teamHikeSessionId);
   }
 
+  /// Computes team hike session from document.
   TeamHikeSession? _teamHikeSessionFromDocument(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
@@ -5769,6 +6222,7 @@ class HikerCircleFirebaseRepository {
 
   // _saveActualHikeRouteCapture stores replay geometry and source counts; endpoints, bounds and
   // stored-array counts are derived by readers.
+  /// Saves actual hike route capture.
   Future<void> _saveActualHikeRouteCapture({
     required AppSession session,
     required ActiveHikeSession activeHike,
@@ -5803,6 +6257,7 @@ class HikerCircleFirebaseRepository {
     }, SetOptions(merge: true));
   }
 
+  /// Computes actual route points for.
   List<HikeCoordinate> _actualRoutePointsFor(ActiveHikeSession activeHike) {
     final points = activeHike.routePoints
         .where((point) => point.hasValidPosition)
@@ -5816,6 +6271,7 @@ class HikerCircleFirebaseRepository {
     return points;
   }
 
+  /// Computes hike coordinate for cloud.
   Map<String, dynamic> _hikeCoordinateForCloud(HikeCoordinate coordinate) {
     final accuracy = coordinate.accuracyMeters;
     final altitude = coordinate.altitudeMeters;
@@ -5829,6 +6285,7 @@ class HikerCircleFirebaseRepository {
     };
   }
 
+  /// Computes hike manual pin for cloud.
   Map<String, dynamic> _hikeManualPinForCloud(HikeManualPin pin) {
     final normalizedId = pin.id.trim();
     return {
@@ -5840,6 +6297,7 @@ class HikerCircleFirebaseRepository {
     };
   }
 
+  /// Computes progress meters for.
   double _progressMetersFor(
     ActiveHikeSession activeHike,
     HikeCoordinate coordinate,
@@ -5860,16 +6318,19 @@ class HikerCircleFirebaseRepository {
     return startCoordinate.distanceTo(coordinate);
   }
 
+  /// Computes same phone.
   bool _samePhone(String first, String second) {
     final firstKey = _phoneKeyFor(first);
     final secondKey = _phoneKeyFor(second);
     return firstKey.isNotEmpty && firstKey == secondKey;
   }
 
+  /// Computes phone key for.
   String _phoneKeyFor(String phoneNumber) {
     return phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
   }
 
+  /// Computes terminal restore result from exception.
   ActiveHikeCloudRestoreResult? _terminalRestoreResultFromException(
     FirebaseFunctionsException error, {
     required String requestedSessionId,
@@ -5888,6 +6349,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes terminal completion result from exception.
   ActiveHikeCloudCompletionResult? _terminalCompletionResultFromException(
     FirebaseFunctionsException error, {
     required String requestedSessionId,
@@ -5906,6 +6368,7 @@ class HikerCircleFirebaseRepository {
     }
   }
 
+  /// Computes buddy requests from raw.
   List<Map<String, dynamic>> _buddyRequestsFromRaw(Object? raw) {
     if (raw is! Map) {
       return const [];
@@ -5936,6 +6399,7 @@ class HikerCircleFirebaseRepository {
     return requests;
   }
 
+  /// Computes trail from firestore.
   Trail? _trailFromFirestore(Map<String, dynamic> data) {
     final checkpoints = _listOfMaps(
       data['checkpoints'],
@@ -6000,6 +6464,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes checkpoint from firestore.
   TrailCheckpoint? _checkpointFromFirestore(Map<String, dynamic> data) {
     final name = _stringFrom(data['name']);
     if (name.isEmpty) {
@@ -6013,6 +6478,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes weather from firestore.
   TrailWeather weatherFromFirestore(Object? value) {
     final data = value is Map ? Map<String, dynamic>.from(value) : {};
     final hourlyData = data['hourlyForecast'];
@@ -6037,6 +6503,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes hourly forecast from firestore.
   HourlyForecast? _hourlyForecastFromFirestore(Object? value) {
     final data = value is Map ? Map<String, dynamic>.from(value) : {};
     final time = _dateFromValue(data['timeLocal']);
@@ -6051,14 +6518,17 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes nullable int from.
   int? _nullableIntFrom(Object? value) {
     return value is num ? value.toInt() : null;
   }
 
+  /// Computes nullable double from.
   double? _nullableDoubleFrom(Object? value) {
     return value is num ? value.toDouble() : null;
   }
 
+  /// Computes hazard from firestore.
   TrailHazard? _hazardFromFirestore(Map<String, dynamic> data) {
     final description = _stringFrom(data['description']);
     if (description.isEmpty) {
@@ -6073,6 +6543,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes list of maps.
   List<Map<String, dynamic>> _listOfMaps(Object? value) {
     if (value is! Iterable) {
       return const [];
@@ -6083,14 +6554,17 @@ class HikerCircleFirebaseRepository {
         .toList();
   }
 
+  /// Computes user id for.
   String _userIdFor(AppSession session) {
     return FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber);
   }
 
+  /// Computes string from.
   String _stringFrom(Object? value) {
     return value is String ? value : '';
   }
 
+  /// Computes cover image urls from.
   List<String> _coverImageUrlsFrom(Map<String, dynamic> data) {
     final raw = data['coverImageUrl'];
     if (raw is List) {
@@ -6100,18 +6574,22 @@ class HikerCircleFirebaseRepository {
     return legacy.isNotEmpty ? [legacy] : const [];
   }
 
+  /// Computes nullable string from.
   String? _nullableStringFrom(Object? value) {
     return value is String ? value : null;
   }
 
+  /// Computes double from.
   double _doubleFrom(Object? value) {
     return value is num ? value.toDouble() : 0;
   }
 
+  /// Computes int from.
   int _intFrom(Object? value) {
     return value is num ? value.toInt() : 0;
   }
 
+  /// Computes date from value.
   DateTime? _dateFromValue(Object? value) {
     if (value is Timestamp) {
       return value.toDate();
@@ -6122,6 +6600,7 @@ class HikerCircleFirebaseRepository {
     return null;
   }
 
+  /// Computes title case.
   String _titleCase(String value) {
     if (value.isEmpty) {
       return value;
@@ -6129,6 +6608,7 @@ class HikerCircleFirebaseRepository {
     return '${value[0].toUpperCase()}${value.substring(1)}';
   }
 
+  /// Computes location label for hazard report.
   String _locationLabelForHazardReport(Map<String, dynamic> report) {
     final locationLabel = _stringFrom(report['locationLabel']);
     if (locationLabel.isNotEmpty) {
@@ -6142,6 +6622,7 @@ class HikerCircleFirebaseRepository {
     return _stringFrom(report['trailName']);
   }
 
+  /// Computes new trail id.
   String _newTrailId(String name) {
     final slug = name
         .toLowerCase()
@@ -6151,6 +6632,7 @@ class HikerCircleFirebaseRepository {
     return 'trail_${safeSlug}_${DateTime.now().microsecondsSinceEpoch}';
   }
 
+  /// Computes safe storage file name.
   String _safeStorageFileName(String fileName, int index) {
     final normalized = fileName
         .trim()
@@ -6160,6 +6642,7 @@ class HikerCircleFirebaseRepository {
     return normalized.isEmpty ? 'trail_image_$index.jpg' : normalized;
   }
 
+  /// Computes content type for file name.
   String _contentTypeForFileName(String fileName) {
     final lower = fileName.toLowerCase();
     if (lower.endsWith('.png')) {
@@ -6177,6 +6660,7 @@ class HikerCircleFirebaseRepository {
     return 'image/jpeg';
   }
 
+  /// Computes throw if admin unavailable.
   void _throwIfAdminUnavailable(AppSession session) {
     _throwIfFirebaseUnavailable();
     if (session.isAdmin) {
@@ -6187,6 +6671,7 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Computes throw if firebase unavailable.
   void _throwIfFirebaseUnavailable() {
     if (_firebaseBootstrapResult.isAvailable) {
       return;

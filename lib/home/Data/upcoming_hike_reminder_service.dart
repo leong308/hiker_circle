@@ -9,8 +9,12 @@ import '../../app/Data/local_session_database.dart';
 import '../../core/services/content_hash.dart';
 import '../Model/hike_session_models.dart';
 
+/// Represents hike reminder notifications.
 abstract interface class HikeReminderNotifications {
+  /// Computes pending.
   Future<Map<int, String?>> pending();
+
+  /// Computes schedule.
   Future<void> schedule(
     int id,
     DateTime at,
@@ -18,11 +22,17 @@ abstract interface class HikeReminderNotifications {
     String body,
     String payload,
   );
+
+  /// Shows.
   Future<void> show(int id, String title, String body, String payload);
+
+  /// Cancels.
   Future<void> cancel(int id);
 }
 
+/// Represents device hike reminder notifications.
 class DeviceHikeReminderNotifications implements HikeReminderNotifications {
+  /// Creates device hike reminder notifications.
   DeviceHikeReminderNotifications(this.plugin);
   final FlutterLocalNotificationsPlugin plugin;
 
@@ -37,6 +47,7 @@ class DeviceHikeReminderNotifications implements HikeReminderNotifications {
     iOS: DarwinNotificationDetails(presentAlert: true, presentSound: true),
   );
 
+  /// Computes pending.
   @override
   Future<Map<int, String?>> pending() async {
     // Native iOS safety requests have no plugin integer ID. Its typed API
@@ -55,6 +66,7 @@ class DeviceHikeReminderNotifications implements HikeReminderNotifications {
     return result;
   }
 
+  /// Computes schedule.
   @override
   Future<void> schedule(
     int id,
@@ -95,6 +107,7 @@ class DeviceHikeReminderNotifications implements HikeReminderNotifications {
     }
   }
 
+  /// Shows.
   @override
   Future<void> show(int id, String title, String body, String payload) =>
       plugin.show(
@@ -104,12 +117,15 @@ class DeviceHikeReminderNotifications implements HikeReminderNotifications {
         payload: payload,
         notificationDetails: details,
       );
+
+  /// Cancels.
   @override
   Future<void> cancel(int id) => plugin.cancel(id: id);
 }
 
 /// SQLite is the durable ledger; the OS owns delivery while the app is closed.
 class UpcomingHikeReminderService {
+  /// Creates upcoming hike reminder service.
   UpcomingHikeReminderService({
     required this.database,
     required this.notifications,
@@ -124,18 +140,21 @@ class UpcomingHikeReminderService {
   Future<void> _work = Future.value();
   bool _active = true;
 
+  /// Computes reminder time.
   static DateTime reminderTime(DateTime departure, DateTime now) {
     final oneHourBefore = departure.toUtc().subtract(const Duration(hours: 1));
     return oneHourBefore.isAfter(now.toUtc()) ? oneHourBefore : now.toUtc();
   }
 
   // Keep the key independent of the temporary/cloud ID and preparation edits.
+  /// Computes reminder key.
   static String reminderKey(UpcomingHike hike) => stableContentHash([
     hike.creatorPhone.replaceAll(RegExp(r'[^0-9]'), ''),
     hike.trailId,
     hike.departureTime.toUtc().toIso8601String(),
   ]);
 
+  /// Synchronizes.
   Future<void> synchronize() {
     if (!_active) return Future.value();
     final next = _work.catchError((Object _) {}).then((_) => _synchronize());
@@ -143,6 +162,7 @@ class UpcomingHikeReminderService {
     return next;
   }
 
+  /// Synchronizes.
   Future<void> _synchronize() async {
     if (!_active) return;
     final now = _now().toUtc();
@@ -190,6 +210,10 @@ class UpcomingHikeReminderService {
       if (row.status != 'delivered') {
         await database.setHikeReminderStatus(row.notificationId, 'cancelled');
       }
+      await database.deleteScheduledDeviceNotification(
+        ownerPhoneNumber: row.ownerPhoneNumber,
+        messageId: 'hike-reminder:${row.reminderKey}',
+      );
     }
     for (final entry in desired.entries) {
       if (!_active) return;
@@ -200,7 +224,8 @@ class UpcomingHikeReminderService {
           '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
       final body =
           '${hike.trailName} starts ${start.day}/${start.month}/${start.year} at $time. Remember to charge your phone to 100% before your hike.';
-      final payload = jsonEncode({
+      final data = <String, dynamic>{
+        'messageId': 'hike-reminder:${entry.key}',
         'type': 'local_upcoming_hike_reminder',
         'upcomingHikeId': hike.id,
         'ownerPhoneNumber': ownerPhoneNumber,
@@ -212,7 +237,8 @@ class UpcomingHikeReminderService {
           path: '/view',
           queryParameters: {'upcomingHikeId': hike.id, 'chargePhone': '1'},
         ).toString(),
-      });
+      };
+      final payload = jsonEncode(data);
       final hash = stableContentHash([title, body, payload]);
       final previous = rows
           .where(
@@ -229,16 +255,31 @@ class UpcomingHikeReminderService {
         remindAt: reminderTime(hike.departureTime, now),
         contentHash: hash,
       );
+
+      /// Records history.
+      Future<void> recordHistory() => database.saveDeviceNotification(
+        ownerPhoneNumber: ownerPhoneNumber,
+        messageId: 'hike-reminder:${entry.key}',
+        title: title,
+        body: body,
+        type: 'local_upcoming_hike_reminder',
+        deepLink: data['deepLink'] as String,
+        data: data,
+        receivedAt: row.remindAt,
+        source: 'local_reminder',
+      );
       if (!_active || row.status == 'delivered') continue;
       if (row.status == 'scheduled' &&
           !row.remindAt.isAfter(now) &&
           !pending.containsKey(row.notificationId)) {
+        await recordHistory();
         await database.setHikeReminderStatus(row.notificationId, 'delivered');
         continue;
       }
       if (row.status == 'scheduled' &&
           pending[row.notificationId] == payload &&
           previous?.contentHash == hash) {
+        if (row.remindAt.isAfter(now)) await recordHistory();
         continue;
       }
       // Local creation, identity reconciliation and repeated refreshes share an ID.
@@ -250,23 +291,30 @@ class UpcomingHikeReminderService {
           body,
           payload,
         );
+        await recordHistory();
         await database.setHikeReminderStatus(row.notificationId, 'scheduled');
       } else {
         if (pending.containsKey(row.notificationId)) {
           await notifications.cancel(row.notificationId);
         }
         await notifications.show(row.notificationId, title, body, payload);
+        await recordHistory();
         await database.setHikeReminderStatus(row.notificationId, 'delivered');
       }
     }
   }
 
+  /// Stops for sign out.
   Future<void> stopForSignOut() async {
     _active = false;
     await _work.catchError((Object _) {});
     for (final row in await database.loadHikeReminders()) {
       if (row.ownerPhoneNumber != ownerPhoneNumber) continue;
       await notifications.cancel(row.notificationId);
+      await database.deleteScheduledDeviceNotification(
+        ownerPhoneNumber: row.ownerPhoneNumber,
+        messageId: 'hike-reminder:${row.reminderKey}',
+      );
       if (row.status != 'delivered') {
         await database.setHikeReminderStatus(row.notificationId, 'cancelled');
       }

@@ -1,15 +1,12 @@
 // HikerBottomNavBar renders the app's shared destination controls and selected state.
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_bar/liquid_glass_bar.dart';
+import '../Model/hiker_bottom_nav_destination.dart';
+export '../Model/hiker_bottom_nav_destination.dart';
 
-class HikerBottomNavDestination {
-  const HikerBottomNavDestination({required this.label, required this.icon});
-
-  final String label;
-  final IconData icon;
-}
-
+/// Displays the hiker bottom nav bar.
 class HikerBottomNavBar extends StatelessWidget {
+  /// Creates hiker bottom nav bar.
   const HikerBottomNavBar({
     super.key,
     required this.currentIndex,
@@ -32,6 +29,7 @@ class HikerBottomNavBar extends StatelessWidget {
   final List<HikerBottomNavDestination> destinations;
   final int queuedSosCount;
 
+  /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
