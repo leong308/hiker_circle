@@ -41,7 +41,10 @@ class HelpCenterPage extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 22),
-      const _HelpLabel('YOUR GUIDES'),
+      const SectionLabel(
+        label: 'YOUR GUIDES',
+        padding: EdgeInsets.only(left: 14, bottom: 10),
+      ),
       _GuideLink(
         icon: Icons.route_rounded,
         title: 'Plan & track a hike',
@@ -77,7 +80,10 @@ class HelpCenterPage extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 12),
-      const _HelpLabel('NEED A HAND?'),
+      const SectionLabel(
+        label: 'NEED A HAND?',
+        padding: EdgeInsets.only(left: 14, bottom: 10),
+      ),
       _GuideLink(
         icon: Icons.chat_bubble_outline_rounded,
         title: 'Report a problem',
@@ -159,8 +165,10 @@ class _HikeBasicsPageState extends State<HikeBasicsPage> {
           ),
         ),
         const SizedBox(height: 18),
-        _HelpLabel(
-          '${entries.length} ${entries.length == 1 ? 'CONDITION' : 'CONDITIONS'}',
+        SectionLabel(
+          padding: const EdgeInsets.only(left: 14, bottom: 10),
+          label:
+              '${entries.length} ${entries.length == 1 ? 'CONDITION' : 'CONDITIONS'}',
         ),
         for (final entry in entries)
           Padding(
@@ -201,7 +209,10 @@ class _HikeBasicsPageState extends State<HikeBasicsPage> {
             ),
           ),
         const SizedBox(height: 12),
-        const _HelpLabel('FURTHER READING'),
+        const SectionLabel(
+          label: 'FURTHER READING',
+          padding: EdgeInsets.only(left: 14, bottom: 10),
+        ),
         const Text(
           'Outdoor safety guidance and Malaysian weather and air-quality advice.',
         ),

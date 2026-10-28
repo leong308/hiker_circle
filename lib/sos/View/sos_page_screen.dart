@@ -520,7 +520,7 @@ class _SosPageState extends State<SosPage> {
                     onDuressLongPress: () => unawaited(_handleDuressSos()),
                   ),
                   const SizedBox(height: 18),
-                  const _SectionTitle(label: 'Safety Tools'),
+                  const SectionLabel(label: 'Safety Tools'),
                   const SizedBox(height: 8),
                   _SosSafetyToolsGrid(
                     onOpenFirstAid: () => unawaited(_openFirstAidGuide()),
@@ -1264,7 +1264,7 @@ class _SosGestureGuidePageState extends State<_SosGestureGuidePage> {
                         'Hold for about one second. The alert is sent silently without an alarm or countdown, and contacts are warned not to call if that could increase danger.',
                   ),
                   const SizedBox(height: 18),
-                  const _SectionTitle(label: 'Try the gesture safely'),
+                  const SectionLabel(label: 'Try the gesture safely'),
                   const SizedBox(height: 8),
                   _InsetGroup(
                     child: Padding(
@@ -2630,31 +2630,6 @@ class _FlashPatternPreviewState extends State<_FlashPatternPreview> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Displays the section title.
-class _SectionTitle extends StatelessWidget {
-  /// Creates section title.
-  const _SectionTitle({required this.label});
-
-  final String label;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 14),
-      child: Text(
-        label.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _SosColors.secondaryTextFor(context),
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          letterSpacing: 0,
-        ),
       ),
     );
   }

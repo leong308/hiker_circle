@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// The compact section labels used on the homepage and trail creation form.
+/// The shared group heading style used throughout HikerCircle.
 class SectionLabel extends StatelessWidget {
   /// Creates section label.
   const SectionLabel({

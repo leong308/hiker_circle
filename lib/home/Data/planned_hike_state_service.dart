@@ -12,7 +12,7 @@ class PlannedHikeStateResolver {
 
   static const Duration visibleAfterDepartureGrace =
       UpcomingHike.visibleAfterDepartureGrace;
-  static const Duration weatherFreshness = Duration(hours: 4);
+  static const Duration weatherFreshness = TrailWeather.cacheFreshness;
 
   /// Computes merge upcoming hikes.
   static List<UpcomingHike> mergeUpcomingHikes({

@@ -8,11 +8,16 @@ class _PreparationStateViewModel extends ChangeNotifier {
     required this.readImmediate,
     required this.readIsHost,
     required this.readPrimaryActionLabel,
+    required this.readCheckTrailheadOnStart,
   });
   final UpcomingHike Function() readHike;
   final bool Function() readImmediate;
   final bool Function() readIsHost;
   final String? Function() readPrimaryActionLabel;
+  final bool Function() readCheckTrailheadOnStart;
+  final _trailhead = TrailheadProximityViewModel();
+  late final Future<TrailheadProximityAction?> Function(TrailheadProximity?)
+  presentTrailheadWarning;
   bool _disposed = false;
 
   /// Whether this instance is still active.
@@ -99,6 +104,7 @@ class _PreparationStateViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _trailhead.dispose();
     super.dispose();
   }
 
@@ -110,9 +116,27 @@ class _PreparationStateViewModel extends ChangeNotifier {
 
   bool stateCompletionDelivered = false;
 
-  /// Starts hike.
+  /// Checks a scheduled hike's trailhead distance before requesting its start.
   Future<void> commandStartHike(PlannedHike plan, Route<String> route) async {
     try {
+      if (readCheckTrailheadOnStart() && !plan.trail.isUnlisted) {
+        final accepted = await _trailhead.confirmContinue(
+          plan.trail,
+          refreshLocation: true,
+          presentWarning: presentTrailheadWarning,
+          onDirectionsUnavailable: () => _publish(
+            () => stateError = 'Unable to open Waze. Please try again.',
+          ),
+        );
+        if (!mounted) return;
+        if (!accepted) {
+          _publish(() {
+            stateStartInFlight = false;
+            stateStartRequested = false;
+          });
+          return;
+        }
+      }
       final started = await readOnStart()(plan);
       if (!mounted) return;
       if (started) {

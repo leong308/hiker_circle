@@ -15,11 +15,15 @@ class FinalPreparationReviewPage extends StatefulWidget {
     this.loadWeather,
     required this.onStart,
     this.immediate = false,
+    this.checkTrailheadOnStart,
     this.primaryActionLabel,
     this.loadBatteryLevel,
   });
   final UpcomingHike hike;
   final bool immediate;
+
+  /// Scheduled team readiness can opt in while ordinary Start Now skips a repeat check.
+  final bool? checkTrailheadOnStart;
   final String? primaryActionLabel;
   final Future<bool> Function(PlannedHike) onStart;
   final Future<TrailWeather> Function()? loadWeather;
@@ -130,9 +134,16 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       readImmediate: () => widget.immediate,
       readIsHost: () => widget.isHost,
       readPrimaryActionLabel: () => widget.primaryActionLabel,
+      readCheckTrailheadOnStart: () =>
+          widget.checkTrailheadOnStart ?? !widget.immediate,
     )..addListener(_renderScreenModel);
     _screenModel.readOnStart = () => widget.onStart;
     _screenModel.effectPresentStartHikeEffect1 = _presentStartHikeEffect1;
+    _screenModel.presentTrailheadWarning = (comparison) =>
+        showDialog<TrailheadProximityAction>(
+          context: context,
+          builder: (_) => TrailheadProximityDialog(proximity: comparison),
+        );
 
     _confirmedGearItems = {...?_plan?.completedChecklistItems};
     WidgetsBinding.instance.addObserver(this);

@@ -283,7 +283,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
                               : () => _changePhoto(profile),
                         ),
                         const SizedBox(height: 18),
-                        const _SectionLabel('ABOUT YOU'),
+                        const SectionLabel(label: 'ABOUT YOU'),
                         const SizedBox(height: 8),
                         _DetailsGroup(
                           rows: [
@@ -325,7 +325,7 @@ class _ProfileDetailsPageState extends State<ProfileDetailsPage> {
                           ],
                         ),
                         const SizedBox(height: 18),
-                        const _SectionLabel('ACCOUNT'),
+                        const SectionLabel(label: 'ACCOUNT'),
                         const SizedBox(height: 8),
                         _DetailsGroup(
                           rows: [

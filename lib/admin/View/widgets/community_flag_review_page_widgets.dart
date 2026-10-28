@@ -8,12 +8,8 @@ class _SectionLabel extends StatelessWidget {
 
   /// Builds this widget from its current presentation state.
   @override
-  Widget build(BuildContext context) => Text(
-    text,
-    style: Theme.of(
-      context,
-    ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-  );
+  Widget build(BuildContext context) =>
+      SectionLabel(label: text, padding: EdgeInsets.zero);
 }
 
 /// Displays the content card.

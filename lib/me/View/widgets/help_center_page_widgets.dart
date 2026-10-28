@@ -340,23 +340,3 @@ class _HelpCard extends StatelessWidget {
     child: child,
   );
 }
-
-/// Displays the help label.
-class _HelpLabel extends StatelessWidget {
-  /// Creates help label.
-  const _HelpLabel(this.text);
-  final String text;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      text,
-      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-        fontWeight: FontWeight.w800,
-        letterSpacing: 1,
-      ),
-    ),
-  );
-}

@@ -6,6 +6,9 @@ import '../sos/View/fall_detection_test_dialog.dart';
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'View/solo_hike_distance_dialog.dart';
 import 'View/hike_start_navigation.dart';
+import 'View/trailhead_proximity_dialog.dart';
+import 'ModelView/trailhead_proximity_view_model.dart';
+import 'Model/trailhead_proximity.dart';
 import 'dart:async';
 import 'dart:math' as math;
 

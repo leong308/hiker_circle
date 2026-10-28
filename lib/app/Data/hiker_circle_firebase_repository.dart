@@ -32,6 +32,8 @@ import '../../trail/Model/trail_models.dart';
 import '../../trail/Model/trail_hazard_alert.dart';
 import '../../trail/Model/trail_hazard_assessment.dart';
 import '../../trail/Data/trail_caution_service.dart';
+import '../../trail/Data/trail_checkpoint_weather_repository.dart';
+import '../../trail/Model/trail_weather_location.dart';
 import '../Model/app_session.dart';
 import '../Model/community_post_draft.dart';
 export '../Model/community_post_draft.dart';
@@ -1258,7 +1260,7 @@ class HikerCircleFirebaseRepository {
             id: '${trail.trailId}:${trail.latitude.toStringAsFixed(4)}:${trail.longitude.toStringAsFixed(4)}',
             callable: 'fetchWeatherForTrail',
             arguments: {'trailId': trail.trailId},
-            freshness: const Duration(hours: 4),
+            freshness: TrailWeather.cacheFreshness,
             online: _firebaseBootstrapResult.isAvailable,
           );
           final raw = data['weather'];
@@ -1287,7 +1289,7 @@ class HikerCircleFirebaseRepository {
       id: '${trail.trailId}:${trail.latitude.toStringAsFixed(4)}:${trail.longitude.toStringAsFixed(4)}',
       callable: 'fetchWeatherForTrail',
       arguments: {'trailId': trail.trailId},
-      freshness: const Duration(hours: 4),
+      freshness: TrailWeather.cacheFreshness,
       online: _firebaseBootstrapResult.isAvailable,
       force: true,
     );
@@ -1295,6 +1297,29 @@ class HikerCircleFirebaseRepository {
         ? trail.copyWith(weather: weatherFromFirestore(data['weather']))
         : trail;
   }
+
+  /// Reads a shared checkpoint forecast without replacing the default trailhead weather.
+  Stream<TrailWeather> watchTrailCheckpointWeather(
+    Trail trail,
+    TrailWeatherLocation location,
+  ) => TrailCheckpointWeatherRepository(
+    readCached: (trailId, checkpointKey) async =>
+        (await _resolvedFirestore
+                .collection('trails')
+                .doc(trailId)
+                .collection('checkpointWeather')
+                .doc(checkpointKey)
+                .get()
+                .timeout(_firebaseReadTimeout))
+            .data(),
+    fetchWeather: (trailId, checkpointKey) async {
+      final result = await _resolvedFunctions
+          .httpsCallable('fetchWeatherForTrailCheckpoint')
+          .call({'trailId': trailId, 'checkpointKey': checkpointKey})
+          .timeout(const Duration(seconds: 40));
+      return Map<String, dynamic>.from(result.data as Map);
+    },
+  ).watch(trail, location);
 
   /// Loads upcoming hikes.
   Future<List<UpcomingHike>> loadUpcomingHikes() async {

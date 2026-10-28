@@ -102,6 +102,9 @@ class HourlyForecast {
 
 /// Keep raw forecast data with its cache time for trail-local weather presentation.
 class TrailWeather {
+  /// Matches the shared server forecast cache's three-hour lifetime.
+  static const cacheFreshness = Duration(hours: 3);
+
   /// Creates trail weather.
   const TrailWeather({
     required this.summary,
@@ -167,9 +170,11 @@ class TrailWeather {
   }
 
   /// Returns is stale.
-  bool get isStale {
-    return DateTime.now().toUtc().difference(cachedAt.toUtc()).inHours >= 4;
-  }
+  bool get isStale => isStaleAt(DateTime.now());
+
+  /// Treats the expiry boundary consistently in UI, caching and preparation checks.
+  bool isStaleAt(DateTime now) =>
+      now.toUtc().difference(cachedAt.toUtc()) >= cacheFreshness;
 }
 
 /// Computes wmo summary.

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'Model/trail_models.dart';
+import 'Model/trail_weather_location.dart';
 import 'Model/trail_precautions.dart';
 import 'View/weather_presentation.dart';
 import 'View/trail_precaution_card.dart';

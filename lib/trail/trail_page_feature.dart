@@ -11,7 +11,6 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
-import 'package:url_launcher/url_launcher.dart';
 
 import '../app/Data/hiker_circle_firebase_repository.dart';
 import '../app/Data/local_session_database.dart';

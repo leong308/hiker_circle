@@ -1,12 +1,11 @@
 part of '../../trail_images_card_feature.dart';
 
-/// Displays the trail images card.
+/// Displays device-selected trail photos with Gallery and Camera controls.
 class TrailImagesCard extends StatelessWidget {
   /// Creates trail images card.
   const TrailImagesCard({
     super.key,
     required this.images,
-    required this.linkController,
     required this.onGallery,
     required this.onCamera,
     required this.onRemove,
@@ -16,7 +15,6 @@ class TrailImagesCard extends StatelessWidget {
   });
 
   final List<TrailImagePreview> images;
-  final TextEditingController linkController;
   final VoidCallback onGallery;
   final VoidCallback onCamera;
   final ValueChanged<int> onRemove;
@@ -242,33 +240,6 @@ class TrailImagesCard extends StatelessWidget {
             Divider(
               height: 1,
               color: colors.outlineVariant.withValues(alpha: .65),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: linkController,
-              enabled: !isBusy,
-              keyboardType: TextInputType.url,
-              textInputAction: TextInputAction.done,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: 'Image link',
-                prefixIcon: const Icon(Icons.link_rounded, size: 21),
-                filled: true,
-                fillColor: colors.surfaceContainerLow,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: colors.primary, width: 1.5),
-                ),
-              ),
             ),
           ],
         ),

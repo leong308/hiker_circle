@@ -266,8 +266,6 @@ class _AddTrailSheetStateViewModel extends ChangeNotifier {
 
   late final HikerCircleFirebaseRepository Function() readRepository;
 
-  late final String? Function() effectValidatedImageUrl;
-
   late final void Function(
     String trailId,
     String name,
@@ -288,7 +286,7 @@ class _AddTrailSheetStateViewModel extends ChangeNotifier {
   )
   effectPresentDoSaveTrailEffect1;
 
-  /// Computes do save trail.
+  /// Uploads selected device photos before saving the trail.
   Future<void> commandDoSaveTrail({
     required String name,
     required String area,
@@ -309,10 +307,6 @@ class _AddTrailSheetStateViewModel extends ChangeNotifier {
         : null;
     final trailId = readRepository().newTrailIdForName(name);
     final imageUrls = <String>[];
-    final manualImageUrl = effectValidatedImageUrl();
-    if (manualImageUrl != null && manualImageUrl.isNotEmpty) {
-      imageUrls.add(manualImageUrl);
-    }
 
     if (statePendingImages.isNotEmpty) {
       _publish(() {

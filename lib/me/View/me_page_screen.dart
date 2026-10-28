@@ -1292,7 +1292,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     onBack: () => Navigator.of(context).pop(),
                   ),
                   const SizedBox(height: 16),
-                  _SectionTitle(label: 'HikerCircle Assistant'),
+                  SectionLabel(label: 'HikerCircle Assistant'),
                   const SizedBox(height: 8),
                   Card(
                     margin: EdgeInsets.zero,
@@ -1331,7 +1331,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Account Security'),
+                  SectionLabel(label: 'Account Security'),
                   const SizedBox(height: 8),
                   Card(
                     margin: EdgeInsets.zero,
@@ -1375,7 +1375,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     onTap: _changePassword,
                   ),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Language'),
+                  SectionLabel(label: 'Language'),
                   const SizedBox(height: 8),
                   _ChoiceSettingCard(
                     icon: Icons.language_rounded,
@@ -1392,11 +1392,11 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Safety settings'),
+                  SectionLabel(label: 'Safety settings'),
                   const SizedBox(height: 8),
                   const SafetySettingsPanel(),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Region'),
+                  SectionLabel(label: 'Region'),
                   const SizedBox(height: 8),
                   _TimeZoneSettingCard(
                     value: PreferredTimeZone.compactLabel(
@@ -1408,7 +1408,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     onTap: () => unawaited(_choosePreferredTimeZone()),
                   ),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Appearance & Theme'),
+                  SectionLabel(label: 'Appearance & Theme'),
                   const SizedBox(height: 8),
                   _ChoiceSettingCard(
                     icon: Icons.palette_rounded,
@@ -1422,7 +1422,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Permissions'),
+                  SectionLabel(label: 'Permissions'),
                   const SizedBox(height: 8),
                   _SwitchSettingCard(
                     icon: Icons.location_on_rounded,
@@ -1433,7 +1433,7 @@ class _AdvancedAppSettingsPageState extends State<_AdvancedAppSettingsPage> {
                     onChanged: (value) => unawaited(_setPreciseLocation(value)),
                   ),
                   const SizedBox(height: 18),
-                  _SectionTitle(label: 'Trail Recommendations'),
+                  SectionLabel(label: 'Trail Recommendations'),
                   const SizedBox(height: 8),
                   _SwitchSettingCard(
                     icon: Icons.insights_rounded,
@@ -3289,31 +3289,6 @@ class _SignOutCell extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Displays the section title.
-class _SectionTitle extends StatelessWidget {
-  /// Creates section title.
-  const _SectionTitle({required this.label});
-
-  final String label;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 14),
-      child: Text(
-        label.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _MeColors.secondaryTextFor(context),
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          letterSpacing: 0,
         ),
       ),
     );

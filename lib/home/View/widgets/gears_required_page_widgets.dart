@@ -76,13 +76,7 @@ class _GearGuideSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            title,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w800,
-              letterSpacing: -.3,
-            ),
-          ),
+          SectionLabel(label: title, padding: EdgeInsets.zero),
           const SizedBox(height: 4),
           Text(
             subtitle,

@@ -295,7 +295,7 @@ class _PreparationDashboard extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 22),
-        _SectionTitle(label: 'Recent Hazards on This Trail'),
+        SectionLabel(label: 'Recent Hazards on This Trail'),
         const SizedBox(height: 8),
         if (hazards.isEmpty)
           const _EmptyState(
@@ -757,7 +757,7 @@ class _PreparationReminderPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Needs Attention'),
+                  SectionLabel(label: 'Needs Attention'),
                   const SizedBox(height: 8),
                   if (missingItems.isEmpty)
                     const _EmptyState(
@@ -774,7 +774,7 @@ class _PreparationReminderPage extends StatelessWidget {
                       const SizedBox(height: 8),
                     ],
                   const SizedBox(height: 14),
-                  _SectionTitle(label: 'Already Ready'),
+                  SectionLabel(label: 'Already Ready'),
                   const SizedBox(height: 8),
                   if (readyItems.isEmpty)
                     const _EmptyState(message: 'No ready items yet.')
@@ -891,7 +891,7 @@ class _HazardDetailPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Recommended Action'),
+                  SectionLabel(label: 'Recommended Action'),
                   const SizedBox(height: 8),
                   _ChecklistInsightRow(
                     icon: Icons.route_rounded,
@@ -979,7 +979,7 @@ class _ActiveHikeDashboard extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         const SizedBox(height: 22),
-        _SectionTitle(label: 'Safety Monitoring'),
+        SectionLabel(label: 'Safety Monitoring'),
         const SizedBox(height: 8),
         _MonitoringCard(
           activeHike: activeHike,
@@ -987,11 +987,11 @@ class _ActiveHikeDashboard extends StatelessWidget {
           onCancelFallStillnessSos: onCancelFallStillnessSos,
         ),
         const SizedBox(height: 22),
-        _SectionTitle(label: 'Shared With'),
+        SectionLabel(label: 'Shared With'),
         const SizedBox(height: 8),
         _SharedWithCard(activeHike: activeHike),
         const SizedBox(height: 22),
-        _SectionTitle(label: 'Team Snapshot'),
+        SectionLabel(label: 'Team Snapshot'),
         const SizedBox(height: 8),
         _TeamSnapshotCard(
           activeHike: activeHike,
@@ -1230,20 +1230,6 @@ class _InfoLine extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-/// Displays the section title.
-class _SectionTitle extends StatelessWidget {
-  /// Creates section title.
-  const _SectionTitle({required this.label});
-
-  final String label;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return SectionLabel(label: label);
   }
 }
 

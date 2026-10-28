@@ -199,14 +199,7 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
               totalDuration: totalDuration,
             ),
             const SizedBox(height: 18),
-            Text(
-              'PAST HIKES',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: _HistoryColors.secondaryFor(context),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.8,
-              ),
-            ),
+            const SectionLabel(label: 'PAST HIKES'),
             const SizedBox(height: 9),
             for (final hike in hikes) ...[
               _HikeHistoryCard(hike: hike, onTap: () => _openDetail(hike)),

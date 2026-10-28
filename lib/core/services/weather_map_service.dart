@@ -52,7 +52,7 @@ int? trailRainProbabilityAt(
   required DateTime now,
 }) {
   final age = now.toUtc().difference(weather.cachedAt.toUtc());
-  if (age >= const Duration(hours: 4) || age.isNegative) return null;
+  if (age >= TrailWeather.cacheFreshness || age.isNegative) return null;
   final hourly = weather.forecastData['hourly'];
   if (hourly is Map) {
     final times = hourly['time'];
@@ -131,7 +131,7 @@ TrailRainEstimate trailRainEstimateAt(
   TrailRainEstimate result([num? probability]) =>
       TrailRainEstimate(time: sampleTime, probability: probability?.round());
   final age = now.toUtc().difference(weather.cachedAt.toUtc());
-  if (age.isNegative || age >= const Duration(hours: 4)) return result();
+  if (age.isNegative || age >= TrailWeather.cacheFreshness) return result();
 
   final entries = <(num, num?)>[];
 
