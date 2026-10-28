@@ -1,20 +1,25 @@
-// Fresh report/hike reads fence each leased, retryable delivery to affected upcoming hikers.
+// Fresh report/session reads fence leased, retryable deliveries to affected active and upcoming hikers.
 'use strict';
 const {createHash, randomUUID} = require('node:crypto');
 const {readUser} = require('./user_modules');
 const {classifyHazard, dateMillis, hazardExpiry, isActiveHazard, reportCycle,
-  upcomingHazardRecipients, isUpcomingHazardHike, hazardAlertMessages} = require('./trail_hazard_policy');
+  upcomingHazardRecipients, isUpcomingHazardHike, hazardAlertMessages,
+  activeHazardRecipients, isActiveHazardHike, UPCOMING_START_GRACE_MS} = require('./trail_hazard_policy');
 
 const LEASE_MS = 2 * 60000;
 const PERMANENT_TOKEN_ERRORS = new Set(['messaging/registration-token-not-registered', 'messaging/invalid-registration-token']);
+// Hash ledger identities and token receipts without persisting raw device tokens.
 const digest = value => createHash('sha256').update(value).digest('hex');
+// Restrict notification identities to canonical Firestore document keys.
 const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value);
+// Separate deliveries when the report changes trail or hazard classification.
 function alertRevision(report) {
   const policy = classifyHazard(report?.hazardType);
   return digest(JSON.stringify([report?.trailId || '', report?.hazardType || '',
     policy.hazardCategory, policy.riskLevel, policy.hazardPolicyVersion]));
 }
 
+// Apply the server hazard policy before any notification is composed.
 async function normalizeHazardReport({db, hazardId}) {
   const ref = db.collection('hazardReports').doc(hazardId);
   return db.runTransaction(async tx => {
@@ -32,41 +37,47 @@ async function normalizeHazardReport({db, hazardId}) {
   });
 }
 
+// New and reopened reports notify hikers; confirmations alone do not repeat alerts.
 function shouldDispatchReportChange(before, after, now = Date.now()) {
   return isActiveHazard(after, now) && (!before || !isActiveHazard(before, now)
     || reportCycle(before) !== reportCycle(after) || before.hazardType !== after.hazardType);
 }
 
-async function deliveryContext({tx, reportRef, hikeRef, phone, cycle, revision, now}) {
+// Recheck the live report, session and recipient before claiming or sending.
+async function deliveryContext({tx, reportRef, hikeRef, phone, cycle, revision, now, audience = 'upcoming'}) {
   const [reportSnapshot, hikeSnapshot] = await Promise.all([tx.get(reportRef), tx.get(hikeRef)]);
   const report = reportSnapshot.data(), hike = hikeSnapshot.data();
   let team;
-  if (validId(hike?.teamHikeSessionId)) {
+  if (audience !== 'active' && validId(hike?.teamHikeSessionId)) {
     team = (await tx.get(hikeRef.firestore.collection('teamHikeSessions').doc(hike.teamHikeSessionId))).data();
   }
   if (!isActiveHazard(report, now) || reportCycle(report) !== cycle || alertRevision(report) !== revision
-    || !isUpcomingHazardHike(hike, now, team)
-    || hike.trailId !== report.trailId || !upcomingHazardRecipients(hike).includes(phone)) return null;
+    || !(audience === 'active' ? isActiveHazardHike(hike) : isUpcomingHazardHike(hike, now, team))
+    || hike.trailId !== report.trailId
+    || !(audience === 'active' ? activeHazardRecipients(hike) : upcomingHazardRecipients(hike)).includes(phone)) return null;
   return {report, hike};
 }
 
-async function claimDelivery({db, report, hike, phone, now}) {
+// Lease one report-cycle/session/recipient delivery while preserving old upcoming ledger keys.
+async function claimDelivery({db, report, hike, phone, now, audience = 'upcoming'}) {
   const cycle = reportCycle(report.data());
   const revision = alertRevision(report.data());
-  const id = digest(`${report.id}:${cycle}:${revision}:${hike.id}:${phone}`);
+  const id = digest(`${audience === 'active' ? 'active:' : ''}${report.id}:${cycle}:${revision}:${hike.id}:${phone}`);
   const ref = db.collection('trailHazardDeliveries').doc(id);
   return db.runTransaction(async tx => {
     const previous = (await tx.get(ref)).data() || {};
-    const current = await deliveryContext({tx, reportRef: report.ref, hikeRef: hike.ref, phone, cycle, revision, now});
+    const current = await deliveryContext({tx, reportRef: report.ref, hikeRef: hike.ref, phone, cycle, revision, now, audience});
     if (!current || previous.status === 'delivered' || previous.leaseUntil > now) return null;
     const attemptId = randomUUID();
-    tx.set(ref, {hazardId: report.id, cycle, alertRevision: revision, upcomingHikeId: hike.id, recipientPhone: phone,
+    tx.set(ref, {hazardId: report.id, cycle, alertRevision: revision, audience,
+      ...(audience === 'active' ? {sessionId: hike.id} : {upcomingHikeId: hike.id}), recipientPhone: phone,
       attemptId, leaseUntil: now + LEASE_MS, attempts: (previous.attempts || 0) + 1,
       status: 'sending', updatedAt: new Date(now), expiresAt: new Date(now + 30 * 86400000)}, {merge: true});
     return {ref, attemptId, cycle, revision, sentTokenHashes: previous.sentTokenHashes || [], ...current};
   });
 }
 
+// Only the current lease holder may record delivery progress.
 async function updateClaim(db, claim, patch) {
   return db.runTransaction(async tx => {
     const previous = (await tx.get(claim.ref)).data();
@@ -76,6 +87,7 @@ async function updateClaim(db, claim, patch) {
   });
 }
 
+// Remove rejected tokens while preserving concurrent device-token refreshes.
 async function pruneInvalidTokens({db, userRef, tokens}) {
   if (!tokens.size) return;
   const ref = userRef.collection('modules').doc('devices');
@@ -91,14 +103,15 @@ async function pruneInvalidTokens({db, userRef, tokens}) {
   });
 }
 
+// Send to the current registered device and retain progress for retryable failures.
 async function deliverToRecipient({db, messaging, userId, tokensFor, report, hike, phone,
-  clock, loadRecipient, pruneTokens}) {
+  clock, loadRecipient, pruneTokens, audience = 'upcoming'}) {
   // A large fan-out can outlive a lease duration; each recipient starts its own fresh lease.
-  const claim = await claimDelivery({db, report, hike, phone, now: clock()});
+  const claim = await claimDelivery({db, report, hike, phone, now: clock(), audience});
   if (!claim) return 0;
   let retryNeeded = false, successCount = 0;
   const sent = new Set(claim.sentTokenHashes), invalid = new Set();
-  const userRef = db.collection('users').doc(userId(phone));
+  const userRef = db.collection('users').doc(audience === 'active' && claim.hike.userId ? claim.hike.userId : userId(phone));
   try {
     const user = loadRecipient ? await loadRecipient(phone) : (await readUser(userRef, ['devices'])).data();
     if (!user || user.accountDisabled === true || user.status === 'disabled') {
@@ -113,24 +126,29 @@ async function deliverToRecipient({db, messaging, userId, tokensFor, report, hik
         const currentClaim = (await tx.get(claim.ref)).data();
         if (currentClaim?.attemptId !== claim.attemptId) return null;
         return deliveryContext({tx, reportRef: report.ref, hikeRef: hike.ref, phone,
-          cycle: claim.cycle, revision: claim.revision, now: clock()});
+          cycle: claim.cycle, revision: claim.revision, now: clock(), audience});
       });
       if (!context) {
         await updateClaim(db, claim, {status: 'stale', leaseUntil: 0});
         return successCount;
       }
       const batch = pending.slice(start, start + 500);
-      const messages = hazardAlertMessages(context.report);
+      const active = audience === 'active';
+      const messages = hazardAlertMessages(context.report, {duringHike: active});
       const departure = dateMillis(context.hike.departureTimeLocal || context.hike.departureTime);
-      const expires = Math.min(departure, hazardExpiry(context.report), clock() + 28 * 86400000);
+      const expires = Math.min(active ? clock() + 3600000 : departure + UPCOMING_START_GRACE_MS,
+        hazardExpiry(context.report), clock() + 28 * 86400000);
       const response = await messaging.sendEachForMulticast({tokens: batch,
         notification: {title: messages.title,
           body: `${String(context.hike.trailName || context.report.trailName || 'Your trail').slice(0, 100)} — Community report: ${String(context.report.hazardType || 'Trail caution').slice(0, 100)}. ${messages.injunctive} ${messages.descriptive}`.slice(0, 900)},
         data: {type: 'trail_hazard_alert', hazardId: report.id, trailId: context.report.trailId,
-          upcomingHikeId: hike.id, framing: messages.framing,
-          deepLink: `hikercircle://upcoming-hike/view?upcomingHikeId=${encodeURIComponent(hike.id)}&hazardId=${encodeURIComponent(report.id)}`},
+          ...(active ? {audience: 'active', sessionId: hike.id} : {upcomingHikeId: hike.id}),
+          framing: messages.framing,
+          deepLink: active
+            ? `hikercircle://hike/hazard?sessionId=${encodeURIComponent(hike.id)}&trailId=${encodeURIComponent(context.report.trailId)}&hazardId=${encodeURIComponent(report.id)}`
+            : `hikercircle://upcoming-hike/view?upcomingHikeId=${encodeURIComponent(hike.id)}&hazardId=${encodeURIComponent(report.id)}`},
         android: {priority: 'high', ttl: Math.max(0, expires - clock()),
-          notification: {channelId: 'hiker_circle_upcoming_hikes', priority: 'high'}},
+          notification: {channelId: active ? 'hiker_circle_foreground' : 'hiker_circle_upcoming_hikes', priority: 'high'}},
         apns: {headers: {'apns-priority': '10', 'apns-expiration': String(Math.floor(expires / 1000))},
           payload: {aps: {sound: 'default'}}},
       });
@@ -160,17 +178,18 @@ async function deliverToRecipient({db, messaging, userId, tokensFor, report, hik
 
 // A provided report limits a new-report trigger to its trail; scheduler catch-up also handles later plans/joins.
 async function sendTrailHazardAlerts({db, messaging, userId, tokensFor, now = Date.now(), clock = Date.now,
-  hikes, report, loadRecipient, pruneTokens}) {
+  hikes, report, loadRecipient, pruneTokens, audience = 'upcoming'}) {
   if (report && (!isActiveHazard(report.data(), now) || !validId(report.data().trailId))) return {sent: 0};
-  const snapshot = hikes || await (report
-    ? db.collection('upcomingHikes').where('trailId', '==', report.data().trailId)
-    : db.collection('upcomingHikes')).get();
+  let query = db.collection(audience === 'active' ? 'hikeSessions' : 'upcomingHikes');
+  if (audience === 'active') query = query.where('status', '==', 'active');
+  if (report) query = query.where('trailId', '==', report.data().trailId);
+  const snapshot = hikes || await query.get();
   const reportsByTrail = new Map();
   const errors = [];
   let sent = 0;
   for (const hike of snapshot.docs) {
     const data = hike.data();
-    if (!isUpcomingHazardHike(data, now) || !validId(data.trailId)) continue;
+    if (!(audience === 'active' ? isActiveHazardHike(data) : isUpcomingHazardHike(data, now)) || !validId(data.trailId)) continue;
     let reports;
     if (report) reports = report.data().trailId === data.trailId ? [report] : [];
     else {
@@ -186,10 +205,10 @@ async function sendTrailHazardAlerts({db, messaging, userId, tokensFor, now = Da
       reports = reportsByTrail.get(data.trailId);
     }
     for (const caution of reports) {
-      for (const phone of upcomingHazardRecipients(data)) {
+      for (const phone of audience === 'active' ? activeHazardRecipients(data) : upcomingHazardRecipients(data)) {
         try {
           sent += await deliverToRecipient({db, messaging, userId, tokensFor,
-            report: caution, hike, phone, clock, loadRecipient, pruneTokens});
+            report: caution, hike, phone, clock, loadRecipient, pruneTokens, audience});
         } catch (error) { errors.push(error); }
       }
     }

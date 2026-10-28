@@ -513,6 +513,18 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
           >()
           ?.createNotificationChannel(
             const AndroidNotificationChannel(
+              'hiker_circle_foreground',
+              'HikerCircle notifications',
+              description: 'Hiking updates and active trail cautions',
+              importance: Importance.high,
+            ),
+          );
+      await stateLocalNotifications
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.createNotificationChannel(
+            const AndroidNotificationChannel(
               'hiker_circle_upcoming_hikes',
               'Upcoming hike cautions',
               description:
@@ -926,6 +938,22 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       return;
     }
 
+    // Active hikers see the canonical-report popup immediately while the app is
+    // foregrounded. Background notifications use the same link when tapped.
+    if (ActiveTrailHazardNotice.fromFcm(message.data) != null &&
+        deepLink != null) {
+      commandEnqueueFcmOpen(
+        _PendingFcmOpen(
+          key: message.messageId?.trim().isNotEmpty == true
+              ? message.messageId!.trim()
+              : 'foreground-hazard:${message.sentTime?.millisecondsSinceEpoch ?? 0}:${message.data.hashCode}',
+          deepLink: deepLink,
+          title: title,
+          body: body,
+        ),
+      );
+    }
+
     // A team readiness request is actionable state, not just an informational
     // banner. Foreground users should see the ready interface immediately;
     // background and terminated users follow the same deep link after tapping
@@ -951,13 +979,14 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
       return;
     }
 
+    final upcomingCaution =
+        type == 'trail_hazard_alert' &&
+        !ActiveTrailHazardNotice.isActiveFcm(message.data);
     final androidDetails = AndroidNotificationDetails(
-      type == 'trail_hazard_alert'
+      upcomingCaution
           ? 'hiker_circle_upcoming_hikes'
           : 'hiker_circle_foreground',
-      type == 'trail_hazard_alert'
-          ? 'Upcoming hike cautions'
-          : 'HikerCircle notifications',
+      upcomingCaution ? 'Upcoming hike cautions' : 'HikerCircle notifications',
       channelDescription: 'In-app notifications',
       importance: Importance.high,
       priority: Priority.high,
@@ -978,6 +1007,7 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
             title: title,
             body: body,
             payload: jsonEncode({
+              ...message.data,
               'type': type,
               'deepLink': deepLink ?? '',
               'title': title,

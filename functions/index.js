@@ -289,9 +289,23 @@ exports.notifyUpcomingHikersAboutTrailHazard = onDocumentWritten({
   const db = admin.firestore();
   const report = await hazards.normalizeHazardReport({db, hazardId: event.params.hazardId});
   if (report && hazards.shouldDispatchReportChange(event.data.before?.data(), report.data())) {
-    await hazards.sendTrailHazardAlerts({db, report, messaging: admin.messaging(),
-      userId: userDocumentIdForPhone, tokensFor: latestFcmTokensForUser});
+    const results = await Promise.allSettled(['upcoming', 'active'].map(audience =>
+      hazards.sendTrailHazardAlerts({db, report, messaging: admin.messaging(),
+        userId: userDocumentIdForPhone, tokensFor: latestFcmTokensForUser, audience})));
+    const failures = results.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (failures.length) throw new AggregateError(failures, 'Trail hazard deliveries need retry.');
   }
+});
+
+// Retry interrupted active-hiker fan-outs and deliver to sessions that came online later.
+exports.retryActiveTrailHazardAlerts = onSchedule({
+  schedule: 'every 5 minutes', region: 'asia-southeast1', timeoutSeconds: 540,
+  maxInstances: 1, concurrency: 1, retryCount: 3,
+}, async () => {
+  await require('./trail_hazard_notifications').sendTrailHazardAlerts({
+    db: admin.firestore(), messaging: admin.messaging(), userId: userDocumentIdForPhone,
+    tokensFor: latestFcmTokensForUser, audience: 'active',
+  });
 });
 // Both admin-added and approved recorded trails use this same missing-cover pipeline.
 exports.generateMissingTrailCover = onDocumentWritten({

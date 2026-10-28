@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "trailId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "groupChats",
       "queryScope": "COLLECTION",
       "fields": [

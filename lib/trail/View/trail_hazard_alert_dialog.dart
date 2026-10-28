@@ -47,11 +47,13 @@ class TrailHazardAlertDialog extends StatelessWidget {
     required this.alerts,
     required this.beforeStart,
     this.canCancelHike = false,
+    this.duringHike = false,
   });
 
   final List<TrailHazardAlert> alerts;
   final bool beforeStart;
   final bool canCancelHike;
+  final bool duringHike;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -112,7 +114,11 @@ class TrailHazardAlertDialog extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  fatal ? 'Reconsider this hike' : 'A caution on your trail',
+                  duringHike && fatal
+                      ? 'Serious caution on your trail'
+                      : fatal
+                      ? 'Reconsider this hike'
+                      : 'A caution on your trail',
                   style: theme.textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w800,
                     color: colors.onSurface,
@@ -136,7 +142,9 @@ class TrailHazardAlertDialog extends StatelessWidget {
                 ],
                 const SizedBox(height: 6),
                 Text(
-                  lead.injunctiveMessage,
+                  duringHike
+                      ? lead.activeHikeInstruction
+                      : lead.injunctiveMessage,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                     height: 1.4,
@@ -144,13 +152,21 @@ class TrailHazardAlertDialog extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  lead.descriptiveMessage,
+                  duringHike
+                      ? lead.activeHikeConsequence
+                      : lead.descriptiveMessage,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: colors.onSurfaceVariant,
                     height: 1.4,
                   ),
                 ),
-                if (fatal) ...[
+                if (duringHike) ...[
+                  const SizedBox(height: 18),
+                  FilledButton(
+                    onPressed: () => close(TrailHazardAlertAction.acknowledge),
+                    child: const Text('Got it'),
+                  ),
+                ] else if (fatal) ...[
                   const SizedBox(height: 16),
                   FilledButton(
                     style: FilledButton.styleFrom(

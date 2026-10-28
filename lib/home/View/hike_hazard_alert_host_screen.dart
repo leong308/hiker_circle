@@ -1,5 +1,22 @@
 part of '../hike_hazard_alert_host_feature.dart';
 
+/// Shows an informational in-hike alert without changing the hike or its route.
+Future<void> showActiveTrailHazardNotification(
+  BuildContext context, {
+  required Future<List<TrailHazardAlert>> Function() loadAlerts,
+}) async {
+  await showDialog<TrailHazardAlertAction>(
+    context: context,
+    barrierDismissible: false,
+    routeSettings: const RouteSettings(name: 'active-hike-trail-hazard'),
+    builder: (_) => _NotificationHazardDialog(
+      loadAlerts: loadAlerts,
+      canCancelHike: false,
+      duringHike: true,
+    ),
+  );
+}
+
 /// A notification opens hike details first, then this owned alert above them.
 class HikeHazardAlertHost extends StatefulWidget {
   /// Creates hike hazard alert host.
@@ -130,10 +147,12 @@ class _NotificationHazardDialog extends StatefulWidget {
   const _NotificationHazardDialog({
     required this.loadAlerts,
     required this.canCancelHike,
+    this.duringHike = false,
   });
 
   final Future<List<TrailHazardAlert>> Function() loadAlerts;
   final bool canCancelHike;
+  final bool duringHike;
 
   /// Creates the presentation state for this widget.
   @override
@@ -182,6 +201,7 @@ class _NotificationHazardDialogState extends State<_NotificationHazardDialog> {
         alerts: alerts,
         beforeStart: false,
         canCancelHike: widget.canCancelHike,
+        duringHike: widget.duringHike,
       );
     }
     return PopScope(
@@ -202,6 +222,8 @@ class _NotificationHazardDialogState extends State<_NotificationHazardDialog> {
             : Text(
                 _failed
                     ? 'Connect to the internet to check its current status.'
+                    : widget.duringHike
+                    ? 'The report may have been resolved, removed or expired. Check the latest trail conditions while hiking.'
                     : 'The report may have been resolved, removed or expired. Check the latest trail conditions before you start.',
               ),
         actions: [
