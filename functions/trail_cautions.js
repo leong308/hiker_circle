@@ -1,7 +1,7 @@
 // Community trail cautions validate evidence and transact confirmations, resolutions, and reopened report cycles.
 'use strict';
 const {randomUUID} = require('node:crypto');
-const {TYPE_CATEGORIES, classifyHazard, hazardExpiry, REPORT_LIFETIME_MS} = require('./trail_hazard_policy');
+const {TYPE_CATEGORIES, classifyHazard, hazardExpiry, hazardLifetimeMs, REPORT_LIFETIME_MS} = require('./trail_hazard_policy');
 const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
 const LIFETIME_MS = REPORT_LIFETIME_MS;
 const TYPES = TYPE_CATEGORIES;
@@ -61,7 +61,7 @@ async function submit({db, bucket, uid, phone, data, now = Date.now(), timestamp
     tx.create(reference, {hazardId, trailId, trailName:data.trailName.trim(), hazardType:data.hazardType,
       description, latitude:data.latitude, longitude:data.longitude, media, ...classifyHazard(data.hazardType),
       reportedBy:uid, reportedByPhoneNumber:phone, status:'unverified', reportLabel:'Community report',
-      reportedAt, reportedAtLocal:new Date(now).toISOString(), expiresAt:timestamp(now + LIFETIME_MS),
+      reportedAt, reportedAtLocal:new Date(now).toISOString(), expiresAt:timestamp(now + hazardLifetimeMs(data.hazardType)),
       reportCount:1, resolutionCount:0, cycle:0, resolutionId:null});
     tx.create(reference.collection('votes').doc(`0_confirm_${uid}`), {uid, kind:'confirm', cycle:0, createdAt:reportedAt});
     return {hazardId};

@@ -3,6 +3,8 @@
 
 const HAZARD_POLICY_VERSION = 2;
 const REPORT_LIFETIME_MS = 7 * 86400000;
+const CRITICAL_WEATHER_LIFETIME_MS = 24 * 3600000;
+const NORMAL_WEATHER_LIFETIME_MS = 12 * 3600000;
 const UPCOMING_START_GRACE_MS = 15 * 60000;
 const HAZARD_CATEGORIES = Object.freeze({
   'Trail surface': Object.freeze(['Slippery pathway', 'Loose rock', 'Deep mud', 'Ice or snow',
@@ -43,12 +45,24 @@ function dateMillis(value) {
   if (typeof value === 'number') return value;
   return typeof value === 'string' ? Date.parse(value) : NaN;
 }
-// Use the explicit expiry, falling back to the original report lifetime.
+// Give weather reports a risk-based lifetime; other cautions keep their existing window.
+function hazardLifetimeMs(hazardType) {
+  const policy = classifyHazard(hazardType);
+  return policy.hazardCategory === 'Weather'
+    ? policy.riskLevel === 'fatal' ? CRITICAL_WEATHER_LIFETIME_MS : NORMAL_WEATHER_LIFETIME_MS
+    : REPORT_LIFETIME_MS;
+}
+
+// Cap old weather expiries from the original report time without extending shorter explicit limits.
 function hazardExpiry(report) {
-  const explicit = dateMillis(report?.expiresAt);
-  if (Number.isFinite(explicit)) return explicit;
-  const reported = dateMillis(report?.reportedAt) || dateMillis(report?.reportedAtLocal);
-  return reported + REPORT_LIFETIME_MS;
+  const stored = dateMillis(report?.expiresAt);
+  const explicit = Number.isFinite(stored) ? stored : dateMillis(report?.expiresAtLocal);
+  const serverReported = dateMillis(report?.reportedAt);
+  const reported = Number.isFinite(serverReported) ? serverReported : dateMillis(report?.reportedAtLocal);
+  const limit = reported + hazardLifetimeMs(report?.hazardType);
+  if (!Number.isFinite(explicit)) return limit;
+  return classifyHazard(report?.hazardType).hazardCategory === 'Weather' && Number.isFinite(limit)
+    ? Math.min(explicit, limit) : explicit;
 }
 // Suppress terminal and expired reports before notifying hikers.
 function isActiveHazard(report, now = Date.now()) {
@@ -103,6 +117,7 @@ function hazardAlertMessages(report, {duringHike = false} = {}) {
 }
 
 module.exports = {HAZARD_POLICY_VERSION, HAZARD_CATEGORIES, TYPE_CATEGORIES, REPORT_LIFETIME_MS,
+  CRITICAL_WEATHER_LIFETIME_MS, NORMAL_WEATHER_LIFETIME_MS, hazardLifetimeMs,
   classifyHazard, dateMillis, hazardExpiry, isActiveHazard, reportCycle,
   upcomingHazardRecipients, isUpcomingHazardHike, hazardAlertMessages,
   activeHazardRecipients, isActiveHazardHike, UPCOMING_START_GRACE_MS};

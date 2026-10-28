@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'trail_hazard_categories.dart';
+import 'trail_hazard_expiry.dart';
 
 /// A caution read from its Firestore document, rather than an FCM payload.
 /// Notifications carry an identity; a fresh document determines risk and status.
@@ -49,10 +50,11 @@ class TrailHazardAlert {
           : trailHazardTypeIsFatal(type),
       status: _text(data['status'], fallback: 'unverified').toLowerCase(),
       reportedAt: reportedAt,
-      expiresAt:
-          _date(data['expiresAt']) ??
-          _date(data['expiresAtLocal']) ??
-          reportedAt?.add(const Duration(days: 7)),
+      expiresAt: trailHazardExpiry(
+        type: type,
+        reportedAt: reportedAt,
+        expiresAt: _date(data['expiresAt']) ?? _date(data['expiresAtLocal']),
+      ),
       description: _text(data['description']),
       cycle: data['cycle'] is num ? (data['cycle'] as num).toInt() : 0,
     );
@@ -126,10 +128,21 @@ class TrailHazardAlert {
   bool get isVerified => status == 'verified';
 
   /// Computes active.
-  bool active(DateTime now) =>
-      !const {'resolved', 'rejected', 'deleted', 'expired'}.contains(status) &&
-      expiresAt != null &&
-      now.toUtc().isBefore(expiresAt!.toUtc());
+  bool active(DateTime now) {
+    final expiry = trailHazardExpiry(
+      type: type,
+      reportedAt: reportedAt,
+      expiresAt: expiresAt,
+    );
+    return !const {
+          'resolved',
+          'rejected',
+          'deleted',
+          'expired',
+        }.contains(status) &&
+        expiry != null &&
+        now.toUtc().isBefore(expiry.toUtc());
+  }
 
   /// Returns injunctive message.
   String get injunctiveMessage => isFatal

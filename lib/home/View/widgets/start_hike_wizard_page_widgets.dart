@@ -145,36 +145,6 @@ class _ChoiceTile extends StatelessWidget {
   }
 }
 
-/// Displays the read only field.
-class _ReadOnlyField extends StatelessWidget {
-  /// Creates read only field.
-  const _ReadOnlyField({
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return InputDecorator(
-      decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon)),
-      child: Text(
-        value,
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: _WizardColors.textFor(context),
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0,
-        ),
-      ),
-    );
-  }
-}
-
 /// Displays the tappable field.
 class _TappableField extends StatelessWidget {
   /// Creates tappable field.

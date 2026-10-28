@@ -44,9 +44,10 @@ abstract final class GearGuideCatalog {
           reason:
               'Helps you signal for attention without straining your voice.',
         ),
-        'Headlamp with spare batteries': (
+        TrailGearPlan.lightingItem: (
           category: GearGuideCategory.safety,
-          reason: 'Lights your path after dark while keeping your hands free.',
+          reason:
+              'Required when your hike overlaps nighttime. Bring a headlamp or torchlight with spare batteries or power.',
         ),
         'Emergency blanket': (
           category: GearGuideCategory.safety,
@@ -94,7 +95,8 @@ abstract final class GearGuideCatalog {
         ),
         'Power bank': (
           category: GearGuideCategory.navigation,
-          reason: 'Recharges your phone for navigation and communication.',
+          reason:
+              'Required for trails longer than 5 km; recommended for shorter hikes. Bring it charged to power navigation and communication.',
         ),
         'Physical map': (
           category: GearGuideCategory.navigation,

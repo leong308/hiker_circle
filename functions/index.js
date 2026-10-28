@@ -307,6 +307,59 @@ exports.retryActiveTrailHazardAlerts = onSchedule({
     tokensFor: latestFcmTokensForUser, audience: 'active',
   });
 });
+// sendArrivalFootprintFile: Attach the recorded route image through the existing emergency WhatsApp account.
+async function sendArrivalFootprintFile({phone, image, caption, fileName}) {
+  const form = new FormData();
+  form.set('chatId', `${phone.replace(/\D/g, '')}@c.us`);
+  form.set('caption', caption);
+  form.set('file', new Blob([image], {type: 'image/png'}), fileName);
+  let response;
+  try {
+    const url = greenApiEndpoint('sendFileByUpload').replace('https://api.green-api.com/', 'https://media.green-api.com/');
+    response = await fetch(url, {method: 'POST', body: form, signal: AbortSignal.timeout(12000)});
+  } catch (error) {
+    return providerFailureWasDefinitelyUnsent(error)
+      ? {status: 'failed', retryable: true} : {status: 'delivery_uncertain', retryable: false};
+  }
+  const body = await response.json().catch(() => null);
+  const id = greenApiMessageId(body);
+  if (response.ok && id) return {messageId: id};
+  return response.ok ? {status: 'delivery_uncertain', retryable: false}
+    : require('./hike_arrival_safety').classifySosProviderHttpFailure(response.status);
+}
+
+for (const [name, method] of Object.entries({armHikeArrivalSafety: 'arm', confirmHikeArrivalSafety: 'confirmSafe'})) {
+  exports[name] = onCall({timeoutSeconds: 60}, async request => {
+    const {uid} = authenticatedPhoneFor(request, 'Sign in to manage your hike arrival check.');
+    return require('./hike_arrival_safety')[method]({db: admin.firestore(), uid,
+      sessionId: request.data?.sessionId, eventId: request.data?.eventId,
+      warningAtMillis: request.data?.warningAtMillis, reason: request.data?.reason, ErrorType: HttpsError});
+  });
+}
+
+exports.checkHikeArrivalSafety = onCall({timeoutSeconds: 120, secrets: [greenApiInstanceId, greenApiToken]}, async request => {
+  const {uid} = authenticatedPhoneFor(request, 'Sign in to check your hike arrival alert.');
+  const sessionId = String(request.data?.sessionId || '');
+  if (!/^[A-Za-z0-9_-]{1,180}$/.test(sessionId)) throw new HttpsError('invalid-argument', 'Select an active hike.');
+  return require('./hike_arrival_safety').processHike({db: admin.firestore(), uid, sessionId,
+    sendFile: sendArrivalFootprintFile, ErrorType: HttpsError});
+});
+
+// The cloud fallback keeps contact escalation running if the phone app is suspended or terminated.
+exports.processOverdueHikeArrivals = onSchedule({schedule: 'every 1 minutes', region: 'asia-southeast1',
+  timeoutSeconds: 540, maxInstances: 1, concurrency: 1, secrets: [greenApiInstanceId, greenApiToken]}, async () => {
+  const db = admin.firestore();
+  const snapshot = await db.collection('hikeSessions').where('status', '==', 'active')
+    .where('arrivalSafety.enabled', '==', true).where('arrivalSafety.responseDeadlineMillis', '<=', Date.now()).get();
+  const failures = [];
+  for (let offset = 0; offset < snapshot.docs.length; offset += 4) {
+    const results = await Promise.allSettled(snapshot.docs.slice(offset, offset + 4).map(session =>
+      require('./hike_arrival_safety').processHike({db, sessionId: session.id, sendFile: sendArrivalFootprintFile})));
+    for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+  }
+  if (failures.length) throw new AggregateError(failures, 'Some arrival contact alerts need retry.');
+});
+
 // Both admin-added and approved recorded trails use this same missing-cover pipeline.
 exports.generateMissingTrailCover = onDocumentWritten({
   document: 'trails/{trailId}', region: 'asia-southeast1', retry: true,
@@ -1705,9 +1758,23 @@ exports.sendSosWhatsAppMessage = onCall(
         },
         { merge: true }
       );
-      return { send: true, recipientDigits, preferredTimeZone };
+      return { send: true, recipientDigits, preferredTimeZone,
+        ...(Object.hasOwn(previous, 'shirtColor')
+          ? {shirtColor: require('./hike_shirt_color').normalizeShirtColor(previous.shirtColor)} : {}),
+      };
     });
     if (!claim.send) return claim.response;
+
+    // Keep clothing fixed for retries, including a locally captured colour from an offline hike.
+    let shirtColor = null;
+    if (!dispatch.isTest) {
+      const clothing = require('./hike_shirt_color');
+      shirtColor = Object.hasOwn(claim, 'shirtColor') ? claim.shirtColor : clothing.normalizeShirtColor(dispatch.shirtColor);
+      if (!Object.hasOwn(claim, 'shirtColor') && !shirtColor) {
+        try { shirtColor = await clothing.resolveSosShirtColor({db, uid, triggeredAtMillis: dispatch.triggeredAtMillis}); }
+        catch (_) { logger.warn('SOS clothing lookup unavailable; continuing emergency delivery.', {uid}); }
+      }
+    }
 
     let credentials;
     try {
@@ -1754,6 +1821,7 @@ exports.sendSosWhatsAppMessage = onCall(
         status: 'sending',
         outboundStartedAt: admin.firestore.FieldValue.serverTimestamp(),
         outboundStartedAtLocal: new Date().toISOString(),
+        shirtColor,
       }
     );
     if (!markedSending) {
@@ -1778,6 +1846,7 @@ exports.sendSosWhatsAppMessage = onCall(
               location: dispatch.location,
               triggerSource: dispatch.triggerSource,
               preferredTimeZone: claim.preferredTimeZone,
+              shirtColor,
             }),
           }),
           signal: AbortSignal.timeout(12 * 1000),
@@ -2197,6 +2266,7 @@ exports.notifyEmergencyContactsOfLiveLocation = onCall(
         trailName: hike.trailName,
         startedAt,
         shareUrl,
+        shirtColor: require('./hike_shirt_color').shirtColorForHike(hike),
       });
     } catch (error) {
       if (error instanceof LiveLocationNotificationValidationError) {

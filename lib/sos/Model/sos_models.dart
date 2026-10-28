@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/Model/preferred_time_zone.dart';
+import '../../home/Model/hike_shirt_color.dart';
 
 /// Represents sos dashboard.
 class SosDashboard {
@@ -407,6 +408,7 @@ abstract final class SosAlertMessageComposer {
     String? customNote,
     SosAlertTriggerSource triggerSource = SosAlertTriggerSource.mobilePhone,
     String preferredTimeZone = PreferredTimeZone.fallbackId,
+    HikeShirtColor? shirtColor,
   }) {
     final validTriggerLocation = triggerLocation?.hasValidPosition == true
         ? triggerLocation
@@ -429,6 +431,7 @@ abstract final class SosAlertMessageComposer {
       '',
       '⚠️ *Reason*\n${reasonFor(mode, triggerSource: triggerSource)}',
       '',
+      if (shirtColor != null) ...['👕 *Shirt colour*\n${shirtColor.label}', ''],
       '📍 *Location*\n$locationLine',
       if (accuracyLine != null) accuracyLine,
       '',
@@ -647,6 +650,7 @@ class SosAlert {
     required this.message,
     this.triggerLocation,
     this.triggerSource = SosAlertTriggerSource.mobilePhone,
+    this.shirtColor,
   });
 
   /// Creates sos alert from a cloud record.
@@ -681,6 +685,7 @@ class SosAlert {
           : const [],
       message: _stringFrom(data['message']),
       triggerSource: SosAlertTriggerSource.fromFirestore(data['triggerSource']),
+      shirtColor: HikeShirtColor.fromName(data['shirtColor']),
       triggerLocation: parsedTriggerLocation?.hasValidPosition == true
           ? parsedTriggerLocation
           : null,
@@ -699,6 +704,7 @@ class SosAlert {
   final String message;
   final SosTriggerLocation? triggerLocation;
   final SosAlertTriggerSource triggerSource;
+  final HikeShirtColor? shirtColor;
 
   /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
@@ -716,6 +722,7 @@ class SosAlert {
           .toList(),
       'message': message,
       'triggerSource': triggerSource.firestoreValue,
+      if (shirtColor != null) 'shirtColor': shirtColor!.name,
       if (triggerLocation case final triggerLocation?)
         'triggerLocation': triggerLocation.toFirestore(),
     };

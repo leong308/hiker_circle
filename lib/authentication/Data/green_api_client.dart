@@ -49,6 +49,7 @@ class GreenApiClient {
     double? longitude,
     double? accuracyMeters,
     String? customNote,
+    String? shirtColor,
     String triggerSource = 'mobile_phone',
     bool isTest = false,
   }) async {
@@ -120,6 +121,7 @@ class GreenApiClient {
             if (customNote?.trim().isNotEmpty == true)
               'customNote': customNote!.trim(),
             'isTest': isTest,
+            if (!isTest && shirtColor != null) 'shirtColor': shirtColor,
           });
       final raw = response.data;
       if (raw is! Map) {

@@ -364,6 +364,7 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
     private val ticker = object : Runnable {
         override fun run() {
             if (!monitoring) return
+            HikeArrivalSafety.tick(this@HikeSafetyMonitorService)
             sampleLocationIfDue()
             uploadBufferedLocationsIfDue()
             evaluateTimers()
@@ -827,7 +828,10 @@ class HikeSafetyMonitorService : Service(), SensorEventListener, LocationListene
         val sampledAt = System.currentTimeMillis()
         runCatching {
             locationSamples.append(settings.sessionId, settings.ownerUid, sampledAt, location)
-        }.onSuccess { lastSampleAtElapsed = elapsed }
+        }.onSuccess {
+            lastSampleAtElapsed = elapsed
+            HikeArrivalSafety.recordFootprint(this, settings.sessionId, settings.ownerUid, location)
+        }
             .onFailure { android.util.Log.e("HikeSafetyMonitor", "Unable to persist GPS sample", it) }
     }
 

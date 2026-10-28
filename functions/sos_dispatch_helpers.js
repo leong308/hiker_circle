@@ -2,6 +2,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const {SHIRT_COLORS, normalizeShirtColor} = require('./hike_shirt_color');
 
 const SOS_MODES = new Set([
   'manual',
@@ -186,6 +187,8 @@ function parseSosDispatchRequest(data, nowMillis = Date.now()) {
     triggeredAtMillis,
     customNote: rawCustomNote,
     location,
+    ...(normalizeShirtColor(payload.shirtColor) && !isTest
+      ? {shirtColor: normalizeShirtColor(payload.shirtColor)} : {}),
   };
 }
 
@@ -197,6 +200,7 @@ function composeSosMessage({
   triggeredAtMillis,
   customNote,
   location,
+  shirtColor,
   triggerSource = 'mobile_phone',
   preferredTimeZone = DEFAULT_SOS_TIME_ZONE,
 }) {
@@ -234,6 +238,7 @@ function composeSosMessage({
     '',
     `⚠️ *Reason*\n${reasonForSos(mode, triggerSource)}`,
     '',
+    ...(normalizeShirtColor(shirtColor) ? [`👕 *Shirt colour*\n${SHIRT_COLORS[shirtColor]}`, ''] : []),
     `📍 *Location*\n${locationLine}`,
     ...(accuracyLine ? [accuracyLine] : []),
     '',
@@ -268,6 +273,8 @@ function sosDispatchPayloadHash(dispatch) {
     dispatch.customNote,
     location,
   ];
+  // Preserve legacy hashes exactly when the optional clothing snapshot is absent.
+  if (normalizeShirtColor(dispatch.shirtColor) && dispatch.isTest !== true) canonicalPayload.push({shirtColor: dispatch.shirtColor});
   return crypto
     .createHash('sha256')
     .update(JSON.stringify(canonicalPayload))

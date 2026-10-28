@@ -23,7 +23,6 @@ class PreparationGearGrid extends StatelessWidget {
       const {
         'Drinking water': 'Water',
         'Energy snack': 'Snacks',
-        'Headlamp with spare batteries': 'Headlamp + batteries',
         'Sun protection (hat, sunscreen)': 'Hat + sunscreen',
         'Dry bag / waterproof phone pouch': 'Waterproof pouch',
         'Secure water-crossing footwear': 'Crossing footwear',

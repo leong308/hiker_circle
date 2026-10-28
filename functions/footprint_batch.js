@@ -151,6 +151,14 @@ async function appendFootprints(db, { sessionId, uid, phoneNumber, footprints },
         updatedAt: timestamp(),
       });
     }
+    // A fresh recorded arrival cancels overdue-arrival work before any sender can claim it.
+    if (hike.arrivalSafety?.enabled) {
+      const {arrivalPlan, advanceArrivalProof} = require('./hike_arrival_policy');
+      const plan = arrivalPlan(hike);
+      const proof = advanceArrivalProof(plan, canonical, hike.arrivalSafety.proof, now);
+      patch.arrivalSafety = {...hike.arrivalSafety, proof,
+        ...(proof.arrivedAtMillis ? {enabled: false, status: 'arrived', arrivedAtMillis: proof.arrivedAtMillis, targetName: proof.targetName} : {})};
+    }
     // Estimate with concrete timestamps, not FieldValue sentinels.
     const sizedPatch = { ...patch, ...(patch.updatedAt ? { updatedAt: new Date(now), latestLocationUpdatedAt: new Date(now) } : {}) };
     if (Object.keys(patch).length && documentBytes(sessionRef.path, { ...hike, ...sizedPatch }) > DOCUMENT_BUDGET) {

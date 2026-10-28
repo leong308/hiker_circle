@@ -52,6 +52,7 @@ import ActivityKit
   private var pendingDeepLink: String?
   private var activeHikeLiveActivitySessionId: String?
   private var activeHikeLiveStatusChannel: FlutterMethodChannel?
+  private var arrivalSafetyChannel: FlutterMethodChannel?
   private var latestManualHikeStatus: ManualHikeLiveStatus?
   private var hikerBleBridge: HikerBleBridge?
   private lazy var iosHikeSafetyMonitor: IOSHikeSafetyMonitor = IOSHikeSafetyMonitor(
@@ -142,6 +143,7 @@ import ActivityKit
     configureHomeWidgetsChannel()
     configureSafetyNotifications()
     configureActiveHikeLiveStatusChannel()
+    configureArrivalSafetyChannel()
     iosHikeSafetyMonitor.restorePersistedSessionIfNeeded()
     configureHikerBleBridge()
     if let url = launchOptions?[.url] as? URL {
@@ -406,6 +408,13 @@ import ActivityKit
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
+    if response.notification.request.identifier.hasPrefix(HikeArrivalSafety.notificationPrefix),
+       let link = response.notification.request.content.userInfo["deepLink"] as? String {
+      pendingDeepLink = link
+      deepLinkChannel?.invokeMethod("onDeepLink", arguments: link)
+      completionHandler()
+      return
+    }
     if response.actionIdentifier == IOSHikeSafetyMonitor.safeActionIdentifier {
       let eventId = response.notification.request.content.userInfo["eventId"] as? String ?? ""
       _ = iosHikeSafetyMonitor.stopTriggeredAlarm(eventId: eventId)
@@ -425,6 +434,37 @@ import ActivityKit
       didReceive: response,
       withCompletionHandler: completionHandler
     )
+  }
+
+  /// Delivers the spoken local warning in the foreground as well as while the app is backgrounded.
+  override func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+      withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    if notification.request.identifier.hasPrefix(HikeArrivalSafety.notificationPrefix) {
+      arrivalSafetyChannel?.invokeMethod("onArrivalSafetyChanged", arguments: nil)
+      completionHandler([.banner, .list, .sound])
+      return
+    }
+    super.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
+  }
+
+  /// Keeps arrival confirmation separate from fall countdown cancellation and SOS alarm controls.
+  private func configureArrivalSafetyChannel() {
+    guard let controller = window?.rootViewController as? FlutterViewController else { return }
+    let channel = FlutterMethodChannel(name: "hiker_circle/arrival_safety", binaryMessenger: controller.binaryMessenger)
+    arrivalSafetyChannel = channel
+    HikeArrivalSafety.shared.onChanged = { [weak self] in
+      self?.arrivalSafetyChannel?.invokeMethod("onArrivalSafetyChanged", arguments: nil)
+    }
+    channel.setMethodCallHandler { call, result in
+      let data = call.arguments as? [String: Any] ?? [:]
+      switch call.method {
+      case "configure": result(HikeArrivalSafety.shared.configure(data))
+      case "read": result(HikeArrivalSafety.shared.read(owner: data["owner"] as? String ?? ""))
+      case "confirmSafe": result(HikeArrivalSafety.shared.confirmSafe(owner: data["owner"] as? String ?? "", trackingKey: data["trackingKey"] as? String ?? ""))
+      case "stop": HikeArrivalSafety.shared.stop(owner: data["owner"] as? String ?? ""); result(nil)
+      default: result(FlutterMethodNotImplemented)
+      }
+    }
   }
 
   private func configureActiveHikeLiveStatusChannel() {
@@ -2006,6 +2046,7 @@ private final class IOSHikeSafetyMonitor: NSObject, CLLocationManagerDelegate {
       do {
         try NativeLocationSampleBuffer.shared.append(sessionId: sessionId, ownerUid: ownerUid,
           sampledAt: Int64(now.timeIntervalSince1970 * 1000), location: location)
+        HikeArrivalSafety.shared.recordFootprint(sessionId: sessionId, owner: ownerUid, location: location)
         lastLocationSampleAt = now
       } catch {
         NSLog("HikerCircle could not persist a GPS sample: %@", error.localizedDescription)

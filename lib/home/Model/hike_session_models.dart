@@ -162,7 +162,6 @@ class GearChecklistCatalog {
     'Safety Essentials': [
       'Charged phone',
       'Power bank',
-      'Torch',
       'First-aid kit',
       'Emergency whistle',
       'Multi-tool',
@@ -187,7 +186,7 @@ class GearChecklistCatalog {
       'Warm hat and gloves',
     ],
     'Emergency & Recovery': [
-      'Headlamp with spare batteries',
+      TrailGearPlan.lightingItem,
       'Fire starter or matches',
       'Emergency blanket',
       'Whistle',
@@ -206,7 +205,7 @@ class GearChecklistCatalog {
   /// Computes sanitize.
   static Set<String> sanitize(Iterable<String> items) {
     return Set<String>.unmodifiable(
-      items.where(
+      TrailGearPlan.normalizeItems(items).where(
         (item) =>
             allItems.contains(item) ||
             TrailGearPlan.isPreference(item) ||
@@ -1055,9 +1054,9 @@ class HikeSessionDraft {
       ),
       offlinePhysicalAlertEnabled: data['offlinePhysicalAlertEnabled'] == true,
       duressEnabled: data['duressEnabled'] == true,
-      completedChecklistItems: _modelStringList(
-        data['completedChecklistItems'],
-      ).toSet(),
+      completedChecklistItems: TrailGearPlan.normalizeItems(
+        _modelStringList(data['completedChecklistItems']),
+      ),
       teamBuddies: _modelListOfMaps(
         data['teamBuddies'],
       ).map(TeamHikeBuddy.fromFirestore).toList(),

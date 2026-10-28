@@ -72,7 +72,7 @@ class TrailCautionDetailsViewModel extends ChangeNotifier {
   /// Returns whether the source report still exists and is visible.
   bool get available => _available;
 
-  /// Returns whether the seven-day map display window remains open.
+  /// Returns whether this report's category-specific display window remains open.
   bool get active => available && _report.isActiveAt(_clock());
 
   /// Returns whether a confirmation request is in flight.

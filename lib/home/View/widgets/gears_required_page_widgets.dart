@@ -250,7 +250,7 @@ class _GearItemCard extends StatelessWidget {
     'Water filter or tablets' => Icons.filter_alt_outlined,
     'First-aid kit' || 'Blister care' => Icons.medical_services_outlined,
     'Emergency whistle' => Icons.campaign_outlined,
-    'Headlamp with spare batteries' => Icons.flashlight_on_outlined,
+    TrailGearPlan.lightingItem => Icons.flashlight_on_outlined,
     'Emergency blanket' ||
     'Sleeping bag and sleeping mat' => Icons.layers_outlined,
     'Raincoat' || 'Pack rain cover' => Icons.umbrella_outlined,

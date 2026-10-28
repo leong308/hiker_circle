@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'trail_hazard_categories.dart';
+import 'trail_hazard_expiry.dart';
 
 /// Represents community hazard.
 class CommunityHazard {
@@ -48,8 +49,11 @@ class CommunityHazard {
   bool isActiveAt(DateTime now) =>
       !['rejected', 'deleted'].contains(status) &&
       now.isBefore(
-        expiresAt ??
-            reportedAt?.add(const Duration(days: 7)) ??
+        trailHazardExpiry(
+              type: type,
+              reportedAt: reportedAt,
+              expiresAt: expiresAt,
+            ) ??
             DateTime.fromMillisecondsSinceEpoch(0),
       );
 
@@ -74,6 +78,12 @@ class CommunityHazard {
       return null;
     }
     final time = data['reportedAt'];
+    final reportedAt = time is Timestamp
+        ? time.toDate()
+        : DateTime.tryParse('${data['reportedAtLocal'] ?? ''}');
+    final type = data['hazardType'] is String
+        ? data['hazardType'] as String
+        : 'Caution';
     final result = CommunityHazard(
       id: id,
       reportedBy: data['reportedBy'] is String
@@ -82,9 +92,7 @@ class CommunityHazard {
       cycle: data['cycle'] is num
           ? (data['cycle'] as num).toInt().clamp(0, 1000000)
           : 0,
-      type: data['hazardType'] is String
-          ? data['hazardType'] as String
-          : 'Caution',
+      type: type,
       isFatal:
           data['hazardPolicyVersion'] is num &&
               (data['hazardPolicyVersion'] as num) >= 1 &&
@@ -96,9 +104,13 @@ class CommunityHazard {
       description: data['description'] is String
           ? data['description'] as String
           : '',
-      expiresAt: data['expiresAt'] is Timestamp
-          ? (data['expiresAt'] as Timestamp).toDate()
-          : DateTime.tryParse('${data['expiresAtLocal'] ?? ''}'),
+      expiresAt: trailHazardExpiry(
+        type: type,
+        reportedAt: reportedAt,
+        expiresAt: data['expiresAt'] is Timestamp
+            ? (data['expiresAt'] as Timestamp).toDate()
+            : DateTime.tryParse('${data['expiresAtLocal'] ?? ''}'),
+      ),
       status: data['status'] is String
           ? data['status'] as String
           : 'unverified',
@@ -115,13 +127,7 @@ class CommunityHazard {
       latestEvidence: data['latestEvidence'] is Map
           ? Map<String, dynamic>.from(data['latestEvidence'] as Map)
           : const {},
-      reportedAt: time is Timestamp
-          ? time.toDate()
-          : DateTime.tryParse(
-              data['reportedAtLocal'] is String
-                  ? data['reportedAtLocal'] as String
-                  : '',
-            ),
+      reportedAt: reportedAt,
     );
     return includeExpired || result.isActiveAt(now ?? DateTime.now())
         ? result
