@@ -4,6 +4,8 @@ import '../../app/Data/app_settings_controller.dart';
 import '../Data/location_update_interval_controller.dart';
 import 'route_gear_assessment.dart';
 import 'hike_shirt_color.dart';
+import 'hike_join_request_stats.dart';
+import 'team_hike_identity.dart';
 import 'trail_gear_plan.dart';
 import 'path_deviation_policy.dart';
 import 'location_update_interval.dart';
@@ -697,6 +699,7 @@ class TeamHikeSession {
     this.startedAt,
     this.updatedAt,
     this.sharedDraft,
+    this.participantColorsByPhone = const {},
   });
 
   /// Creates team hike session from a cloud record.
@@ -704,7 +707,13 @@ class TeamHikeSession {
     Map<String, dynamic> data, {
     String id = '',
   }) {
+    final rawParticipants = _modelListOfMaps(data['participants']);
+    final assignments = TeamHikeIdentity.assignments(
+      rawParticipants,
+      data['participantColorsByPhone'],
+    );
     return TeamHikeSession(
+      participantColorsByPhone: assignments,
       id: id.isEmpty ? _modelStringFrom(data['teamHikeSessionId']) : id,
       sourceUpcomingHikeId: _modelStringFrom(data['sourceUpcomingHikeId']),
       activeHikeSessionId: _modelStringFrom(data['activeHikeSessionId']),
@@ -723,9 +732,22 @@ class TeamHikeSession {
       sharedDraft: data['draft'] is Map
           ? HikeSessionDraft.fromPersistence(_modelMapFrom(data['draft']))
           : null,
-      participants: _modelListOfMaps(
-        data['participants'],
-      ).map(TeamHikeParticipant.fromFirestore).toList(),
+      participants: rawParticipants.map((participant) {
+        final buddy = participant['buddy'] is Map
+            ? _modelMapFrom(participant['buddy'])
+            : participant;
+        final phone = _modelStringFrom(participant['phoneNumber']).trim();
+        return TeamHikeParticipant.fromFirestore({
+          ...participant,
+          'buddy': {
+            ...buddy,
+            'phoneNumber': phone.isNotEmpty ? phone : buddy['phoneNumber'],
+            'avatarColorValue':
+                assignments[TeamHikeIdentity.participantKey(participant)] ??
+                TeamHikeIdentity.colors.first,
+          },
+        });
+      }).toList(),
     );
   }
 
@@ -744,6 +766,7 @@ class TeamHikeSession {
   final DateTime? updatedAt;
   final List<TeamHikeParticipant> participants;
   final HikeSessionDraft? sharedDraft;
+  final Map<String, int> participantColorsByPhone;
 
   /// Returns ready count.
   int get readyCount => participants
@@ -821,6 +844,7 @@ class TeamHikeSession {
       updatedAt: updatedAt ?? this.updatedAt,
       participants: participants ?? this.participants,
       sharedDraft: sharedDraft ?? this.sharedDraft,
+      participantColorsByPhone: participantColorsByPhone,
     );
   }
 
@@ -835,6 +859,7 @@ class TeamHikeSession {
       'trailId': trailId,
       'trailName': trailName,
       'phase': phase.name,
+      'participantColorsByPhone': participantColorsByPhone,
       'countdownSeconds': countdownSeconds,
       'participants': participants
           .map((participant) => participant.toFirestore())
@@ -2342,6 +2367,7 @@ class UpcomingHikeJoinRequestReview {
     this.profile = const <String, dynamic>{},
     this.achievements = const <Map<String, dynamic>>[],
     this.hikeHistory = const <Map<String, dynamic>>[],
+    this.stats = const HikeJoinRequestStats(),
   });
 
   final String requestId;
@@ -2355,6 +2381,7 @@ class UpcomingHikeJoinRequestReview {
   final Map<String, dynamic> profile;
   final List<Map<String, dynamic>> achievements;
   final List<Map<String, dynamic>> hikeHistory;
+  final HikeJoinRequestStats stats;
 
   /// Returns can resolve.
   bool get canResolve => status == 'pending';
@@ -2368,29 +2395,20 @@ class UpcomingHikeJoinRequestReview {
           ? 'expired'
           : _modelStringFrom(data['status']),
       reason: _modelStringFrom(data['reason']),
-      requesterName: _modelStringFrom(data['requesterName']).isEmpty
-          ? 'A hiker'
-          : _modelStringFrom(data['requesterName']),
+      requesterName: safeJoinRequestAlias(data['requesterName']),
       trailName: _modelStringFrom(data['trailName']).isEmpty
           ? 'Upcoming hike'
           : _modelStringFrom(data['trailName']),
       departureTime: _modelDateFromValue(data['departureTimeLocal']),
       needsJoinPolicyChoice: data['needsJoinPolicyChoice'] == true,
-      profile: data['profile'] is Map
-          ? Map<String, dynamic>.from(data['profile'] as Map)
-          : const <String, dynamic>{},
-      achievements: data['achievements'] is List
-          ? (data['achievements'] as List)
-                .whereType<Map>()
-                .map((value) => Map<String, dynamic>.from(value))
-                .toList()
-          : const <Map<String, dynamic>>[],
-      hikeHistory: data['hikeHistory'] is List
-          ? (data['hikeHistory'] as List)
-                .whereType<Map>()
-                .map((value) => Map<String, dynamic>.from(value))
-                .toList()
-          : const <Map<String, dynamic>>[],
+      profile: {
+        'displayName': safeJoinRequestAlias(
+          data['profile'] is Map
+              ? (data['profile'] as Map)['displayName'] ?? data['requesterName']
+              : data['requesterName'],
+        ),
+      },
+      stats: HikeJoinRequestStats.fromMap(data['stats']),
     );
   }
 }

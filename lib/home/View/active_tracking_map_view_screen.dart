@@ -1,18 +1,5 @@
 part of '../active_tracking_map_view_feature.dart';
 
-final _teamColors = <Color>[
-  const Color(0xFF7C3AED),
-  const Color(0xFF0EA5E9),
-  const Color(0xFFEC4899),
-  const Color(0xFF14B8A6),
-  const Color(0xFFF97316),
-  const Color(0xFF8B5CF6),
-  const Color(0xFF06B6D4),
-  const Color(0xFFD946EF),
-  const Color(0xFF84CC16),
-  const Color(0xFFF43F5E),
-];
-
 /// Checks whether valid coordinate.
 bool _isValidCoordinate(double latitude, double longitude) {
   return latitude.isFinite &&
@@ -22,11 +9,6 @@ bool _isValidCoordinate(double latitude, double longitude) {
       longitude >= -180 &&
       longitude <= 180;
 }
-
-const _selfTeamColor = Color(0xFF34A853);
-
-/// Computes fallback team color.
-Color _fallbackTeamColor(int index) => _teamColors[index % _teamColors.length];
 
 /// Computes same phone number.
 bool _samePhoneNumber(String first, String second) {
@@ -41,14 +23,7 @@ Color _displayColorForParticipant(
   int index,
   String currentPhoneNumber,
 ) {
-  if (_samePhoneNumber(participant.phoneNumber, currentPhoneNumber)) {
-    return _selfTeamColor;
-  }
-  final storedColor = Color(participant.buddy.avatarColorValue);
-  if (storedColor == _selfTeamColor) {
-    return _fallbackTeamColor(index);
-  }
-  return storedColor;
+  return Color(participant.buddy.avatarColorValue);
 }
 
 /// Keep GPS movement and team markers tied to the active session rather than the planned trail geometry.
@@ -1293,7 +1268,18 @@ class _ActiveTrackingMapViewState extends State<ActiveTrackingMapView>
             left: 10,
             right: 82,
             bottom: 88,
-            child: _ActiveTrackingLegend(activeHike: widget.activeHike),
+            child: _ActiveTrackingLegend(
+              isTeam: _effectiveParticipants.isNotEmpty,
+              selfColor: _effectiveParticipants
+                  .where(
+                    (p) => _samePhoneNumber(
+                      p.phoneNumber,
+                      widget.currentPhoneNumber,
+                    ),
+                  )
+                  .map((p) => Color(p.buddy.avatarColorValue))
+                  .firstOrNull,
+            ),
           ),
         if (widget.onReportHazard != null && widget.interactive)
           Positioned(
@@ -1378,8 +1364,10 @@ class _ProjectedTeamMarker extends StatelessWidget {
             child: photoURL.isEmpty
                 ? Text(
                     initial,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: Color(
+                        TeamHikeIdentity.foreground(color.toARGB32()),
+                      ),
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -1391,8 +1379,10 @@ class _ProjectedTeamMarker extends StatelessWidget {
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) => Text(
                       initial,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: Color(
+                          TeamHikeIdentity.foreground(color.toARGB32()),
+                        ),
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
                       ),

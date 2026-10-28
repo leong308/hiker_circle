@@ -28,6 +28,7 @@ const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const {contentHash, conditionalPayload, reminderCooldown} = require('./mobile_cache_helpers');
 const crypto = require('crypto');
+const teamPolicy = require('./team_hike_policy');
 const argon2 = require('argon2');
 const {
   SosDispatchValidationError,
@@ -2604,8 +2605,8 @@ exports.joinUpcomingHike = onCall({}, async (request) => {
     if (!alreadyJoined) {
       uniquePhones.push(ownerPhone);
     }
-    if (uniquePhones.length > 50) {
-      throw new HttpsError('resource-exhausted', 'This hike has reached its participant limit.');
+    if (uniquePhones.length > teamPolicy.MAX_TEAM_HIKERS) {
+      throw new HttpsError('resource-exhausted', 'This hike has reached its limit of 30 hikers.');
     }
 
     const nowIso = new Date().toISOString();
@@ -2738,7 +2739,6 @@ exports.requestToJoinUpcomingHike = onCall({}, async (request) => {
       return { requestId, ...lifecycle };
     }
 
-    const profile = canonicalChatProfile(requesterPhone, user);
     const nowIso = new Date().toISOString();
     transaction.create(requestReference, {
       requestId,
@@ -2748,8 +2748,7 @@ exports.requestToJoinUpcomingHike = onCall({}, async (request) => {
       hostPhone,
       requesterPhone,
       requesterUserId: uid,
-      requesterName: profile.name,
-      requesterPhotoURL: profile.photoURL,
+      requesterName: require('./join_request_hiker_stats').safeJoinAlias(user.profile?.username),
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       createdAtLocal: nowIso,
@@ -2771,7 +2770,7 @@ function upcomingHikeJoinRequestResponse(requestId, request, hike, lifecycle) {
     hikeId: String(request?.hikeId || ''),
     status: lifecycle.status,
     reason: lifecycle.reason,
-    requesterName: String(request?.requesterName || 'A hiker').slice(0, 80),
+    requesterName: require('./join_request_hiker_stats').safeJoinAlias(request?.requesterName),
     trailName: String(hike?.trailName || request?.trailName || 'Upcoming hike')
       .slice(0, 160),
     departureTimeLocal: String(
@@ -2856,6 +2855,9 @@ exports.loadUpcomingHikeJoinRequest = onCall({}, async (request) => {
     .doc(String(joinRequest.hikeId || ''))
     .get();
   const hike = hikeSnapshot.exists ? hikeSnapshot.data() || {} : null;
+  if (hike && String(hike.creatorPhone || '') !== hostPhone) {
+    throw new HttpsError('permission-denied', 'Only the current hike host can review this request.');
+  }
   const lifecycle = joinRequestLifecycle(joinRequest, hike);
   if (lifecycle.status === 'expired' && String(joinRequest.status) === 'pending') {
     await requestSnapshot.ref.set(
@@ -2874,11 +2876,14 @@ exports.loadUpcomingHikeJoinRequest = onCall({}, async (request) => {
     hike,
     lifecycle
   );
-  const details = await publicHikerDetails(
-    db,
-    String(joinRequest.requesterUserId || '')
+  if (lifecycle.status !== 'pending') return response;
+  if (String(joinRequest.requesterUserId || '') !== userDocumentIdForPhone(String(joinRequest.requesterPhone || ''))) {
+    throw new HttpsError('failed-precondition', 'This requester is unavailable.');
+  }
+  const details = await require('./join_request_hiker_stats').loadJoinRequesterDetails(
+    db, String(joinRequest.requesterUserId || '')
   );
-  return { ...response, ...details };
+  return { ...response, ...details, requesterName: details.profile.displayName };
 });
 
 exports.loadPublicHikerProfile = onCall({}, async (request) => {
@@ -2994,8 +2999,8 @@ exports.resolveUpcomingHikeJoinRequest = onCall({}, async (request) => {
       .filter((phone) => /^\+[1-9]\d{7,14}$/.test(phone));
     const uniquePhones = [...new Set(participantPhones)];
     if (!uniquePhones.includes(requesterPhone)) uniquePhones.push(requesterPhone);
-    if (uniquePhones.length > 50) {
-      throw new HttpsError('resource-exhausted', 'This hike has reached its participant limit.');
+    if (uniquePhones.length > teamPolicy.MAX_TEAM_HIKERS) {
+      throw new HttpsError('resource-exhausted', 'This hike has reached its limit of 30 hikers.');
     }
     const requesterProfile = canonicalChatProfile(
       requesterPhone,
@@ -3280,6 +3285,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
       || !/^\+[1-9]\d{7,14}$/.test(requesterPhone)
       || !validFirestoreDocumentId(hikeId)
       || String(joinRequest.status || '') !== 'pending'
+      || String(joinRequest.requesterUserId || '') !== userDocumentIdForPhone(requesterPhone)
     ) {
       await event.data.ref.set(
         {
@@ -3295,7 +3301,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
     const hikeSnapshot = await db.collection('upcomingHikes').doc(hikeId).get();
     const hike = hikeSnapshot.exists ? hikeSnapshot.data() || {} : null;
     const lifecycle = joinRequestLifecycle(joinRequest, hike);
-    if (lifecycle.status !== 'pending') {
+    if (lifecycle.status !== 'pending' || String(hike?.creatorPhone || '') !== hostPhone) {
       await event.data.ref.set(
         {
           hostNotificationStatus: 'skipped',
@@ -3307,8 +3313,15 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
       return;
     }
 
-    const requesterName = String(joinRequest.requesterName || 'A hiker')
-      .trim().slice(0, 80);
+    const joinStats = require('./join_request_hiker_stats');
+    let requesterDetails;
+    try {
+      requesterDetails = await joinStats.loadJoinRequesterDetails(db, String(joinRequest.requesterUserId || ''));
+    } catch (_) {
+      requesterDetails = joinStats.unavailableDetails(joinRequest.requesterName);
+      logger.warn('Join-request hiking stats unavailable; delivering the request without totals.');
+    }
+    const requesterName = requesterDetails.profile.displayName;
     const trailName = String(hike.trailName || joinRequest.trailName || 'your hike')
       .trim().slice(0, 100);
     const deepLink =
@@ -3331,7 +3344,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
             tokens: tokenList.slice(index, index + 500),
             notification: {
               title: 'Hike join request',
-              body: `${requesterName || 'A hiker'} wants to join ${trailName}.`,
+              body: joinStats.joinNotificationBody({requesterName, trailName, stats: requesterDetails.stats, compact: true}),
             },
             data: {
               type: 'upcoming_hike_join_request',
@@ -3371,7 +3384,7 @@ exports.notifyHostAboutUpcomingHikeJoinRequest = onDocumentCreated(
           body: JSON.stringify({
             chatId: `${recipientDigits}@c.us`,
             header: 'HikerCircle join request',
-            body: `${requesterName || 'A hiker'} wants to join ${trailName}.`,
+            body: joinStats.joinNotificationBody({requesterName, trailName, stats: requesterDetails.stats}),
             footer: 'Open HikerCircle to accept or decline.',
             buttons: [
               {
@@ -3780,6 +3793,7 @@ const teamHikeActionLimits = Object.freeze({
   activate: [30, 60 * 60 * 1000],
   attach: [40, 60 * 60 * 1000],
   location: [360, 10 * 60 * 1000],
+  readinessLocation: [60, 10 * 60 * 1000],
   ping: [20, 10 * 60 * 1000],
   respond: [60, 60 * 60 * 1000],
   end: [20, 60 * 60 * 1000],
@@ -3884,18 +3898,6 @@ function teamBuddyFromUser(phoneNumber, user, isHost, index) {
     ? user.profile
     : {};
   const key = phoneKeyFor(phoneNumber);
-  const fallbackColors = [
-    0xff7c3aed,
-    0xff0ea5e9,
-    0xffec4899,
-    0xff14b8a6,
-    0xfff97316,
-    0xff8b5cf6,
-    0xff06b6d4,
-    0xffd946ef,
-    0xfff43f5e,
-    0xfff59e0b,
-  ];
   const name = String(
     canonicalUsername(user, `Hiker ${key.slice(-4)}`)
   ).trim().slice(0, 80) || 'Trail buddy';
@@ -3909,8 +3911,8 @@ function teamBuddyFromUser(phoneNumber, user, isHost, index) {
     role: isHost ? 'Host' : 'Teammate',
     ...(photoURL ? { photoURL } : {}),
     avatarColorValue: isHost
-      ? 0xff34a853
-      : fallbackColors[index % fallbackColors.length],
+      ? teamPolicy.TEAM_COLORS[0]
+      : teamPolicy.TEAM_COLORS[(index + 1) % teamPolicy.MAX_TEAM_HIKERS],
   };
 }
 
@@ -4515,10 +4517,10 @@ exports.scheduleUpcomingHike = onCall(
           .filter((phone) => phone !== ownerPhone)
       : [];
     if (
-      requestedPhones.length > 10
+      requestedPhones.length > teamPolicy.MAX_TEAM_HIKERS - 1
       || requestedPhones.some((phone) => !/^\+[1-9]\d{7,14}$/.test(phone))
     ) {
-      throw new HttpsError('invalid-argument', 'The selected hiking buddies are invalid.');
+      throw new HttpsError('invalid-argument', 'Select up to 29 valid hiking buddies; the team limit is 30 including the host.');
     }
     const invitedPhones = [...new Set(requestedPhones)];
     const db = admin.firestore();
@@ -6534,7 +6536,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
   const requestedPhones = Array.isArray(request.data?.invitedPhoneNumbers)
     ? request.data.invitedPhoneNumbers.map((phone) => String(phone || '').trim())
     : [];
-  const maximumInvitees = sourceUpcomingHikeId ? 49 : 10;
+  const maximumInvitees = teamPolicy.MAX_TEAM_HIKERS - 1;
   if (
     requestedPhones.length === 0
     || requestedPhones.length > maximumInvitees
@@ -6542,9 +6544,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
   ) {
     throw new HttpsError(
       'invalid-argument',
-      sourceUpcomingHikeId
-        ? 'A scheduled team hike can include up to 50 hikers.'
-        : 'Choose between one and ten valid hiking buddies.'
+      'A team hike can include up to 30 hikers, including the host.'
     );
   }
   const invitedPhones = [...new Set(requestedPhones)]
@@ -6716,7 +6716,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
       ].filter((phone) => phone !== ownerPhone);
       if (
         expectedInvitees.length === 0
-        || expectedInvitees.length > 49
+        || expectedInvitees.length > teamPolicy.MAX_TEAM_HIKERS - 1
         || expectedInvitees.length !== invitedPhones.length
         || expectedInvitees.some((phone) => !invitedPhones.includes(phone))
       ) {
@@ -6786,7 +6786,7 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
         );
       }
     }
-    const participants = allBuddies.map((buddy, index) => ({
+    let participants = allBuddies.map((buddy, index) => ({
       buddy,
       phoneNumber: buddy.phoneNumber,
       status: index === 0 ? 'joined' : 'invited',
@@ -6798,6 +6798,10 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
       updatedAtLocal: nowIso,
       separationAlertActive: false,
     }));
+    const participantColorsByPhone = teamPolicy.participantColors(participants,
+      existingSessionSnapshot.data()?.participantColorsByPhone || {});
+    participants = teamPolicy.applyParticipantColors(participants, participantColorsByPhone);
+    draft = {...draft, teamBuddies: participants.filter(item => !item.isHost).map(item => item.buddy)};
     const result = {
       teamHikeSessionId: sessionReference.id,
       activeHikeSessionId: '',
@@ -6811,6 +6815,8 @@ exports.createTeamHikeSession = onCall({}, async (request) => {
       phase: 'inviting',
       countdownSeconds: 5,
       participants,
+      participantColorsByPhone,
+      participantColorVersion: 1,
       participantPhoneNumbers: [ownerPhone, ...invitedPhones],
       draft,
       startPointName: draft.startPointName,
@@ -7004,6 +7010,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
     let newlyJoinedName = '';
     let everyoneEnded = phase === 'completed';
     const teamPatch = {};
+    const participantColorsByPhone = teamPolicy.participantColors(participants, team.participantColorsByPhone || {});
     if (action === 'read') {
       const storedPhones = Array.isArray(team.participantPhoneNumbers)
         ? team.participantPhoneNumbers.map((phone) => String(phone || '').trim())
@@ -7109,6 +7116,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
         ? 'inviting'
         : 'readyCheck';
     } else if (action === 'beginReadiness') {
+      if (participants.length > teamPolicy.MAX_TEAM_HIKERS) throw new HttpsError('failed-precondition', 'A team hike supports at most 30 hikers. Reduce the roster before starting.');
       if (!isHost) {
         throw new HttpsError(
           'permission-denied',
@@ -7315,6 +7323,12 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
         teamPatch.activeHikeSessionId = activeHikeSessionId;
       }
       didChange = true;
+    } else if (action === 'readinessLocation') {
+      if (!['inviting', 'readyCheck', 'countdown'].includes(phase)) {
+        throw new HttpsError('failed-precondition', 'Preparation location sharing has ended.');
+      }
+      const updated = teamPolicy.readinessLocation(participants[callerIndex], request.data, Date.now(), HttpsError);
+      if (updated) { participants[callerIndex] = updated; didChange = true; }
     } else if (action === 'location') {
       if (phase !== 'active') {
         throw new HttpsError('failed-precondition', 'The team hike is not active.');
@@ -7622,6 +7636,12 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
       didChange = true;
     }
 
+    const coloredParticipants = teamPolicy.applyParticipantColors(participants, participantColorsByPhone);
+    if (JSON.stringify(coloredParticipants) !== JSON.stringify(participants)
+      || JSON.stringify(team.participantColorsByPhone) !== JSON.stringify(participantColorsByPhone)) didChange = true;
+    participants = coloredParticipants;
+    teamPatch.participantColorsByPhone = participantColorsByPhone;
+    teamPatch.participantColorVersion = 1;
     const nextTeam = {
       ...team,
       ...teamPatch,

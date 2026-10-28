@@ -19,6 +19,7 @@ import '../core/widgets/static_hazard_marker.dart';
 import '../trail/Model/trail_models.dart';
 import 'Data/active_hike_weather_service.dart';
 import 'Model/hike_session_models.dart';
+import 'Model/team_hike_identity.dart';
 import 'Model/active_hike_map_mode.dart';
 part 'View/active_tracking_map_view_screen.dart';
 part 'ModelView/active_tracking_map_view_view_model.dart';
