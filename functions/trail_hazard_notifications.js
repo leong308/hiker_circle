@@ -29,8 +29,9 @@ async function normalizeHazardReport({db, hazardId}) {
     const classification = classifyHazard(report.hazardType);
     const patch = Object.fromEntries(Object.entries(classification).filter(([key, value]) => report[key] !== value));
     if (!Number.isSafeInteger(report.cycle) || report.cycle < 0) patch.cycle = 0;
-    if (!Number.isFinite(dateMillis(report.expiresAt)) && Number.isFinite(hazardExpiry(report))) {
-      patch.expiresAt = new Date(hazardExpiry(report));
+    const expiry = hazardExpiry(report);
+    if (Number.isFinite(expiry) && dateMillis(report.expiresAt) !== expiry) {
+      patch.expiresAt = new Date(expiry);
     }
     if (Object.keys(patch).length) tx.update(ref, patch);
     return {id: hazardId, ref, data: () => ({...report, ...patch})};

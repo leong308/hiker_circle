@@ -33,6 +33,34 @@ class _HikerHomePageState extends State<HikerHomePage>
       _screenModel.stateIsFallStillnessDialogVisible = value;
 
   late final _HikerHomePageStateViewModel _screenModel;
+  DialogRoute<void>? _arrivalSafetyRoute;
+  late final _arrivalSafety = HikeArrivalSafetyCoordinator(
+    owner: widget.session.phoneNumber,
+    readHike: () => activeHike,
+    isReady: () => mounted && _notificationUiReady && !isRestoringActiveHike,
+    canPresent: () =>
+        mounted &&
+        _appLifecycleState == AppLifecycleState.resumed &&
+        !_hasTriggeredSos &&
+        !isFallStillnessDialogVisible &&
+        !fallStillnessMonitor.isAwaitingResponse,
+    present: _presentArrivalSafety,
+    logWarning: (key, link, warnedAt) =>
+        DeviceNotificationLogService.recordLocalNotification(
+          ownerPhoneNumber: widget.session.phoneNumber,
+          messageId: key,
+          title: 'Is everything okay?',
+          body:
+              'Arrival at the peak or trail end has not been confirmed. Open HikerCircle to respond.',
+          type: 'local_arrival_overdue',
+          deepLink: link,
+          receivedAt: warnedAt,
+        ),
+    speak: () => _sosDeviceAlertService.speakFallStillnessPrompt(
+      message:
+          'Is everything okay? Your latest arrival time has passed. Confirm everything is okay to cancel the pending emergency-contact alert.',
+    ),
+  );
   late final _activeTrailHazardAlerts = ActiveTrailHazardAlertCoordinator(
     readCurrent: () {
       final hike = activeHike;
@@ -1016,6 +1044,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         return;
       }
       _notificationUiReady = true;
+      _arrivalSafety.start();
       unawaited(_drainPendingFcmOpens());
       unawaited(_drainPendingBleUiEvents());
       unawaited(_drainPendingTeamReadiness());
@@ -1513,7 +1542,24 @@ class _HikerHomePageState extends State<HikerHomePage>
     Future<dynamic> Function() action,
   ) => _screenModel.commandRunReconnectStep(label, action);
 
-  /// Computes drain pending fcm opens.
+  /// Owns the overdue-arrival popup route without interfering with urgent SOS dialogs.
+  Future<void> _presentArrivalSafety() async {
+    if (!mounted || _arrivalSafetyRoute != null) return;
+    final route = DialogRoute<void>(
+      context: context,
+      barrierDismissible: false,
+      settings: const RouteSettings(name: 'overdue-hike-arrival'),
+      builder: (_) => HikeArrivalSafetyDialog(coordinator: _arrivalSafety),
+    );
+    _arrivalSafetyRoute = route;
+    try {
+      await Navigator.of(context, rootNavigator: true).push(route);
+    } finally {
+      if (identical(_arrivalSafetyRoute, route)) _arrivalSafetyRoute = null;
+    }
+  }
+
+  /// Drains pending notification routes after session restoration and urgent safety UI.
   Future<void> _drainPendingFcmOpens() async {
     if (!_notificationUiReady ||
         _hasTriggeredSos ||
@@ -1872,6 +1918,16 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
     if (uri.host == 'hike' && uri.path == '/hazard') {
       await _activeTrailHazardAlerts.open(uri);
+      return;
+    }
+    if (uri.host == 'hike' && uri.path == '/arrival') {
+      final requested = uri.queryParameters['sessionId'];
+      if (requested != null &&
+          activeHike != null &&
+          activeHike?.sessionId != requested) {
+        return;
+      }
+      await _arrivalSafety.refresh();
       return;
     }
     if (uri.host == 'hike' && uri.path == '/report-hazard') {
@@ -5330,6 +5386,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     }
 
     if (state == AppLifecycleState.resumed) {
+      unawaited(_arrivalSafety.refresh());
       setState(_rebuildPlannedHike);
       unawaited(_deliverAchievementNotifications());
       unawaited(
@@ -6213,6 +6270,15 @@ class _HikerHomePageState extends State<HikerHomePage>
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    _arrivalSafety.dispose();
+    final arrivalRoute = _arrivalSafetyRoute;
+    if (arrivalRoute != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (arrivalRoute.isActive) {
+          arrivalRoute.navigator?.removeRoute(arrivalRoute);
+        }
+      });
+    }
     _activeTrailHazardAlerts.dispose();
     for (final ready in _sosPresentationWaiters.toList()) {
       if (!ready.isCompleted) ready.complete();

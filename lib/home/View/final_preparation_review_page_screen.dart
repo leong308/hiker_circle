@@ -811,14 +811,13 @@ class _PreparationState extends State<FinalPreparationReviewPage>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         battery,
-        if (plan.expectedReturnTime.difference(plan.plannedStartTime) >
-            const Duration(hours: 3)) ...[
-          const SizedBox(height: 10),
-          Text(
-            'Over 3 hours planned — bring a charged power bank.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
+        const SizedBox(height: 10),
+        Text(
+          plan.trail.distanceKm > 5
+              ? 'Trail over 5 km — a charged power bank is required.'
+              : 'A charged power bank is recommended for this hike.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     );
   }

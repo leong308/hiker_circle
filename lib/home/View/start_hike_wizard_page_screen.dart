@@ -1638,15 +1638,7 @@ class _TimingStep extends StatelessWidget {
   void _selectStartNow() {
     onStartNowChanged(true);
     final now = DateTime.now();
-    final hikeDuration = _safePlannedHikeDuration(draft);
-    final expectedArrival = now.add(hikeDuration);
-    onChanged(
-      draft.copyWith(
-        departureTime: now,
-        expectedArrivalTime: expectedArrival,
-        expectedReturnTime: expectedArrival.add(const Duration(hours: 2)),
-      ),
-    );
+    onChanged(HikeArrivalTiming.retime(draft, departure: now));
   }
 
   /// Selects scheduled start.
@@ -1682,14 +1674,7 @@ class _TimingStep extends StatelessWidget {
           );
       }
     }
-    final diff = _safePlannedHikeDuration(draft);
-    onChanged(
-      draft.copyWith(
-        departureTime: updated,
-        expectedArrivalTime: updated.add(diff),
-        expectedReturnTime: updated.add(diff).add(const Duration(hours: 2)),
-      ),
-    );
+    onChanged(HikeArrivalTiming.retime(draft, departure: updated));
   }
 
   /// Computes pick departure date.
@@ -1795,28 +1780,16 @@ class _TimingStep extends StatelessWidget {
         _DurationPickerField(
           label: 'Estimated Hike Duration',
           value: draft.expectedArrivalTime.difference(draft.departureTime),
-          onChanged: (duration) {
-            final arrival = draft.departureTime.add(duration);
-            onChanged(
-              draft.copyWith(
-                expectedArrivalTime: arrival,
-                expectedReturnTime: arrival.add(const Duration(hours: 2)),
-              ),
-            );
-          },
+          onChanged: (duration) => onChanged(
+            HikeArrivalTiming.retime(
+              draft,
+              departure: draft.departureTime,
+              duration: duration,
+            ),
+          ),
         ),
         const SizedBox(height: 12),
-        _ReadOnlyField(
-          label: 'Estimated Time of Arrival',
-          value: _formatTime(draft.expectedArrivalTime),
-          icon: Icons.flag_rounded,
-        ),
-        const SizedBox(height: 12),
-        _ReadOnlyField(
-          label: 'Estimated Return Time',
-          value: _formatTime(draft.expectedReturnTime),
-          icon: Icons.assignment_return_rounded,
-        ),
+        HikeArrivalTimeFields(draft: draft, onChanged: onChanged),
         const SizedBox(height: 12),
       ],
     );
@@ -2441,13 +2414,8 @@ DateTime _minimumScheduledDepartureTime() {
 }
 
 /// Computes safe planned hike duration.
-Duration _safePlannedHikeDuration(HikeSessionDraft draft) {
-  final duration = draft.expectedArrivalTime.difference(draft.departureTime);
-  if (!duration.isNegative && duration > Duration.zero) {
-    return duration;
-  }
-  return Duration(minutes: math.max(1, draft.trail.estimatedDurationMinutes));
-}
+Duration _safePlannedHikeDuration(HikeSessionDraft draft) =>
+    HikeArrivalTiming.plannedDuration(draft);
 
 /// Applies safe recording interval.
 HikeSessionDraft _withSafeRecordingInterval(HikeSessionDraft draft) {

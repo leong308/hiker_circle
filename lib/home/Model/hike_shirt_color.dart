@@ -78,6 +78,10 @@ enum HikeShirtColor {
   /// Returns preference.
   String get preference => '$preferencePrefix$name';
 
+  /// Restores an optional clothing snapshot without accepting arbitrary message text.
+  static HikeShirtColor? fromName(Object? name) =>
+      values.where((color) => color.name == name).firstOrNull;
+
   /// Checks whether preference.
   static bool isPreference(String value) =>
       value.startsWith(preferencePrefix) &&

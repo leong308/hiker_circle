@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A571B0010000000000000001 /* HikeArrivalSafety.swift in Sources */ = {isa = PBXBuildFile; fileRef = A571B0020000000000000001 /* HikeArrivalSafety.swift */; };
+		A571B0010000000000000002 /* arrival_overdue.caf in Resources */ = {isa = PBXBuildFile; fileRef = A571B0020000000000000002 /* arrival_overdue.caf */; };
 		4B7A1C110000000000000002 /* NativeLocationSampleBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B7A1C100000000000000002 /* NativeLocationSampleBuffer.swift */; };
 		4B7A1C110000000000000003 /* MobileSecurityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B7A1C100000000000000003 /* MobileSecurityBridge.swift */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
@@ -69,6 +71,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A571B0020000000000000001 /* HikeArrivalSafety.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HikeArrivalSafety.swift; sourceTree = "<group>"; };
+		A571B0020000000000000002 /* arrival_overdue.caf */ = {isa = PBXFileReference; lastKnownFileType = audio.caf; path = arrival_overdue.caf; sourceTree = "<group>"; };
 		4B7A1C100000000000000002 /* NativeLocationSampleBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocationSampleBuffer.swift; sourceTree = "<group>"; };
 		4B7A1C100000000000000003 /* MobileSecurityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSecurityBridge.swift; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
@@ -223,6 +227,8 @@
 				2BC812756D1F7DD1967E3477 /* QrScannerPlugin.swift */,
 				4B7A1C100000000000000001 /* HikerBleBridge.swift */,
 				4B7A1C100000000000000002 /* NativeLocationSampleBuffer.swift */,
+				A571B0020000000000000001 /* HikeArrivalSafety.swift */,
+				A571B0020000000000000002 /* arrival_overdue.caf */,
 		4B7A1C100000000000000003 /* MobileSecurityBridge.swift */,
 			);
 			path = Runner;
@@ -382,6 +388,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */,
+				A571B0010000000000000002 /* arrival_overdue.caf in Resources */,
 				8F4A6B210001000100010001 /* GoogleService-Info.plist in Resources */,
 				3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */,
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
@@ -528,6 +535,7 @@
 				21C76767CEC433283C923E64 /* QrScannerPlugin.swift in Sources */,
 				4B7A1C110000000000000001 /* HikerBleBridge.swift in Sources */,
 				4B7A1C110000000000000002 /* NativeLocationSampleBuffer.swift in Sources */,
+				A571B0010000000000000001 /* HikeArrivalSafety.swift in Sources */,
 		4B7A1C110000000000000003 /* MobileSecurityBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

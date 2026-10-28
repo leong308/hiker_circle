@@ -96,17 +96,13 @@ class _StartHikeWizardPageStateViewModel extends ChangeNotifier {
   /// Computes draft for now.
   HikeSessionDraft commandDraftForNow() {
     final now = DateTime.now();
-    final hikeDuration = _safePlannedHikeDuration(stateDraft);
-    final expectedArrival = now.add(hikeDuration);
-    return _withPlatformSafetyPolicy(
-      _withSafeRecordingInterval(stateDraft),
-    ).copyWith(
-      departureTime: now,
-      expectedArrivalTime: expectedArrival,
-      expectedReturnTime: stateDraft.trail.isUnlisted
-          ? expectedArrival
-          : expectedArrival.add(const Duration(hours: 2)),
+    final updated = HikeArrivalTiming.retime(
+      _withPlatformSafetyPolicy(_withSafeRecordingInterval(stateDraft)),
+      departure: now,
     );
+    return stateDraft.trail.isUnlisted
+        ? updated.copyWith(expectedReturnTime: updated.expectedArrivalTime)
+        : updated;
   }
 
   /// Releases resources owned by this instance.
@@ -153,11 +149,9 @@ class _StartHikeWizardPageStateViewModel extends ChangeNotifier {
           if (action == TrailHazardAlertAction.reschedule) {
             stateStartNow = false;
             final departure = _minimumScheduledDepartureTime();
-            final arrival = departure.add(_safePlannedHikeDuration(stateDraft));
-            stateDraft = stateDraft.copyWith(
-              departureTime: departure,
-              expectedArrivalTime: arrival,
-              expectedReturnTime: arrival.add(const Duration(hours: 2)),
+            stateDraft = HikeArrivalTiming.retime(
+              stateDraft,
+              departure: departure,
             );
           }
         });

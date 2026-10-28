@@ -83,9 +83,9 @@ const KNOWLEDGE_ARTICLES = Object.freeze([
   {
     id: 'hike_preparation',
     title: 'Preparing for a hike',
-    keywords: ['prepare', 'preparation', 'checklist', 'weather', 'caution', 'battery', 'shirt color', 'power bank'],
+    keywords: ['prepare', 'preparation', 'checklist', 'weather', 'caution', 'battery', 'shirt color', 'power bank', 'headlamp', 'torchlight'],
     content:
-      'Preparation combines the trail checklist, forecast, trail cautions, emergency contacts, battery guidance, and team readiness when applicable. Warnings can change with rain, temperature, humidity, wind, sunset timing, elevation, water exposure, and route hazards. Recheck close to departure. For hikes longer than three hours, bring a suitable power bank. Daytime clothing guidance favours visible, lighter colours that absorb less solar heat and can make the hiker easier to locate.',
+      'Preparation combines the trail checklist, forecast, trail cautions, emergency contacts, battery guidance, and team readiness when applicable. Warnings can change with rain, temperature, humidity, wind, sunset timing, elevation, water exposure, and route hazards. Recheck close to departure. A headlamp or torchlight is required when the planned hike overlaps nighttime. A charged power bank is required for trails longer than 5 km and recommended for trails of 5 km or less. Daytime clothing guidance favours visible, lighter colours that absorb less solar heat and can make the hiker easier to locate.',
   },
   {
     id: 'trail_cautions',

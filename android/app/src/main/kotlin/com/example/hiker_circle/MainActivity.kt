@@ -136,6 +136,20 @@ class MainActivity : FlutterFragmentActivity() {
     // configureFlutterEngine: Register platform channels and attach lifecycle-aware native bridges.
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val arrivalChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hiker_circle/arrival_safety")
+        HikeArrivalSafety.onChanged = { arrivalChannel.invokeMethod("onArrivalSafetyChanged", null) }
+        arrivalChannel.setMethodCallHandler { call, result ->
+            val data = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+            try {
+                when (call.method) {
+                    "configure" -> result.success(HikeArrivalSafety.configure(this, data))
+                    "read" -> result.success(HikeArrivalSafety.readState(this, data["owner"] as? String ?: ""))
+                    "confirmSafe" -> result.success(HikeArrivalSafety.confirmSafe(this, data["owner"] as? String ?: "", data["trackingKey"] as? String ?: ""))
+                    "stop" -> { HikeArrivalSafety.stop(this, data["owner"] as? String ?: ""); result.success(null) }
+                    else -> result.notImplemented()
+                }
+            } catch (error: Exception) { result.error("arrival_safety_storage", "Unable to save the arrival safety check.", null) }
+        }
         MobileSecurityBridge(this, flutterEngine.dartExecutor.binaryMessenger)
         cameraManager = getSystemService(CameraManager::class.java)
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
@@ -563,6 +577,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     // onDestroy: Dispose activity-owned resources while the safety service keeps its own outputs.
     override fun onDestroy() {
+        HikeArrivalSafety.onChanged = null
         // Do not cancel the system vibrator here. The native hike-safety
         // foreground service may own an urgent response prompt after Flutter
         // is reclaimed or the activity is destroyed.

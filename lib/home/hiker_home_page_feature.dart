@@ -17,6 +17,8 @@ import 'View/final_preparation_review_page.dart';
 import 'View/hike_charging_reminder_dialog.dart';
 import 'View/hike_hazard_alert_host.dart';
 import 'Data/trail_hazard_start_gate.dart';
+import 'ModelView/hike_arrival_safety_coordinator.dart';
+import 'View/hike_arrival_safety_dialog.dart';
 import '../trail/View/trail_hazard_alert_dialog.dart';
 import 'Data/upcoming_hike_reminder_service.dart';
 import 'Model/hike_preparation_sharing.dart';

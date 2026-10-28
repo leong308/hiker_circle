@@ -259,4 +259,4 @@ function routeCredit(trail) {
 }
 
 
-module.exports = {decodePolyline, routePoints, routeCover, routeCredit};
+module.exports = {decodePolyline, routePoints, routeCover, routeCredit, encodePng};

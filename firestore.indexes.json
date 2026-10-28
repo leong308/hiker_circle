@@ -4,6 +4,23 @@
       "collectionGroup": "hikeSessions",
       "queryScope": "COLLECTION",
       "fields": [
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "arrivalSafety.enabled", "order": "ASCENDING"},
+        {"fieldPath": "arrivalSafety.responseDeadlineMillis", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "userId", "order": "ASCENDING"},
+        {"fieldPath": "startedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "hikeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "trailId", "order": "ASCENDING" }
       ]

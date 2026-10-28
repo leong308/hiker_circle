@@ -14,6 +14,7 @@ import '../../app/Model/app_session.dart';
 import '../../authentication/Data/green_api_client.dart';
 import '../../authentication/Data/phone_number_formatter.dart';
 import '../Model/sos_models.dart';
+import '../../home/Model/hike_shirt_color.dart';
 
 /// Represents sos alert repository exception.
 class SosAlertRepositoryException implements Exception {
@@ -388,6 +389,22 @@ class SosAlertRepository {
     return alerts;
   }
 
+  /// Captures only the active hike's clothing; storage failure must not block SOS delivery.
+  Future<HikeShirtColor?> _shirtColorAtTrigger(
+    String phone,
+    DateTime triggeredAt,
+  ) async {
+    try {
+      final hike = await _localDatabase
+          .loadActiveHikeSession(phoneNumber: phone)
+          .timeout(const Duration(milliseconds: 750));
+      if (hike == null || hike.startedAt.isAfter(triggeredAt)) return null;
+      return HikeShirtColor.fromPreferences(hike.draft.completedChecklistItems);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Computes trigger alert.
   Future<SosAlertResult> triggerAlert({
     required AppSession session,
@@ -428,6 +445,10 @@ class SosAlertRepository {
       () => {},
     );
     activeIds.add(alertId);
+    final shirtColor = await _shirtColorAtTrigger(
+      session.phoneNumber,
+      triggeredAt,
+    );
     final message = SosAlertMessageComposer.compose(
       mode: mode,
       phoneNumber: session.phoneNumber,
@@ -436,6 +457,7 @@ class SosAlertRepository {
       customNote: customMessageNote,
       triggerSource: resolvedTriggerSource,
       preferredTimeZone: AppSettingsController.instance.preferredTimeZone,
+      shirtColor: shirtColor,
     );
 
     final pendingAlert = SosAlert(
@@ -451,6 +473,7 @@ class SosAlertRepository {
       message: message,
       triggerLocation: triggerLocation,
       triggerSource: resolvedTriggerSource,
+      shirtColor: shirtColor,
     );
     int? durableQueueId;
     try {
@@ -487,6 +510,7 @@ class SosAlertRepository {
       message: message,
       triggerLocation: triggerLocation,
       triggerSource: resolvedTriggerSource,
+      shirtColor: shirtColor,
     );
     final acknowledgement =
         _completeSubmittedAlert(
@@ -547,6 +571,7 @@ class SosAlertRepository {
               triggerLocation: triggerLocation,
               customMessageNote: customMessageNote,
               triggerSource: resolvedTriggerSource,
+              shirtColor: pendingAlert.shirtColor,
             ),
           ),
         ),
@@ -582,6 +607,7 @@ class SosAlertRepository {
       message: message,
       triggerLocation: triggerLocation,
       triggerSource: resolvedTriggerSource,
+      shirtColor: pendingAlert.shirtColor,
     );
 
     if (sentCount > 0) {
@@ -814,6 +840,7 @@ class SosAlertRepository {
           final triggerSource = SosAlertTriggerSource.fromFirestore(
             payload['triggerSource'],
           );
+          final shirtColor = HikeShirtColor.fromName(payload['shirtColor']);
           final message =
               payload['message'] as String? ??
               SosAlertMessageComposer.compose(
@@ -825,6 +852,7 @@ class SosAlertRepository {
                 triggerSource: triggerSource,
                 preferredTimeZone:
                     AppSettingsController.instance.preferredTimeZone,
+                shirtColor: shirtColor,
               );
           final previousDispatches = _dispatchesFromPayload(
             payload['dispatches'],
@@ -851,6 +879,7 @@ class SosAlertRepository {
                 triggerLocation: triggerLocation,
                 customMessageNote: payload['customMessageNote'] as String?,
                 triggerSource: triggerSource,
+                shirtColor: shirtColor,
               ),
             );
           }
@@ -887,6 +916,7 @@ class SosAlertRepository {
             message: message,
             triggerLocation: triggerLocation,
             triggerSource: triggerSource,
+            shirtColor: shirtColor,
           );
 
           final remainingRetryContacts = _contactsRequiringRetry(
@@ -1051,10 +1081,11 @@ class SosAlertRepository {
   }) {
     final triggerLocation = alert.triggerLocation;
     return {
-      'schemaVersion': 3,
+      'schemaVersion': 4,
       'alertId': alert.id,
       'mode': alert.mode.firestoreValue,
       'triggerSource': alert.triggerSource.firestoreValue,
+      if (alert.shirtColor != null) 'shirtColor': alert.shirtColor!.name,
       'triggeredAtLocal': alert.triggeredAt.toUtc().toIso8601String(),
       'phoneNumber': session?.phoneNumber ?? sessionPhoneNumber ?? '',
       'message': alert.message,
@@ -1184,6 +1215,7 @@ class SosAlertRepository {
       message: alert.message,
       triggerLocation: alert.triggerLocation,
       triggerSource: alert.triggerSource,
+      shirtColor: alert.shirtColor,
     );
   }
 
@@ -1221,6 +1253,7 @@ class SosAlertRepository {
     required SosAlertTriggerSource triggerSource,
     String? customMessageNote,
     bool isTest = false,
+    HikeShirtColor? shirtColor,
   }) async {
     final normalizedPhoneNumber = PhoneNumberFormatter.normalize(
       contact.phoneNumber,
@@ -1255,6 +1288,7 @@ class SosAlertRepository {
               customNote: customMessageNote,
               triggerSource: triggerSource.firestoreValue,
               isTest: isTest,
+              shirtColor: shirtColor?.name,
             )
             .timeout(_sendAttemptTimeout);
 

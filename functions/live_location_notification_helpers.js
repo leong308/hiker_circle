@@ -3,6 +3,7 @@
 
 const crypto = require('crypto');
 const { formatSosDateTime } = require('./sos_dispatch_helpers');
+const {SHIRT_COLORS, normalizeShirtColor} = require('./hike_shirt_color');
 
 class LiveLocationNotificationValidationError extends Error {}
 
@@ -48,6 +49,7 @@ function composeLiveLocationStartMessage({
   trailName,
   startedAt,
   shareUrl,
+  shirtColor,
 }) {
   const safeName = normalizeLine(hikerName, 80) || 'A HikerCircle user';
   const safeTrail = normalizeLine(trailName, 160) || 'a hike';
@@ -65,6 +67,7 @@ function composeLiveLocationStartMessage({
     `${safeName} has started ${safeTrail}.`,
     safePhone ? `Hiker phone: ${safePhone}` : '',
     `Started: ${safeStartedAt}`,
+    normalizeShirtColor(shirtColor) ? `Shirt colour: ${SHIRT_COLORS[shirtColor]}` : '',
     '',
     '📍 Follow their live location:',
     safeShareUrl,

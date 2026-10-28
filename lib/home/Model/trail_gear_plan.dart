@@ -21,7 +21,7 @@ class TrailGearPlan {
 
   /// Computes missing required.
   Set<String> missingRequired(Iterable<String> saved) =>
-      requiredItems.difference(saved.toSet());
+      requiredItems.difference(normalizeItems(saved));
   final Map<String, List<String>> sections;
   final Map<String, String> reasons;
   final Map<String, bool> scenarios;
@@ -31,7 +31,21 @@ class TrailGearPlan {
 
   /// Computes completed.
   int completed(Iterable<String> saved) =>
-      saved.where(items.contains).toSet().length;
+      normalizeItems(saved).where(items.contains).length;
+
+  static const lightingItem = 'Headlamp or torchlight';
+
+  /// Retains packed lighting from older checklists as one combined item.
+  static Set<String> normalizeItems(Iterable<String> items) => items
+      .map(
+        (item) => switch (item) {
+          'Torch' ||
+          'Torchlight' ||
+          'Headlamp with spare batteries' => lightingItem,
+          _ => item,
+        },
+      )
+      .toSet();
   static const scenarioLabels = {
     'river': 'River crossings',
     'rough': 'Uneven / unpaved terrain',
@@ -44,14 +58,14 @@ class TrailGearPlan {
     'Energy snack',
     'First-aid kit',
     'Emergency whistle',
-    'Headlamp with spare batteries',
+    lightingItem,
+    'Power bank',
     'Raincoat',
     'Sun protection (hat, sunscreen)',
     'Emergency blanket',
   ];
   static const additions = {
     'Long day': [
-      'Power bank',
       'Extra food for delays',
       'Extra drinking water',
       'Blister care',
@@ -86,7 +100,6 @@ class TrailGearPlan {
     'Remote route': [
       'Physical map',
       'Compass',
-      'Power bank',
       'Satellite communicator if no signal',
       'Water filter or tablets',
       'Multi-tool',
@@ -138,6 +151,75 @@ class TrailGearPlan {
     return false;
   }
 
+  /// Checks every trail-local day, using saved sunrise/sunset or a 07:00–19:00 fallback.
+  static bool overlapsNighttime(
+    TrailWeather weather,
+    DateTime start,
+    DateTime end,
+  ) {
+    if (!end.isAfter(start)) return false;
+    final data = weather.forecastData;
+    final offset = Duration(
+      seconds: (data['utc_offset_seconds'] as num?)?.toInt() ?? 8 * 3600,
+    );
+    final localStart = start.toUtc().add(offset),
+        localEnd = end.toUtc().add(offset);
+    final daily = data['daily'] is Map ? data['daily'] as Map : const {};
+    final days = daily['time'] is List ? daily['time'] as List : const [];
+    for (
+      var day = DateTime.utc(localStart.year, localStart.month, localStart.day);
+      day.isBefore(localEnd);
+      day = day.add(const Duration(days: 1))
+    ) {
+      final dayStart = day.subtract(offset),
+          dayEnd = dayStart.add(const Duration(days: 1));
+      var sunrise = dayStart.add(const Duration(hours: 7));
+      var sunset = dayStart.add(const Duration(hours: 19));
+      for (var index = 0; index < days.length; index++) {
+        final stamp = _daylightTime(days, index);
+        if (stamp == null) continue;
+        final localDay = stamp.add(offset);
+        if (localDay.year != day.year ||
+            localDay.month != day.month ||
+            localDay.day != day.day) {
+          continue;
+        }
+        final rise = _daylightTime(daily['sunrise'], index),
+            set = _daylightTime(daily['sunset'], index);
+        if (rise != null &&
+            set != null &&
+            !rise.isBefore(dayStart) &&
+            set.isBefore(dayEnd) &&
+            set.isAfter(rise)) {
+          sunrise = rise;
+          sunset = set;
+        }
+        break;
+      }
+      final segmentStart = start.toUtc().isAfter(dayStart)
+          ? start.toUtc()
+          : dayStart;
+      final segmentEnd = end.toUtc().isBefore(dayEnd) ? end.toUtc() : dayEnd;
+      if (segmentStart.isBefore(sunrise) || !segmentEnd.isBefore(sunset)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Reads a bounded forecast epoch without accepting malformed daylight values.
+  static DateTime? _daylightTime(dynamic values, int index) {
+    if (values is! List || index >= values.length || values[index] is! num) {
+      return null;
+    }
+    final epoch = (values[index] as num).toDouble();
+    if (!epoch.isFinite || epoch <= 0 || epoch > 8640000000000) return null;
+    return DateTime.fromMillisecondsSinceEpoch(
+      (epoch * 1000).round(),
+      isUtc: true,
+    );
+  }
+
   /// Selects for trail.
   static TrailGearPlan forTrail(
     Trail trail,
@@ -163,6 +245,14 @@ class TrailGearPlan {
     if (overlapsSunProtectionWindow(start, end, offset)) {
       required['Sun protection (hat, sunscreen)'] =
           'Your hike overlaps 08:00–18:00 at the trail';
+    }
+    if (overlapsNighttime(trail.weather, start, end)) {
+      required[lightingItem] =
+          'Your planned hike overlaps nighttime. Pack a headlamp or torchlight with spare power.';
+    }
+    if (trail.distanceKm > 5) {
+      required['Power bank'] =
+          'Required for trails longer than 5 km. Bring it charged for navigation and communication.';
     }
     if (fresh &&
         forecast.hours.any(
