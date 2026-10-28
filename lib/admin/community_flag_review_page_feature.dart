@@ -1,4 +1,5 @@
 // A focused review page keeps detection evidence beside the original content.
+import '../core/widgets/section_label.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';

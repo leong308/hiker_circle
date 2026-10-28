@@ -6,12 +6,17 @@ class TrailWeatherPanel extends StatefulWidget {
   const TrailWeatherPanel({
     super.key,
     required this.weather,
+    this.trail,
+    this.loadLocationWeather,
     this.elevationGainMeters = 0,
     this.durationMinutes = 0,
     this.onDepartureChanged,
   });
   final ValueChanged<DateTime?>? onDepartureChanged;
   final TrailWeather weather;
+  final Trail? trail;
+  final Stream<TrailWeather> Function(Trail, TrailWeatherLocation)?
+  loadLocationWeather;
   final int elevationGainMeters;
   final int durationMinutes;
 
@@ -57,6 +62,8 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
     _screenModel = _TrailWeatherPanelStateViewModel(
       readOnDepartureChanged: () => widget.onDepartureChanged,
       readWeather: () => widget.weather,
+      readTrail: () => widget.trail,
+      readLocationWeather: () => widget.loadLocationWeather,
     )..addListener(_renderScreenModel);
 
     _freshnessTimer = Timer.periodic(const Duration(minutes: 1), (_) {
@@ -78,7 +85,12 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
   @override
   void didUpdateWidget(covariant TrailWeatherPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.elevationGainMeters <= 250 && chartMetric == 3) chartMetric = 0;
+    if (oldWidget.trail?.trailId != widget.trail?.trailId ||
+        !_screenModel.commandLocations.any(
+          (point) => point.key == _screenModel.stateLocationKey,
+        )) {
+      _screenModel.commandResetLocations();
+    }
   }
 
   /// Returns data.
@@ -112,6 +124,28 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
+    if (!_screenModel.commandHasLocationWeather) {
+      return Material(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(22),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _locationPicker(),
+              const SizedBox(height: 16),
+              if (_screenModel.stateLoadingLocation) ...[
+                const LinearProgressIndicator(),
+                const SizedBox(height: 12),
+                const Text('Loading checkpoint forecast…'),
+              ],
+              if (_screenModel.stateLocationError != null) _locationError(),
+            ],
+          ),
+        ),
+      );
+    }
     if (days.isEmpty) {
       return Card(
         child: Padding(
@@ -119,6 +153,10 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (widget.trail != null && widget.trail!.distanceKm > 3) ...[
+                _locationPicker(),
+                const SizedBox(height: 16),
+              ],
               Text(
                 'Before you set off now',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -128,7 +166,7 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
               ),
               const SizedBox(height: 8),
               for (final caution in trailPrecautions(
-                weather: widget.weather,
+                weather: _screenModel.commandWeather,
                 day: 0,
                 now: DateTime.now(),
                 elevationGain: widget.elevationGainMeters,
@@ -152,7 +190,7 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
     final code = value(d, 'weather_code', i);
     final daylight = value(d, 'daylight_duration', i);
     final cautions = trailPrecautions(
-      weather: widget.weather,
+      weather: _screenModel.commandWeather,
       day: i,
       now: DateTime.now(),
       elevationGain: widget.elevationGainMeters,
@@ -178,28 +216,37 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (var j = 0; j < days.length; j++)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        avatar: Icon(
-                          forecastWeatherIcon(value(d, 'weather_code', j)),
-                          size: 18,
-                        ),
-                        label: Text(date(days[j] as num)),
-                        selected: i == j,
-                        onSelected: (_) {
-                          setState(() => selected = j);
-                          _notifyDepartureChanged();
-                        },
+            if (widget.trail != null && widget.trail!.distanceKm > 3) ...[
+              _locationPicker(),
+              const SizedBox(height: 16),
+            ],
+            if (_screenModel.stateLocationError != null) _locationError(),
+            if (_screenModel.stateRefreshingLocation) ...[
+              const LinearProgressIndicator(),
+              const SizedBox(height: 12),
+            ],
+            Text('Select day', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 8),
+            ForecastScrollRow(
+              key: const ValueKey('forecast-dates-scroll'),
+              children: [
+                for (var j = 0; j < days.length; j++)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      avatar: Icon(
+                        forecastWeatherIcon(value(d, 'weather_code', j)),
+                        size: 18,
                       ),
+                      label: Text(date(days[j] as num)),
+                      selected: i == j,
+                      onSelected: (_) {
+                        setState(() => selected = j);
+                        _notifyDepartureChanged();
+                      },
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
             const SizedBox(height: 20),
             Row(
@@ -234,35 +281,6 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
               ],
             ),
             const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (value(d, 'precipitation_probability_max', i)
-                    case final num rain)
-                  weatherMetric(
-                    context,
-                    Icons.water_drop_outlined,
-                    'Rain chance',
-                    '${rain.round()}%',
-                  ),
-                if (value(d, 'wind_gusts_10m_max', i) case final num gust)
-                  weatherMetric(
-                    context,
-                    Icons.air_rounded,
-                    'Peak gusts',
-                    '${gust.round()} km/h',
-                  ),
-                if (value(d, 'uv_index_max', i) case final num uv)
-                  weatherMetric(
-                    context,
-                    Icons.wb_sunny_outlined,
-                    'Peak UV',
-                    uv.toStringAsFixed(1),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 18),
             _chart(context, indices, times),
             if (value(d, 'sunrise', i) != null ||
                 value(d, 'sunset', i) != null) ...[
@@ -296,6 +314,34 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
                   ),
                 ),
             ],
+            const SizedBox(height: 14),
+            ForecastScrollRow(
+              key: const ValueKey('forecast-summary-scroll'),
+              children: [
+                if (value(d, 'precipitation_probability_max', i)
+                    case final num rain)
+                  weatherMetric(
+                    context,
+                    Icons.water_drop_outlined,
+                    'Rain chance',
+                    '${rain.round()}%',
+                  ),
+                if (value(d, 'wind_gusts_10m_max', i) case final num gust)
+                  weatherMetric(
+                    context,
+                    Icons.air_rounded,
+                    'Peak gusts',
+                    '${gust.round()} km/h',
+                  ),
+                if (value(d, 'uv_index_max', i) case final num uv)
+                  weatherMetric(
+                    context,
+                    Icons.wb_sunny_outlined,
+                    'Peak UV',
+                    uv.toStringAsFixed(1),
+                  ),
+              ],
+            ),
             const SizedBox(height: 24),
             _precautionsSection(context, [
               Text(
@@ -405,6 +451,52 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
     );
   }
 
+  /// Places the forecast coordinate selector before the day picker.
+  Widget _locationPicker() => DropdownButtonFormField<String>(
+    key: ValueKey(
+      'forecast-location-${widget.trail?.trailId}-${_screenModel.stateLocationKey}',
+    ),
+    initialValue: _screenModel.stateLocationKey,
+    isExpanded: true,
+    decoration: const InputDecoration(
+      labelText: 'Forecast location',
+      prefixIcon: Icon(Icons.location_on_outlined),
+    ),
+    items: [
+      for (final location in _screenModel.commandLocations)
+        DropdownMenuItem(
+          value: location.key,
+          child: Text(
+            location.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+    ],
+    onChanged: (key) {
+      if (key != null) _screenModel.commandSelectLocation(key);
+    },
+  );
+
+  /// Keeps retry beside the affected forecast instead of silently changing locations.
+  Widget _locationError() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        _screenModel.stateLocationError!,
+        style: TextStyle(color: Theme.of(context).colorScheme.error),
+      ),
+      TextButton.icon(
+        onPressed: () => _screenModel.commandSelectLocation(
+          _screenModel.stateLocationKey,
+          retry: true,
+        ),
+        icon: const Icon(Icons.refresh_rounded),
+        label: const Text('Retry forecast'),
+      ),
+    ],
+  );
+
   /// Computes precaution card.
   Widget _precautionCard(TrailPrecaution caution, String scope) {
     final id = '$scope:${caution.id}';
@@ -490,7 +582,8 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
   /// Computes forecast freshness card.
   Widget _forecastFreshnessCard(BuildContext context) {
     final theme = Theme.of(context);
-    final cachedEpoch = widget.weather.cachedAt.millisecondsSinceEpoch / 1000;
+    final cachedEpoch =
+        _screenModel.commandWeather.cachedAt.millisecondsSinceEpoch / 1000;
     final timezone = data['timezone']?.toString().trim();
     return Container(
       padding: const EdgeInsets.all(16),
@@ -511,7 +604,7 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
               shape: BoxShape.circle,
             ),
             child: Icon(
-              widget.weather.isStale
+              _screenModel.commandWeather.isStale
                   ? Icons.history_rounded
                   : Icons.cloud_done_rounded,
               color: theme.colorScheme.primary,
@@ -523,8 +616,8 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.weather.isStale
-                      ? 'Forecast may be outdated'
+                  _screenModel.commandWeather.isStale
+                      ? 'Forecast expired'
                       : 'Forecast is up to date',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
@@ -559,6 +652,19 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
                     ],
                   ),
                 ],
+                if (_screenModel.stateLocationKey !=
+                        TrailWeatherLocation.trailheadKey &&
+                    _screenModel.commandWeather.isStale)
+                  TextButton.icon(
+                    onPressed: _screenModel.stateRefreshingLocation
+                        ? null
+                        : () => _screenModel.commandSelectLocation(
+                            _screenModel.stateLocationKey,
+                            retry: true,
+                          ),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Refresh forecast'),
+                  ),
               ],
             ),
           ),
@@ -589,20 +695,10 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
       'temperature_2m',
       'precipitation_probability',
       'relative_humidity_2m',
-      if (widget.elevationGainMeters > 250) 'wind_speed_10m',
+      'wind_speed_10m',
     ];
-    final labels = [
-      'Temperature',
-      'Rain',
-      'Humidity',
-      if (widget.elevationGainMeters > 250) 'Wind',
-    ];
-    final units = [
-      '°C',
-      '%',
-      '%',
-      if (widget.elevationGainMeters > 250) 'km/h',
-    ];
+    final labels = ['Temperature', 'Rain', 'Humidity', 'Wind'];
+    final units = ['°C', '%', '%', 'km/h'];
     final spots = <FlSpot>[
       for (final h in indices)
         value(hourly, keys[chartMetric], h) == null
@@ -620,10 +716,26 @@ class _TrailWeatherPanelState extends State<TrailWeatherPanel> {
           spacing: 6,
           children: [
             for (var m = 0; m < labels.length; m++)
-              ChoiceChip(
-                label: Text(labels[m]),
-                selected: chartMetric == m,
-                onSelected: (_) => setState(() => chartMetric = m),
+              Tooltip(
+                message: labels[m],
+                child: Semantics(
+                  label: labels[m],
+                  selected: chartMetric == m,
+                  child: ChoiceChip(
+                    showCheckmark: false,
+                    label: Icon(
+                      const [
+                        Icons.thermostat_rounded,
+                        Icons.water_drop_outlined,
+                        Icons.water_outlined,
+                        Icons.air_rounded,
+                      ][m],
+                      size: 22,
+                    ),
+                    selected: chartMetric == m,
+                    onSelected: (_) => setState(() => chartMetric = m),
+                  ),
+                ),
               ),
           ],
         ),

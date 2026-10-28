@@ -135,7 +135,7 @@ class _FirstAidGuidePageState extends State<FirstAidGuidePage> {
                         },
                       ),
                       const SizedBox(height: 22),
-                      _SectionTitle(label: 'First choose a category'),
+                      SectionLabel(label: 'First choose a category'),
                       const SizedBox(height: 8),
                       for (final category in categories) ...[
                         _CategoryCard(
@@ -219,7 +219,7 @@ class _FirstAidCategoryPage extends StatelessWidget {
                   const SizedBox(height: 16),
                   _CategoryHero(category: category),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'What to do'),
+                  SectionLabel(label: 'What to do'),
                   const SizedBox(height: 8),
                   if (scenarios.isNotEmpty)
                     _ScenarioResponseGuide(
@@ -247,7 +247,7 @@ class _FirstAidCategoryPage extends StatelessWidget {
                   if (scenarios.isEmpty || category.isCpr)
                     _GuidanceSourceCard(topic: category.topics.first),
                   const SizedBox(height: 22),
-                  _SectionTitle(
+                  SectionLabel(
                     label: category.isCpr
                         ? 'Get emergency help now'
                         : 'When to use SOS',
@@ -1026,31 +1026,6 @@ class _EmergencyShortcut extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Displays the section title.
-class _SectionTitle extends StatelessWidget {
-  /// Creates section title.
-  const _SectionTitle({required this.label});
-
-  final String label;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 14),
-      child: Text(
-        label.toUpperCase(),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _GuideColors.secondaryTextFor(context),
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          letterSpacing: 0,
         ),
       ),
     );

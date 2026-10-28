@@ -1,4 +1,5 @@
 // HikeHistoryPage browses completed and expired hikes, with route, telemetry and team detail views.
+import '../core/widgets/section_label.dart';
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 import 'dart:math' as math;

@@ -104,7 +104,7 @@ List<TrailPrecaution> trailPrecautions({
   String metric(String key, String unit) => peak(key) == null
       ? 'unavailable'
       : '${peak(key)!.toStringAsFixed(0)}$unit';
-  final stale = now.toUtc().difference(weather.cachedAt.toUtc()).inHours >= 4;
+  final stale = weather.isStaleAt(now);
   final requiredKeys = [
     'temperature_2m',
     'relative_humidity_2m',
@@ -142,10 +142,10 @@ List<TrailPrecaution> trailPrecautions({
       'data',
       3,
       'Conditions could not be fully assessed',
-      '${stale ? 'Forecast is over four hours old. ' : ''}${incomplete ? 'Some forecast hours or measurements are unavailable. ' : ''}Refresh weather and check official warnings before departure.',
+      '${stale ? 'Forecast is at least three hours old. ' : ''}${incomplete ? 'Some forecast hours or measurements are unavailable. ' : ''}Refresh weather and check official warnings before departure.',
       quickAction: 'Refresh weather and check official alerts.',
       quickFacts: [
-        if (stale) 'Forecast >4h old',
+        if (stale) 'Forecast ≥3h old',
         if (incomplete) 'Incomplete forecast',
       ],
     );

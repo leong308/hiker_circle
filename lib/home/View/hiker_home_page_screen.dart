@@ -2999,6 +2999,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           builder: (_) => FinalPreparationReviewPage(
             hike: preview,
             immediate: true,
+            checkTrailheadOnStart: upcomingHikeId?.isNotEmpty == true,
             isHost: !joiningTeam,
             primaryActionLabel: joiningTeam
                 ? 'Continue to team readiness'
@@ -9004,14 +9005,7 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                   ),
                   if (_routeAnalysis.checkpoints.isNotEmpty) ...[
                     const SizedBox(height: 18),
-                    Text(
-                      'CHECKPOINT PERFORMANCE',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: _SummaryColors.secondaryTextFor(context),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0,
-                      ),
-                    ),
+                    const SectionLabel(label: 'CHECKPOINT PERFORMANCE'),
                     const SizedBox(height: 8),
                     _SummaryCard(
                       child: Column(
@@ -9036,14 +9030,7 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                   ],
                   if (widget.activeHike.checkInRecords.isNotEmpty) ...[
                     const SizedBox(height: 18),
-                    Text(
-                      'CHECK-INS',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: _SummaryColors.secondaryTextFor(context),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0,
-                      ),
-                    ),
+                    const SectionLabel(label: 'CHECK-INS'),
                     const SizedBox(height: 8),
                     _SummaryCard(
                       child: widget.activeHike.checkInRecords.isEmpty
@@ -9087,14 +9074,7 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
                     ),
                   ],
                   const SizedBox(height: 18),
-                  Text(
-                    'INSIGHTS',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: _SummaryColors.secondaryTextFor(context),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
-                  ),
+                  const SectionLabel(label: 'INSIGHTS'),
                   const SizedBox(height: 8),
                   _SummaryCard(
                     child: Column(

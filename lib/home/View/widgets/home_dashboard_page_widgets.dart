@@ -416,7 +416,7 @@ class _BestMatchesHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Expanded(child: _SectionTitle(label: 'Hiking Trails')),
+        const Expanded(child: SectionLabel(label: 'Hiking Trails')),
         if (onAddTrailByAdmin != null)
           Tooltip(
             message: 'Add trail',

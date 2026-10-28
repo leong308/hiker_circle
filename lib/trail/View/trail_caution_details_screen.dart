@@ -414,7 +414,7 @@ class _TrailCautionsHistoryState extends State<TrailCautionsHistory> {
       ? const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Trail Cautions History'),
+            SectionLabel(label: 'Trail Cautions History'),
             SizedBox(height: 8),
             Text('Sign in to view caution history.'),
           ],
@@ -489,12 +489,7 @@ class TrailCautionsHistoryList extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Trail Cautions History',
-          style: Theme.of(
-            context,
-          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-        ),
+        const SectionLabel(label: 'Trail Cautions History'),
         const SizedBox(height: 12),
         if (hasError && sorted.isEmpty)
           const Text(

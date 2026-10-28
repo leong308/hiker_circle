@@ -1677,17 +1677,9 @@ class _SettingsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
+        SectionLabel(
+          label: section.title,
           padding: const EdgeInsets.only(left: 14, bottom: 7),
-          child: Text(
-            section.title.toUpperCase(),
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _MeColors.secondaryTextFor(context),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0,
-            ),
-          ),
         ),
         _InsetGroup(
           child: Column(

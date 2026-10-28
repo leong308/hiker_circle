@@ -1,3 +1,4 @@
+import '../core/widgets/section_label.dart';
 import 'View/hike_safety_settings_page.dart';
 import 'Model/hike_safety_preferences.dart';
 import 'View/fall_sensitivity_setting.dart';

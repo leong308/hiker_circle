@@ -1490,28 +1490,6 @@ class _AdminNotice extends StatelessWidget {
   }
 }
 
-/// Displays the section title.
-class _SectionTitle extends StatelessWidget {
-  /// Creates section title.
-  const _SectionTitle({required this.label});
-
-  final String label;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      label,
-      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-        color: _AdminColors.secondaryTextFor(context),
-        fontSize: 16,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0,
-      ),
-    );
-  }
-}
-
 /// Displays the circle icon.
 class _CircleIcon extends StatelessWidget {
   /// Creates circle icon.
@@ -1650,7 +1628,7 @@ class _DebugSectionPicker extends StatelessWidget {
     return Column(
       children: [
         const SizedBox(height: 8),
-        _SectionTitle(label: 'All Debug Data Sources'),
+        SectionLabel(label: 'All Debug Data Sources'),
         const SizedBox(height: 8),
         const _DebugSourceNotice(
           title: 'Inspect app data',
@@ -1776,7 +1754,7 @@ class _FirestoreDebugView extends StatelessWidget {
           icon: Icons.cloud_done_rounded,
         ),
         const SizedBox(height: 12),
-        _SectionTitle(
+        SectionLabel(
           label:
               '$populated/${data.length} collections / $totalDocuments documents',
         ),
@@ -1825,7 +1803,7 @@ class _LocalDbDebugView extends StatelessWidget {
           icon: Icons.phone_android_rounded,
         ),
         const SizedBox(height: 12),
-        _SectionTitle(
+        SectionLabel(
           label: '$populated/${data.length} tables / $totalRows rows',
         ),
         const SizedBox(height: 8),
@@ -1871,7 +1849,7 @@ class _RuntimeDebugView extends StatelessWidget {
           icon: Icons.memory_rounded,
         ),
         const SizedBox(height: 12),
-        _SectionTitle(label: '${data.length} runtime state groups'),
+        SectionLabel(label: '${data.length} runtime state groups'),
         const SizedBox(height: 8),
         if (data.isEmpty)
           const _EmptyState(message: 'No runtime state snapshot loaded.')

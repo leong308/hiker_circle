@@ -2068,7 +2068,7 @@ class _TeamDetailPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Roster'),
+                  SectionLabel(label: 'Roster'),
                   const SizedBox(height: 8),
                   Container(
                     decoration: BoxDecoration(
@@ -2109,7 +2109,7 @@ class _TeamDetailPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 22),
-                  _SectionTitle(label: 'Team Safety Logic'),
+                  SectionLabel(label: 'Team Safety Logic'),
                   const SizedBox(height: 8),
                   Container(
                     decoration: BoxDecoration(
@@ -2749,44 +2749,6 @@ class _InfoLine extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Displays the section title.
-class _SectionTitle extends StatelessWidget {
-  /// Creates section title.
-  const _SectionTitle({required this.label});
-
-  final String label;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 2),
-      child: Row(
-        children: [
-          Container(
-            width: 3,
-            height: 18,
-            decoration: BoxDecoration(
-              color: _CircleColors.green,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            label.toUpperCase(),
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: _CircleColors.secondaryTextFor(context),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

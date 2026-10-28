@@ -1063,14 +1063,14 @@ class _TeamsSection extends StatelessWidget {
       children: [
         _TeamBuilderCard(buddies: buddies, onCreateTeam: onCreateTeam),
         const SizedBox(height: 22),
-        _SectionTitle(label: 'Team Hikes'),
+        SectionLabel(label: 'Team Hikes'),
         const SizedBox(height: 8),
         for (final team in teams) ...[
           _TeamPlanCard(team: team),
           const SizedBox(height: 12),
         ],
         const SizedBox(height: 10),
-        _SectionTitle(label: 'Team Flow'),
+        SectionLabel(label: 'Team Flow'),
         const SizedBox(height: 8),
         const _InsetGroup(
           child: Column(
@@ -2131,7 +2131,7 @@ class _ChatsSection extends StatelessWidget {
 
     final tiles = <Widget>[];
     if (pinned.isNotEmpty) {
-      tiles.add(_SectionTitle(label: 'Pinned chats'));
+      tiles.add(SectionLabel(label: 'Pinned chats'));
       tiles.add(const SizedBox(height: 10));
       for (final chat in pinned) {
         tiles.add(
@@ -2152,7 +2152,7 @@ class _ChatsSection extends StatelessWidget {
       }
     }
     if (unpinned.isNotEmpty) {
-      tiles.add(_SectionTitle(label: 'Chats'));
+      tiles.add(SectionLabel(label: 'Chats'));
       tiles.add(const SizedBox(height: 10));
       for (final chat in unpinned) {
         tiles.add(

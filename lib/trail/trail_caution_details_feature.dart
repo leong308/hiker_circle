@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../core/widgets/caution_icon.dart';
 import '../core/widgets/page_header_style.dart';
+import '../core/widgets/section_label.dart';
 import '../core/widgets/community_hazard_marker.dart';
 import '../home/View/hike_start_navigation.dart';
 import 'Data/trail_caution_service.dart';

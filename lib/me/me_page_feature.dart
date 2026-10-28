@@ -1,3 +1,4 @@
+import '../core/widgets/section_label.dart';
 import 'View/safety_settings_panel.dart';
 import '../home/Data/location_update_interval_controller.dart';
 // MePage coordinates profile, account settings, privacy, achievements and security actions.

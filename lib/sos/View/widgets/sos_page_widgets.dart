@@ -1232,7 +1232,7 @@ class _SosTriggerLogPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionTitle(label: 'SOS communication'),
+        const SectionLabel(label: 'SOS communication'),
         const SizedBox(height: 8),
         _DeliveryActionCard(
           icon: Icons.chat_bubble_rounded,

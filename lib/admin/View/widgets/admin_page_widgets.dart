@@ -166,7 +166,7 @@ class _HazardReportsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SectionTitle(label: 'Hazard Reports'),
+        SectionLabel(label: 'Hazard Reports'),
         const SizedBox(height: 8),
         Column(
           children: [
@@ -221,7 +221,7 @@ class _AchievementManagementSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Expanded(child: _SectionTitle(label: 'Achievement Rules')),
+            const Expanded(child: SectionLabel(label: 'Achievement Rules')),
             FilledButton.icon(
               onPressed: isSaving ? null : onAdd,
               icon: const Icon(Icons.add_rounded, size: 18),

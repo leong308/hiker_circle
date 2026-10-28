@@ -152,30 +152,6 @@ class _IdentityCard extends StatelessWidget {
   }
 }
 
-/// Displays the section label.
-class _SectionLabel extends StatelessWidget {
-  /// Creates section label.
-  const _SectionLabel(this.text);
-
-  final String text;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 4),
-      child: Text(
-        text,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: _ProfileColors.secondaryTextFor(context),
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.8,
-        ),
-      ),
-    );
-  }
-}
-
 /// Displays the detail row.
 class _DetailRow extends StatelessWidget {
   /// Creates detail row.

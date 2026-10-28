@@ -57,6 +57,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   bool get _editingContacts => _screenModel.stateEditingContacts;
 
   late final _StartHikeWizardPageStateViewModel _screenModel;
+  final _trailheadModel = TrailheadProximityViewModel();
 
   /// Returns draft.
   HikeSessionDraft get _draft => _screenModel.stateDraft;
@@ -109,6 +110,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   @override
   void initState() {
     super.initState();
+    _trailheadModel.addListener(_renderScreenModel);
     _screenModel = _StartHikeWizardPageStateViewModel(
       readPreselectedTrail: () => widget.preselectedTrail,
     )..addListener(_renderScreenModel);
@@ -184,7 +186,11 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
 
   /// Validate the current wizard step and keep the draft within the active step sequence.
   Future<void> _next() async {
-    if (_isScheduling || _isStarting || _checkingDistance || _checkingHazards) {
+    if (_isScheduling ||
+        _isStarting ||
+        _checkingDistance ||
+        _checkingHazards ||
+        _trailheadModel.continuing) {
       return;
     }
     if (!_initialReportsChecked) {
@@ -212,6 +218,14 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
         );
       return;
     }
+
+    if (currentStep == _StartHikeWizardStep.timing &&
+        _startNow &&
+        !_draft.trail.isUnlisted &&
+        !await _confirmTrailheadProximity()) {
+      return;
+    }
+    if (!mounted) return;
 
     if (currentStep == _StartHikeWizardStep.trail &&
         (_draft.effectiveCheckpoints.length < 3 ||
@@ -262,7 +276,29 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     setState(() {
       _stepIndex += 1;
     });
+    _fetchTimingLocation();
   }
+
+  /// Starts GPS when an immediate hike enters Timing and Tracking.
+  void _fetchTimingLocation() {
+    if (_steps[_stepIndex] == _StartHikeWizardStep.timing &&
+        _startNow &&
+        !_draft.trail.isUnlisted) {
+      unawaited(_trailheadModel.requestCurrentLocation());
+    }
+  }
+
+  /// Presents the ViewModel's distance decision before leaving the timing step.
+  Future<bool> _confirmTrailheadProximity() => _trailheadModel.confirmContinue(
+    _draft.trail,
+    presentWarning: (comparison) => showDialog<TrailheadProximityAction>(
+      context: context,
+      builder: (_) => TrailheadProximityDialog(proximity: comparison),
+    ),
+    onDirectionsUnavailable: () => ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Unable to open Waze. Please try again.')),
+    ),
+  );
 
   /// Starts now and finish.
   Future<void> _startNowAndFinish() async {
@@ -491,6 +527,7 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
     setState(() {
       _stepIndex -= 1;
     });
+    _fetchTimingLocation();
   }
 
   /// Delegates update draft to the ViewModel.
@@ -502,8 +539,10 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
       _screenModel.commandEditSafetyContacts();
 
   /// Delegates update start now to the ViewModel.
-  void _updateStartNow(bool startNow) =>
-      _screenModel.commandUpdateStartNow(startNow);
+  void _updateStartNow(bool startNow) {
+    _screenModel.commandUpdateStartNow(startNow);
+    if (startNow) _fetchTimingLocation();
+  }
 
   /// Delegates draft for now to the ViewModel.
   HikeSessionDraft _draftForNow() => _screenModel.commandDraftForNow();
@@ -565,7 +604,11 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _Header(
-                        onBack: _isScheduling || _isStarting || _checkingHazards
+                        onBack:
+                            _isScheduling ||
+                                _isStarting ||
+                                _checkingHazards ||
+                                _trailheadModel.continuing
                             ? () {}
                             : _back,
                       ),
@@ -575,7 +618,13 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                         totalSteps: _stepCount,
                       ),
                       const SizedBox(height: 18),
-                      KeyedSubtree(key: ValueKey(_stepIndex), child: step),
+                      AbsorbPointer(
+                        absorbing: _trailheadModel.continuing,
+                        child: KeyedSubtree(
+                          key: ValueKey(_stepIndex),
+                          child: step,
+                        ),
+                      ),
                       const SizedBox(height: 18),
                       Row(
                         children: [
@@ -585,7 +634,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                               onPressed:
                                   _isScheduling ||
                                       _isStarting ||
-                                      _checkingHazards
+                                      _checkingHazards ||
+                                      _trailheadModel.continuing
                                   ? null
                                   : _back,
                               child: Text(_stepIndex <= 0 ? 'Cancel' : 'Back'),
@@ -598,7 +648,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                               onPressed:
                                   _isScheduling ||
                                       _isStarting ||
-                                      _checkingHazards
+                                      _checkingHazards ||
+                                      _trailheadModel.continuing
                                   ? null
                                   : _next,
                               icon: Icon(
@@ -613,6 +664,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
                                     ? 'Scheduling...'
                                     : _isStarting
                                     ? 'Starting...'
+                                    : _trailheadModel.continuing
+                                    ? 'Checking location…'
                                     : _isFinalStep
                                     ? _isUpcomingHike
                                           ? 'Schedule Hike'
@@ -809,6 +862,8 @@ class _StartHikeWizardPageState extends State<StartHikeWizardPage> {
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    _trailheadModel.removeListener(_renderScreenModel);
+    _trailheadModel.dispose();
     _screenModel.removeListener(_renderScreenModel);
     _screenModel.dispose();
     super.dispose();

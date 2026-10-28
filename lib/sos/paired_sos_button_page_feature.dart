@@ -1,4 +1,5 @@
 // PairedSosButtonPage displays BLE button readiness and runs a controlled paired-button test.
+import '../core/widgets/section_label.dart';
 import 'package:hiker_circle/core/widgets/page_header_style.dart';
 import 'dart:async';
 

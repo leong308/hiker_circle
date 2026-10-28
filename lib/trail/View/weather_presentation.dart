@@ -4,6 +4,58 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../core/widgets/running_border.dart';
 import '../Model/trail_precautions.dart';
 
+/// Shows a draggable scroll thumb below horizontally arranged forecast choices.
+class ForecastScrollRow extends StatefulWidget {
+  /// Reuses the same visible scrolling affordance for dates and summary metrics.
+  const ForecastScrollRow({super.key, required this.children});
+  final List<Widget> children;
+
+  /// Creates the strip's scroll-controller owner.
+  @override
+  State<ForecastScrollRow> createState() => _ForecastScrollRowState();
+}
+
+/// Keeps each forecast strip's scrollbar attached to exactly one scroll position.
+class _ForecastScrollRowState extends State<ForecastScrollRow> {
+  final _controller = ScrollController();
+
+  /// Releases the scroll position when the forecast leaves the page.
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// Places the visible track below the content without covering the cards.
+  @override
+  Widget build(BuildContext context) => RawScrollbar(
+    controller: _controller,
+    thumbVisibility: true,
+    trackVisibility: true,
+    interactive: true,
+    thumbColor: Theme.of(context).colorScheme.primary.withValues(alpha: .65),
+    trackColor: Theme.of(context).colorScheme.primary.withValues(alpha: .10),
+    trackBorderColor: Colors.transparent,
+    thickness: 4,
+    radius: const Radius.circular(4),
+    scrollbarOrientation: ScrollbarOrientation.bottom,
+    child: SingleChildScrollView(
+      controller: _controller,
+      primary: false,
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        children: [
+          for (var i = 0; i < widget.children.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            widget.children[i],
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
 /// Shared presentation for trail outlooks and scheduled hiking forecasts.
 Widget weatherMetric(
   BuildContext context,

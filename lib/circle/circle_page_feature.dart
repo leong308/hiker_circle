@@ -1,4 +1,5 @@
 // CirclePage combines community stories, buddy discovery, teams and group chat navigation.
+import '../core/widgets/section_label.dart';
 import '../core/widgets/page_header_style.dart';
 import '../core/widgets/running_border.dart';
 import 'dart:async';

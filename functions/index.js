@@ -9459,6 +9459,26 @@ exports.fetchWeatherForAllTrails = onSchedule(
   }
 );
 
+// fetchWeatherForTrailCheckpoint: Keep additional point forecasts separate from the trailhead forecast.
+exports.fetchWeatherForTrailCheckpoint = onCall({}, async (request) => {
+  authenticatedPhoneFor(request, 'Sign in to check checkpoint weather.');
+  const trailId = String(request.data?.trailId || '').trim();
+  const checkpointKey = String(request.data?.checkpointKey || '').trim();
+  if (!validFirestoreDocumentId(trailId) || !/^-?\d{1,2}\.\d{5}_-?\d{1,3}\.\d{5}$/.test(checkpointKey)) {
+    throw new HttpsError('invalid-argument', 'Choose a valid trail checkpoint.');
+  }
+  const {loadCheckpointWeather, CheckpointWeatherError} = require('./trail_checkpoint_weather');
+  const db = admin.firestore();
+  try {
+    const weather = await loadCheckpointWeather(db, db.collection('trails').doc(trailId), checkpointKey);
+    return {weather};
+  } catch (error) {
+    if (error instanceof CheckpointWeatherError) throw new HttpsError(error.code, error.message);
+    logger.warn('Checkpoint weather unavailable', {trailId, checkpointKey, message: error.message});
+    throw new HttpsError('unavailable', 'Checkpoint weather is unavailable. Please try again.');
+  }
+});
+
 // fetchWeatherForTrail: Return conditional forecast hashes while preserving the shared refresh lease.
 exports.fetchWeatherForTrail = onCall(
   {},

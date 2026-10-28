@@ -9,7 +9,7 @@ class HikeBriefingWeatherService {
   /// Creates hike briefing weather service.
   HikeBriefingWeatherService({http.Client? client}) : _client = client;
   static final shared = HikeBriefingWeatherService();
-  static const freshness = Duration(hours: 4);
+  static const freshness = TrailWeather.cacheFreshness;
   static const forecastDays = 16;
 
   /// Checks whether beyond forecast.
