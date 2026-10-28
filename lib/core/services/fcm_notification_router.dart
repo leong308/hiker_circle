@@ -1,11 +1,16 @@
 // FcmNotificationRouter maps known notification payloads to supported app deep links without
 // invoking navigation itself.
+import '../../home/Model/active_trail_hazard_notice.dart';
+
 /// Represents fcm notification router.
 abstract final class FcmNotificationRouter {
   /// Computes deep link for.
   static String? deepLinkFor(Map<String, dynamic> data) {
     final type = data['type']?.toString().trim() ?? '';
     if (type == 'trail_hazard_alert') {
+      if (ActiveTrailHazardNotice.isActiveFcm(data)) {
+        return ActiveTrailHazardNotice.fromFcm(data)?.deepLink;
+      }
       // Canonical identity is required; neither message text nor a severity
       // supplied in a push can authorize cancellation or bypass a start check.
       Uri? supplied;

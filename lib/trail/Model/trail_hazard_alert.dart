@@ -141,6 +141,16 @@ class TrailHazardAlert {
       ? 'Starting a hike with this hazard could expose you or your group to serious harm.'
       : 'Knowing where this caution was reported helps you prepare and adjust your route.';
 
+  /// Gives actionable guidance to hikers whose sessions have already started.
+  String get activeHikeInstruction => isFatal
+      ? 'Pause in a safe place, review this report and avoid the affected area.'
+      : 'Check the caution details and stay alert while hiking.';
+
+  /// Describes the reported risk without presenting a pre-start warning mid-hike.
+  String get activeHikeConsequence => isFatal
+      ? 'Continuing through this hazard could expose you or your group to serious harm.'
+      : descriptiveMessage;
+
   /// Returns verification message.
   String get verificationMessage => isVerified
       ? 'Reviewed by an admin. Trail conditions can change.'

@@ -33,6 +33,17 @@ class _HikerHomePageState extends State<HikerHomePage>
       _screenModel.stateIsFallStillnessDialogVisible = value;
 
   late final _HikerHomePageStateViewModel _screenModel;
+  late final _activeTrailHazardAlerts = ActiveTrailHazardAlertCoordinator(
+    readCurrent: () {
+      final hike = activeHike;
+      return hike == null
+          ? null
+          : (sessionId: hike.sessionId, trailId: hike.trail.trailId);
+    },
+    load: (trailId) => hikerCircleRepository.loadTrailHazardAssessment(trailId),
+    present: (loadAlerts) =>
+        showActiveTrailHazardNotification(context, loadAlerts: loadAlerts),
+  );
 
   /// Returns trails.
   List<Trail> get trails => _screenModel.stateTrails;
@@ -1857,6 +1868,10 @@ class _HikerHomePageState extends State<HikerHomePage>
         return;
       }
       _openActiveHikeSessionFromDeepLink();
+      return;
+    }
+    if (uri.host == 'hike' && uri.path == '/hazard') {
+      await _activeTrailHazardAlerts.open(uri);
       return;
     }
     if (uri.host == 'hike' && uri.path == '/report-hazard') {
@@ -6198,6 +6213,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    _activeTrailHazardAlerts.dispose();
     for (final ready in _sosPresentationWaiters.toList()) {
       if (!ready.isCompleted) ready.complete();
     }
