@@ -3543,6 +3543,21 @@ class HikerCircleFirebaseRepository {
     );
   }
 
+  /// Records the caller's own preparation fix without creating an active hike.
+  Future<TeamHikeSession> recordTeamReadinessLocation({
+    required String teamHikeSessionId,
+    required SosTriggerLocation location,
+  }) => _manageTeamHikeAction(
+    action: 'readinessLocation',
+    teamHikeSessionId: teamHikeSessionId,
+    data: {
+      'latitude': location.latitude,
+      'longitude': location.longitude,
+      'accuracyMeters': location.accuracyMeters,
+      'capturedAtMillis': location.capturedAt?.millisecondsSinceEpoch,
+    },
+  );
+
   /// Synchronizes team hike participant location.
   Future<TeamHikeSession?> syncTeamHikeParticipantLocation({
     required AppSession session,

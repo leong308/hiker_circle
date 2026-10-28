@@ -3,9 +3,10 @@ part of '../../active_tracking_map_view_feature.dart';
 /// Displays the active tracking legend.
 class _ActiveTrackingLegend extends StatelessWidget {
   /// Creates active tracking legend.
-  const _ActiveTrackingLegend({required this.activeHike});
+  const _ActiveTrackingLegend({required this.selfColor, required this.isTeam});
 
-  final ActiveHikeSession activeHike;
+  final Color? selfColor;
+  final bool isTeam;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -20,11 +21,11 @@ class _ActiveTrackingLegend extends StatelessWidget {
         child: Wrap(
           spacing: 12,
           runSpacing: 6,
-          children: const [
-            _LegendDot(color: Color(0xFF34A853), label: 'Recorded trail'),
-            _LegendDot(color: Color(0xFF0A84FF), label: 'Latest GPS'),
-            _LegendDot(color: Color(0xFF34A853), label: 'You'),
-            _LegendDot(color: Color(0xFF7C3AED), label: 'Teammate border'),
+          children: [
+            const _LegendDot(color: Color(0xFF34A853), label: 'Recorded trail'),
+            const _LegendDot(color: Color(0xFF0A84FF), label: 'Latest GPS'),
+            if (selfColor != null) _LegendDot(color: selfColor!, label: 'You'),
+            if (isTeam) const Text('Team markers use assigned colours'),
           ],
         ),
       ),

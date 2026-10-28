@@ -89,7 +89,7 @@ class _UpcomingHikeJoinRequestDialogState
     if (review.status == 'accepted') {
       return (
         title: 'Request already accepted',
-        message: '${review.requesterName} is already part of this hike.',
+        message: '${_requesterName()} is already part of this hike.',
         icon: Icons.check_circle_rounded,
         color: _green,
       );
@@ -133,13 +133,8 @@ class _UpcomingHikeJoinRequestDialogState
   /// Delegates departure label to the ViewModel.
   String _departureLabel() => _screenModel.commandDepartureLabel();
 
-  /// Delegates profile text to the ViewModel.
-  String _profileText(String key, [String fallback = 'Not provided']) =>
-      _screenModel.commandProfileText(key, fallback);
-
-  /// Delegates history subtitle to the ViewModel.
-  String _historySubtitle(Map<String, dynamic> hike) =>
-      _screenModel.commandHistorySubtitle(hike);
+  /// Delegates the privacy-filtered public alias to the ViewModel.
+  String _requesterName() => _screenModel.commandRequesterName();
 
   /// Builds this widget from its current presentation state.
   @override
@@ -219,7 +214,7 @@ class _UpcomingHikeJoinRequestDialogState
                                 const SizedBox(height: 5),
                                 Text(
                                   terminal?.message ??
-                                      '${widget.review.requesterName} would like to join your solo hike.',
+                                      '${_requesterName()} would like to join your hike.',
                                   style: TextStyle(
                                     color: secondary,
                                     height: 1.4,
@@ -273,9 +268,11 @@ class _UpcomingHikeJoinRequestDialogState
                                     size: 18,
                                   ),
                                   const SizedBox(width: 8),
-                                  Text(
-                                    _departureLabel(),
-                                    style: TextStyle(color: secondary),
+                                  Expanded(
+                                    child: Text(
+                                      _departureLabel(),
+                                      style: TextStyle(color: secondary),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -301,18 +298,10 @@ class _UpcomingHikeJoinRequestDialogState
                                     backgroundColor: _green.withValues(
                                       alpha: 0.14,
                                     ),
-                                    backgroundImage:
-                                        _profileText('photoURL', '').isEmpty
-                                        ? null
-                                        : NetworkImage(
-                                            _profileText('photoURL', ''),
-                                          ),
-                                    child: _profileText('photoURL', '').isEmpty
-                                        ? const Icon(
-                                            Icons.person_rounded,
-                                            color: _green,
-                                          )
-                                        : null,
+                                    child: const Icon(
+                                      Icons.person_rounded,
+                                      color: _green,
+                                    ),
                                   ),
                                   const SizedBox(width: 12),
                                   Expanded(
@@ -321,10 +310,7 @@ class _UpcomingHikeJoinRequestDialogState
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          _profileText(
-                                            'displayName',
-                                            widget.review.requesterName,
-                                          ),
+                                          _requesterName(),
                                           style: TextStyle(
                                             color: text,
                                             fontSize: 16,
@@ -332,8 +318,9 @@ class _UpcomingHikeJoinRequestDialogState
                                           ),
                                         ),
                                         Text(
-                                          '${_profileText('hikerLevelName', 'Hiker')} · '
-                                          '${widget.review.profile['achievementPoints'] ?? 0} points',
+                                          widget.review.stats.available
+                                              ? 'Level ${widget.review.stats.hikerLevel} · ${widget.review.stats.achievementPoints} points'
+                                              : 'HikerCircle member',
                                           style: TextStyle(color: secondary),
                                         ),
                                       ],
@@ -342,88 +329,8 @@ class _UpcomingHikeJoinRequestDialogState
                                 ],
                               ),
                               const SizedBox(height: 12),
-                              _ProfileLine(
-                                icon: Icons.landscape_outlined,
-                                label: 'Experience',
-                                value: _profileText('hikerExperience'),
-                                color: secondary,
-                              ),
-                              _ProfileLine(
-                                icon: Icons.calendar_month_outlined,
-                                label: 'Hike frequency',
-                                value: _profileText('hikeFrequency'),
-                                color: secondary,
-                              ),
-                              _ProfileLine(
-                                icon: Icons.location_on_outlined,
-                                label: 'Area',
-                                value: _profileText('residentialLocation'),
-                                color: secondary,
-                              ),
-                              if (widget.review.achievements.isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                Text(
-                                  'Achievements',
-                                  style: TextStyle(
-                                    color: text,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 7),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: widget.review.achievements
-                                      .map(
-                                        (achievement) => Chip(
-                                          avatar: const Icon(
-                                            Icons.workspace_premium_rounded,
-                                            size: 17,
-                                            color: Color(0xFFF59E0B),
-                                          ),
-                                          label: Text(
-                                            achievement['title']?.toString() ??
-                                                'Achievement',
-                                          ),
-                                          visualDensity: VisualDensity.compact,
-                                        ),
-                                      )
-                                      .toList(),
-                                ),
-                              ],
-                              if (widget.review.hikeHistory.isNotEmpty) ...[
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Recent hike history',
-                                  style: TextStyle(
-                                    color: text,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                for (final hike in widget.review.hikeHistory)
-                                  ListTile(
-                                    dense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                    leading: const Icon(
-                                      Icons.route_rounded,
-                                      color: _green,
-                                    ),
-                                    title: Text(
-                                      hike['trailName']?.toString() ?? 'Hike',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    subtitle: Text(_historySubtitle(hike)),
-                                  ),
-                              ],
-                              const SizedBox(height: 4),
-                              Text(
-                                'Phone number and private route data are never shown.',
-                                style: TextStyle(
-                                  color: secondary,
-                                  fontSize: 11,
-                                ),
+                              HikeJoinRequestStatsCard(
+                                stats: widget.review.stats,
                               ),
                             ],
                           ),
@@ -541,42 +448,4 @@ class _UpcomingHikeJoinRequestDialogState
   /// Presents the resolve effect4 UI.
   void _presentResolveEffect4() =>
       Navigator.of(context, rootNavigator: true).pop();
-}
-
-/// Displays the profile line.
-class _ProfileLine extends StatelessWidget {
-  /// Creates profile line.
-  const _ProfileLine({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  /// Builds this widget from its current presentation state.
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 17, color: color),
-          const SizedBox(width: 8),
-          Text('$label: ', style: TextStyle(color: color)),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

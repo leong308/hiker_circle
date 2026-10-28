@@ -7777,6 +7777,33 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
     if (mounted) setState(() {});
   }
 
+  late final _readinessLocations = TeamReadinessLocationViewModel(
+    readTeam: () => _screenModel.stateLatestTeamSession,
+    phoneNumber: widget.session.phoneNumber,
+    isForeground: () =>
+        mounted &&
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
+    capture: () => LocationSnapshotService.instance.refresh(),
+    record: (location) async {
+      await widget.repository.recordTeamReadinessLocation(
+        teamHikeSessionId: widget.initialTeamSession.id,
+        location: location,
+      );
+    },
+  );
+
+  /// Opens the recorded-position map without changing readiness or starting a hike.
+  Future<void> _showTeamMap(TeamHikeSession team) =>
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => TeamReadinessMapPage(
+            initialTeam: team,
+            currentPhoneNumber: widget.session.phoneNumber,
+            teams: widget.repository.watchTeamHikeSession(team.id),
+          ),
+        ),
+      );
+
   Timer? _countdownTicker;
   Timer? _teamRefreshTimer;
 
@@ -7797,6 +7824,7 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
 
     WidgetsBinding.instance.addObserver(this);
     _latestTeamSession = widget.initialTeamSession;
+    _readinessLocations.start();
     _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() {});
@@ -7814,6 +7842,7 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_pollTeamSession());
+      unawaited(_readinessLocations.refresh());
     }
   }
 
@@ -7822,6 +7851,7 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _countdownTicker?.cancel();
+    _readinessLocations.dispose();
     _teamRefreshTimer?.cancel();
 
     _screenModel.removeListener(_renderScreenModel);
@@ -7858,16 +7888,9 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      PageHeader(
-                        title: 'Team Hike Launch',
-                        foregroundColor: Colors.white,
-                        leading: PageHeaderAction(
-                          tooltip: 'Close',
-                          icon: CupertinoIcons.xmark,
-                          onPressed: () => Navigator.of(context).pop(),
-                          color: Colors.white,
-                          surface: Colors.white.withValues(alpha: .12),
-                        ),
+                      TeamReadinessHeader(
+                        onMap: () => unawaited(_showTeamMap(teamSession)),
+                        onClose: () => Navigator.of(context).pop(),
                       ),
                       const SizedBox(height: 18),
                       DecoratedBox(
@@ -8434,7 +8457,8 @@ class _TeamSafetyPreparationPageState
                   const _LockedTeamSafetyRow(
                     icon: Icons.location_on_rounded,
                     title: 'Live location sharing',
-                    subtitle: 'Visible only to this hike team while active.',
+                    subtitle:
+                        'Visible only to this team during preparation and the active hike.',
                   ),
                   _LockedTeamSafetyRow(
                     icon: Icons.alt_route_rounded,
@@ -8729,8 +8753,12 @@ class _TeamReadyPlayerSlot extends StatelessWidget {
                 backgroundColor: Color(participant.buddy.avatarColorValue),
                 child: Text(
                   participant.buddy.shortName.substring(0, 1).toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: Color(
+                      TeamHikeIdentity.foreground(
+                        participant.buddy.avatarColorValue,
+                      ),
+                    ),
                     fontSize: 25,
                     fontWeight: FontWeight.w900,
                   ),

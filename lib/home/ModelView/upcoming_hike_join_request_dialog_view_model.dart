@@ -19,23 +19,10 @@ class _UpcomingHikeJoinRequestDialogStateViewModel extends ChangeNotifier {
         '${departure.hour}:$minute';
   }
 
-  /// Computes profile text.
-  String commandProfileText(String key, [String fallback = 'Not provided']) {
-    final value = readReview().profile[key]?.toString().trim() ?? '';
-    return value.isEmpty ? fallback : value;
-  }
-
-  /// Computes history subtitle.
-  String commandHistorySubtitle(Map<String, dynamic> hike) {
-    final distance = (hike['recordedDistanceKm'] as num?)?.toDouble() ?? 0;
-    final seconds = (hike['durationSeconds'] as num?)?.toInt() ?? 0;
-    final duration = Duration(seconds: seconds);
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60);
-    final kind = hike['hikeType'] == 'team' ? 'Group hike' : 'Solo hike';
-    return '$kind · ${distance.toStringAsFixed(1)} km · '
-        '${hours > 0 ? '${hours}h ' : ''}${minutes}m';
-  }
+  /// Uses only the public alias; no general profile-field renderer is exposed.
+  String commandRequesterName() => safeJoinRequestAlias(
+    readReview().profile['displayName'] ?? readReview().requesterName,
+  );
 
   /// Releases resources owned by this instance.
   @override
