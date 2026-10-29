@@ -23,7 +23,8 @@ function upcomingHikeUnavailableReason(hike, nowMillis = Date.now()) {
     return 'hike_removed';
   }
   const launchHasStarted = Boolean(
-    String(hike.teamHikeSessionId || '').trim()
+    hike.teamLaunchConsumed === true
+    ||     String(hike.teamHikeSessionId || '').trim()
     || hike.teamLaunchLinkedAt
     || hike.teamLaunchLinkedAtLocal
     || (Array.isArray(hike.startedParticipantPhones)

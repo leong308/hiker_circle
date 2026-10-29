@@ -964,6 +964,7 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
           'team_hike_countdown',
           'team_hike_started',
           'team_hike_start',
+          'team_hike_ping',
         }.contains(type) &&
         deepLink != null) {
       commandEnqueueFcmOpen(
@@ -2505,6 +2506,26 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
               stateActiveHike = updatedHike;
             });
             commandPersistActiveHikeSnapshot(updatedHike);
+            final pingKey = TeamPingPolicy.pendingKey(
+              teamSession,
+              readSession().phoneNumber,
+              DateTime.now(),
+            );
+            if (pingKey != null) {
+              commandEnqueueFcmOpen(
+                _PendingFcmOpen(
+                  key: 'team-ping:$pingKey',
+                  title: 'Your team is checking on you',
+                  body: 'Please confirm that you are OK.',
+                  deepLink: Uri(
+                    scheme: 'hikercircle',
+                    host: 'team-hike',
+                    path: '/ping',
+                    queryParameters: {'teamSessionId': teamSession.id},
+                  ).toString(),
+                ),
+              );
+            }
           },
           onError: (Object error, StackTrace stackTrace) {
             debugPrint('Team hike updates are unavailable: $error');
@@ -3632,6 +3653,33 @@ class _TeamHikeLaunchPageStateViewModel extends ChangeNotifier {
   bool stateIsPollingTeam = false;
 
   late TeamHikeSession stateLatestTeamSession;
+
+  /// Saves this account's personal launch draft locally before publishing Ready.
+  Future<void> commandSavePreparedDraft(HikeSessionDraft draft) =>
+      readRepository().localDatabase.saveLocalPreference(
+        ownerPhoneNumber: readSession().phoneNumber,
+        key: 'team_prepared:${readInitialTeamSession().id}',
+        value: draft.toPersistence(),
+      );
+
+  /// Restores a matching confirmed draft after app termination; another member's checks are never reused.
+  Future<HikeSessionDraft?> commandRestorePreparedDraft() async {
+    try {
+      final raw = await readRepository().localDatabase.loadLocalPreference(
+        ownerPhoneNumber: readSession().phoneNumber,
+        key: 'team_prepared:${readInitialTeamSession().id}',
+      );
+      if (raw is! Map) return null;
+      final draft = HikeSessionDraft.fromPersistence(
+        Map<String, dynamic>.from(raw),
+      );
+      return draft.trail.trailId == readInitialTeamSession().trailId
+          ? draft
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Computes poll team session.
   Future<void> commandPollTeamSession() async {

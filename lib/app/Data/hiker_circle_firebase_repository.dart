@@ -454,6 +454,8 @@ Map<String, dynamic> buildActiveHikeCompletionPayload({
   return {
     'sessionId': sessionId,
     'draft': activeHike.draft.toPersistence(),
+    if (activeHike.latestLocation != null)
+      'lastRecordedLocation': activeHike.latestLocation!.toFirestore(),
     'startedAtLocal': startedAtUtc.toIso8601String(),
     'endedAtLocal': endedAtUtc.toIso8601String(),
     if (teamHikeSessionId.isNotEmpty) 'teamHikeSessionId': teamHikeSessionId,
@@ -3407,6 +3409,33 @@ class HikerCircleFirebaseRepository {
         });
   }
 
+  /// Finds a participant-authorized launch for the selected upcoming hike.
+  Future<TeamHikeSession?> loadTeamHikeForUpcoming(String upcomingId) async {
+    final owner = (await _localDatabase.loadSession())?.phoneNumber ?? '';
+    final snapshot = await _teamHikeSessions
+        .where('participantPhoneNumbers', arrayContains: owner)
+        .get();
+    return snapshot.docs
+        .map(_teamHikeSessionFromDocument)
+        .whereType<TeamHikeSession>()
+        .where(
+          (team) =>
+              team.sourceUpcomingHikeId == upcomingId &&
+              team.phase != TeamHikePhase.completed,
+        )
+        .firstOrNull;
+  }
+
+  /// Commits an explicit cancellation or withdrawal before leaving readiness.
+  Future<TeamHikeSession> cancelTeamReadiness({
+    required AppSession session,
+    required String teamHikeSessionId,
+    required bool isHost,
+  }) => _manageTeamHikeAction(
+    action: isHost ? 'cancel' : 'leaveReadiness',
+    teamHikeSessionId: teamHikeSessionId,
+  );
+
   /// Loads team hike session.
   Future<TeamHikeSession?> loadTeamHikeSession(String teamHikeSessionId) async {
     if (!_firebaseBootstrapResult.isAvailable || teamHikeSessionId.isEmpty) {
@@ -5673,6 +5702,23 @@ class HikerCircleFirebaseRepository {
       );
     }
   }
+
+  /// Watches common team snapshot versions so open history pages refresh after another member finishes.
+  Stream<String> watchTeamHistoryChanges(String phone) => _teamHikeSessions
+      .where('participantPhoneNumbers', arrayContains: phone)
+      .snapshots()
+      .map((snapshot) {
+        final versions =
+            snapshot.docs
+                .map(
+                  (doc) =>
+                      '${doc.id}:${doc.data()['summarySnapshot']?['generatedAtLocal'] ?? ''}',
+                )
+                .toList()
+              ..sort();
+        return versions.join('|');
+      })
+      .distinct();
 
   /// Loads my hike history.
   Future<List<HikeHistorySummary>> loadMyHikeHistory({

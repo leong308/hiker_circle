@@ -56,6 +56,17 @@ function teamNoticeIsAuthorized(payload, team) {
   const participants = new Set((Array.isArray(team?.participants) ? team.participants : [])
     .map(participant => String(participant?.phoneNumber || participant?.buddy?.phoneNumber || '').trim()).filter(Boolean));
   if (!participants.has(recipient)) return false;
+  if (type === 'team_hike_ping') {
+    const roster = team.participants || [];
+    const target = roster.find(p => String(p.phoneNumber || p.buddy?.phoneNumber || '').trim() === recipient);
+    const source = roster.find(p => String(p.phoneNumber || p.buddy?.phoneNumber || '').trim() === sender);
+    const ping = dateMillis(target?.lastPingAtLocal), ok = dateMillis(target?.lastOkAtLocal);
+    // Drop a queued ping after either hiker ends, answers it, or receives a newer ping.
+    return source?.status !== 'ended' && target?.status !== 'ended'
+      && participants.has(sender) && target?.lastPingSenderPhone === sender
+      && Number.isFinite(ping) && ping === timestampFor(payload, 'createdAtLocal', 'createdAt')
+      && Date.now() - ping <= 60 * 60 * 1000 && (!Number.isFinite(ok) || ok < ping);
+  }
   if (HOST_TYPES.has(type)) return sender === host;
   if (type === 'team_hike_invite_accepted') return participants.has(sender) && recipient === host;
   return ['team_hike_ping', 'team_hike_ping_ok', 'team_hike_path_deviation'].includes(type) && participants.has(sender);

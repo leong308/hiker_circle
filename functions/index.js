@@ -29,6 +29,7 @@ const { getStorage } = require('firebase-admin/storage');
 const {contentHash, conditionalPayload, reminderCooldown} = require('./mobile_cache_helpers');
 const crypto = require('crypto');
 const teamPolicy = require('./team_hike_policy');
+const teamHistory = require('./team_hike_history');
 const argon2 = require('argon2');
 const {
   SosDispatchValidationError,
@@ -1181,7 +1182,7 @@ async function updateTeamParticipantForHike(hike, nextStatus) {
       return null;
     }
     const team = snapshot.data() || {};
-    if (team.phase === 'completed') {
+    if (team.phase === 'completed' || validTeamParticipants(team).some(p => teamParticipantPhone(p) === phoneNumber && p.status === nextStatus)) {
       return team;
     }
     const nowIso = new Date().toISOString();
@@ -1212,11 +1213,10 @@ async function updateTeamParticipantForHike(hike, nextStatus) {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAtLocal: nowIso,
     };
-    transaction.set(
-      reference,
-      patch,
-      { merge: true }
-    );
+    if (nextStatus === 'ended' && !team.summarySnapshot?.finalized) {
+      patch.summarySnapshot = teamHistory.buildSnapshot({...team, ...patch}, nowIso);
+    }
+    transaction.set(reference, patch, {merge: true});
     return { ...team, ...patch };
   });
   if (updatedTeam && String(updatedTeam.phase || '') === 'completed') {
@@ -3794,6 +3794,7 @@ const teamHikeActionLimits = Object.freeze({
   attach: [40, 60 * 60 * 1000],
   location: [360, 10 * 60 * 1000],
   readinessLocation: [60, 10 * 60 * 1000],
+  leaveReadiness: [20, 60 * 60 * 1000],
   ping: [20, 10 * 60 * 1000],
   respond: [60, 60 * 60 * 1000],
   end: [20, 60 * 60 * 1000],
@@ -6034,6 +6035,23 @@ exports.completeActiveHikeSession = onCall(
         rawSummary: request.data?.summary,
       });
       const nowIso = new Date().toISOString();
+      if (teamReference) {
+        const team = teamSnapshot.data() || {};
+        const fix = teamHistory.recordedLocation(request.data?.lastRecordedLocation);
+        const participants = validTeamParticipants(team).map(p => teamParticipantPhone(p) !== phoneNumber ? p : {
+          ...p, status: 'ended', endedAtLocal: new Date(endedAtMillis).toISOString(),
+          completionMetrics: {distanceKm: summaryReport.distanceKm, routePointCount: summaryReport.routePointCount},
+          ...(fix && Date.parse(fix.capturedAtLocal) <= endedAtMillis + 10000
+            && Date.parse(fix.capturedAtLocal) >= startedAtMillis ? {latestLocation: fix, locationUpdatedAtLocal: fix.capturedAtLocal} : {}),
+          updatedAtLocal: nowIso,
+        });
+        const shared = teamHistory.buildSnapshot({...team, participants}, nowIso);
+        transaction.set(teamReference, {participants, summarySnapshot: shared,
+          ...(shared.finalized ? {phase: 'completed', endedAtLocal: shared.endedAtLocal} : {}),
+          updatedAtLocal: nowIso, updatedAt: admin.firestore.FieldValue.serverTimestamp()}, {merge: true});
+        if (sourceUpcomingHikeId) transaction.set(db.collection('upcomingHikes').doc(sourceUpcomingHikeId), {
+          teamLaunchConsumed: true, updatedAtLocal: nowIso}, {merge: true});
+      }
       const completionPatch = {
         status: 'completed',
         monitoringExpected: false,
@@ -6239,7 +6257,7 @@ exports.listExpiredScheduledHikes = onCall({}, async (request) => {
 
 // listMyHikeHistory: Use the owner revision hash to avoid rereading an unchanged history payload.
 exports.listMyHikeHistory = onCall({}, async (request) => {
-  const { uid } = authenticatedPhoneFor(
+  const { uid, phoneNumber } = authenticatedPhoneFor(
     request,
     'Sign in to view your hike history.'
   );
@@ -6258,12 +6276,19 @@ exports.listMyHikeHistory = onCall({}, async (request) => {
     .orderBy('endedAtLocal', 'desc')
     .limit(limit)
     .get();
-  const hikes = snapshot.docs
-    .filter((document) => String(document.data()?.status || '') === 'completed')
-    .map((document) => hikeHistorySummaryData(document.id, document.data() || {}))
-    .sort((left, right) => String(right.endedAtLocal || '')
-      .localeCompare(String(left.endedAtLocal || '')))
-    .slice(0, limit);
+  const teamIds = [...new Set(snapshot.docs.map(doc => String(doc.data()?.teamHikeSessionId || '')).filter(validFirestoreDocumentId))];
+  const teams = teamIds.length ? await admin.firestore().getAll(...teamIds.map(id => admin.firestore().collection('teamHikeSessions').doc(id))) : [];
+  const byTeam = new Map(teams.filter(doc => doc.exists).map(doc => [doc.id, {...doc.data(), teamHikeSessionId: doc.id}]));
+  const rows = snapshot.docs.filter(doc => doc.data()?.status === 'completed').map(doc => {
+    const team = byTeam.get(String(doc.data()?.teamHikeSessionId || ''));
+    if (team && validTeamParticipants(team).some(p => teamParticipantPhone(p) === phoneNumber)) {
+      const row = hikeHistorySummaryData(`team-history_${team.teamHikeSessionId}`, teamHistory.historySession(team));
+      return {...row, teamSummary: team.summarySnapshot || teamHistory.buildSnapshot(team, team.updatedAtLocal), teamHikeSessionId: team.teamHikeSessionId};
+    }
+    return hikeHistorySummaryData(doc.id, doc.data() || {});
+  });
+  const hikes = [...new Map(rows.map(row => [row.sessionId, row])).values()]
+    .sort((a,b) => String(b.endedAtLocal || '').localeCompare(String(a.endedAtLocal || ''))).slice(0,limit);
   return conditionalPayload({hikes}, request.data || {}, revisionHash);
 });
 
@@ -6284,6 +6309,12 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
     throw new HttpsError('invalid-argument', 'The hike history entry is invalid.');
   }
   const db = admin.firestore();
+  if (sessionId.startsWith('team-history_')) {
+    const teamId = sessionId.slice('team-history_'.length);
+    if (!validFirestoreDocumentId(teamId)) throw new HttpsError('not-found', 'This team history is unavailable.');
+    const detail = await teamHistory.loadDetail(db, teamId, phoneNumber, HttpsError, hikeHistoryDetailData);
+    return conditionalPayload({detail}, request.data || {}, revisionHash);
+  }
   const sessionReference = db.collection('hikeSessions').doc(sessionId);
   const sessionSnapshot = await sessionReference.get();
   const session = sessionSnapshot.data() || {};
@@ -6299,6 +6330,10 @@ exports.loadMyHikeHistoryDetail = onCall({}, async (request) => {
   }
   const trailId = String(session.trailId || '').trim();
   const teamHikeSessionId = String(session.teamHikeSessionId || '').trim();
+  if (validFirestoreDocumentId(teamHikeSessionId)) {
+    const detail = await teamHistory.loadDetail(db, teamHikeSessionId, phoneNumber, HttpsError, hikeHistoryDetailData);
+    return conditionalPayload({detail}, request.data || {}, revisionHash);
+  }
   const sourceUpcomingHikeId = String(session.sourceUpcomingHikeId || '').trim();
   const chatReferences = [
     ...(validFirestoreDocumentId(teamHikeSessionId)
@@ -7002,7 +7037,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
       ...participant,
       buddy: participant?.buddy && typeof participant.buddy === 'object'
         ? { ...participant.buddy }
-        : { phoneNumber: teamParticipantPhone(participant) },
+        : {name: String(participant.name || ''), handle: String(participant.handle || ''), phoneNumber: teamParticipantPhone(participant)},
       phoneNumber: teamParticipantPhone(participant),
     }));
     let phase = String(team.phase || 'inviting');
@@ -7234,6 +7269,25 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
         didChange = didChange || phase !== 'readyCheck';
         phase = 'readyCheck';
       }
+    } else if (action === 'leaveReadiness') {
+      if (isHost || !['inviting', 'readyCheck', 'countdown'].includes(phase)) {
+        throw new HttpsError('failed-precondition', 'Only a preparing team member can leave this launch.');
+      }
+      participants = participants.filter((_, index) => index !== callerIndex);
+      phase = participants.some(p => p.status === 'invited') ? 'inviting' : 'readyCheck';
+      const ready = participants.length > 0 && participants.every(p => ['ready', 'active'].includes(p.status));
+      phase = ready ? 'countdown' : phase;
+      teamPatch.countdownStartedAtLocal = ready ? nowIso : null;
+      if (ready) queueTeamOutboxForParticipants(transaction, db, participants, 'team_hike_countdown', hostPhone, teamId, nowIso);
+      if (validFirestoreDocumentId(String(team.sourceUpcomingHikeId || ''))) {
+        transaction.set(db.collection('upcomingHikes').doc(team.sourceUpcomingHikeId), {
+          participantPhones: admin.firestore.FieldValue.arrayRemove(callerPhone),
+          participantCount: participants.length,
+          draft: {teamBuddies: participants.filter(p => !p.isHost).map(p => p.buddy)},
+          updatedAtLocal: nowIso,
+        }, {merge: true});
+      }
+      didChange = true;
     } else if (action === 'cancel') {
       if (!isHost) {
         throw new HttpsError(
@@ -7583,6 +7637,7 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
         };
         everyoneEnded = participants.length > 0
           && participants.every((item) => item.status === 'ended');
+        teamPatch.summarySnapshot = teamHistory.buildSnapshot({...team, participants}, nowIso);
         if (everyoneEnded) {
           phase = 'completed';
           teamPatch.endedAtLocal = nowIso;
@@ -7642,6 +7697,11 @@ exports.manageTeamHikeSession = onCall({}, async (request) => {
     participants = coloredParticipants;
     teamPatch.participantColorsByPhone = participantColorsByPhone;
     teamPatch.participantColorVersion = 1;
+    if (['active', 'completed'].includes(phase) && validFirestoreDocumentId(String(team.sourceUpcomingHikeId || ''))) {
+      transaction.set(db.collection('upcomingHikes').doc(team.sourceUpcomingHikeId), {
+        teamLaunchConsumed: true, updatedAtLocal: nowIso,
+      }, {merge: true});
+    }
     const nextTeam = {
       ...team,
       ...teamPatch,
@@ -12020,7 +12080,13 @@ exports.invalidateCompletedHistory = onDocumentWritten({document: 'hikeSessions/
   const after = event.data?.after?.data();
   if (before?.status !== 'completed' && after?.status !== 'completed') return;
   if (contentHash(before || {}) === contentHash(after || {})) return;
-  for (const uid of new Set([before?.userId, after?.userId].filter(Boolean))) await invalidateMobileHistory(uid, event.id);
+  const owners = new Set([before?.userId, after?.userId].filter(Boolean));
+  const teamId = String(after?.teamHikeSessionId || before?.teamHikeSessionId || '');
+  if (validFirestoreDocumentId(teamId)) {
+    const team = await getFirestore().collection('teamHikeSessions').doc(teamId).get();
+    validTeamParticipants(team.data() || {}).forEach(p => owners.add(userDocumentIdForPhone(teamParticipantPhone(p))));
+  }
+  for (const uid of owners) await invalidateMobileHistory(uid, event.id);
 });
 async function invalidateHistoryChild(sessionId, eventId) {
   if (!sessionId) return;

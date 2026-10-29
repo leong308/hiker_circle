@@ -1,5 +1,6 @@
 // HikeHistorySummary and detail models parse completed hikes, route samples and team tracks.
 import '../../home/Model/hike_session_models.dart';
+import '../../home/Model/shared_team_hike_summary.dart';
 
 /// Computes map.
 Map<String, dynamic> _map(Object? value) =>
@@ -48,6 +49,7 @@ class HikeHistorySummary {
     required this.batteryEndPercent,
     required this.teamMemberCount,
     required this.coverImageUrl,
+    this.teamHikeSessionId = '',
   });
 
   /// Creates hike history summary from stored map data.
@@ -74,6 +76,7 @@ class HikeHistorySummary {
       batteryEndPercent: _integer(data['batteryEndPercent']).clamp(0, 100),
       teamMemberCount: _integer(data['teamMemberCount']).clamp(1, 50),
       coverImageUrl: _text(data['coverImageUrl']),
+      teamHikeSessionId: _text(data['teamHikeSessionId']),
     );
   }
 
@@ -94,6 +97,7 @@ class HikeHistorySummary {
   final int batteryEndPercent;
   final int teamMemberCount;
   final String coverImageUrl;
+  final String teamHikeSessionId;
 
   /// Returns is team.
   bool get isTeam => hikeType == 'team';
@@ -226,6 +230,7 @@ class HikeHistoryDetail {
     required this.teamHikeSessionId,
     required this.groupChatId,
     required this.routeCaptureAvailable,
+    this.sharedTeamSummary,
   });
 
   /// Creates hike history detail from stored map data.
@@ -251,6 +256,9 @@ class HikeHistoryDetail {
         .toList();
     return HikeHistoryDetail(
       summary: HikeHistorySummary.fromMap(_map(data['summary'])),
+      sharedTeamSummary: data['teamSummary'] is Map
+          ? SharedTeamHikeSummary.fromMap(_map(data['teamSummary']))
+          : null,
       startPointName: _text(plan['startPointName']),
       destinationName: _text(plan['destinationName']),
       plannedStartTime: _date(plan['plannedStartTimeLocal']),
@@ -335,6 +343,7 @@ class HikeHistoryDetail {
   }
 
   final HikeHistorySummary summary;
+  final SharedTeamHikeSummary? sharedTeamSummary;
   final String startPointName;
   final String destinationName;
   final DateTime? plannedStartTime;

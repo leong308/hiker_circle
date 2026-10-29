@@ -18,6 +18,8 @@ import '../core/widgets/loading_toast.dart';
 import '../core/widgets/cached_trail_image.dart';
 import '../core/widgets/route_preview_map.dart';
 import '../home/Model/hike_session_models.dart';
+import '../home/Model/shared_team_hike_summary.dart';
+import '../home/View/widgets/team_hike_summary_panel.dart';
 import '../trail/Model/trail_models.dart';
 import 'Model/hike_history_models.dart';
 import 'Data/expired_hikes_repository.dart';

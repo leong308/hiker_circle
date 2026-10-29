@@ -3034,6 +3034,8 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<PlannedHike?> _reviewDraftPreparation(
     HikeSessionDraft draft, {
     bool joiningTeam = false,
+    String? primaryActionLabel,
+    bool checkTrailheadOnStart = false,
     String? upcomingHikeId,
     required Future<bool> Function(
       HikeSessionDraft draft,
@@ -3070,11 +3072,12 @@ class _HikerHomePageState extends State<HikerHomePage>
           builder: (_) => FinalPreparationReviewPage(
             hike: preview,
             immediate: true,
-            checkTrailheadOnStart: upcomingHikeId?.isNotEmpty == true,
+            checkTrailheadOnStart:
+                checkTrailheadOnStart || upcomingHikeId?.isNotEmpty == true,
             isHost: !joiningTeam,
-            primaryActionLabel: joiningTeam
-                ? 'Continue to team readiness'
-                : null,
+            primaryActionLabel:
+                primaryActionLabel ??
+                (joiningTeam ? 'Continue to team readiness' : null),
             canStart: true,
             plan: plan.copyWith(
               gearAssessment: _gearRouteService.peek(plan.trail),
@@ -3127,10 +3130,34 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<bool> _startInstantHikeFromWizard(
     HikeSessionDraft draft, {
     TrailHazardStartGate? initialHazardGate,
-  }) => _screenModel.commandStartInstantHikeFromWizard(
-    draft,
-    initialHazardGate: initialHazardGate,
-  );
+  }) async {
+    if (draft.hikeType == HikeType.team) {
+      final preview = PlannedHikeStateResolver.provisionalFromConfirmedDraft(
+        draft: draft,
+        creatorPhone: widget.session.phoneNumber,
+        creatorName: '',
+      );
+      final plan = PlannedHikeStateResolver.resolve(
+        upcomingHike: preview,
+        liveTrails: trails,
+        emergencyContactsSelected: emergencyContacts.isNotEmpty,
+        phoneBatteryLevel: _latestPhoneBatteryLevel,
+      );
+      final started = await _tryPreparedHikeStart(
+        () => _startPreparedInstantHike(
+          draft,
+          plan,
+          initialHazardGate: initialHazardGate,
+        ),
+      );
+      if (mounted && started) _revealActiveHike();
+      return started;
+    }
+    return _screenModel.commandStartInstantHikeFromWizard(
+      draft,
+      initialHazardGate: initialHazardGate,
+    );
+  }
 
   /// Starts prepared instant hike.
   Future<bool> _startPreparedInstantHike(
@@ -3191,7 +3218,7 @@ class _HikerHomePageState extends State<HikerHomePage>
         return false;
       }
       final preparedDraft = _applyTeamSafetySettings(
-        hikeToStart.draft,
+        teamSession.sharedDraft ?? hikeToStart.draft,
         teamSession,
       );
       hikeToStart = hikeToStart.copyWith(
@@ -3201,8 +3228,9 @@ class _HikerHomePageState extends State<HikerHomePage>
       );
     }
 
-    if (hikeToStart.draft.fallDetectionEnabled ||
-        hikeToStart.draft.offlinePhysicalAlertEnabled) {
+    if (hikeToStart.teamHikeSessionId.isEmpty &&
+        (hikeToStart.draft.fallDetectionEnabled ||
+            hikeToStart.draft.offlinePhysicalAlertEnabled)) {
       final volumeReady = await ensureIosSosOutputVolumeReady(
         context: context,
         deviceAlertService: _sosDeviceAlertService,
@@ -3215,11 +3243,13 @@ class _HikerHomePageState extends State<HikerHomePage>
         return false;
       }
     }
-    if (!await _ensureBackgroundSafetyReady(hikeToStart.draft) || !mounted) {
+    if (hikeToStart.teamHikeSessionId.isEmpty &&
+        (!await _ensureBackgroundSafetyReady(hikeToStart.draft) || !mounted)) {
       return false;
     }
 
-    if (!await _checkHazardsForStart(hazardGate, draft.trail) || !mounted) {
+    if (hikeToStart.teamHikeSessionId.isEmpty &&
+        (!await _checkHazardsForStart(hazardGate, draft.trail) || !mounted)) {
       return false;
     }
 
@@ -3602,6 +3632,32 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (!mounted) {
       return;
     }
+    if (hike.hikeType == 'team') {
+      if (trail == null) {
+        HikerCircleToast.show(context, 'This trail is unavailable.');
+        return;
+      }
+      final draft = _draftForUpcomingHike(hike, trail);
+      if (_sameTeamPhone(hike.creatorPhone, widget.session.phoneNumber)) {
+        await _tryPreparedHikeStart(
+          () => _startUpcomingHikeNow(hike: hike, draft: draft),
+        );
+      } else {
+        final team = await hikerCircleRepository.loadTeamHikeForUpcoming(
+          hike.id,
+        );
+        if (team != null) {
+          await _openTeamHikeInvite(team.id);
+        } else if (mounted) {
+          HikerCircleToast.show(
+            context,
+            'Waiting for the host to start team readiness.',
+          );
+        }
+      }
+      if (activeHike != null && mounted) _revealActiveHike();
+      return;
+    }
     var plan = PlannedHikeStateResolver.resolve(
       upcomingHike: hike,
       liveTrails: trails,
@@ -3908,16 +3964,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           upcoming.creatorPhone,
           widget.session.phoneNumber,
         )) {
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'The hike host must start team readiness. Open the hike details to follow its status.',
-                ),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
+          await _showUpcomingHikeDetails(upcoming);
           return;
         }
         await _startUpcomingHikeNow(
@@ -3940,7 +3987,10 @@ class _HikerHomePageState extends State<HikerHomePage>
     required HikeSessionDraft draft,
     PlannedHike? preparation,
   }) async {
-    if (preparation == null || !preparation.requiredGearReady) {
+    var teamLaunch =
+        draft.hikeType == HikeType.team && draft.teamBuddies.isNotEmpty;
+    if (!teamLaunch &&
+        (preparation == null || !preparation.requiredGearReady)) {
       await _showUpcomingHikeDetails(hike);
       return activeHike?.sourceUpcomingHikeId == hike.id;
     }
@@ -3969,7 +4019,11 @@ class _HikerHomePageState extends State<HikerHomePage>
       // requires explicit consent whenever current reports cannot be fetched.
     }
     if (!mounted) return false;
-    draft = _applyReviewedPreparation(draft, preparation);
+    teamLaunch =
+        draft.hikeType == HikeType.team && draft.teamBuddies.isNotEmpty;
+    if (preparation != null) {
+      draft = _applyReviewedPreparation(draft, preparation);
+    }
     final checked = await confirmSoloHikeDistance(
       context,
       draft,
@@ -3984,7 +4038,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     /// Computes confirm hazards.
     Future<bool> confirmHazards() =>
         _checkHazardsForStart(hazardGate, draft.trail, upcomingHike: hike);
-    if (!await confirmHazards() || !mounted) return false;
+    if (!teamLaunch && (!await confirmHazards() || !mounted)) return false;
     var hikeToStart = ActiveHikeSession.fromDraft(
       draft,
       sourceUpcomingHikeId: hike.id,
@@ -3999,13 +4053,17 @@ class _HikerHomePageState extends State<HikerHomePage>
         return false;
       }
       hikeToStart = hikeToStart.copyWith(
-        draft: _applyTeamSafetySettings(draft, teamSession),
+        draft: _applyTeamSafetySettings(
+          teamSession.sharedDraft ?? draft,
+          teamSession,
+        ),
         teamHikeSessionId: teamSession.id,
         teamHikeSession: teamSession,
       );
     }
-    if (hikeToStart.draft.fallDetectionEnabled ||
-        hikeToStart.draft.offlinePhysicalAlertEnabled) {
+    if (hikeToStart.teamHikeSessionId.isEmpty &&
+        (hikeToStart.draft.fallDetectionEnabled ||
+            hikeToStart.draft.offlinePhysicalAlertEnabled)) {
       final volumeReady = await ensureIosSosOutputVolumeReady(
         context: context,
         deviceAlertService: _sosDeviceAlertService,
@@ -4018,10 +4076,11 @@ class _HikerHomePageState extends State<HikerHomePage>
         return false;
       }
     }
-    if (!await _ensureBackgroundSafetyReady(hikeToStart.draft) || !mounted) {
+    if (hikeToStart.teamHikeSessionId.isEmpty &&
+        (!await _ensureBackgroundSafetyReady(hikeToStart.draft) || !mounted)) {
       return false;
     }
-    if (!await confirmHazards() || !mounted) return false;
+    if (!teamLaunch && (!await confirmHazards() || !mounted)) return false;
     final startProgress = ValueNotifier<_HikeStartProgress>(
       const _HikeStartProgress(
         title: 'Starting scheduled hike',
@@ -4206,10 +4265,11 @@ class _HikerHomePageState extends State<HikerHomePage>
           'This trail is unavailable, so the invitation was not accepted.',
         );
       }
-      final acceptedSession =
-          await _HikerHomePageDataActions.acceptTeamHikeInvite(
-            hikerCircleRepository,
-          )(session: widget.session, teamHikeSessionId: teamHikeSessionId);
+      final acceptedSession = pendingSession.phase == TeamHikePhase.active
+          ? pendingSession
+          : await _HikerHomePageDataActions.acceptTeamHikeInvite(
+              hikerCircleRepository,
+            )(session: widget.session, teamHikeSessionId: teamHikeSessionId);
       if (!mounted) {
         return;
       }
@@ -4255,14 +4315,8 @@ class _HikerHomePageState extends State<HikerHomePage>
                     .map((participant) => participant.buddy)
                     .toList(),
               );
-      final reviewed = await _reviewDraftPreparation(
-        draft,
-        joiningTeam: true,
-        upcomingHikeId: acceptedSession.sourceUpcomingHikeId,
-        onStart: (safetyDraft, preparation) =>
-            _startJoinedTeamHike(acceptedSession, safetyDraft, preparation),
-      );
-      if (mounted && reviewed != null) _revealActiveHike();
+      final started = await _startJoinedTeamHike(acceptedSession, draft);
+      if (mounted && started) _revealActiveHike();
     } on HikerCircleFirebaseRepositoryException catch (error) {
       if (!mounted) {
         return;
@@ -4285,9 +4339,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   Future<bool> _startJoinedTeamHike(
     TeamHikeSession acceptedSession,
     HikeSessionDraft draft,
-    PlannedHike preparation,
   ) async {
-    draft = _applyReviewedPreparation(draft, preparation);
     final hazardGate = _newHazardStartGate();
     UpcomingHike? upcoming = myUpcomingHikes
         .where((hike) => hike.id == acceptedSession.sourceUpcomingHikeId)
@@ -4309,7 +4361,6 @@ class _HikerHomePageState extends State<HikerHomePage>
     /// Computes confirm hazards.
     Future<bool> confirmHazards() =>
         _checkHazardsForStart(hazardGate, draft.trail, upcomingHike: upcoming);
-    if (!await confirmHazards() || !mounted) return false;
     final launchedSession = await _presentStartJoinedTeamHikeEffect1(
       acceptedSession,
       draft,
@@ -4318,54 +4369,9 @@ class _HikerHomePageState extends State<HikerHomePage>
     if (launchedSession == null || !mounted) {
       return false;
     }
-    if (!await confirmHazards() || !mounted) return false;
-    final participant = launchedSession.participants
-        .where(
-          (item) =>
-              _sameTeamPhone(item.phoneNumber, widget.session.phoneNumber),
-        )
-        .firstOrNull;
-    final safety = participant?.safetySettings ?? const <String, dynamic>{};
-    final preparedDraft = draft.copyWith(
-      shareLiveLocation: draft.shareLiveLocation,
-      pathDeviationEnabled: !draft.trail.isUnlisted,
-      pathDeviationDistanceMeters: safety['pathDeviationDistanceMeters'] == null
-          ? draft.pathDeviationDistanceMeters
-          : PathDeviationPolicy.normalizeDistance(
-              safety['pathDeviationDistanceMeters'],
-            ),
-      fallDetectionEnabled: true,
-      fallDetectionSettings: FallDetectionSettings(
-        sensorSensitivity:
-            _finiteDoubleValue(safety['sensorSensitivity'])?.clamp(
-              FallDetectionSettings.minSensorSensitivity,
-              FallDetectionSettings.maxSensorSensitivity,
-            ) ??
-            draft.fallDetectionSettings.sensorSensitivity,
-        fallResponseDuration: Duration(
-          seconds:
-              _boundedIntValue(
-                safety['fallResponseDurationSeconds'],
-                minimum: 5,
-                maximum: 600,
-              ) ??
-              _boundedIntValue(
-                safety['responseCountdownSeconds'],
-                minimum: 5,
-                maximum: 600,
-              ) ??
-              draft.fallDetectionSettings.fallResponseDuration.inSeconds,
-        ),
-        longestRestDuration: Duration(
-          seconds:
-              _boundedIntValue(
-                safety['longestRestDurationSeconds'],
-                minimum: 30,
-                maximum: 86400,
-              ) ??
-              draft.fallDetectionSettings.longestRestDuration.inSeconds,
-        ),
-      ),
+    final preparedDraft = _applyTeamSafetySettings(
+      launchedSession.sharedDraft ?? draft,
+      launchedSession,
     );
     final preparedHike = ActiveHikeSession.fromDraft(
       preparedDraft,
@@ -4416,18 +4422,84 @@ class _HikerHomePageState extends State<HikerHomePage>
       activeHike = liveHike;
       selectedTabIndex = 0;
     });
+    await _consumeTeamUpcomingHike(launchedSession.sourceUpcomingHikeId);
     _syncActiveHikeServices(liveHike, forceLiveStatus: true);
     await _activeHikePersistenceQueue;
     unawaited(_recordInitialActiveHikeLocation(liveHike));
     return true;
   }
 
-  /// Computes respond to team ping.
+  /// Completes the hiker's personal gear, shirt and device checks before sending Ready.
+  Future<HikeSessionDraft?> _reviewTeamLaunchPreparation(
+    HikeSessionDraft draft,
+  ) async {
+    draft = await _loadHikeSafetyDraft(draft, null);
+    if (!mounted) return null;
+    HikeSessionDraft? prepared;
+    await _reviewDraftPreparation(
+      draft,
+      primaryActionLabel: 'Send Ready',
+      checkTrailheadOnStart: true,
+      onStart: (value, plan) async {
+        final ready = _applyReviewedPreparation(value, plan);
+        if (!await _ensureBackgroundSafetyReady(ready) || !mounted) {
+          return false;
+        }
+        prepared = ready;
+        return true;
+      },
+    );
+    return prepared;
+  }
+
+  /// Removes a started schedule from this member's cards and durable local planning cache.
+  Future<void> _consumeTeamUpcomingHike(String id) async {
+    if (id.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _consumedUpcomingHikeIds = {..._consumedUpcomingHikeIds, id};
+        myUpcomingHikes = myUpcomingHikes
+            .where((hike) => hike.id != id)
+            .toList();
+        _rebuildPlannedHike();
+      });
+    }
+    await hikerCircleRepository.localDatabase.markPlannedHikeConsumed(
+      ownerPhoneNumber: widget.session.phoneNumber,
+      upcomingHikeId: id,
+    );
+  }
+
+  final Set<String> _presentedTeamPings = {};
+  Route<bool>? _teamPingRoute;
+
+  /// Validates the live membership before presenting a ping, including notification taps.
   Future<void> _respondToTeamPing(String teamHikeSessionId) async {
     try {
       if (!mounted) {
         return;
       }
+      final hike = activeHike;
+      if (hike == null ||
+          hike.teamHikeSessionId != teamHikeSessionId ||
+          _isEndingActiveHike) {
+        return;
+      }
+      final team = await hikerCircleRepository.loadTeamHikeSession(
+        teamHikeSessionId,
+      );
+      if (!mounted ||
+          _isEndingActiveHike ||
+          team == null ||
+          activeHike?.sessionId != hike.sessionId) {
+        return;
+      }
+      final key = TeamPingPolicy.pendingKey(
+        team,
+        widget.session.phoneNumber,
+        DateTime.now(),
+      );
+      if (key == null || !_presentedTeamPings.add(key)) return;
       final shouldRespond = await _presentRespondToTeamPingEffect1();
       if (shouldRespond != true || !mounted) {
         return;
@@ -4904,6 +4976,7 @@ class _HikerHomePageState extends State<HikerHomePage>
       _isEndingActiveHike = true;
     }
     _precautionAnnouncer.dismiss();
+    HikeStartNavigation.closeOwnedRoute(_teamPingRoute, false);
 
     final endedAt = DateTime.now();
     var report = HikeSummaryReport.fromActiveHike(
@@ -4970,6 +5043,8 @@ class _HikerHomePageState extends State<HikerHomePage>
       return;
     }
 
+    await _consumeTeamUpcomingHike(completedHike.sourceUpcomingHikeId);
+    if (!mounted) return;
     setState(() {
       activeHike = null;
       _isEndingActiveHike = false;
@@ -6812,6 +6887,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           initialTeamSession: teamSession,
           initialSafetyDraft: draft,
           confirmReportedHazards: confirmReportedHazards,
+          reviewPreparation: _reviewTeamLaunchPreparation,
         );
       },
     ),
@@ -6876,6 +6952,7 @@ class _HikerHomePageState extends State<HikerHomePage>
           initialTeamSession: acceptedSession,
           initialSafetyDraft: draft,
           confirmReportedHazards: confirmHazards,
+          reviewPreparation: _reviewTeamLaunchPreparation,
         );
       },
     ),
@@ -6884,24 +6961,27 @@ class _HikerHomePageState extends State<HikerHomePage>
   /// Presents the respond to team ping effect1 UI.
   Future<bool?> _presentRespondToTeamPingEffect1() => showCupertinoDialog<bool>(
     context: context,
-    builder: (dialogContext) => CupertinoAlertDialog(
-      title: const Text('Your team is checking on you'),
-      content: const Text(
-        'Send “I’m OK” only after you have checked your situation.',
-      ),
-      actions: [
-        CupertinoDialogAction(
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Not now'),
+    builder: (dialogContext) {
+      _teamPingRoute = ModalRoute.of<bool>(dialogContext);
+      return CupertinoAlertDialog(
+        title: const Text('Your team is checking on you'),
+        content: const Text(
+          'Send “I’m OK” only after you have checked your situation.',
         ),
-        CupertinoDialogAction(
-          isDefaultAction: true,
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('I’m OK'),
-        ),
-      ],
-    ),
-  );
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Not now'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('I’m OK'),
+          ),
+        ],
+      );
+    },
+  ).whenComplete(() => _teamPingRoute = null);
 
   /// Presents the open emergency contacts effect1 UI.
   Future<List<EmergencyContact>?> _presentOpenEmergencyContactsEffect1() =>
@@ -7737,6 +7817,7 @@ class _TeamHikeLaunchPage extends StatefulWidget {
     required this.initialTeamSession,
     required this.initialSafetyDraft,
     required this.confirmReportedHazards,
+    required this.reviewPreparation,
   });
 
   final AppSession session;
@@ -7745,6 +7826,7 @@ class _TeamHikeLaunchPage extends StatefulWidget {
   final TeamHikeSession initialTeamSession;
   final HikeSessionDraft initialSafetyDraft;
   final Future<bool> Function() confirmReportedHazards;
+  final Future<HikeSessionDraft?> Function(HikeSessionDraft) reviewPreparation;
 
   /// Creates the presentation state for this widget.
   @override
@@ -7804,6 +7886,9 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
         ),
       );
 
+  HikeSessionDraft? _preparedDraft;
+  bool _preparedDraftLoaded = false;
+
   Timer? _countdownTicker;
   Timer? _teamRefreshTimer;
 
@@ -7824,6 +7909,7 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
 
     WidgetsBinding.instance.addObserver(this);
     _latestTeamSession = widget.initialTeamSession;
+    unawaited(_restorePreparedDraft());
     _readinessLocations.start();
     _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
@@ -7835,6 +7921,16 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
       (_) => unawaited(_pollTeamSession()),
     );
     unawaited(_pollTeamSession());
+  }
+
+  /// Restores this member's confirmed gear and safety choices before resuming a launch.
+  Future<void> _restorePreparedDraft() async {
+    final draft = await _screenModel.commandRestorePreparedDraft();
+    if (!mounted) return;
+    setState(() {
+      _preparedDraft = draft;
+      _preparedDraftLoaded = true;
+    });
   }
 
   /// Responds to foreground and background transitions.
@@ -7869,110 +7965,116 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
   /// Builds this widget from its current presentation state.
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF07140D),
-      body: SafeArea(
-        child: StreamBuilder<TeamHikeSession?>(
-          initialData: widget.initialTeamSession,
-          stream: _HikerHomePageDataActions.watchTeamHikeSession(
-            widget.repository,
-          )(widget.initialTeamSession.id),
-          builder: (context, snapshot) {
-            final teamSession = _visibleTeamSession(snapshot.data);
-            _closeWhenReady(teamSession);
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 620),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TeamReadinessHeader(
-                        onMap: () => unawaited(_showTeamMap(teamSession)),
-                        onClose: () => Navigator.of(context).pop(),
-                      ),
-                      const SizedBox(height: 18),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF0F5132), Color(0xFF34A853)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(
-                                0xFF34A853,
-                              ).withValues(alpha: 0.24),
-                              blurRadius: 24,
-                              offset: const Offset(0, 14),
-                            ),
-                          ],
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF07140D),
+        body: SafeArea(
+          child: StreamBuilder<TeamHikeSession?>(
+            initialData: widget.initialTeamSession,
+            stream: _HikerHomePageDataActions.watchTeamHikeSession(
+              widget.repository,
+            )(widget.initialTeamSession.id),
+            builder: (context, snapshot) {
+              final teamSession = _visibleTeamSession(snapshot.data);
+              _closeWhenReady(teamSession);
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 620),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TeamReadinessHeader(
+                          onMap: () => unawaited(_showTeamMap(teamSession)),
+                          onClose: () =>
+                              unawaited(_cancelReadiness(teamSession)),
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                teamSession.trailName,
-                                style: Theme.of(context).textTheme.titleLarge
-                                    ?.copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 0,
-                                    ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _launchSubtitle(teamSession),
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.82,
-                                      ),
-                                      letterSpacing: 0,
-                                    ),
-                              ),
-                              const SizedBox(height: 18),
-                              _ReadyLaunchButton(
-                                label: _readyButtonLabel(teamSession),
-                                subtitle: _readyButtonSubtitle(teamSession),
-                                enabled: _canPressButton(teamSession),
-                                busy: _isMarkingReady || _isActivating,
-                                countdown:
-                                    teamSession.phase == TeamHikePhase.countdown
-                                    ? teamSession.countdownRemainingSeconds
-                                    : null,
-                                onPressed: () =>
-                                    unawaited(_onButtonPressed(teamSession)),
+                        const SizedBox(height: 18),
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF0F5132), Color(0xFF34A853)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(18),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(
+                                  0xFF34A853,
+                                ).withValues(alpha: 0.24),
+                                blurRadius: 24,
+                                offset: const Offset(0, 14),
                               ),
                             ],
                           ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(18),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Text(
+                                  teamSession.trailName,
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0,
+                                      ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _launchSubtitle(teamSession),
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.82,
+                                        ),
+                                        letterSpacing: 0,
+                                      ),
+                                ),
+                                const SizedBox(height: 18),
+                                _ReadyLaunchButton(
+                                  label: _readyButtonLabel(teamSession),
+                                  subtitle: _readyButtonSubtitle(teamSession),
+                                  enabled: _canPressButton(teamSession),
+                                  busy: _isMarkingReady || _isActivating,
+                                  countdown:
+                                      teamSession.phase ==
+                                          TeamHikePhase.countdown
+                                      ? teamSession.countdownRemainingSeconds
+                                      : null,
+                                  onPressed: () =>
+                                      unawaited(_onButtonPressed(teamSession)),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 18),
-                      _TeamLaunchStatusCard(
-                        teamSession: teamSession,
-                        currentPhoneNumber: widget.session.phoneNumber,
-                        onRemovePendingInvitees:
-                            _sameTeamPhone(
-                                  teamSession.hostPhoneNumber,
-                                  widget.session.phoneNumber,
-                                ) &&
-                                teamSession.invitedCount > 0
-                            ? () =>
-                                  unawaited(_removePendingInvitees(teamSession))
-                            : null,
-                      ),
-                    ],
+                        const SizedBox(height: 18),
+                        _TeamLaunchStatusCard(
+                          teamSession: teamSession,
+                          currentPhoneNumber: widget.session.phoneNumber,
+                          onRemovePendingInvitees:
+                              _sameTeamPhone(
+                                    teamSession.hostPhoneNumber,
+                                    widget.session.phoneNumber,
+                                  ) &&
+                                  teamSession.invitedCount > 0
+                              ? () => unawaited(
+                                  _removePendingInvitees(teamSession),
+                                )
+                              : null,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
@@ -8004,16 +8106,12 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
 
   /// Marks current participant ready.
   Future<void> _markCurrentParticipantReady(TeamHikeSession teamSession) async {
-    if (!_canMarkReady(teamSession)) {
+    if (!_preparedDraftLoaded || !_canMarkReady(teamSession)) {
       return;
     }
     setState(() => _isMarkingReady = true);
     try {
       final trail = teamSession.sharedDraft?.trail;
-      if (trail != null &&
-          (!await confirmHikePrecautions(context, trail) || !mounted)) {
-        return;
-      }
       final profile = await _HikerHomePageDataActions.loadCommunityProfile(
         widget.repository,
       )(phoneNumber: widget.session.phoneNumber);
@@ -8044,10 +8142,30 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
       if (safetySettings == null || !mounted) {
         return;
       }
-      if (!await widget.confirmReportedHazards() || !mounted) {
-        if (mounted) _finishTeamNavigation(null);
-        return;
-      }
+      final initial = widget.initialSafetyDraft;
+      final prepared = await widget.reviewPreparation(
+        initial.copyWith(
+          fallDetectionEnabled: true,
+          pathDeviationEnabled: trail?.isUnlisted != true,
+          pathDeviationDistanceMeters: PathDeviationPolicy.normalizeDistance(
+            safetySettings['pathDeviationDistanceMeters'],
+          ),
+          fallDetectionSettings: FallDetectionSettings(
+            sensorSensitivity: (safetySettings['sensorSensitivity'] as num)
+                .toDouble(),
+            fallResponseDuration: Duration(
+              seconds: safetySettings['fallResponseDurationSeconds'] as int,
+            ),
+            longestRestDuration: Duration(
+              seconds: safetySettings['longestRestDurationSeconds'] as int,
+            ),
+          ),
+        ),
+      );
+      if (prepared == null || !mounted) return;
+      if (!await widget.confirmReportedHazards() || !mounted) return;
+      await _screenModel.commandSavePreparedDraft(prepared);
+      _preparedDraft = prepared;
       final readySession =
           await _HikerHomePageDataActions.markTeamParticipantReady(
             widget.repository,
@@ -8076,6 +8194,53 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
         setState(() {
           _isMarkingReady = false;
         });
+      }
+    }
+  }
+
+  /// Cancels or leaves preparation only after confirmation and a successful server update.
+  Future<void> _cancelReadiness(TeamHikeSession team) async {
+    if (_isMarkingReady || _isActivating) return;
+    final host = _sameTeamPhone(
+      team.hostPhoneNumber,
+      widget.session.phoneNumber,
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text(host ? 'Cancel team readiness?' : 'Leave team readiness?'),
+        content: Text(
+          host
+              ? 'This cancels the launch for everyone.'
+              : 'You will leave this team launch.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('Keep preparing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            child: Text(host ? 'Cancel launch' : 'Leave team'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.repository.cancelTeamReadiness(
+        session: widget.session,
+        teamHikeSessionId: team.id,
+        isHost: host,
+      );
+      if (mounted) _finishTeamNavigation(null);
+    } catch (error) {
+      if (mounted) {
+        HikerCircleToast.show(
+          context,
+          'Could not cancel readiness. Please retry.',
+          tone: HikerCircleToastTone.error,
+        );
       }
     }
   }
@@ -8134,14 +8299,19 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
           title: 'Team hike ended',
         );
       }
-      HikeStartNavigation.completeFlow(route, result);
+      HikeStartNavigation.completeFlow(
+        route,
+        result?.copyWith(
+          sharedDraft: _preparedDraft ?? widget.initialSafetyDraft,
+        ),
+      );
     });
     WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   /// Closes when ready.
   void _closeWhenReady(TeamHikeSession teamSession) {
-    if (_didFinishNavigation) {
+    if (_didFinishNavigation || !_preparedDraftLoaded) {
       return;
     }
     if (teamSession.phase == TeamHikePhase.completed) {
@@ -8171,10 +8341,6 @@ class _TeamHikeLaunchPageState extends State<_TeamHikeLaunchPage>
       return;
     }
     try {
-      if (!await widget.confirmReportedHazards() || !mounted) {
-        if (mounted) _finishTeamNavigation(null);
-        return;
-      }
       final activeSession =
           await _HikerHomePageDataActions.activateTeamHikeSession(
             widget.repository,
@@ -8996,6 +9162,20 @@ class _HikeSummaryReportPageState extends State<_HikeSummaryReportPage> {
   @override
   Widget build(BuildContext context) {
     final report = widget.report;
+    if (widget.activeHike.teamHikeSessionId.isNotEmpty) {
+      return SharedTeamHikeSummaryPage(
+        initialSummary: SharedTeamHikeSummary.atLocalEnd(
+          widget.activeHike,
+          report,
+          widget.session.phoneNumber,
+        ),
+        teams: widget.repository.watchTeamHikeSession(
+          widget.activeHike.teamHikeSessionId,
+        ),
+        ownerPhone: widget.session.phoneNumber,
+        onShare: () => unawaited(_openSharePreview()),
+      );
+    }
 
     /// Formats time.
     String formatTime(DateTime dt) {
@@ -9764,16 +9944,6 @@ class _ActiveHikeHomePageState extends State<ActiveHikeHomePage>
                     widget.onOpenTeamChat!();
                   },
                 ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.warning_amber_rounded),
-                title: const Text('Report a trail hazard'),
-                subtitle: const Text('Include your latest phone location'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  widget.onReportHazard();
-                },
-              ),
               if (teammates.isNotEmpty) ...[
                 const Divider(),
                 Padding(
@@ -9857,7 +10027,6 @@ class _ActiveHikeHomePageState extends State<ActiveHikeHomePage>
               onStyleChanged: widget.onMapStyleChanged,
               mapMode: _screenModel.stateMapMode,
               mapBuilder: widget.mapBuilder,
-              onReportHazard: widget.onReportHazard,
             ),
           ),
         ),
@@ -10135,9 +10304,11 @@ class _ActiveHikeBottomBar extends StatelessWidget {
     child: Row(
       children: [
         Expanded(
-          child: ActiveHikeMapModeButton(
-            onPressed: onToggleMapMode,
-            mode: mapMode,
+          child: OutlinedButton.icon(
+            key: const ValueKey('active-hike-hazard-button'),
+            onPressed: onReportHazard,
+            icon: const Icon(Icons.warning_amber_rounded),
+            label: const Text('Hazard'),
           ),
         ),
         if (onOpenTeamTools != null) ...[
