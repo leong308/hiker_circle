@@ -92,7 +92,7 @@ class HikeArrivalSafetyCoordinator extends ChangeNotifier {
       return 'The automatic contact alert could not be sent. Please contact your emergency contacts directly.';
     }
     if (_cloud?['status'] == 'no_contacts') {
-      return 'No emergency contacts are saved in your cloud account. Please confirm that you are okay.';
+      return 'No emergency contacts are saved in your cloud account. Go to SOS page and add now!';
     }
     return 'Your recorded footprints have not confirmed arrival at a saved peak or the trail end. Confirm that you are okay to cancel the pending alert to your emergency contacts.';
   }
