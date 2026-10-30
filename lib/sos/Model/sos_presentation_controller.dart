@@ -5,7 +5,15 @@ import 'package:flutter/foundation.dart';
 import 'sos_models.dart';
 
 /// Defines the sos presentation phase choices.
-enum SosPresentationPhase { sending, sent, partial, queued, noContacts, failed }
+enum SosPresentationPhase {
+  sending,
+  sent,
+  partial,
+  unconfirmed,
+  queued,
+  noContacts,
+  failed,
+}
 
 // Native audio is process-wide. This scalar lease prevents an old account's
 // delayed cleanup from stopping a newer account's alarm; it stores no identity.
@@ -122,6 +130,7 @@ class SosPresentationController extends ChangeNotifier {
   bool _disposed = false;
   String? _alertId;
   int _confirmedSentCount = 0;
+  int _receiptRevision = 0;
 
   /// Returns current.
   SosPresentation? get current => _current;
@@ -140,6 +149,7 @@ class SosPresentationController extends ChangeNotifier {
     _onStopAlarm = onStopAlarm;
     _alertId = null;
     _confirmedSentCount = 0;
+    _receiptRevision = 0;
     _current = SosPresentation(
       eventId: eventId,
       mode: mode,
@@ -208,33 +218,39 @@ class SosPresentationController extends ChangeNotifier {
       return;
     }
     final alert = result.alert;
+    final revision = alert.dispatches.fold<int>(
+      0,
+      (value, p) => p.updatedAtMillis > value ? p.updatedAtMillis : value,
+    );
     if ((_alertId != null && _alertId != alert.id) ||
-        alert.sentCount < _confirmedSentCount ||
-        (_current!.phase == SosPresentationPhase.sent &&
-            _alertId != null &&
-            alert.status != SosAlertStatus.sent)) {
+        revision < _receiptRevision ||
+        (revision <= _receiptRevision &&
+            alert.sentCount < _confirmedSentCount)) {
       return;
     }
     _alertId = alert.id;
+    _receiptRevision = revision;
     _confirmedSentCount = alert.sentCount;
 
-    /// Computes contacts.
-    String contacts(int count) => count == 1 ? 'contact' : 'contacts';
     final (phase, message) = switch (alert.status) {
       SosAlertStatus.sent => (
         SosPresentationPhase.sent,
-        '${alert.sentCount} emergency ${contacts(alert.sentCount)} notified.',
+        '${alert.confirmationLabel}.',
       ),
       SosAlertStatus.partial => (
         SosPresentationPhase.partial,
-        '${alert.sentCount} of ${alert.contactCount} emergency ${contacts(alert.contactCount)} notified.',
+        '${alert.confirmationLabel}.${alert.unconfirmedCount > 0 ? ' Unconfirmed contacts are still being checked.' : ''}',
+      ),
+      SosAlertStatus.unconfirmed => (
+        SosPresentationPhase.unconfirmed,
+        '${alert.confirmationLabel}. Still checking for late confirmations.',
       ),
       SosAlertStatus.queued => (
         result.queuedForRetry
             ? SosPresentationPhase.queued
             : SosPresentationPhase.sending,
         result.queuedForRetry
-            ? 'Your alert is saved. HikerCircle will retry when a connection is available.'
+            ? 'Your alert is saved. Only failed contacts will be retried when a connection is available.'
             : 'Your alert is saved. Sending to your emergency contacts…',
       ),
       SosAlertStatus.noContacts => (
@@ -282,6 +298,7 @@ class SosPresentationController extends ChangeNotifier {
     _onStopAlarm = null;
     _alertId = null;
     _confirmedSentCount = 0;
+    _receiptRevision = 0;
     notifyListeners();
   }
 

@@ -30,6 +30,7 @@ const {contentHash, conditionalPayload, reminderCooldown} = require('./mobile_ca
 const crypto = require('crypto');
 const teamPolicy = require('./team_hike_policy');
 const teamHistory = require('./team_hike_history');
+const sosConfirmation = require('./sos_confirmation');
 const argon2 = require('argon2');
 const {
   SosDispatchValidationError,
@@ -1424,15 +1425,20 @@ async function transitionSosDispatch(
     ) {
       return false;
     }
-    transaction.set(
-      reference,
-      {
-        ...updates,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAtLocal: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    const now = Date.now();
+    const patch = {...updates, updatedAtMillis: now,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedAtLocal: new Date(now).toISOString()};
+    if (current.confirmationTracking) {
+      const retry = updates.status === 'failed' && updates.retryable === true && Number(current.attemptCount) < sosConfirmation.MAX_ATTEMPTS;
+      if (updates.status === 'failed') {
+        patch.retryable = retry;
+        patch.nextRetryAtMillis = retry ? now + 60000 : 0;
+      }
+      patch.nextCheckAtMillis = updates.status === 'failed' && !retry ? admin.firestore.FieldValue.delete()
+        : updates.status === 'sending' ? patch.confirmationDeadlineMillis : now + 60000;
+      sosConfirmation.project(transaction, admin.firestore(), reference.id, {...current, ...patch}, now);
+    }
+    transaction.set(reference, patch, {merge: true});
     return true;
   });
 }
@@ -1539,8 +1545,8 @@ function greenApiReadinessHttpsError(error) {
 // Emergency messages must never carry the provider credential or arbitrary
 // provider text in the mobile binary. A stable dispatch claim prevents normal
 // client retries from sending the same alert twice. Once an outbound request
-// may have reached the provider, an unconfirmed result is deliberately made
-// terminal instead of risking a duplicate emergency message.
+// may have reached the provider, an unconfirmed result stays open to
+// read-only provider reconciliation without blindly sending a duplicate.
 exports.sendSosWhatsAppMessage = onCall(
   {
     secrets: [greenApiInstanceId, greenApiToken],
@@ -1582,6 +1588,12 @@ exports.sendSosWhatsAppMessage = onCall(
       );
     }
 
+    return sendValidatedSosDispatch({uid, ownerPhone, dispatch});
+  }
+);
+
+// Send one validated SOS recipient; app retries and background recovery share the same transactional claim.
+async function sendValidatedSosDispatch({uid, ownerPhone, dispatch}) {
     const db = admin.firestore();
     const userReference = db.collection('users').doc(uid);
     const dispatchReference = db
@@ -1612,10 +1624,8 @@ exports.sendSosWhatsAppMessage = onCall(
         user.preferredTimeZone
       );
       const savedContacts = Array.isArray(user.sos_contacts) ? user.sos_contacts : [];
-      const isSavedContact = savedContacts.some(
-        (contact) =>
-          String(contact?.phoneNumber || '').replace(/\D/g, '') === recipientDigits
-      );
+      const contactIndex = savedContacts.findIndex(contact => String(contact?.phoneNumber || '').replace(/\D/g, '') === recipientDigits);
+      const isSavedContact = contactIndex >= 0;
       if (!isSavedContact) {
         throw new HttpsError(
           'permission-denied',
@@ -1666,6 +1676,9 @@ exports.sendSosWhatsAppMessage = onCall(
             return { send: false, response: sosDispatchClientResponse(uncertain) };
           }
           return { send: false, response: sosDispatchClientResponse(previous) };
+        }
+        if (previousStatus === 'failed' && previous.retryable && Number(previous.nextRetryAtMillis || 0) > now) {
+          return {send: false, response: sosDispatchClientResponse(previous)};
         }
         if (
           previousStatus === 'failed'
@@ -1734,6 +1747,11 @@ exports.sendSosWhatsAppMessage = onCall(
           recipientPhoneNumber: dispatch.recipientPhone,
           dispatchId: dispatch.dispatchId,
           sourceId: dispatch.dispatchId,
+          ...(!dispatch.isTest ? {confirmationTracking: true, request: dispatch,
+            alertId: dispatch.dispatchId.endsWith(`_${recipientDigits}`) ? dispatch.dispatchId.slice(0, -(recipientDigits.length + 1)) : dispatch.dispatchId,
+            contactName: String(previous.contactName || savedContacts[contactIndex]?.name || `Contact ${contactIndex + 1}`).slice(0, 80),
+            contactIndex: Number(previous.contactIndex) || contactIndex + 1, confirmationReference: sosConfirmation.referenceFor(dispatchReference.id, attemptCount),
+            nextRetryAtMillis: 0, nextCheckAtMillis: now + 30000, providerMessageId: '', providerStatus: ''} : {}),
           messageType: dispatch.isTest ? 'sos_test' : 'sos_alert',
           mode: dispatch.mode,
           triggerSource: dispatch.triggerSource,
@@ -1760,6 +1778,7 @@ exports.sendSosWhatsAppMessage = onCall(
         { merge: true }
       );
       return { send: true, recipientDigits, preferredTimeZone,
+        confirmationReference: sosConfirmation.referenceFor(dispatchReference.id, attemptCount),
         ...(Object.hasOwn(previous, 'shirtColor')
           ? {shirtColor: require('./hike_shirt_color').normalizeShirtColor(previous.shirtColor)} : {}),
       };
@@ -1820,6 +1839,7 @@ exports.sendSosWhatsAppMessage = onCall(
       new Set(['claimed']),
       {
         status: 'sending',
+        ...(!dispatch.isTest ? {confirmationDeadlineMillis: Date.now() + sosConfirmation.WINDOW_MS} : {}),
         outboundStartedAt: admin.firestore.FieldValue.serverTimestamp(),
         outboundStartedAtLocal: new Date().toISOString(),
         shirtColor,
@@ -1829,6 +1849,7 @@ exports.sendSosWhatsAppMessage = onCall(
       return sosDispatchClientResponse({ status: 'sending' });
     }
 
+    const pendingStatuses = new Set(dispatch.isTest ? ['sending'] : ['sending', 'delivery_uncertain']);
     let response;
     try {
       response = await fetch(
@@ -1848,9 +1869,9 @@ exports.sendSosWhatsAppMessage = onCall(
               triggerSource: dispatch.triggerSource,
               preferredTimeZone: claim.preferredTimeZone,
               shirtColor,
-            }),
+            }) + (dispatch.isTest ? '' : `\n\nSOS reference: ${claim.confirmationReference}`),
           }),
-          signal: AbortSignal.timeout(12 * 1000),
+          signal: AbortSignal.timeout(dispatch.isTest ? 12000 : sosConfirmation.WINDOW_MS),
         }
       );
     } catch (error) {
@@ -1866,7 +1887,7 @@ exports.sendSosWhatsAppMessage = onCall(
       await transitionSosDispatch(
         dispatchReference,
         attemptNonce,
-        new Set(['sending']),
+        pendingStatuses,
         {
           status,
           retryable,
@@ -1897,7 +1918,7 @@ exports.sendSosWhatsAppMessage = onCall(
       await transitionSosDispatch(
         dispatchReference,
         attemptNonce,
-        new Set(['sending']),
+        pendingStatuses,
         {
           status,
           retryable,
@@ -1920,7 +1941,7 @@ exports.sendSosWhatsAppMessage = onCall(
       await transitionSosDispatch(
         dispatchReference,
         attemptNonce,
-        new Set(['sending']),
+        pendingStatuses,
         {
           status: 'delivery_uncertain',
           retryable: false,
@@ -1935,7 +1956,7 @@ exports.sendSosWhatsAppMessage = onCall(
       const finalized = await transitionSosDispatch(
         dispatchReference,
         attemptNonce,
-        new Set(['sending']),
+        pendingStatuses,
         {
           status: 'sent',
           retryable: false,
@@ -1959,8 +1980,47 @@ exports.sendSosWhatsAppMessage = onCall(
       return sosDispatchClientResponse({ status: 'delivery_uncertain' });
     }
     return sosDispatchClientResponse({ status: 'sent', providerMessageId });
+}
+
+// Verify SOS outcomes without resending unknown attempts; the provider instance's other message types are ignored.
+exports.reconcileSosConfirmations = onSchedule({schedule: 'every 1 minutes', timeoutSeconds: 120,
+  maxInstances: 1, secrets: [greenApiInstanceId, greenApiToken]}, async () => {
+  const db = admin.firestore(), now = Date.now();
+  const due = await db.collection('sosWhatsAppDispatches').where('nextCheckAtMillis', '<=', now).limit(50).get();
+  const records = due.docs.filter(doc => doc.data().confirmationTracking === true && doc.data().isTest !== true);
+  if (!records.length) return;
+  const credentials = greenApiCredentials();
+  let queue = [], journal = [], verified = false;
+  try {
+    const responses = await Promise.all(['showMessagesQueue', 'lastOutgoingMessages'].map(method =>
+      fetch(greenApiEndpoint(method, credentials), {signal: AbortSignal.timeout(10000)})));
+    if (responses.every(response => response.ok)) {
+      [queue, journal] = await Promise.all(responses.map(response => response.json()));
+      verified = Array.isArray(queue) && Array.isArray(journal);
+    }
+  } catch (_) { logger.warn('SOS confirmation lookup is temporarily unavailable.'); }
+  const retry = [];
+  for (const doc of records) {
+    const previous = doc.data();
+    const evidence = verified ? sosConfirmation.evidenceFor(previous, queue, journal) : null;
+    const next = await sosConfirmation.reconcile({db, ref: doc.ref, previous, evidence, now,
+      deleteField: () => admin.firestore.FieldValue.delete()});
+    const failedRetry = next?.status === 'failed' && next.retryable === true
+      && Number(next.attemptCount) < sosConfirmation.MAX_ATTEMPTS && Number(next.nextRetryAtMillis || 0) <= now;
+    // A claim whose lease expired never started an outbound request and can be safely recovered.
+    const unsentClaim = next?.status === 'claimed' && Number(next.leaseExpiresAtMillis || 0) <= now;
+    if (verified && next && !next.expired && (failedRetry || unsentClaim)
+      && next.request && retry.length < 3) retry.push(next);
   }
-);
+  await Promise.all(retry.map(async record => {
+    try {
+      const dispatch = record.request;
+      if (record.ownerUid !== userDocumentIdForPhone(record.senderPhoneNumber)
+        || dispatch.recipientPhone !== record.recipientPhoneNumber || dispatch.isTest) return;
+      await sendValidatedSosDispatch({uid: record.ownerUid, ownerPhone: record.senderPhoneNumber, dispatch});
+    } catch (_) { logger.warn('A targeted SOS retry could not be completed; its canonical state is retained.'); }
+  }));
+});
 
 async function sendLiveLocationStartToContact({
   db,

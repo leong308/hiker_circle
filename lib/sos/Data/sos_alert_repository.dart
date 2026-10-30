@@ -14,6 +14,8 @@ import '../../app/Model/app_session.dart';
 import '../../authentication/Data/green_api_client.dart';
 import '../../authentication/Data/phone_number_formatter.dart';
 import '../Model/sos_models.dart';
+import '../Model/sos_delivery_policy.dart';
+import 'sos_confirmation_store.dart';
 import '../../home/Model/hike_shirt_color.dart';
 
 /// Represents sos alert repository exception.
@@ -114,7 +116,7 @@ class SosAlertRepository {
     FirebaseFirestore? firestore,
     GreenApiClient? greenApiClient,
     LocalSessionDatabase? localDatabase,
-    Duration sendAttemptTimeout = const Duration(seconds: 4),
+    Duration sendAttemptTimeout = const Duration(seconds: 15),
     Duration cloudWriteTimeout = const Duration(seconds: 4),
     FirebaseBootstrapResult firebaseBootstrapResult =
         const FirebaseBootstrapResult.available(),
@@ -135,6 +137,42 @@ class SosAlertRepository {
   /// Returns resolved firestore.
   FirebaseFirestore get _resolvedFirestore =>
       _firestore ?? FirebaseFirestore.instance;
+
+  /// Shares authoritative contact receipts across the home overlay and SOS history.
+  SosConfirmationStore get _confirmations =>
+      SosConfirmationStore(_resolvedFirestore);
+
+  /// Resolves the owner using the same phone identity as Firebase authentication.
+  String _owner(AppSession session) =>
+      FirebaseUserRepository.documentIdForPhoneNumber(session.phoneNumber);
+
+  /// Applies late results without creating a new SOS popup for a historic alert.
+  Stream<SosAlert> watchDeliveryConfirmations(AppSession session) {
+    if (!_firebaseBootstrapResult.isAvailable) return const Stream.empty();
+    return _confirmations.watch(_owner(session)).map((alert) {
+      _notifyQueueChanged(
+        session,
+        alert: alert,
+        queuedForRetry: alert.dispatches.any(SosDeliveryPolicy.canRetry),
+      );
+      return alert;
+    });
+  }
+
+  /// Overlays owner-only server receipts when reopening SOS history.
+  Future<List<SosAlert>> _confirmedLogs(
+    AppSession session,
+    List<SosAlert> alerts,
+  ) async {
+    try {
+      await _confirmations.refresh(_owner(session));
+    } catch (_) {
+      // Retain the local log when the device is offline.
+    }
+    return alerts
+        .map((a) => _confirmations.remember(_owner(session), a))
+        .toList();
+  }
 
   /// Returns users.
   CollectionReference<Map<String, dynamic>> get _users {
@@ -337,7 +375,7 @@ class SosAlertRepository {
         limit: limit,
       );
       if (referencedAlerts.isNotEmpty) {
-        return referencedAlerts;
+        return _confirmedLogs(session, referencedAlerts);
       }
       final snapshot = await _sosAlerts
           .where(
@@ -352,7 +390,7 @@ class SosAlertRepository {
           .map((document) => SosAlert.fromFirestore(document.data()))
           .toList();
       alerts.sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
-      return alerts;
+      return _confirmedLogs(session, alerts);
     } catch (_) {
       return const [];
     }
@@ -512,6 +550,7 @@ class SosAlertRepository {
       triggerSource: resolvedTriggerSource,
       shirtColor: shirtColor,
     );
+    _confirmations.remember(_owner(session), pendingAlert);
     final acknowledgement =
         _completeSubmittedAlert(
           session: session,
@@ -586,28 +625,42 @@ class SosAlertRepository {
       );
     }
 
+    final reconciled = _confirmations.contacts(
+      _owner(session),
+      alertId,
+      dispatches,
+    );
+    dispatches
+      ..clear()
+      ..addAll(reconciled);
     final sentCount = dispatches.where((dispatch) => dispatch.wasSent).length;
-    final failedCount = dispatches.length - sentCount;
+    final failedCount = dispatches
+        .where((p) => !p.wasSent && !p.isUnconfirmed && !p.isConfirming)
+        .length;
     final status = _statusFor(
       contactCount: contacts.length,
       sentCount: sentCount,
       failedCount: failedCount,
+      dispatches: dispatches,
     );
 
-    final alert = SosAlert(
-      id: alertId,
-      mode: mode,
-      status: status,
-      triggeredAt: triggeredAt,
-      triggeredByPhoneNumber: session.phoneNumber,
-      contactCount: contacts.length,
-      sentCount: sentCount,
-      failedCount: failedCount,
-      dispatches: dispatches,
-      message: message,
-      triggerLocation: triggerLocation,
-      triggerSource: resolvedTriggerSource,
-      shirtColor: pendingAlert.shirtColor,
+    final alert = _confirmations.remember(
+      _owner(session),
+      SosAlert(
+        id: alertId,
+        mode: mode,
+        status: status,
+        triggeredAt: triggeredAt,
+        triggeredByPhoneNumber: session.phoneNumber,
+        contactCount: contacts.length,
+        sentCount: sentCount,
+        failedCount: failedCount,
+        dispatches: dispatches,
+        message: message,
+        triggerLocation: triggerLocation,
+        triggerSource: resolvedTriggerSource,
+        shirtColor: pendingAlert.shirtColor,
+      ),
     );
 
     if (sentCount > 0) {
@@ -661,9 +714,13 @@ class SosAlertRepository {
 
     _activeAlertIds[session.phoneNumber]?.remove(alertId);
     final queuedCount = await countQueuedAlerts(session: session);
-    final effectiveAlert = queuedForRetry && sentCount == 0
-        ? _alertWithStatus(alert, SosAlertStatus.queued)
-        : alert;
+    final freshAlert = _confirmations.remember(_owner(session), alert);
+    final effectiveAlert =
+        queuedForRetry &&
+            freshAlert.sentCount == 0 &&
+            !freshAlert.dispatches.any((p) => p.isUnconfirmed || p.isConfirming)
+        ? _alertWithStatus(freshAlert, SosAlertStatus.queued)
+        : freshAlert;
     _notifyQueueChanged(
       session,
       alert: effectiveAlert,
@@ -796,6 +853,11 @@ class SosAlertRepository {
       );
     }
 
+    try {
+      await _confirmations.refresh(_owner(session));
+    } catch (_) {
+      // The callable still enforces per-contact idempotency if receipts are temporarily unavailable.
+    }
     var attempted = 0;
     var sent = 0;
     final attemptedIds = <int>{};
@@ -854,16 +916,22 @@ class SosAlertRepository {
                     AppSettingsController.instance.preferredTimeZone,
                 shirtColor: shirtColor,
               );
-          final previousDispatches = _dispatchesFromPayload(
-            payload['dispatches'],
-          );
           final alertId =
               payload['alertId'] as String? ?? _alertIdFor(triggeredAt, mode);
+          final previousDispatches = _confirmations.contacts(
+            _owner(session),
+            alertId,
+            _dispatchesFromPayload(payload['dispatches']),
+          );
           final contactsForRetry = _contactsFromPayload(payload['contacts']);
-          final retryContacts =
+          final candidateContacts =
               contactsForRetry.isEmpty && previousDispatches.isEmpty
               ? contacts
               : contactsForRetry;
+          final retryContacts = _contactsRequiringRetry(
+            candidateContacts,
+            previousDispatches,
+          );
           final contactUniverse = retryContacts.isNotEmpty
               ? retryContacts
               : contacts;
@@ -884,14 +952,20 @@ class SosAlertRepository {
             );
           }
 
-          final allDispatches = _latestDispatchesByPhone([
-            ...previousDispatches,
-            ...retryDispatches,
-          ]);
+          final allDispatches = _confirmations.contacts(
+            _owner(session),
+            alertId,
+            _latestDispatchesByPhone([
+              ...previousDispatches,
+              ...retryDispatches,
+            ]),
+          );
           final latestSentCount = allDispatches
               .where((dispatch) => dispatch.wasSent)
               .length;
-          final latestFailedCount = allDispatches.length - latestSentCount;
+          final latestFailedCount = allDispatches
+              .where((p) => !p.wasSent && !p.isUnconfirmed && !p.isConfirming)
+              .length;
           final originalContactCount = switch (payload['contactCount']) {
             final num value when value.isFinite && value >= 0 => value.toInt(),
             _ =>
@@ -906,6 +980,7 @@ class SosAlertRepository {
               contactCount: originalContactCount,
               sentCount: latestSentCount,
               failedCount: latestFailedCount,
+              dispatches: allDispatches,
             ),
             triggeredAt: triggeredAt,
             triggeredByPhoneNumber: session.phoneNumber,
@@ -1178,7 +1253,9 @@ class SosAlertRepository {
       final latest = latestByPhone[key];
       return key.isEmpty ||
           latest == null ||
-          (!latest.wasSent && latest.retryable);
+          (SosDeliveryPolicy.canRetry(latest) &&
+              latest.nextRetryAtMillis <=
+                  DateTime.now().millisecondsSinceEpoch);
     }).toList();
   }
 
@@ -1290,7 +1367,7 @@ class SosAlertRepository {
               isTest: isTest,
               shirtColor: shirtColor?.name,
             )
-            .timeout(_sendAttemptTimeout);
+            .timeout(isTest ? const Duration(seconds: 4) : _sendAttemptTimeout);
 
         if (result.wasSent) {
           return SosContactDispatch(
@@ -1301,12 +1378,36 @@ class SosAlertRepository {
             providerMessageId: result.providerMessageId,
           );
         }
+        if (!isTest &&
+            (result.deliveryUncertain ||
+                result.confirmationStatus == 'sending')) {
+          return SosContactDispatch(
+            contactName: contact.name,
+            phoneNumber: normalizedPhoneNumber,
+            wasSent: false,
+            retryable: false,
+            confirmationStatus: result.confirmationStatus == 'sending'
+                ? 'sending'
+                : 'unconfirmed',
+            errorMessage: result.message,
+          );
+        }
         retryable = result.retryable;
         lastError = result.message ?? 'Emergency message was not confirmed.';
         if (!retryable || result.deliveryUncertain) {
           break;
         }
       } on TimeoutException catch (error) {
+        if (!isTest) {
+          return SosContactDispatch(
+            contactName: contact.name,
+            phoneNumber: normalizedPhoneNumber,
+            wasSent: false,
+            retryable: false,
+            confirmationStatus: 'unconfirmed',
+            errorMessage: 'No confirmation within 15 seconds. Still checking.',
+          );
+        }
         lastError = error;
       } on GreenApiException catch (error) {
         lastError = error;
@@ -1447,7 +1548,11 @@ class SosAlertRepository {
     required int contactCount,
     required int sentCount,
     required int failedCount,
+    List<SosContactDispatch>? dispatches,
   }) {
+    if (dispatches != null) {
+      return SosDeliveryPolicy.status(contactCount, dispatches);
+    }
     if (contactCount == 0) {
       return SosAlertStatus.noContacts;
     }

@@ -9,6 +9,7 @@ class GreenApiSendResult {
     required this.wasSent,
     required this.retryable,
     this.deliveryUncertain = false,
+    this.confirmationStatus = '',
     this.providerMessageId,
     this.message,
   });
@@ -16,6 +17,7 @@ class GreenApiSendResult {
   final bool wasSent;
   final bool retryable;
   final bool deliveryUncertain;
+  final String confirmationStatus;
   final String? providerMessageId;
   final String? message;
 }
@@ -140,13 +142,17 @@ class GreenApiClient {
               : providerMessageId,
         );
       }
-      if (status == 'delivery_uncertain') {
+      if (status == 'delivery_uncertain' ||
+          (!isTest && status == 'in_progress')) {
         return GreenApiSendResult(
           wasSent: false,
           retryable: false,
-          deliveryUncertain: true,
+          deliveryUncertain: status == 'delivery_uncertain',
+          confirmationStatus: status == 'in_progress'
+              ? 'sending'
+              : 'unconfirmed',
           message:
-              'Delivery could not be confirmed. To avoid a duplicate alert, HikerCircle will not resend this dispatch automatically. Call emergency services directly.',
+              'No confirmation yet. HikerCircle is checking this contact without blindly resending.',
         );
       }
       return GreenApiSendResult(

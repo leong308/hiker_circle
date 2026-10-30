@@ -593,6 +593,7 @@ class _HikerHomePageState extends State<HikerHomePage>
   late final TabController tabController;
 
   StreamSubscription<SosQueueChange>? _sosQueueSubscription;
+  StreamSubscription<SosAlert>? _sosConfirmationSubscription;
   StreamSubscription<void>? _sosConnectionSubscription;
 
   final Set<int> _stoppingSosPresentationIds = {};
@@ -960,6 +961,14 @@ class _HikerHomePageState extends State<HikerHomePage>
     sosAlertRepository = SosAlertRepository(
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
     );
+    _sosConfirmationSubscription = sosAlertRepository
+        .watchDeliveryConfirmations(widget.session)
+        .listen(
+          (_) {},
+          onError: (Object _) {
+            // Firestore reconnects the owner-only receipt listener automatically.
+          },
+        );
     _sosQueueSubscription = SosAlertRepository.queueChanges.listen((change) {
       if (mounted && change.phoneNumber == widget.session.phoneNumber) {
         final alert = change.alert;
@@ -6391,6 +6400,7 @@ class _HikerHomePageState extends State<HikerHomePage>
     _bleEventSubscription?.cancel();
     _networkReachabilitySubscription?.cancel();
     _sosQueueSubscription?.cancel();
+    _sosConfirmationSubscription?.cancel();
     _sosConnectionSubscription?.cancel();
     _formedTeamChatsSubscription?.cancel();
     _teamReadinessSubscription?.cancel();
