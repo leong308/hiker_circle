@@ -53,6 +53,7 @@ function buildUpcomingHikePreview(
   if (
     !id
     || hike.isDeleted === true
+    || hike.teamLaunchConsumed === true
     || !Number.isFinite(departureMillis)
     || departureMillis + 15 * 60 * 1000 <= nowMillis
   ) {

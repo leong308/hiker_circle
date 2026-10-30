@@ -22,7 +22,8 @@ abstract final class HikeStartNavigation {
         navigator == null) {
       return;
     }
-    if (route.isCurrent) {
+    if (route.isCurrent &&
+        route.popDisposition != RoutePopDisposition.doNotPop) {
       navigator.pop<T>(result);
     } else {
       navigator.removeRoute<T>(route, result);

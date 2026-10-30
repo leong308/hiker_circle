@@ -115,6 +115,7 @@ flutter:
     - assets/animations/gps_location.LICENSE.txt
     - assets/animations/file_transfer.gif
     - assets/icons/AppIcon-Android-1024.png
+    - assets/icons/HikerCircle-Loader-Transparent.png
 
   fonts:
     - family: Inter

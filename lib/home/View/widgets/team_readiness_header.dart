@@ -26,8 +26,8 @@ class TeamReadinessHeader extends StatelessWidget {
     ),
     actions: [
       PageHeaderAction(
-        tooltip: 'Close',
-        icon: Icons.close_rounded,
+        tooltip: 'Cancel readiness',
+        icon: Icons.cancel_outlined,
         onPressed: onClose,
         color: Colors.white,
         surface: Colors.white.withValues(alpha: .12),

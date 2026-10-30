@@ -258,7 +258,9 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
           _buildWeather(context),
           const SizedBox(height: 10),
           _BriefingAction(
-            title: 'Final preparation review',
+            title: hike.hikeType == 'team'
+                ? 'Start team readiness'
+                : 'Final preparation review',
             onTap: widget.onReview,
             leading: Stack(
               alignment: Alignment.center,
@@ -276,7 +278,9 @@ class _NextHikeBriefingState extends State<NextHikeBriefing>
               ],
             ),
             subtitle: Text(
-              plan == null
+              hike.hikeType == 'team'
+                  ? 'Prepare together and confirm when ready'
+                  : plan == null
                   ? 'Build your trail-specific packing list'
                   : '${plan.checklistCompleted}/${plan.checklistTotal} packed · gear & safety',
             ),

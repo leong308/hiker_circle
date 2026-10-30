@@ -1175,6 +1175,7 @@ class _TeamSnapshotCard extends StatefulWidget {
 /// Manages the team snapshot card presentation and lifecycle.
 class _TeamSnapshotCardState extends State<_TeamSnapshotCard> {
   String _pingingPhoneNumber = '';
+  HikerCircleLoadingDialogRoute? _pingLoadingRoute;
 
   /// Builds this widget from its current presentation state.
   @override
@@ -1306,8 +1307,8 @@ class _TeamSnapshotCardState extends State<_TeamSnapshotCard> {
           ),
         );
     } finally {
+      _presentPingEffect2();
       if (mounted) {
-        _presentPingEffect2();
         setState(() {
           _pingingPhoneNumber = '';
         });
@@ -1315,20 +1316,31 @@ class _TeamSnapshotCardState extends State<_TeamSnapshotCard> {
     }
   }
 
-  /// Presents the ping effect1 UI.
-  Future<void> _presentPingEffect1() => showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const HikerCircleLoadingToast(
+  /// Uses the same bounded modal treatment as other loading operations.
+  Future<void> _presentPingEffect1() {
+    final route = HikerCircleLoadingDialogRoute(
+      context: context,
       compact: true,
       message: 'Sending safety ping…',
-      detail: 'Waiting for the hiker’s acknowledgement.',
-    ),
-  );
+      detail: 'Sending a check-in request to your teammate.',
+    );
+    _pingLoadingRoute = route;
+    return Navigator.of(context, rootNavigator: true).push<void>(route);
+  }
 
-  /// Presents the ping effect2 UI.
-  void _presentPingEffect2() =>
-      Navigator.of(context, rootNavigator: true).pop();
+  /// Closes only this ping's loader; late completion cannot dismiss another route.
+  void _presentPingEffect2() {
+    _pingLoadingRoute?.close();
+    _pingLoadingRoute = null;
+  }
+
+  /// Removes an outstanding loader if the containing team card goes away.
+  @override
+  void dispose() {
+    final loading = _pingLoadingRoute;
+    WidgetsBinding.instance.addPostFrameCallback((_) => loading?.close());
+    super.dispose();
+  }
 }
 
 /// Displays the team participant row.

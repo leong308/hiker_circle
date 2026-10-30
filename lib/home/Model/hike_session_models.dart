@@ -700,6 +700,7 @@ class TeamHikeSession {
     this.updatedAt,
     this.sharedDraft,
     this.participantColorsByPhone = const {},
+    this.summarySnapshot,
   });
 
   /// Creates team hike session from a cloud record.
@@ -714,6 +715,9 @@ class TeamHikeSession {
     );
     return TeamHikeSession(
       participantColorsByPhone: assignments,
+      summarySnapshot: data['summarySnapshot'] is Map
+          ? _modelMapFrom(data['summarySnapshot'])
+          : null,
       id: id.isEmpty ? _modelStringFrom(data['teamHikeSessionId']) : id,
       sourceUpcomingHikeId: _modelStringFrom(data['sourceUpcomingHikeId']),
       activeHikeSessionId: _modelStringFrom(data['activeHikeSessionId']),
@@ -767,6 +771,7 @@ class TeamHikeSession {
   final List<TeamHikeParticipant> participants;
   final HikeSessionDraft? sharedDraft;
   final Map<String, int> participantColorsByPhone;
+  final Map<String, dynamic>? summarySnapshot;
 
   /// Returns ready count.
   int get readyCount => participants
@@ -845,6 +850,7 @@ class TeamHikeSession {
       participants: participants ?? this.participants,
       sharedDraft: sharedDraft ?? this.sharedDraft,
       participantColorsByPhone: participantColorsByPhone,
+      summarySnapshot: summarySnapshot,
     );
   }
 
@@ -860,6 +866,7 @@ class TeamHikeSession {
       'trailName': trailName,
       'phase': phase.name,
       'participantColorsByPhone': participantColorsByPhone,
+      if (summarySnapshot != null) 'summarySnapshot': summarySnapshot,
       'countdownSeconds': countdownSeconds,
       'participants': participants
           .map((participant) => participant.toFirestore())
@@ -2134,6 +2141,7 @@ class UpcomingHike {
     required this.createdAt,
     this.participantPhones = const [],
     this.isDeleted = false,
+    this.teamLaunchConsumed = false,
     this.deletedAt,
     this.deletedReason = '',
     this.draft,
@@ -2166,6 +2174,7 @@ class UpcomingHike {
   final DateTime createdAt;
   final List<String> participantPhones;
   final bool isDeleted;
+  final bool teamLaunchConsumed;
   final String deletedReason;
   final DateTime? deletedAt;
   final HikeSessionDraft? draft;
@@ -2186,7 +2195,7 @@ class UpcomingHike {
 
   /// Checks whether upcoming at.
   bool isUpcomingAt(DateTime now) =>
-      !isDeleted && visibleUntil.isAfter(now.toUtc());
+      !isDeleted && !teamLaunchConsumed && visibleUntil.isAfter(now.toUtc());
 
   /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() => {
@@ -2212,6 +2221,7 @@ class UpcomingHike {
     'createdAt': createdAt.toUtc().toIso8601String(),
     if (participantPhones.isNotEmpty) 'participantPhones': participantPhones,
     if (isDeleted) 'isDeleted': true,
+    if (teamLaunchConsumed) 'teamLaunchConsumed': true,
     if (deletedReason.isNotEmpty) 'deletedReason': deletedReason,
     if (deletedAt != null)
       'deletedAtLocal': deletedAt!.toUtc().toIso8601String(),
@@ -2302,6 +2312,7 @@ class UpcomingHike {
       createdAt: _modelDateFromValue(data['createdAt']) ?? DateTime.now(),
       participantPhones: participantPhones,
       isDeleted: data['isDeleted'] == true,
+      teamLaunchConsumed: data['teamLaunchConsumed'] == true,
       deletedReason: _modelStringFrom(data['deletedReason']).isNotEmpty
           ? _modelStringFrom(data['deletedReason'])
           : data['expired'] == true

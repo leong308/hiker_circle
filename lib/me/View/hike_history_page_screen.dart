@@ -61,6 +61,9 @@ class _HikeHistoryPageState extends State<HikeHistoryPage> {
     )..addListener(_renderScreenModel);
 
     _historyFuture = _load();
+    if (widget.loadHistory == null && widget.session != null) {
+      _screenModel.watchSharedHistory(widget.session!.phoneNumber);
+    }
   }
 
   /// Delegates load to the ViewModel.
@@ -602,6 +605,27 @@ class _HikeHistoryDetailBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final summary = detail.summary;
+    if (detail.sharedTeamSummary != null) {
+      return StreamBuilder<TeamHikeSession?>(
+        stream: repository?.watchTeamHikeSession(detail.teamHikeSessionId),
+        builder: (context, snapshot) {
+          final stored = snapshot.data?.summarySnapshot;
+          final shared = stored == null
+              ? detail.sharedTeamSummary!
+              : detail.sharedTeamSummary!.prefer(
+                  SharedTeamHikeSummary.fromMap(stored),
+                );
+          return RefreshIndicator(
+            onRefresh: onRefresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 36),
+              children: [TeamHikeSummaryPanel(summary: shared)],
+            ),
+          );
+        },
+      );
+    }
     final overview = RefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(

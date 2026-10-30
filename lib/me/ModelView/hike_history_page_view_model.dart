@@ -35,10 +35,32 @@ class _HikeHistoryPageStateViewModel extends ChangeNotifier {
     await future;
   }
 
+  StreamSubscription<String>? _sharedHistory;
+  Timer? _sharedRefresh;
+
+  /// Refreshes visible common history cards after another hiker's result is finalized.
+  void watchSharedHistory(String phone) {
+    _sharedHistory = readRepository().watchTeamHistoryChanges(phone).listen((
+      _,
+    ) {
+      _sharedRefresh?.cancel();
+      _sharedRefresh = Timer(const Duration(milliseconds: 250), () async {
+        if (!mounted) return;
+        try {
+          await commandRefresh();
+        } catch (_) {
+          /* Keep the existing cached history. */
+        }
+      });
+    }, onError: (Object _) {});
+  }
+
   /// Releases resources owned by this instance.
   @override
   void dispose() {
     _disposed = true;
+    _sharedRefresh?.cancel();
+    _sharedHistory?.cancel();
     super.dispose();
   }
 }

@@ -41,6 +41,7 @@ class _UpcomingHikeJoinRequestDialogState
   static const _red = Color(0xFFE11D48);
   bool _isResolving = false;
   String? _error;
+  HikerCircleLoadingDialogRoute? _resolveLoadingRoute;
 
   /// Resolves.
   Future<void> _resolve(bool accept) async {
@@ -49,19 +50,12 @@ class _UpcomingHikeJoinRequestDialogState
       _isResolving = true;
       _error = null;
     });
-    var loadingPopupOpen = true;
     unawaited(_presentResolveEffect1());
-    // Give the modal route a frame to mount before the request can complete;
-    // this keeps the cleanup below from touching the underlying review dialog.
-    await Future<void>.delayed(Duration.zero);
     try {
       final result = await widget
           .onResolve(accept)
           .timeout(const Duration(seconds: 30));
-      if (loadingPopupOpen && mounted) {
-        loadingPopupOpen = false;
-        _presentResolveEffect2();
-      }
+      _presentResolveEffect2();
       if (mounted) _presentResolveEffect3(result);
     } on TimeoutException {
       if (mounted) {
@@ -74,10 +68,7 @@ class _UpcomingHikeJoinRequestDialogState
         setState(() => _error = 'Unable to respond right now. Try again.');
       }
     } finally {
-      if (loadingPopupOpen && mounted) {
-        loadingPopupOpen = false;
-        _presentResolveEffect4();
-      }
+      _presentResolveEffect4();
       if (mounted) setState(() => _isResolving = false);
     }
   }
@@ -421,31 +412,43 @@ class _UpcomingHikeJoinRequestDialogState
   /// Releases resources owned by this instance.
   @override
   void dispose() {
+    final loading = _resolveLoadingRoute;
+    WidgetsBinding.instance.addPostFrameCallback((_) => loading?.close());
     _screenModel.removeListener(_renderScreenModel);
     _screenModel.dispose();
     super.dispose();
   }
 
-  /// Presents the resolve effect1 UI.
-  Future<void> _presentResolveEffect1() => showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const HikerCircleLoadingToast(
+  /// Opens a bounded branded modal and retains its route for race-safe cleanup.
+  Future<void> _presentResolveEffect1() {
+    final route = HikerCircleLoadingDialogRoute(
+      context: context,
       compact: true,
       message: 'Updating join request…',
       detail: 'Saving the host decision securely.',
-    ),
-  );
+    );
+    _resolveLoadingRoute = route;
+    return Navigator.of(context, rootNavigator: true).push<void>(route);
+  }
 
-  /// Presents the resolve effect2 UI.
-  void _presentResolveEffect2() =>
-      Navigator.of(context, rootNavigator: true).pop();
+  /// Closes only the request's own loading modal, even if another popup opened later.
+  void _presentResolveEffect2() {
+    _resolveLoadingRoute?.close();
+    _resolveLoadingRoute = null;
+  }
 
-  /// Presents the resolve effect3 UI.
-  void _presentResolveEffect3(UpcomingHikeJoinRequestReview result) =>
-      Navigator.of(context).pop(result);
+  /// Delivers the decision through the review's own route without dismissing another popup.
+  void _presentResolveEffect3(UpcomingHikeJoinRequestReview result) {
+    final route = ModalRoute.of<UpcomingHikeJoinRequestReview>(context);
+    final owner = route?.navigator;
+    if (route == null || !route.isActive || owner == null) return;
+    if (route.isCurrent) {
+      owner.pop(result);
+    } else {
+      owner.removeRoute(route, result);
+    }
+  }
 
-  /// Presents the resolve effect4 UI.
-  void _presentResolveEffect4() =>
-      Navigator.of(context, rootNavigator: true).pop();
+  /// Makes failure and disposal cleanup idempotent.
+  void _presentResolveEffect4() => _presentResolveEffect2();
 }
