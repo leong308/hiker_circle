@@ -197,6 +197,7 @@ enum SosAlertTriggerSource {
 enum SosAlertStatus {
   sent,
   partial,
+  unconfirmed,
   failed,
   queued,
   noContacts;
@@ -208,6 +209,8 @@ enum SosAlertStatus {
         return 'sent';
       case SosAlertStatus.partial:
         return 'partial';
+      case SosAlertStatus.unconfirmed:
+        return 'unconfirmed';
       case SosAlertStatus.failed:
         return 'failed';
       case SosAlertStatus.queued:
@@ -223,7 +226,9 @@ enum SosAlertStatus {
       case SosAlertStatus.sent:
         return 'Sent';
       case SosAlertStatus.partial:
-        return 'Partially sent';
+        return 'Contacts confirmed';
+      case SosAlertStatus.unconfirmed:
+        return 'Unconfirmed';
       case SosAlertStatus.failed:
         return 'Failed';
       case SosAlertStatus.queued:
@@ -244,6 +249,10 @@ class SosContactDispatch {
     this.retryable = true,
     this.errorMessage,
     this.providerMessageId,
+    this.confirmationStatus = '',
+    this.contactIndex = 0,
+    this.updatedAtMillis = 0,
+    this.nextRetryAtMillis = 0,
   });
 
   /// Creates sos contact dispatch from a cloud record.
@@ -252,6 +261,10 @@ class SosContactDispatch {
       contactName: _stringFrom(data['contactName']),
       phoneNumber: _stringFrom(data['phoneNumber']),
       wasSent: data['wasSent'] == true,
+      confirmationStatus: data['confirmationStatus'] as String? ?? '',
+      contactIndex: (data['contactIndex'] as num?)?.toInt() ?? 0,
+      updatedAtMillis: (data['updatedAtMillis'] as num?)?.toInt() ?? 0,
+      nextRetryAtMillis: (data['nextRetryAtMillis'] as num?)?.toInt() ?? 0,
       retryable: data['retryable'] != false,
       errorMessage: data['errorMessage'] is String
           ? data['errorMessage'] as String
@@ -268,6 +281,25 @@ class SosContactDispatch {
   final bool retryable;
   final String? errorMessage;
   final String? providerMessageId;
+  final String confirmationStatus;
+  final int contactIndex, updatedAtMillis, nextRetryAtMillis;
+
+  /// Unknown provider acceptance remains separate from a contact that definitely failed.
+  bool get isUnconfirmed => confirmationStatus == 'unconfirmed';
+
+  /// A fresh server attempt is still inside its acknowledgement window.
+  bool get isConfirming => confirmationStatus == 'sending';
+
+  /// Exposes an explicit contact result without implying the recipient read the message.
+  String get confirmationLabel => wasSent
+      ? 'Confirmed'
+      : isUnconfirmed
+      ? 'Unconfirmed'
+      : isConfirming
+      ? 'Confirming…'
+      : retryable
+      ? 'Failed · retry scheduled'
+      : 'Failed';
 
   /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {
@@ -275,6 +307,10 @@ class SosContactDispatch {
       'contactName': contactName,
       'phoneNumber': phoneNumber,
       'wasSent': wasSent,
+      'confirmationStatus': confirmationStatus,
+      'contactIndex': contactIndex,
+      'updatedAtMillis': updatedAtMillis,
+      'nextRetryAtMillis': nextRetryAtMillis,
       'retryable': retryable,
       if (errorMessage case final errorMessage?) 'errorMessage': errorMessage,
       if (providerMessageId case final providerMessageId?)
@@ -705,6 +741,14 @@ class SosAlert {
   final SosTriggerLocation? triggerLocation;
   final SosAlertTriggerSource triggerSource;
   final HikeShirtColor? shirtColor;
+
+  /// A count replaces the ambiguous Partial label for mixed contact results.
+  String get confirmationLabel => status == SosAlertStatus.unconfirmed
+      ? 'Unconfirmed · $sentCount of $contactCount contacts confirmed'
+      : '$sentCount of $contactCount contacts confirmed';
+
+  /// Counts unknown delivery outcomes independently of known failures.
+  int get unconfirmedCount => dispatches.where((p) => p.isUnconfirmed).length;
 
   /// Serializes this value for cloud storage.
   Map<String, dynamic> toFirestore() {

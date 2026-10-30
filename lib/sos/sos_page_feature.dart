@@ -28,6 +28,7 @@ import 'Data/nearby_sos_event_repository.dart';
 import 'Data/sos_alert_repository.dart';
 import 'Data/sos_device_alert_service.dart';
 import 'Model/sos_models.dart';
+import 'View/widgets/sos_contact_delivery_list.dart';
 import 'Model/sos_presentation_controller.dart';
 import 'Model/nearby_sos_event.dart';
 import 'ModelView/sos_view_model.dart';

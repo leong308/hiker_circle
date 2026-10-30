@@ -677,6 +677,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Server-owned SOS contact receipts expose only this signed-in owner's confirmation results.
+    match /sosDeliveryReceipts/{ownerUid}/dispatches/{dispatchId} {
+      allow read: if signedIn() && request.auth.uid == ownerUid;
+      allow write: if false;
+    }
+
     match /sosWhatsAppDispatches/{dispatchId} {
       allow read: if admin();
       allow write: if false;

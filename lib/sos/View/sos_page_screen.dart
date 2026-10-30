@@ -1031,19 +1031,24 @@ class _SosSystemLogDetailPage extends StatelessWidget {
 
   /// Builds this widget from its current presentation state.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => StreamBuilder<SosQueueChange>(
+    stream: SosAlertRepository.queueChanges.where(
+      (change) => change.alert?.id == log['id'],
+    ),
+    builder: (context, snapshot) => _buildDetails(
+      context,
+      snapshot.data?.alert == null
+          ? log
+          : {...log, ...snapshot.data!.alert!.toFirestore()},
+    ),
+  );
+
+  /// Presents the newest contact receipts without changing the original emergency details.
+  Widget _buildDetails(BuildContext context, Map<String, dynamic> log) {
+    final alert = SosAlert.fromFirestore(log);
     final location = _sosLogLocation(log['triggerLocation']);
     final mode = _sosLogString(log['mode'], fallback: 'sos');
     final status = _sosLogString(log['status'], fallback: 'unknown');
-    final rawContacts = log['dispatches'];
-    final contactNames = rawContacts is Iterable
-        ? rawContacts
-              .whereType<Map>()
-              .map((item) => item['contactName']?.toString().trim() ?? '')
-              .where((name) => name.isNotEmpty)
-              .toSet()
-              .toList(growable: false)
-        : const <String>[];
 
     return Scaffold(
       backgroundColor: _SosColors.backgroundFor(context),
@@ -1103,7 +1108,9 @@ class _SosSystemLogDetailPage extends StatelessWidget {
                       const _HorizontalSeparator(),
                       _StatusRow(
                         label: 'Status',
-                        value: _friendlySosStatus(status),
+                        value: status == 'partial'
+                            ? alert.confirmationLabel
+                            : _friendlySosStatus(status),
                       ),
                       const _HorizontalSeparator(),
                       _StatusRow(
@@ -1142,29 +1149,13 @@ class _SosSystemLogDetailPage extends StatelessWidget {
                       const _HorizontalSeparator(),
                       _StatusRow(
                         label: 'Contacts',
-                        value:
-                            '${_sosLogInt(log['sentCount'])} notified · ${_sosLogInt(log['failedCount'])} need attention',
+                        value: alert.confirmationLabel,
                       ),
-                      if (contactNames.isNotEmpty) ...[
-                        const SizedBox(height: 10),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Wrap(
-                            spacing: 7,
-                            runSpacing: 7,
-                            children: [
-                              for (final name in contactNames)
-                                Chip(
-                                  avatar: const Icon(
-                                    Icons.person_rounded,
-                                    size: 17,
-                                  ),
-                                  label: Text(name),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Confirmed means accepted by the messaging service; it does not mean read.',
+                      ),
+                      SosContactDeliveryList(dispatches: alert.dispatches),
                     ],
                   ),
                 ),
@@ -2777,8 +2768,9 @@ String _friendlySosType(String raw) {
 /// Computes friendly sos status.
 String _friendlySosStatus(String raw) {
   return switch (raw.trim().toLowerCase()) {
-    'sent' => 'Contacts notified',
-    'partial' => 'Some contacts need attention',
+    'sent' => 'Contacts confirmed',
+    'partial' => 'Contacts confirmed',
+    'unconfirmed' => 'Unconfirmed',
     'failed' => 'Delivery needs attention',
     'queued' || 'retry' => 'Waiting for connection',
     'no_contacts' => 'No emergency contacts',

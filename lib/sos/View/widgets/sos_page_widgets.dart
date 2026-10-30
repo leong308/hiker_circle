@@ -464,6 +464,7 @@ class _SosSystemLogRow extends StatelessWidget {
     final sent = _sosLogInt(log['sentCount']);
     final failed = _sosLogInt(log['failedCount']);
     final contactCount = _sosLogInt(log['contactCount']);
+    final unconfirmed = SosAlert.fromFirestore(log).unconfirmedCount > 0;
     final color = failed > 0 || status == 'failed'
         ? _SosColors.orange
         : _SosColors.green;
@@ -487,7 +488,7 @@ class _SosSystemLogRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${_friendlySosType(mode)} · ${_friendlySosStatus(status)}',
+                    '${_friendlySosType(mode)} · ${status == 'partial' ? '$sent of $contactCount contacts confirmed' : _friendlySosStatus(status)}',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: _SosColors.textFor(context),
                       fontWeight: FontWeight.w800,
@@ -508,13 +509,17 @@ class _SosSystemLogRow extends StatelessWidget {
                     runSpacing: 6,
                     children: [
                       _StatusPill(
-                        label: '$sent contacts notified',
+                        label: '$sent of $contactCount contacts confirmed',
                         color: _SosColors.green,
                         surface: _SosColors.greenSoftFor(context),
                       ),
                       _StatusPill(
                         label: failed == 0
-                            ? 'No delivery issues'
+                            ? unconfirmed
+                                  ? 'Unconfirmed'
+                                  : sent < contactCount
+                                  ? 'Awaiting confirmation'
+                                  : 'All contacts confirmed'
                             : '$failed need attention',
                         color: failed > 0
                             ? _SosColors.orange
