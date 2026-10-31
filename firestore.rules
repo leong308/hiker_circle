@@ -532,7 +532,7 @@ service cloud.firestore {
         && request.resource.data.phoneNumber == resource.data.phoneNumber
         && request.resource.data.shareId == resource.data.shareId
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'createdAt', 'createdAtLocal'
+          'createdAt', 'createdAtLocal', 'routeRetentionExpiresAt'
         ])
         && request.resource.data.expiresAt is timestamp
         && (

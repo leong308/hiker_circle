@@ -59,6 +59,7 @@ class LiveLocationSharingService extends ChangeNotifier {
   int _manualStartRevision = 0;
   SosTriggerLocation? _latestHikeLocation;
   int _configurationGeneration = 0;
+  int _publicationRevision = 0;
   Future<void>? _loadFuture;
   Future<void>? _publishFuture;
   Future<void>? _contactNotificationFuture;
@@ -549,6 +550,7 @@ class LiveLocationSharingService extends ChangeNotifier {
     }
 
     final generation = _configurationGeneration;
+    final publicationRevision = _publicationRevision;
     _isPublishing = true;
     late final Future<void> operation;
     operation =
@@ -557,6 +559,7 @@ class LiveLocationSharingService extends ChangeNotifier {
           phoneNumber: phoneNumber,
           share: share,
           generation: generation,
+          publicationRevision: publicationRevision,
         ).whenComplete(() {
           if (identical(_publishFuture, operation)) {
             _publishFuture = null;
@@ -572,13 +575,16 @@ class LiveLocationSharingService extends ChangeNotifier {
     required String phoneNumber,
     required LiveLocationShare share,
     required int generation,
+    required int publicationRevision,
   }) async {
+    bool isCurrent() =>
+        _isCurrentConfiguration(generation, repository, phoneNumber) &&
+        publicationRevision == _publicationRevision;
     try {
       final snapshotService = LocationSnapshotService.instance;
       final location =
           await snapshotService.refresh() ?? snapshotService.latestLocation;
-      if (hasActiveHike ||
-          !_isCurrentConfiguration(generation, repository, phoneNumber)) {
+      if (hasActiveHike || !isCurrent()) {
         return;
       }
       if (location == null) {
@@ -594,37 +600,143 @@ class LiveLocationSharingService extends ChangeNotifier {
         share: share,
         location: location,
       );
-      if (!_isCurrentConfiguration(generation, repository, phoneNumber)) {
+      if (!isCurrent()) {
         return;
       }
       _share = share.copyWith(latestLocation: location);
       _errorMessage = null;
     } on LiveLocationRepositoryException catch (error) {
-      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+      if (isCurrent()) {
         _errorMessage = error.message;
       }
     } catch (_) {
-      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+      if (isCurrent()) {
         _errorMessage = 'Unable to update live location right now.';
       }
     } finally {
-      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+      if (isCurrent()) {
         _isPublishing = false;
         notifyListeners();
       }
     }
   }
 
-  /// Computes share live location.
+  /// Renew only an explicit active-share action; restoration and GPS updates
+  /// retain the server expiry. Keep the previous share if renewal is unconfirmed.
+  Future<bool> _renewActiveShare() async {
+    final repository = _repository;
+    final phoneNumber = _phoneNumber;
+    final previousShare = _share;
+    if (_isBusy ||
+        !_isActive ||
+        repository == null ||
+        phoneNumber == null ||
+        previousShare == null) {
+      return false;
+    }
+    final generation = _configurationGeneration;
+    // An older publication may already be waiting for GPS or Firestore. Its
+    // completion must not restore the old expiry after this explicit renewal.
+    _publicationRevision += 1;
+    _publishTimer?.cancel();
+    _publishTimer = null;
+    _publishFuture = null;
+    _isPublishing = false;
+    _isBusy = true;
+    _errorMessage = null;
+    var notifyContactsAfterRenewal = false;
+    notifyListeners();
+    try {
+      final snapshots = LocationSnapshotService.instance;
+      final hikeLocation = _latestHikeLocation;
+      final oldestFix = DateTime.now().toUtc().subtract(
+        LocationSnapshotService.maximumEmergencySnapshotAge,
+      );
+      final location = hikeLocation?.capturedAt?.isAfter(oldestFix) == true
+          ? hikeLocation
+          : snapshots.latestLocation ?? await snapshots.refresh();
+      if (!_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        return false;
+      }
+      if (location == null) {
+        throw const LiveLocationRepositoryException(
+          'Location unavailable. Check GPS and location permission.',
+        );
+      }
+      final renewedShare = await repository.activate(
+        phoneNumber: phoneNumber,
+        location: location,
+      );
+      if (!_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _deactivateBestEffort(
+          repository: repository,
+          phoneNumber: phoneNumber,
+          share: renewedShare,
+        );
+        return false;
+      }
+      if (!renewedShare.expiresAt.isAfter(previousShare.expiresAt)) {
+        throw const LiveLocationRepositoryException(
+          'The server has not confirmed a later expiry time.',
+        );
+      }
+      _share = renewedShare;
+      if (renewedShare.id != previousShare.id) {
+        // A share that expired or was revoked while this phone still showed it
+        // as active receives a new identity. Re-link an active hike as for an
+        // explicit start, rather than leaving it tied to the unavailable link.
+        _manualStartRevision += 1;
+        _clearContactNotifications();
+        if (!hasActiveHike) {
+          _notificationEligibleShareId = renewedShare.id;
+          notifyContactsAfterRenewal = true;
+        }
+      }
+    } on LiveLocationRepositoryException catch (error) {
+      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _errorMessage =
+            'Live location renewal could not be confirmed. ${error.message} Your previous link and expiry are still displayed.';
+      }
+      return false;
+    } catch (_) {
+      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _errorMessage =
+            'Unable to renew live location. Your previous link and expiry are still displayed. Check your connection and try again.';
+      }
+      return false;
+    } finally {
+      if (_isCurrentConfiguration(generation, repository, phoneNumber)) {
+        _isBusy = false;
+        if (_isActive) _startPublishTimer();
+        notifyListeners();
+      }
+    }
+    if (notifyContactsAfterRenewal &&
+        _isCurrentConfiguration(generation, repository, phoneNumber)) {
+      unawaited(retryStandaloneContactNotifications());
+    }
+    return true;
+  }
+
+  /// Sharing an active link explicitly renews its expiry before opening the
+  /// share sheet. A caller that just activated it for this gesture can skip renewal.
   Future<void> shareLiveLocation({
     required String phoneNumber,
     required FirebaseBootstrapResult firebaseBootstrapResult,
+    bool renewExisting = true,
   }) async {
+    _configure(
+      phoneNumber: phoneNumber,
+      firebaseBootstrapResult: firebaseBootstrapResult,
+    );
+    if (_isBusy || _isSharing) return;
     if (!_isActive || _share == null) {
       await activate(
         phoneNumber: phoneNumber,
         firebaseBootstrapResult: firebaseBootstrapResult,
       );
+    } else if (renewExisting && !await _renewActiveShare()) {
+      return;
     }
 
     final share = _share;
@@ -646,9 +758,11 @@ class LiveLocationSharingService extends ChangeNotifier {
       if (!_isCurrentConfiguration(generation, repository, phoneNumber)) {
         return;
       }
+      final currentShare = _share;
+      if (!_isActive || currentShare == null) return;
       final text = composeStandaloneLiveLocationMessage(
         ownerPhone: phoneNumber,
-        share: share,
+        share: currentShare,
         timeZoneId: AppSettingsController.instance.preferredTimeZone,
       );
       await _deviceService.shareText(

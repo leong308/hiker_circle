@@ -135,7 +135,8 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
   /// Computes share live location.
   Future<void> _shareLiveLocation() async {
     if (_isStartingLiveLocation) return;
-    if (!_liveLocationSharingService.isActive) {
+    final renewExisting = _liveLocationSharingService.isActive;
+    if (!renewExisting) {
       await _startLiveLocation();
       if (!mounted) return;
       if (!_liveLocationSharingService.isActive) {
@@ -146,6 +147,7 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
     await _liveLocationSharingService.shareLiveLocation(
       phoneNumber: widget.phoneNumber,
       firebaseBootstrapResult: widget.firebaseBootstrapResult,
+      renewExisting: renewExisting,
     );
     _showLiveLocationMessage(fallbackMessage: 'Live location link ready.');
   }
@@ -256,6 +258,8 @@ class _LocationSharingPageState extends State<LocationSharingPage> {
                               _liveLocationSharingService.isBusy,
                           isSharing: _liveLocationSharingService.isSharing,
                           shareUrl: _liveLocationSharingService.share?.shareUrl,
+                          expiresAt:
+                              _liveLocationSharingService.share?.expiresAt,
                           autoShareOnHikeStart:
                               _liveLocationSharingService.autoShareOnHikeStart,
                           isPreferenceBusy:
@@ -844,6 +848,7 @@ class _LiveLocationControls extends StatelessWidget {
     required this.isBusy,
     required this.isSharing,
     required this.shareUrl,
+    required this.expiresAt,
     required this.autoShareOnHikeStart,
     required this.isPreferenceBusy,
     required this.onToggle,
@@ -862,6 +867,7 @@ class _LiveLocationControls extends StatelessWidget {
   final bool isBusy;
   final bool isSharing;
   final String? shareUrl;
+  final DateTime? expiresAt;
   final bool autoShareOnHikeStart;
   final bool isPreferenceBusy;
   final VoidCallback onToggle;
@@ -940,6 +946,18 @@ class _LiveLocationControls extends StatelessWidget {
                                 letterSpacing: 0,
                               ),
                         ),
+                        if (isActive && expiresAt != null) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            'Expires: ${PreferredTimeZone.formatInstant(expiresAt!, AppSettingsController.instance.preferredTimeZone)}',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: _LocationColors.secondaryTextFor(
+                                    context,
+                                  ),
+                                ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -1075,6 +1093,16 @@ class _LiveLocationControls extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
+              if (isActive) ...[
+                Text(
+                  'Share Live renews an active link for 24 hours before opening sharing options.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _LocationColors.secondaryTextFor(context),
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               Row(
                 children: [
                   Expanded(

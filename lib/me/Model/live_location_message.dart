@@ -12,16 +12,21 @@ String composeStandaloneLiveLocationMessage({
     share.startedAt,
     timeZoneId,
   );
+  final expiresAt = PreferredTimeZone.formatInstant(
+    share.expiresAt,
+    timeZoneId,
+  );
   return [
     '📍 *HikerCircle Live Location*',
     '',
     'I have started sharing my live location.',
     'User phone: $phone',
     'Started: $startedAt',
+    'Expires: $expiresAt',
     '',
     '📍 Follow my live location:',
     share.shareUrl,
     '',
-    'This is a live location update, not an SOS alert. The link stops when sharing is turned off or expires 24 hours after sharing started.',
+    'This is a live location update, not an SOS alert. The link stops when sharing is turned off or reaches the expiry shown above.',
   ].join('\n');
 }

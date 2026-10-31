@@ -72,12 +72,12 @@ function composeLiveLocationStartMessage({
     '📍 Follow their live location:',
     safeShareUrl,
     '',
-    'This is an automatic safety update, not an SOS alert. The link stops when the hike ends or expires after 24 hours.',
+    'This is an automatic safety update, not an SOS alert. The link stops when the hike ends or its current expiry time is reached. Sharing the link again renews it for 24 hours.',
   ].filter((line) => line !== '').join('\n');
 }
 
 // Original server-owned share creation is stable across activation retries and GPS updates.
-// Shares created before the explicit start field use their fixed 24-hour expiry.
+// Shares created before the explicit start field use their initial 24-hour expiry.
 function originalLiveLocationStartedAtMillis({ share, user, expiresAtMillis, nowMillis = Date.now() }) {
   const millis = (value) => {
     if (value && typeof value.toMillis === 'function') return value.toMillis();
@@ -120,7 +120,7 @@ function composeStandaloneLiveLocationStartMessage({
     `Started: ${formatSosDateTime(startedAtMillis, preferredTimeZone)}`,
     'Follow their live location:',
     safeShareUrl,
-    'This is an automatic safety update, not an SOS alert. The link stops when location sharing is turned off or expires 24 hours after sharing started.',
+    'This is an automatic safety update, not an SOS alert. The link stops when location sharing is turned off or its current expiry time is reached. Sharing the link again renews it for 24 hours.',
   ].filter(Boolean).join('\n');
 }
 

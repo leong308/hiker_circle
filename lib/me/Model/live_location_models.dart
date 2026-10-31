@@ -20,8 +20,8 @@ class LiveLocationShare {
   final DateTime? _startedAt;
   final SosTriggerLocation? latestLocation;
 
-  /// Activation fixes the lifetime at 24 hours; GPS updates and retries never
-  /// move its beginning. Older active links retain that same original instant.
+  /// Explicit renewal can extend expiry while preserving the original start.
+  /// The expiry-based fallback applies to older records without a saved start.
   DateTime get startedAt =>
       _startedAt?.toUtc() ??
       expiresAt.toUtc().subtract(const Duration(hours: 24));

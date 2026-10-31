@@ -369,6 +369,14 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
     if (!mounted) return;
     final hike = stateActiveHike;
     if (hike == null) return;
+    if (started) {
+      // A fresh manual start can replace an expired/revoked link even when the
+      // hiking preference is already on. Relink the active hike and notify its
+      // contacts for the new share; a same-link expiry renewal emits no start.
+      stateLiveLocationCloudConfiguration = null;
+      stateLiveLocationNotificationCompletedSessionIds.remove(hike.sessionId);
+      stateLiveLocationNotificationStatusShownSessionIds.remove(hike.sessionId);
+    }
     final interval = sharing.hasActiveHike
         ? sharing.updateInterval
         : hike.draft.locationRecordingInterval;
@@ -377,7 +385,9 @@ class _HikerHomePageStateViewModel extends ChangeNotifier {
         : started
         ? true
         : hike.draft.shareLiveLocation;
-    if (hike.draft.locationRecordingInterval == interval &&
+    if (!started &&
+        !stopped &&
+        hike.draft.locationRecordingInterval == interval &&
         hike.draft.shareLiveLocation == shouldShare) {
       return;
     }

@@ -5,7 +5,6 @@ const ROUTE_COLLECTION = 'live_location_route_chunks';
 const SLOT_MILLIS = 5000;
 const BUCKET_MILLIS = 5 * 60000;
 const SHARE_LIFETIME_MILLIS = 24 * 3600000;
-const MAX_BUCKETS = SHARE_LIFETIME_MILLIS / BUCKET_MILLIS;
 const BACKFILL_PAGE_SIZE = 25;
 
 function millis(value) {
@@ -24,7 +23,7 @@ function activeShareWindow(share, now) {
   if (share?.isActive !== true || !Number.isSafeInteger(expiresAtMillis) || expiresAtMillis <= now) return null;
   const startedAtMillis = [millis(share.createdAtLocal), millis(share.createdAt), expiresAtMillis - SHARE_LIFETIME_MILLIS]
     .find(value => Number.isSafeInteger(value) && value > 0 && value <= now);
-  if (!startedAtMillis || expiresAtMillis > startedAtMillis + SHARE_LIFETIME_MILLIS) return null;
+  if (!startedAtMillis || expiresAtMillis <= startedAtMillis) return null;
   return {startedAtMillis, expiresAtMillis};
 }
 
@@ -52,12 +51,13 @@ function comparePoints(a, b) {
 async function prepareRouteChunkWrites(transaction, shareReference, share, samples, now = Date.now()) {
   const window = activeShareWindow(share, now);
   if (!window) return [];
+  const bucketCount = Math.ceil((window.expiresAtMillis - window.startedAtMillis) / BUCKET_MILLIS);
   const groups = new Map();
   for (const sample of samples || []) {
     const point = normalizeRoutePoint(sample, window, now);
     if (!point) continue;
     const bucket = Math.floor((point.recordedAtMillis - window.startedAtMillis) / BUCKET_MILLIS);
-    if (bucket < 0 || bucket >= MAX_BUCKETS) continue;
+    if (bucket < 0 || bucket >= bucketCount) continue;
     if (!groups.has(bucket)) groups.set(bucket, []);
     groups.get(bucket).push(point);
   }
@@ -69,6 +69,11 @@ async function prepareRouteChunkWrites(transaction, shareReference, share, sampl
   entries.forEach(([bucket, incoming], index) => {
     const snapshot = snapshots[index];
     const previous = snapshot.data() || {};
+    // Never shorten TTL while an explicit renewal is preparing route history.
+    // Public reads remain gated by the parent's actual expiry, not this field.
+    const retention = millis(share.routeRetentionExpiresAt) > window.expiresAtMillis
+      ? share.routeRetentionExpiresAt : share.expiresAt;
+    const chunkExpiry = millis(previous.expiresAt) > millis(retention) ? previous.expiresAt : retention;
     const slots = new Map();
     for (const sample of [...(Array.isArray(previous.points) ? previous.points : []), ...incoming]) {
       const point = normalizeRoutePoint(sample, window, now);
@@ -80,9 +85,9 @@ async function prepareRouteChunkWrites(transaction, shareReference, share, sampl
     const points = [...slots.values()].sort(comparePoints);
     const bucketStartMillis = window.startedAtMillis + bucket * BUCKET_MILLIS;
     if (snapshot.exists && previous.schemaVersion === 1 && previous.bucketStartMillis === bucketStartMillis
-        && millis(previous.expiresAt) === window.expiresAtMillis
+        && millis(previous.expiresAt) === millis(chunkExpiry)
         && JSON.stringify(previous.points) === JSON.stringify(points)) return;
-    writes.push({reference: snapshot.ref, data: {schemaVersion: 1, bucketStartMillis, points, expiresAt: share.expiresAt}});
+    writes.push({reference: snapshot.ref, data: {schemaVersion: 1, bucketStartMillis, points, expiresAt: chunkExpiry}});
   });
   return writes;
 }
@@ -175,6 +180,6 @@ async function backfillHikeRoute(db, {sessionId, shareId, uid, phoneNumber}, clo
   }
 }
 
-module.exports = {ROUTE_COLLECTION, SLOT_MILLIS, BUCKET_MILLIS, MAX_BUCKETS, BACKFILL_PAGE_SIZE,
+module.exports = {ROUTE_COLLECTION, SLOT_MILLIS, BUCKET_MILLIS, BACKFILL_PAGE_SIZE,
   activeShareWindow, normalizeRoutePoint, prepareRouteChunkWrites, applyRouteChunkWrites,
   prepareHikeRouteWrites, projectShareLocation, backfillHikeRoute};
